@@ -1,0 +1,224 @@
+"""SubjectKind identity normalizers: the fixed core set, its conformance fixtures (R12, D4).
+
+Each normalizer version has one conformance fixture under
+``tests/fixtures/identity_normalizers/<name>-v<N>.json``: raw values and the
+canonical value (or the refusal) the version gives them. A fixture's bytes are
+pinned below: once released, a normalizer version never changes what it does,
+so changing a case means a new version (and a new fixture), never an edited
+one. (purl-type v1 was corrected in place before any release: npm case, the
+subpath decode order and qualifier validation; the Floor collapses unshipped
+variants.) purl-type's per-type case table is checked against an excerpt of
+the purl-spec type definitions (``upstream/purl-spec-case-sensitivity.json``).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from pydantic import TypeAdapter, ValidationError
+
+from cruxible_client.contracts.identity_normalizers import (
+    NORMALIZER_VERSIONS,
+    PURL_TYPE_RULES_V1,
+    KeyNormalizationRefused,
+    KeyNormalizer,
+    PurlTypeNormalizer,
+    normalize_key_value,
+    normalizer_spelling,
+)
+from cruxible_client.contracts.subject_kinds import (
+    KeyClaimTypeShape,
+    key_claim_type_problem,
+)
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "identity_normalizers"
+_RULE: TypeAdapter[KeyNormalizer] = TypeAdapter(KeyNormalizer)
+
+#: sha256 of each conformance fixture's bytes. A normalizer version is
+#: immutable: a changed case is a new version with its own fixture.
+FIXTURE_DIGESTS = {
+    "none-v1.json": "4f210de24a290951a5b579ba0161dfe372be22af9869c32ba39f7e4bf160cf18",
+    "lowercase-v1.json": "05f356e4aed90abcc695baf40e0336951fe01e4fd3c301335b10e121bad1e5ad",
+    "pep503-v1.json": "6c01254bf78bd00d3bb8f1807060d3ac6855908a33030a4889031632d1fb2c8a",
+    "purl-type-v1.json": "4ef2eb5c40e081613517a3a73c5347af3fa7877c69ac43b2b98d2e84f1129c11",
+}
+
+
+def test_every_implemented_normalizer_version_has_exactly_one_pinned_fixture() -> None:
+    expected = {
+        f"{name}-v{version}.json"
+        for name, versions in NORMALIZER_VERSIONS.items()
+        for version in versions
+    }
+    assert {path.name for path in FIXTURES.glob("*.json")} == expected == set(FIXTURE_DIGESTS)
+    for name, digest in FIXTURE_DIGESTS.items():
+        assert hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest() == digest, name
+
+
+def _cases() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    found = []
+    for path in sorted(FIXTURES.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for index, case in enumerate(data["cases"]):
+            found.append((f"{path.stem}[{index}]", data["normalizer"], case))
+    return found
+
+
+@pytest.mark.parametrize(
+    ("label", "rule", "case"), _cases(), ids=[label for label, _r, _c in _cases()]
+)
+def test_conformance_fixture(label: str, rule: dict[str, Any], case: dict[str, Any]) -> None:
+    normalizer = _RULE.validate_python(rule)
+    if "refused" in case:
+        rules = [normalizer]
+        if isinstance(normalizer, PurlTypeNormalizer):
+            # A malformed purl refuses in both identities, never dropped as a qualifier.
+            rules.append(PurlTypeNormalizer(version=normalizer.version, identity="package_variant"))
+        for rule in rules:
+            with pytest.raises(KeyNormalizationRefused) as caught:
+                normalize_key_value(rule, case["raw"])
+            assert caught.value.code == case["refused"]
+        return
+    canonical = normalize_key_value(normalizer, case["raw"])
+    assert canonical == case["canonical"] and type(canonical) is type(case["canonical"])
+    # Canonicalization is idempotent: the canonical value is its own canonical value.
+    assert normalize_key_value(normalizer, canonical) == canonical
+    if isinstance(normalizer, PurlTypeNormalizer):
+        variant = PurlTypeNormalizer(version=normalizer.version, identity="package_variant")
+        assert normalize_key_value(variant, case["raw"]) == case["variant"]
+        assert normalize_key_value(variant, case["variant"]) == case["variant"]
+        # The package identity of a variant is the package itself.
+        assert normalize_key_value(normalizer, case["variant"]) == canonical
+
+
+def test_two_raw_spellings_of_one_package_normalize_to_one_key() -> None:
+    package = PurlTypeNormalizer(version=1, identity="package")
+    variant = PurlTypeNormalizer(version=1, identity="package_variant")
+    amd = "pkg:deb/debian/curl@8.5.0-2?arch=amd64"
+    arm = "pkg:deb/Debian/curl@8.5.0-2?arch=arm64"
+    assert normalize_key_value(package, amd) == normalize_key_value(package, arm)
+    assert normalize_key_value(variant, amd) != normalize_key_value(variant, arm)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"normalizer": "pep503", "version": 2},
+        {"normalizer": "none", "version": 0},
+        {"normalizer": "pep503"},
+        {"normalizer": "purl-type", "version": 1},
+        {"normalizer": "purl-type", "version": 1, "identity": "ecosystem"},
+        {"normalizer": "nfkc", "version": 1},
+        {"normalizer": "lowercase", "version": 1, "locale": "tr"},
+    ],
+)
+def test_only_the_fixed_core_set_at_implemented_versions_is_accepted(
+    rule: dict[str, Any],
+) -> None:
+    """No configurable normalization: a rule is one core name at one pinned version."""
+
+    with pytest.raises(ValidationError):
+        _RULE.validate_python(rule)
+
+
+def test_a_rule_spells_its_name_version_and_purl_identity() -> None:
+    assert normalizer_spelling(_RULE.validate_python({"normalizer": "pep503", "version": 1})) == (
+        "pep503@1"
+    )
+    assert (
+        normalizer_spelling(PurlTypeNormalizer(version=1, identity="package_variant"))
+        == "purl-type@1 (package_variant)"
+    )
+
+
+def _shape(**update: Any) -> KeyClaimTypeShape:
+    base: dict[str, Any] = {
+        "predicate": "pkg.package.name",
+        "live": True,
+        "artifact_format": "cruxible-claim-type-v11",
+        "object_kind": "literal",
+        "cardinality": "one",
+        "allowed_subject_kinds": ("pkg.package",),
+        "literal_type": "string",
+        "canonical_form": ("nfc", "trim"),
+    }
+    return KeyClaimTypeShape(**{**base, **update})
+
+
+def test_a_text_normalizer_needs_a_string_key_claim_type() -> None:
+    pep503 = _RULE.validate_python({"normalizer": "pep503", "version": 1})
+    none = _RULE.validate_python({"normalizer": "none", "version": 1})
+    assert key_claim_type_problem("pkg.package", _shape(), "pkg.package.name", pep503) is None
+    integer = _shape(literal_type="integer")
+    problem = key_claim_type_problem("pkg.package", integer, "pkg.package.name", pep503)
+    assert problem is not None and "normalizes text" in problem
+    assert key_claim_type_problem("pkg.package", integer, "pkg.package.name", none) is None
+
+
+def test_a_lowercasing_normalizer_cannot_follow_an_upper_canonical_form() -> None:
+    upper = _shape(canonical_form=("nfc", "upper"))
+    for name in ("lowercase", "pep503"):
+        rule = _RULE.validate_python({"normalizer": name, "version": 1})
+        problem = key_claim_type_problem("pkg.package", upper, "pkg.package.name", rule)
+        assert problem is not None and "upper" in problem
+
+
+def test_purl_type_v1_folds_exactly_the_components_the_spec_declares_case_insensitive() -> None:
+    upstream = json.loads(
+        (FIXTURES / "upstream" / "purl-spec-case-sensitivity.json").read_text(encoding="utf-8")
+    )
+    for purl_type, components in upstream["types"].items():
+        rule = PURL_TYPE_RULES_V1.get(purl_type)
+        folded = {
+            "namespace": bool(rule and rule.lower_namespace),
+            # pypi's name takes its PEP 503 form, which lowercases it.
+            "name": bool(rule and (rule.lower_name or rule.pep503_name)),
+            "version": bool(rule and rule.lower_version),
+            "subpath": bool(rule and rule.lower_subpath),
+        }
+        for component, case_sensitive in components.items():
+            assert folded[component] == (case_sensitive is False), (purl_type, component)
+        for component, lowered in folded.items():
+            if lowered:
+                assert components.get(component) is False, (purl_type, component)
+    assert set(PURL_TYPE_RULES_V1) <= set(upstream["types"])
+
+
+def test_case_sensitive_npm_names_stay_distinct() -> None:
+    package = PurlTypeNormalizer(version=1, identity="package")
+    spellings = ("pkg:npm/JSONStream@1.3.5", "pkg:npm/jsonstream@1.3.5", "pkg:npm/%40A/b@1")
+    assert len({normalize_key_value(package, raw) for raw in spellings}) == 3
+    assert normalize_key_value(package, "pkg:npm/%40A/b@1") != normalize_key_value(
+        package, "pkg:npm/%40a/b@1"
+    )
+
+
+@pytest.mark.parametrize("identity", ["package", "package_variant"])
+def test_purl_canonical_values_are_fixed_points(identity: str) -> None:
+    """Every component spelling re-reads as itself: encoded dots, slashes, percent, case."""
+
+    rule = PurlTypeNormalizer(version=1, identity=identity)  # type: ignore[arg-type]
+    parts = {
+        "type": ("npm", "PyPI", "generic", "deb", "oci"),
+        "namespace": ("", "%40Scope/", "a/b/", "%2E/", "x%3Ay/"),
+        "name": ("Name_x", "%2E", "a%40b", "n%25m", "caf%C3%A9"),
+        "version": ("", "@1.0RC", "@1%2B2", "@1:2", "@%40"),
+        "qualifiers": ("", "?B=2&a=1", "?arch=%7E", "?checksum=sha1:a,sha1:b"),
+        "subpath": ("", "#%2E", "#a/%2E%2E/b", "#%2E%2E", "#A/./B/"),
+    }
+    import itertools
+
+    count = 0
+    for type_, namespace, name, version, qualifiers, subpath in itertools.product(*parts.values()):
+        raw = f"pkg:{type_}/{namespace}{name}{version}{qualifiers}{subpath}"
+        try:
+            canonical = normalize_key_value(rule, raw)
+        except KeyNormalizationRefused:
+            continue
+        count += 1
+        assert normalize_key_value(rule, canonical) == canonical, (raw, canonical)
+    assert count > 1000

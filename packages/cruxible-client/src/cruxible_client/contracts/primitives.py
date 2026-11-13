@@ -1,0 +1,68 @@
+"""Deterministic helpers shared by primitive type modules.
+
+Scope rule: only operations used by ``>=2`` primitive type modules
+(``errors``, ``predicate``, ``graph/types``, ``feedback/types``,
+``group/types``, ``decision/types``, ``snapshot/types``, ``provider/types``,
+``receipt/types``) for stable identity or canonical serialization.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any, Callable
+
+
+def compact_json(
+    value: Any,
+    *,
+    default: Callable[[Any], Any] | None = None,
+    sort_keys: bool = False,
+) -> str:
+    """Serialize to single-line JSON, preserving insertion order by default.
+
+    Unlike :func:`canonical_json` this does not sort keys unless asked:
+    display surfaces (CLI ``--json-compact``) must emit the same keys in the
+    same order as their pretty form, differing only in whitespace.
+    """
+    kwargs: dict[str, Any] = {}
+    if default is not None:
+        kwargs["default"] = default
+    return json.dumps(value, separators=(",", ":"), sort_keys=sort_keys, **kwargs)
+
+
+def canonical_json(value: Any, *, default: Callable[[Any], Any] | None = None) -> str:
+    """Serialize a JSON-compatible value to a deterministic, RFC-compliant string.
+
+    Sorts keys, uses compact separators, preserves non-ASCII characters, and
+    rejects NaN/Infinity (which have no representation in RFC 7159 JSON).
+    """
+    kwargs: dict[str, Any] = {}
+    if default is not None:
+        kwargs["default"] = default
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+        **kwargs,
+    )
+
+
+def pretty_json(value: Any) -> str:
+    """Serialize deterministic, indented RFC-compliant JSON for file surfaces."""
+
+    return json.dumps(
+        value,
+        sort_keys=True,
+        indent=2,
+        separators=(",", ": "),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def new_id(prefix: str, *, length: int = 12, separator: str = "-") -> str:
+    """Return a new identifier with a hex UUID suffix."""
+    return f"{prefix}{separator}{uuid.uuid4().hex[:length]}"

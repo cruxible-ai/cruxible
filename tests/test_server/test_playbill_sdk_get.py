@@ -1,0 +1,552 @@
+"""Cruxible.get resolves references on the daemon, keeping the SDK's typed views."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import get_type_hints
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+from cruxible_client.authoring.sdk import ClaimView, Cruxible
+from cruxible_client.authoring.sdk_types import ClaimRef, ClaimTypeRef, RefKind, SubjectRef
+from cruxible_client.contracts import ClaimViewRecord
+from cruxible_client.contracts.get_reads import (
+    GetBatchRequest,
+    GetClaimTypeCard,
+    GetEvidence,
+    GetHistory,
+    GetProviderCard,
+    GetRequest,
+    GetSubjectCard,
+)
+from cruxible_client.errors import CoreError
+from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.governance.keys import GeneratedKeyMaterial
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.core_support._knowledge_loop_support import PREDICATE, seed_claims_into
+from tests.support.oid_prefixes import too_short_prefix
+from tests.test_server.test_playbill_procedure_measurements import (  # noqa: F401
+    owned_playbill_http,
+)
+
+
+def _sdk(client: TestClient, instance_id: str, tmp_path: Path) -> Cruxible:
+    transport = CruxibleClient(base_url="http://testserver")
+    transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
+    workspace = tmp_path / "sdk-workspace"
+    workspace.mkdir()
+    return Cruxible._from_client(  # noqa: SLF001
+        transport,
+        instance_id=instance_id,
+        workspace=workspace,
+        clock=lambda: datetime(2026, 8, 16, 21, tzinfo=UTC),
+    )
+
+
+def test_public_get_request_keeps_world_lookup_control_internal() -> None:
+    from cruxible_core.server.routes.playbill import get_by_ref
+
+    assert get_type_hints(get_by_ref)["req"] is GetRequest
+    assert "subject_suggestions" not in GetRequest.model_json_schema()["properties"]
+    ordinary = GetRequest(ref="Subject:project.work_item/wi-42")
+    assert "subject_suggestions" not in ordinary.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="subject_suggestions"):
+        GetRequest.model_validate({**ordinary.model_dump(), "subject_suggestions": False})
+
+
+def test_get_resolves_strings_and_typed_refs_directly(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seed_claims_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+    )
+    pb = _sdk(client, instance_id, tmp_path)
+
+    subject = pb.get("project.work_item/wi-42")
+    assert subject.kind is RefKind.SUBJECT and subject.identity == "project.work_item/wi-42"
+    assert isinstance(subject.value, GetSubjectCard)
+    # Its slug key Claim (core created it by its slug) and its status.
+    assert [(row.predicate, row.value) for row in subject.value.claims] == [
+        ("slug", "wi-42"),
+        ("status", "ready"),
+    ]
+    assert isinstance(subject.ref, SubjectRef)
+    # Summaries answer a compact coordinate; the SDK asks for the full one to pin.
+    assert subject.coordinate == pb.coordinate
+
+    by_leaf = pb.get("status")
+    assert by_leaf.kind is RefKind.CLAIM_TYPE and by_leaf.identity == PREDICATE
+    assert isinstance(by_leaf.value, GetClaimTypeCard)
+    assert pb.get(ClaimTypeRef(PREDICATE, pb.coordinate)).value == by_leaf.value
+
+    # A Claim summary keeps the SDK's typed ClaimView, from a prefix or a ref.
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        (row,) = projection.typed.connection.execute(
+            "SELECT identity FROM claims WHERE subject_path LIKE '%wi-42%' "
+            "AND predicate NOT LIKE '%.slug'"
+        ).fetchall()
+    claim_id = str(row[0]).removeprefix("Claim:")
+    card = pb.get(claim_id[:12])
+    assert card.kind is RefKind.CLAIM and card.identity == claim_id
+    assert isinstance(card.value, ClaimView)
+    assert (card.value.value, card.value.verdict) == ("ready", "supported")
+    assert isinstance(card.ref, ClaimRef)
+    assert pb.get(ClaimRef(claim_id, pb.coordinate)).value == card.value
+    # A subject resolving to a Claim only on the daemon still returns ClaimView.
+    assert pb.get(f"claims/{claim_id[4:6]}/{claim_id}.json").value == card.value
+
+    evidence = pb.get(claim_id, detail="evidence")
+    assert isinstance(evidence.value, GetEvidence)
+    proof = pb.get(claim_id, detail="proof")
+    assert isinstance(proof.value, ClaimViewRecord)
+
+    with pytest.raises(CoreError, match="cruxible.get.ref_not_found"):
+        pb.get("project.work_item/wi-4")
+
+
+def test_a_bounded_native_claim_view_carries_its_value(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    from tests.core_support._bounded_content_support import seed_bounded_content_into
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seeded = seed_bounded_content_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+        {"wi-42": b"The ruling, exactly as written.", "wi-bin": b"opaque"},
+    )
+    ruling, binary = seeded["wi-42"], seeded["wi-bin"]
+    pb = _sdk(client, instance_id, tmp_path)
+
+    card = pb.get(ruling.claim_id)
+    assert isinstance(card.value, ClaimView)
+    assert card.value.object_kind == "literal"
+    assert card.value.value == "The ruling, exactly as written."
+    assert "content_digest" not in card.value.__dict__
+    marked = pb.get(binary.claim_id).value
+    assert isinstance(marked, ClaimView)
+    assert marked.value == "opaque"
+    assert "content_digest" not in marked.__dict__
+
+
+def test_cut_values_offer_runnable_evidence_on_every_surface(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import shlex
+
+    from click.testing import CliRunner
+
+    from cruxible_client.contracts import AcceptedCoordinate
+    from cruxible_client.contracts.get_reads import GetHistory
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp import handlers
+    from tests.core_support._bounded_content_support import seed_bounded_content_into
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    whole = "a bounded ruling " * 15
+    seeded = seed_bounded_content_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+        {"wi-42": whole.encode()},
+    )["wi-42"]
+    pb = _sdk(client, instance_id, tmp_path)
+    transport = pb._client  # noqa: SLF001
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    monkeypatch.setattr(handlers, "_get_client", lambda: transport)
+    prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
+    url = f"/api/v1/{instance_id}/get"
+    for ref, detail in (
+        (seeded.subject, "summary"),
+        (seeded.claim_id, "summary"),
+        (seeded.claim_id, "history"),
+    ):
+        # HTTP and MCP retain the service's surface-specific suggestion, including
+        # the exact historical generation when a revision value was cut.
+        payload = client.post(url, json={"ref": ref, "detail": detail}).json()
+        section = payload["history"]["revisions"][0] if detail == "history" else payload["card"]
+        if ref == seeded.subject:
+            assert (
+                next(row["value"] for row in section["claims"] if row["predicate"] == "status")
+                == whole
+            )
+        else:
+            assert section["value"] == whole
+        step = f'cruxible_get(ref="{seeded.claim_id}", detail="evidence")'
+        mcp = handlers.handle_playbill_get(instance_id, ref=ref, detail=detail)
+        mcp_section = mcp.history.revisions[0] if mcp.history else mcp.card
+        assert mcp_section is not None
+        evidence = eval(
+            step,
+            {"cruxible_get": lambda **kw: handlers.handle_playbill_get(instance_id, **kw)},
+        )
+        assert evidence.evidence.value == whole
+
+        result = CliRunner().invoke(cli, [*prefix, "get", ref, "--detail", detail])
+        assert result.exit_code == 0, result.output
+        # A card names the read of the whole value by its Claim, which runs on a
+        # Subject card too; a history line keeps the flag on the Claim's own read.
+        assert (
+            f"({len(whole)} chars; cruxible get {seeded.claim_id[:16]} --detail evidence)"
+            in result.output
+            or f"({len(whole)} chars; --detail evidence for all)" in result.output
+        )
+        step = next(
+            line.removeprefix("next: ")
+            for line in result.output.splitlines()
+            if line.startswith("next: ")
+        )
+        read = CliRunner().invoke(cli, [*prefix, *shlex.split(step)[1:], "--json"])
+        assert read.exit_code == 0, read.output
+        assert json.loads(read.stdout)["evidence"]["value"] == whole, read.stderr
+
+        # SDK Claim summaries are already whole typed ClaimViews; Subject and
+        # history cards use the service's suggestions.
+        card = pb.get(ref, detail=detail)
+        if isinstance(card.value, ClaimView):
+            assert card.value.value == whole
+            continue
+        assert isinstance(card.value, GetSubjectCard | GetHistory)
+        if isinstance(card.value, GetHistory):
+            assert card.value.revisions[0].value == whole
+        else:
+            assert (
+                next(row.value for row in card.value.claims if row.predicate == "status") == whole
+            )
+        read_sdk = eval(
+            f'cx.get("{seeded.claim_id}", detail="evidence")',
+            {"cx": pb, "AcceptedCoordinate": AcceptedCoordinate},
+        )
+        assert read_sdk.value.value == whole
+
+
+def test_a_read_only_caller_reads_native_text_on_every_surface(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ruling exact-content-read-only: HTTP, SDK, MCP and CLI read the text at READ_ONLY.
+
+    C14: Capture reads and Document bodies are read-tier reads too; a restricted
+    CaptureKind is decided per Capture in the service.
+    """
+
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp import handlers
+    from cruxible_core.runtime.permissions import reset_permissions
+    from tests.core_support._bounded_content_support import VALUE_KIND, seed_bounded_content_into
+    from tests.test_server.test_playbill_get_route import _accept_document
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    text = "The ruling, exactly as written."
+    (ruling,) = seed_bounded_content_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+        {"wi-42": text.encode()},
+    ).values()
+    _accept_document(client, instance_id, key)
+    pb = _sdk(client, instance_id, tmp_path)
+    transport = CruxibleClient(base_url="http://testserver")
+    transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    monkeypatch.setattr(handlers, "_get_client", lambda: transport)
+    get_url = f"/api/v1/{instance_id}/get"
+    capture_url = f"/api/v1/{instance_id}/captures/read"
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
+    reset_permissions()
+    try:
+        # HTTP: the Claim card, its history and a query row read the text.
+        card = client.post(get_url, json={"ref": ruling.claim_id})
+        assert card.status_code == 200, card.text
+        assert card.json()["card"]["value"] == text
+        history = client.post(get_url, json={"ref": ruling.claim_id, "detail": "history"})
+        assert history.status_code == 200, history.text
+        assert [item["value"] for item in history.json()["history"]["revisions"]] == [text]
+        rows = client.post(
+            f"/api/v1/{instance_id}/query",
+            json={"kind": VALUE_KIND, "select": ["status"]},
+        )
+        assert rows.status_code == 200, rows.text
+        assert {row["subject"]: row["status"] for row in rows.json()["rows"]}[
+            ruling.subject
+        ] == text
+
+        # SDK: the typed ClaimView, history and query agree.
+        view = pb.get(ruling.claim_id).value
+        assert isinstance(view, ClaimView) and view.value == text
+        sdk_history = pb.get(ruling.claim_id, detail="history").value
+        assert [item.value for item in sdk_history.revisions] == [text]  # type: ignore[union-attr]
+        sdk_rows = {row["subject"]: row for row in pb.query(kind=VALUE_KIND, select=["status"])}
+        assert sdk_rows[ruling.subject]["status"] == text
+
+        # MCP (through the same daemon).
+        mcp_card = handlers.handle_playbill_get(instance_id, ref=ruling.claim_id).card
+        assert mcp_card is not None and mcp_card.value == text  # type: ignore[union-attr]
+        mcp_history = handlers.handle_playbill_get(
+            instance_id, ref=ruling.claim_id, detail="history"
+        ).history
+        assert mcp_history is not None
+        assert [item.value for item in mcp_history.revisions] == [text]
+        mcp_rows = handlers.handle_playbill_query(
+            instance_id, kind=VALUE_KIND, select=["status"]
+        ).rows
+        assert {row["subject"]: row["status"] for row in mcp_rows}[ruling.subject] == text
+
+        # CLI, over the daemon.
+        prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
+        printed = CliRunner().invoke(cli, [*prefix, "get", ruling.claim_id])
+        assert printed.exit_code == 0, printed.output
+        assert "The ruling, exactly as written." in printed.output
+        printed_history = CliRunner().invoke(
+            cli, [*prefix, "get", ruling.claim_id, "--detail", "history"]
+        )
+        assert printed_history.exit_code == 0, printed_history.output
+        assert "The ruling, exactly as written." in printed_history.output
+        table = CliRunner().invoke(cli, [*prefix, "query", VALUE_KIND, "--select", "status"])
+        assert table.exit_code == 0, table.output
+        assert "The ruling, exactly as written." in table.output
+
+        # C14: no tier refusal for a Capture read or a Document body. The value's
+        # stored bytes are no Capture, so the service (not the tier) refuses it.
+        capture = client.post(capture_url, json={"capture_digest": ruling.digest})
+        assert capture.status_code == 404, capture.text
+        assert capture.json()["error_code"] == "cruxible.capture.not_a_capture"
+        body = client.post(
+            get_url,
+            json={"ref": "Document:design", "detail": "body", "range": {"start": 0, "end": 8}},
+        )
+        assert body.status_code == 200, body.text
+        assert client.post(get_url, json={"ref": "Document:design"}).status_code == 200
+    finally:
+        monkeypatch.delenv("CRUXIBLE_MODE")
+        reset_permissions()
+
+
+def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ruling at-accepts-oid-prefix, over HTTP, the SDK, MCP and the CLI."""
+
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp import handlers
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seed_claims_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+    )
+    earlier = instance.accepted_history()[-2]
+    get_url = f"/api/v1/{instance_id}/get"
+    ref = f"ClaimType:{PREDICATE}"
+
+    printed = client.post(get_url, json={"ref": ref, "at": earlier.oid})
+    assert printed.status_code == 200, printed.text
+    compact = printed.json()["coordinate"]["git_oid"]
+    assert len(compact) == 12 and earlier.oid.startswith(compact)
+
+    # HTTP: get, query and orient read at the compact coordinate.
+    again = client.post(get_url, json={"ref": ref, "at": compact})
+    assert again.status_code == 200, again.text
+    assert again.json()["coordinate"] == printed.json()["coordinate"]
+    queried = client.post(f"/api/v1/{instance_id}/query", json={"kind": "ClaimType", "at": compact})
+    assert queried.status_code == 200, queried.text
+    assert queried.json()["receipt"]["coordinate"]["git_oid"] == earlier.oid
+    oriented = client.get(f"/api/v1/{instance_id}/orient", params={"at": compact})
+    assert oriented.status_code == 200, oriented.text
+    assert oriented.json()["generation"] == earlier.sequence
+
+    # A too-short prefix is the resolver's coded refusal, not a request-shape fault.
+    # An all-digit value of 11 or fewer characters is a generation, so the short
+    # prefix must hold a hex letter to be read as a prefix at all.
+    too_short = too_short_prefix(compact)
+    short = client.post(get_url, json={"ref": ref, "at": too_short})
+    assert short.status_code == 400, short.text
+    assert short.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
+    short_orient = client.get(f"/api/v1/{instance_id}/orient", params={"at": too_short})
+    assert short_orient.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
+    short_query = client.post(
+        f"/api/v1/{instance_id}/query", json={"kind": "ClaimType", "at": too_short}
+    )
+    assert short_query.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
+
+    # SDK and MCP.
+    pb = _sdk(client, instance_id, tmp_path)
+    monkeypatch.setattr(handlers, "_get_client", lambda: pb._client)  # noqa: SLF001
+    assert pb.query(kind="ClaimType", at=compact).page.receipt.coordinate.git_oid == earlier.oid
+    assert handlers.handle_playbill_get(instance_id, ref=ref, at=compact).coordinate.git_oid == (
+        compact
+    )
+    assert handlers.handle_playbill_orient(instance_id, at=compact).generation == earlier.sequence
+    assert (
+        handlers.handle_playbill_query(
+            instance_id, kind="ClaimType", at=compact
+        ).receipt.coordinate.git_oid
+        == earlier.oid
+    )
+
+    # CLI --at, over the daemon.
+    transport = CruxibleClient(base_url="http://testserver")
+    transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
+    assert (
+        transport.get(instance_id, request=GetRequest(ref=ref, at=compact)).coordinate.git_oid
+        == compact
+    )
+    assert transport.orient(instance_id, at=compact).generation == earlier.sequence
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
+    as_json = CliRunner().invoke(cli, [*prefix, "get", ref, "--at", compact, "--json"])
+    assert as_json.exit_code == 0, as_json.output
+    assert json.loads(as_json.output)["coordinate"]["git_oid"] == compact
+    queried_cli = CliRunner().invoke(
+        cli, [*prefix, "query", "ClaimType", "--at", compact, "--json"]
+    )
+    assert queried_cli.exit_code == 0, queried_cli.output
+    assert json.loads(queried_cli.output)["receipt"]["coordinate"]["git_oid"] == earlier.oid
+    oriented_cli = CliRunner().invoke(cli, [*prefix, "orient", "--at", compact, "--json"])
+    assert oriented_cli.exit_code == 0, oriented_cli.output
+    assert json.loads(oriented_cli.output)["generation"] == earlier.sequence
+
+
+def test_world_reads_values_subjects_and_vocabulary_through_the_read_verbs(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """World.values, Subject loading and the vocabulary ride query, get-batch and orient."""
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seed_claims_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+    )
+    pb = _sdk(client, instance_id, tmp_path)
+
+    world = pb.world()
+    assert PREDICATE in world.predicates
+    assert world.kind("project.work_item").subject_ids == ("wi-42", "wi-43")
+
+    values = world.values(subjects=["project.work_item/wi-42"], predicates=[PREDICATE])
+    (value,) = values
+    assert (value.subject, value.predicate, value.value) == (
+        "project.work_item/wi-42",
+        PREDICATE,
+        "ready",
+    )
+    assert value.status == "accepted" and value.claim.startswith("CLM-")
+
+    head = pb.refresh()
+    assert head.coordinate.git_oid == pb.coordinate.git_oid
+    batch = pb._client.get_batch(  # noqa: SLF001
+        instance_id,
+        request=GetBatchRequest(refs=(f"ClaimType:{PREDICATE}", value.claim)),
+    )
+    assert [item.kind for item in batch.results] == ["claim_type", "claim"]
+    assert {item.accepted_coordinate for item in batch.results} == {batch.coordinate}
+
+
+def test_sdk_get_answers_every_kind_get_resolves(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The SDK maps every get kind, so a policy, a Trigger or a principal card opens."""
+
+    from cruxible_client.authoring.sdk import _GET_REF_KINDS
+    from cruxible_client.authoring.sdk_types import ReferenceKindError
+    from cruxible_client.contracts.get_reads import GET_DETAILS_BY_KIND
+
+    assert set(_GET_REF_KINDS) == set(GET_DETAILS_BY_KIND)
+    client, instance_id, _key = owned_playbill_http
+    pb = _sdk(client, instance_id, tmp_path)
+
+    expected = {
+        "ApprovalPolicy:instance": RefKind.APPROVAL_POLICY,
+        "ProcedureRuntimePolicy:instance": RefKind.PROCEDURE_RUNTIME_POLICY,
+        "Trigger:floor-refresh": RefKind.TRIGGER,
+        "Principal:owner": RefKind.PRINCIPAL,
+        "Provider:cruxible-builtin": RefKind.PROVIDER,
+        # workspace.file.result is core-owned and genesis-seeded (B2's
+        # ledger/bootstrap.py genesis seeds), so it is live on every fresh instance.
+        "Contract:workspace.file.result@1": RefKind.CONTRACT,
+    }
+    for ref, kind in expected.items():
+        card = pb.get(ref)
+        assert card.kind is kind
+        with pytest.raises(ReferenceKindError):
+            card.ref  # noqa: B018 - operational cards mint no typed ref
+
+
+def test_sdk_get_reads_provider_names_and_exact_builds(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.named_references import name_provider
+    from cruxible_client.contracts.providers import provider_digest
+    from tests.support.operation_world import build_files, contract_files, operation_build
+    from tests.test_server.test_playbill_line_run_refusals import _accept_members
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    provider = name_provider(operation_build(build="1"))
+    members = {**contract_files(), **build_files(provider)}
+    _accept_members(instance, key, members, timestamp="2026-08-16T20:00:00.000000Z")
+    pb = _sdk(client, instance_id, tmp_path)
+
+    for ref in (f"Provider:{provider.provider_name}", provider.identity.qualified):
+        summary = pb.get(ref)
+        assert summary.kind is RefKind.PROVIDER
+        assert summary.identity == provider.identity.name
+        assert summary.coordinate == pb.coordinate
+        assert isinstance(summary.value, GetProviderCard)
+        assert summary.value.provider == provider.provider_name
+        assert summary.value.build == provider.identity.name
+
+        proof = pb.get(ref, detail="proof")
+        assert proof.kind is RefKind.PROVIDER and proof.identity == summary.identity
+        assert isinstance(proof.value, dict)
+        assert proof.value["envelope"] == provider.model_dump(mode="json")
+        assert proof.value["artifact_digest"] == provider_digest(provider).tagged
+        history = pb.get(ref, detail="history")
+        assert history.kind is RefKind.PROVIDER and history.identity == summary.identity
+        assert isinstance(history.value, GetHistory) and history.value.revisions

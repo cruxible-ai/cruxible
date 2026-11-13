@@ -1,15 +1,23 @@
-"""Contract-freeze tests for the public cruxible-client surface."""
+"""Contract-freeze tests for the reduced Cruxible client surface."""
 
 from __future__ import annotations
 
-import ast
+import hashlib
 from pathlib import Path
 from typing import Any, get_args
 
+import httpx
 import pytest
-from pydantic import BaseModel
+from fastapi.testclient import TestClient
 
+from cruxible_client import __version__ as CLIENT_VERSION
 from cruxible_client import contracts
+from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
+from cruxible_client.contracts.authoring.models import AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
+from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.transport.http import CruxibleClient
+from cruxible_core import __version__ as DAEMON_VERSION
+from cruxible_core.server.app import create_app
 from tests.support.client_contracts import (
     compare_contract_manifests,
     generate_contract_manifest,
@@ -18,7 +26,6 @@ from tests.support.client_contracts import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "tests/goldens/cruxible_client/contracts_snapshot.json"
-CLIENT_PATH = REPO_ROOT / "packages/cruxible-client/src/cruxible_client/http_client.py"
 
 
 def test_client_contract_snapshot_is_current() -> None:
@@ -39,166 +46,341 @@ def test_client_contract_snapshot_is_current() -> None:
     )
 
 
-def test_inspect_neighborhood_state_defaults_to_all() -> None:
-    """The public model default matches the runtime/service/docs default.
+def test_authoring_program_stamp_commits_the_exact_public_contract_snapshot() -> None:
+    manifest = generate_contract_manifest()
+    digest = "sha256:" + hashlib.sha256(canonical_json(manifest).encode("utf-8")).hexdigest()
 
-    The expanded inspect contract defaults to state="all" (every stored edge
-    with its review/lifecycle markers); the client model must agree so an
-    absent `state` in a wire payload never misreports the read's visibility.
-    """
-    assert contracts.InspectNeighborhoodResult.model_fields["state"].default == "all"
-    schema = contracts.InspectNeighborhoodResult.model_json_schema()
-    assert schema["properties"]["state"]["default"] == "all"
+    assert digest == AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
+    assert SDK_CONTRACT_SNAPSHOT_DIGEST == digest
 
 
-def test_group_status_contract_is_persisted_lifecycle_only() -> None:
-    """``withdrawn`` replaces the hard delete; ``auto_resolved`` is read-only legacy.
+def test_current_daemon_serves_the_snapshot_used_by_the_sdk_handshake() -> None:
+    assert CLIENT_VERSION == DAEMON_VERSION
+    with TestClient(create_app()) as server:
+        response = server.get("/version")
 
-    ``auto_resolved`` was a dead-end status no path transitioned out of, and it
-    escaped both ``find_pending_group`` and the pending unique index — so a
-    re-propose of the same signature minted a duplicate row. Auto-resolution is
-    now a real approve and survives as ``resolution_source``. The status literal
-    is still ADMISSIBLE because shipped 0.2.x instances persisted rows carrying
-    it; dropping it made every group read on those instances raise.
-    """
-    assert set(get_args(contracts.GroupStatus)) == {
-        "pending_review",
-        "applying",
-        "resolved",
-        "withdrawn",
-        "auto_resolved",
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.pop("boot_id"), str)
+    assert payload == {
+        "version": DAEMON_VERSION,
+        "sdk_contract_snapshot_digest": SDK_CONTRACT_SNAPSHOT_DIGEST,
     }
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"source_artifact_id": "SRC-1"},
-        {"source_artifact_id": "SRC-1", "chunk_id": ""},
-        {"source_artifact_id": "SRC-1", "heading_path": ["Evidence"]},
-        {
-            "source_artifact_id": "SRC-1",
-            "heading_path": [],
-            "block_selector": "paragraph:1",
-        },
-        {
-            "source_artifact_id": "SRC-1",
-            "heading_path": ["Evidence"],
-            "block_selector": "",
-        },
-        {"source_artifact_id": "", "chunk_id": "chunk-1"},
-    ],
-)
-def test_source_evidence_contract_rejects_incomplete_locators(
-    payload: dict[str, Any],
-) -> None:
-    with pytest.raises(ValueError):
-        contracts.SourceEvidenceInput.model_validate(payload)
+def test_client_reads_package_version_and_served_snapshot_from_version_probe() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/version"
+        return httpx.Response(
+            200,
+            json={
+                "version": DAEMON_VERSION,
+                "sdk_contract_snapshot_digest": SDK_CONTRACT_SNAPSHOT_DIGEST,
+            },
+        )
 
-
-def test_source_evidence_contract_accepts_supported_locator_forms() -> None:
-    by_chunk = contracts.SourceEvidenceInput(
-        source_artifact_id="SRC-1",
-        chunk_id="chunk-1",
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[assignment]
+        base_url="http://cruxible",
+        transport=httpx.MockTransport(handler),
     )
-    by_heading = contracts.SourceEvidenceInput(
-        source_artifact_id="SRC-1",
-        heading_path=["Evidence"],
-        block_selector="paragraph:1",
-    )
-
-    assert by_chunk.chunk_id == "chunk-1"
-    assert by_heading.heading_path == ["Evidence"]
-    assert by_heading.block_selector == "paragraph:1"
+    try:
+        assert client._version_info() == (DAEMON_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST)
+        assert client.version() == DAEMON_VERSION
+    finally:
+        client.close()
 
 
-def test_citation_handles_are_additive_on_every_source_evidence_write_contract() -> None:
-    relationship = contracts.RelationshipInput(
-        from_type="Part",
-        from_id="P-1",
-        relationship_type="fits",
-        to_type="Vehicle",
-        to_id="V-1",
-        citation_handles=["cite1_chunk"],
-    )
-    shared = contracts.SharedEvidenceInput(citation_handles=["src1_revision"])
-    signal = contracts.SignalInput(
-        signal_source="catalog",
-        signal="support",
-        citation_handles=["cite1_signal"],
-    )
-    member = contracts.MemberInput(
-        from_type="Part",
-        from_id="P-1",
-        relationship_type="fits",
-        to_type="Vehicle",
-        to_id="V-1",
-        citation_handles=["cite1_member"],
-    )
+def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
+    current = generate_contract_manifest()
+    assert set(current["models"]) == {
+        "ActionRunOutcome",
+        "ActionRunRequest",
+        "ActionRunResult",
+        "BodyRestricted",
+        "ClaimVersionReference",
+        "ClaimsDiagnostic",
+        "RunCompleteness",
+        "RunCounts",
+        "GetRunNode",
+        "CompilerUpgradeNotice",
+        "ConsumerStatus",
+        "ResolutionContractInput",
+        "InvestigationBinding",
+        "LineTriggerBinding",
+        "LineDispatchItem",
+        "LineDispatchRequest",
+        "LineDispatchResult",
+        "InboxAcknowledged",
+        "InboxDismissRequest",
+        "InboxDismissed",
+        "InboxDispositionResult",
+        "InboxItem",
+        "InboxItemEnvelope",
+        "InboxLinkProposal",
+        "InboxLinkRequest",
+        "InboxLinkSubject",
+        "InboxLinked",
+        "InboxList",
+        "InboxListEntry",
+        "InboxSighting",
+        "LineEvaluateRequest",
+        "LineEnablementPrincipal",
+        "LineEnablement",
+        "LineEvaluateResult",
+        "LineTriggerOccurrence",
+        "LineTriggerVersion",
+        "ResolutionContractReference",
+        "ResolutionContract",
+        "ResolutionContractsRequest",
+        "ResolutionContractsResult",
+        "TriggerEventReference",
+        "Trigger",
+        "CadenceSchedule",
+        "CaptureLandingSchedule",
+        "ResolvedTriggerCaptureContract",
+        "CronSchedule",
+        "WindowCloseSchedule",
+        "ClaimStatementCard",
+        "ClaimLine",
+        "NamePair",
+        "PublicNameMap",
+        "PriorRefusalReceipt",
+        "PriorRefusalCoverage",
+        "GitWorkspaceNote",
+        "IsolatedExecutorRegistration",
+        "ObservationSettlementEvidence",
+        "AcceptedCoordinate",
+        "ActivationReceipt",
+        "ApprovalChallenge",
+        "ApprovalReceipt",
+        "AuditCoverage",
+        "AuthoringRefusal",
+        "AuditCoveredClaim",
+        "AuditCursor",
+        "AuditEvidenceRef",
+        "AuditFactors",
+        "AuditResult",
+        "AuditRow",
+        "AuditScope",
+        "AuthoringExampleResult",
+        "AuthoringIntentListRecord",
+        "AuthoringIntentViewRecord",
+        "AuthoringPreflightResult",
+        "AuthoringLanded",
+        "AuthoringProposed",
+        "AuthoringSubmitResultRecord",
+        "BlockDeclareResult",
+        "BlockDepublishResult",
+        "BlockObserveResult",
+        "BlockSyncItem",
+        "BlockSyncReadRequest",
+        "BlockSyncReadResult",
+        "ProjectionCheckRequest",
+        "ProjectionCheckResult",
+        "BlockSyncResult",
+        "BlockSyncSuccessorCandidate",
+        "CandidateStatusRecord",
+        "CaptureAdmissionAccount",
+        "CaptureContractInputRecord",
+        "CaptureEvidenceAdmission",
+        "CasObjectResult",
+        "ClaimTypeInputProposalResult",
+        "ClaimTypeMigrationPreflight",
+        "ClaimTypeMigrationResult",
+        "ClaimTypeLintWarning",
+        "ClaimTypeProposalLint",
+        "ClaimViewRecord",
+        "CoverageResult",
+        "CurationActionResult",
+        "CurationDetection",
+        "CurationInactiveDetector",
+        "CurationListResult",
+        "FloorConsumerOutcome",
+        "FloorDeliverNowRequest",
+        "FloorDeliveryRequest",
+        "FloorDeliveryResult",
+        "DiagnosticFrontier",
+        "FloorDelta",
+        "FloorExport",
+        "FloorFile",
+        "FloorRefreshResult",
+        "HostCompatibilityReason",
+        "HostInspection",
+        "HostResult",
+        "HostWorkspaceAttachResult",
+        "HostWorkspaceRegistration",
+        "InitResult",
+        "InstanceDecommissionResult",
+        "LedgerMirror",
+        "LedgerMirrorCleared",
+        "NextFinding",
+        "NextHealth",
+        "NextItem",
+        "NextRebuildResult",
+        "NextRepair",
+        "NextRepairRequirement",
+        "NextResult",
+        "Head",
+        "OrientFloor",
+        "OrientResult",
+        "NextStatus",
+        "PolicyInForce",
+        "PolicyInForceList",
+        "PredictRequest",
+        "PredictResult",
+        "ProcedureNodeSupport",
+        "ProcedureReadiness",
+        "ProcedureRunState",
+        "ProcedureChildInvocation",
+        "ProjectionAdvisory",
+        "ProjectionEvidence",
+        "PreflightCertificate",
+        "ProposalInspection",
+        "ProposalList",
+        "ProposalListEntry",
+        "ProposalReadmitResult",
+        "ProposalRecompiled",
+        "OriginatingLine",
+        "ProposalReview",
+        "ProposalReviewSummary",
+        "ReviewGuidance",
+        "ProposalItemReason",
+        "ProposalSelectorResult",
+        "ProposalWithdrawResult",
+        "ProposalRejectResult",
+        "ProviderCatalog",
+        "InstalledProvider",
+        "ProviderInstallRequest",
+        "ProviderInstallResult",
+        "ProviderBuildSummaryV1",
+        "ProviderBuildResolutionV1",
+        "ProviderMoveRequest",
+        "ProviderMoveResult",
+        "ProviderRetireRequest",
+        "ProviderRetireResult",
+        "ProviderRepinV1",
+        "StoppedAutomationV1",
+        "ProviderOperationReadiness",
+        "ProviderPackageSummary",
+        "ProviderWheelObject",
+        "QueryClaimValue",
+        "QueryColumn",
+        "QueryReceipt",
+        "QueryRequest",
+        "QueryResultRecord",
+        "TruncatedText",
+        "WholeValueRead",
+        "ReviewedMember",
+        "SemanticFieldDelta",
+        "SemanticFieldValue",
+        "SettleRequest",
+        "SettleResult",
+        "ProcedureMeasurementReview",
+        "ProcedureResolutionDispositionRequest",
+        "ProcedureResolutionDispositionResult",
+        "ResolutionDispositionSummary",
+        "ProcedureMeasureRequest",
+        "ProcedureMeasureResult",
+        "ProcedureReadingsRequest",
+        "ProcedureReadingsResult",
+        "ProcedureMeasurementContractStatus",
+        "ProcedureMeasurementEligibility",
+        "ProcedureMeasurementResolutionSummary",
+        "ProcedureMeasurementRow",
+        "ProcedureReadingSummary",
+        "SinceCursor",
+        "SinceRequest",
+        "SinceResult",
+        "SinceRow",
+        "FileCheckResult",
+        "FileContext",
+        "StateCoordinate",
+        "WhoAmI",
+        "WorkspaceAdvertisement",
+        "WorkspaceAttachResult",
+        "WorkspaceDetachResult",
+        "WorkspaceFloorStatus",
+        "WorkspaceFloorWriteResult",
+        "PredictionEqualityRule",
+        "PredictionObservationSelector",
+        "PredictionPresenceRule",
+        "PredictionThresholdRule",
+        "ProcedureRunAttribution",
+        "ProcedureRunAttributionWithheld",
+        "ProcedureRunReceipt",
+        "ProcedureRunReceiptWithheld",
+        "ProcedureSourceObservation",
+        "ProcedureTerminalEgress",
+        "ProviderLaneStatus",
+        "QueryFilterContains",
+        "QueryFilterEq",
+        "QueryFilterExists",
+        "QueryFilterGt",
+        "QueryFilterGte",
+        "QueryFilterIn",
+        "QueryFilterLt",
+        "QueryFilterLte",
+        "QueryFilterNe",
+        "QueryFollow",
+        "RuntimeCredentialBootstrapResult",
+        "RuntimeCredentialListResult",
+        "RuntimeCredentialMetadata",
+        "RuntimeCredentialResult",
+        "ServerInfoResult",
+        "ServerRestartResult",
+        "ServerStopResult",
+        "SourceReadReceipt",
+        "TerminalSettlementEvidence",
+        "WorkspaceFileSourceRequest",
+        "WorkspaceFileSourceRequestV2",
+        "ExecutedWorkspaceFileSourceRequestV2",
+    }
+    assert set(current["literal_aliases"]) == {
+        "ActionRunOutcomeStatus",
+        "ApprovalNotActivated",
+        "ProcedureMeasurementRefusalCode",
+        "ProcedureRunnable",
+        "LineEnablementOutcome",
+        "LineEnablementStopReason",
+        "ApprovalPolicyMode",
+        "AuthoringExampleName",
+        "HostCompatibilityReasonCode",
+        "HostCompatibility",
+        "HostStatus",
+        "HostWorkspaceRegistrationStatus",
+        "NextReason",
+        "NextRefusalCode",
+        "ClaimTypeLintCode",
+        "NextRepairGate",
+        "NextRepairOperand",
+        "NextRepairOperation",
+        "NextSeverity",
+        "InboxItemStatus",
+        "FloorExportPart",
+        "OrientSection",
+        "OrientSurface",
+        "PolicyKind",
+        "RuntimeCredentialPermissionMode",
+        "ProviderLaneUnavailableCode",
+    }
 
-    assert relationship.citation_handles == ["cite1_chunk"]
-    assert shared.citation_handles == ["src1_revision"]
-    assert signal.citation_handles == ["cite1_signal"]
-    assert member.citation_handles == ["cite1_member"]
 
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"source": "doc"},
-        {"source": "", "source_record_id": "section-1"},
-        {"source": "doc", "source_record_id": ""},
-        {"source": "doc", "source_record_id": "section-1", "metadata": "bad"},
-    ],
-)
-def test_evidence_ref_contract_rejects_malformed_refs(
-    payload: dict[str, Any],
-) -> None:
-    with pytest.raises(ValueError):
-        contracts.EvidenceRef.model_validate(payload)
-
-
-def test_evidence_ref_contract_preserves_extra_metadata() -> None:
-    ref = contracts.EvidenceRef.model_validate(
-        {
-            "source": "doc",
-            "source_record_id": "section-1",
-            "confidence": 0.9,
-            "metadata": {"kind": "roadmap"},
-        }
-    )
-
-    assert ref.source == "doc"
-    assert ref.source_record_id == "section-1"
-    assert ref.metadata == {"kind": "roadmap", "confidence": 0.9}
-
-
-def test_client_methods_parse_contract_return_models() -> None:
-    tree = ast.parse(CLIENT_PATH.read_text(encoding="utf-8"))
-    client_class = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "CruxibleClient"
-    )
-    violations: list[str] = []
-
-    for method in client_class.body:
-        if not isinstance(method, ast.FunctionDef):
-            continue
-        contract_name = _contract_return_name(method)
-        if contract_name is None:
-            continue
-        returns = [node for node in ast.walk(method) if isinstance(node, ast.Return)]
-        if not returns:
-            violations.append(f"{method.name}: missing return")
-            continue
-        for return_node in returns:
-            if not _returns_parse_model(return_node, contract_name):
-                violations.append(
-                    f"{method.name}: must return _parse_model(..., contracts.{contract_name})"
-                )
-
-    assert violations == []
+def test_host_and_coordinate_contracts_are_strict() -> None:
+    assert set(get_args(contracts.HostStatus)) == {
+        "created",
+        "already_exists",
+        "would_create",
+    }
+    assert contracts.HostResult.model_config["extra"] == "forbid"
+    assert contracts.AcceptedCoordinate.model_config["extra"] == "forbid"
+    assert set(contracts.AcceptedCoordinate.model_fields) == {
+        "tag",
+        "git_oid",
+        "semantic_root",
+        "generation_root",
+        "compiler_digest",
+    }
 
 
 def _manifest(
@@ -328,32 +510,42 @@ def test_contract_compatibility_allows_additive_changes() -> None:
     assert any("Added enum value(s) to Result.mode" in item for item in report.compatible)
 
 
-def _contract_return_name(method: ast.FunctionDef) -> str | None:
-    annotation = method.returns
-    if not isinstance(annotation, ast.Attribute):
-        return None
-    if not isinstance(annotation.value, ast.Name) or annotation.value.id != "contracts":
-        return None
-    value = getattr(contracts, annotation.attr)
-    if not isinstance(value, type) or not issubclass(value, BaseModel):
-        return None
-    return annotation.attr
+def test_no_model_the_contracts_namespace_publishes_is_undeclared() -> None:
+    """Card 83: the snapshot covered only models WRITTEN in `contracts/__init__.py`.
 
+    The package has no `__all__`; its export surface is the `X as X` import
+    idiom, and the old `__module__ == contracts.__name__` filter dropped every
+    model that reached the namespace that way. Twenty-seven models exported on
+    purpose therefore moved no pin, and fields real clients see -- a receipt's
+    requested path among them -- changed under a frozen surface without the
+    freeze noticing. The namespace is the declaration; anything in it is
+    covered, and adding a name to it is a pin movement.
 
-def _returns_parse_model(return_node: ast.Return, contract_name: str) -> bool:
-    value = return_node.value
-    if not isinstance(value, ast.Call):
-        return False
-    if not isinstance(value.func, ast.Attribute) or value.func.attr != "_parse_model":
-        return False
-    if not isinstance(value.func.value, ast.Name) or value.func.value.id != "self":
-        return False
-    if len(value.args) < 2:
-        return False
-    model_arg = value.args[1]
-    return (
-        isinstance(model_arg, ast.Attribute)
-        and isinstance(model_arg.value, ast.Name)
-        and model_arg.value.id == "contracts"
-        and model_arg.attr == contract_name
+    `published` deliberately carries NO module filter beyond excluding
+    `pydantic.BaseModel` itself. A `cruxible_client.contracts.*` prefix here
+    would be the same predicate `_public_models()` uses to compute `covered`,
+    so `published - covered` would be empty by construction and the assertion
+    could never fire. Without the filter a model defined anywhere -- another
+    `cruxible_client` module, or a third-party package -- that reaches the
+    namespace through the `X as X` idiom is published, and this test says so.
+    """
+
+    import inspect
+
+    from pydantic import BaseModel
+
+    from cruxible_client import contracts
+
+    published = {
+        name
+        for name, value in vars(contracts).items()
+        if not name.startswith("_")
+        and inspect.isclass(value)
+        and issubclass(value, BaseModel)
+        and value is not BaseModel
+    }
+    covered = set(generate_contract_manifest()["models"])
+
+    assert published - covered == set(), (
+        "these models are published from cruxible_client.contracts and pinned nowhere"
     )

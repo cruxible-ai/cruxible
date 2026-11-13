@@ -1,0 +1,1107 @@
+"""Exact G9 audit ranking, coverage accounting, and purity laws."""
+
+from __future__ import annotations
+
+from contextlib import nullcontext
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationStatementV1,
+    VerifiedClaimAttestationV1,
+)
+from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence, ClaimVerdictResult
+from cruxible_client.contracts.claims import (
+    AcceptedClaim,
+    ClaimLawEvidence,
+    claim_artifact_digest,
+    claim_statement_digest,
+    render_claim,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.coverage.contracts import (
+    CoverageAccessProfile,
+    LogicalSourceIdentity,
+)
+from cruxible_core.curation.audit import (
+    AuditBudgetV1,
+    AuditDependentRefV1,
+    AuditScopeV1,
+    audit_row_order,
+    build_reverse_dependency_index,
+)
+from cruxible_core.exhaust.consumption import (
+    ConsumptionContextV1,
+    consumption_aggregate,
+    note_consumption_unobserved,
+    record_consumption,
+)
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.query.backends import ClaimQueryFactsV1
+from cruxible_core.query.impact import (
+    DependencyImpactRequestV1,
+    build_dependency_impact,
+)
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.audit import (
+    AuditCursorInvalid,
+    PlaybillAuditRequestV1,
+    _audit_consumption_touch_counts,
+    _AuditHistoryIndex,
+    _history_index,
+    _logical_source_keys,
+    _row,
+    completed_audit_runs,
+    service_playbill_audit,
+)
+from cruxible_core.service.discovery.query import build_accepted_query_facts
+from tests.core_support._knowledge_loop_support import seed_claims
+from tests.core_support._modeling_parity_support import claim_fact, facts, subject
+from tests.core_support._support import initialize_local
+
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
+NOW = datetime(2026, 8, 26, 18, 0, tzinfo=UTC)
+PREDICATE = "project.work_item.status"
+
+
+def _actor() -> GovernedActorContext:
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="auditor",
+        org_id="org-test",
+        operation_id="op-audit",
+        timestamp=NOW,
+    )
+
+
+def _request(*, permitted: bool = True) -> PlaybillAuditRequestV1:
+    return PlaybillAuditRequestV1(
+        evaluation_time=NOW,
+        access_profile=CoverageAccessProfile(
+            profile_id="test-audit",
+            permitted_access_classes=("instance", "public") if permitted else ("public",),
+        ),
+    )
+
+
+def test_served_audit_preserves_historical_inputs_and_required_pin_impact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.service.discovery import audit as service
+    from tests.test_claims.test_claim_retirement import _accepted_dependency_world
+
+    instance, _owner, root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
+    full_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    original = service.build_reverse_dependency_index
+    comparisons = []
+
+    def compare(**kwargs):
+        selected = original(**kwargs)
+        expected = original(**{**kwargs, "tree": full_tree})
+        assert selected == expected
+        assert any(ref.identity.name == leaf_id for refs in selected.values() for ref in refs)
+        comparisons.append(selected)
+        return selected
+
+    monkeypatch.setattr(service, "build_reverse_dependency_index", compare)
+    monkeypatch.setattr(instance, "tree_at", lambda _oid: pytest.fail("audit must select records"))
+    result = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+    assert comparisons
+    assert {row.claim_identity.name for row in result.rows}.issuperset(
+        {root_id, middle_id, leaf_id}
+    )
+
+
+def test_empty_audit_is_byte_identical_idempotent_and_operational_only(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    accepted_before = instance.accepted_coordinate()
+    first = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+    second = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert first.coverage.access_permitted
+    assert first.rows == ()
+    assert first.audited_through_generation == 0
+    assert len(completed_audit_runs(instance)) == 1
+    assert instance.accepted_coordinate() == accepted_before
+    assert consumption_aggregate(instance).artifacts == ()
+    assert instance.review_operational_store().events(family="consumption") == ()
+
+
+def test_access_gate_precedes_counts_and_writes(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    result = service_playbill_audit(
+        instance,
+        request=_request(permitted=False),
+        actor_context=_actor(),
+    )
+
+    assert not result.coverage.access_permitted
+    assert result.coverage.candidate_claim_count == 0
+    assert result.coverage.covered_claims == ()
+    assert result.audited_through_generation is None
+    assert instance.review_operational_store().events(family="audit") == ()
+
+
+def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    subjects = tuple(subject("project.work_item", f"wi-{index}") for index in range(3))
+    claims = tuple(
+        claim_fact(
+            index + 10,
+            subject_row=subjects[index],
+            predicate=PREDICATE,
+            value="ready",
+        )
+        for index in range(3)
+    )
+    projected = ClaimQueryFactsV1(
+        coordinate=instance.accepted_coordinate(),
+        subjects=tuple(sorted(subjects, key=lambda item: item.path.encode("utf-8"))),
+        claims=tuple(sorted(claims, key=lambda item: item.accepted.path.encode("utf-8"))),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit.build_accepted_query_facts",
+        lambda *_args, **_kwargs: projected,
+    )
+    first_request = PlaybillAuditRequestV1(
+        evaluation_time=NOW,
+        access_profile=CoverageAccessProfile(profile_id="test-audit-pages"),
+        budget=AuditBudgetV1(max_rows=2, max_bytes=65_536),
+    )
+    first = service_playbill_audit(instance, request=first_request, actor_context=_actor())
+
+    assert len(first.rows) == 2
+    # Each returned row names its Claim as a line: subject, short field, value.
+    from cruxible_client import contracts as public
+    from cruxible_client.contracts.get_display import render_claim_line
+
+    for row in first.rows:
+        assert row.statement is not None
+        assert row.statement.claim == row.claim_identity.name
+        assert row.statement.subject.startswith("project.work_item/wi-")
+        assert (row.statement.field, row.statement.value) == ("status", "ready")
+        assert render_claim_line(row.statement, lead="7").startswith(
+            f"7  {row.statement.subject}  status = ready  [CLM-"
+        )
+        served = public.AuditRow.model_validate(row.model_dump(mode="json"))
+        assert served.statement == row.statement
+    # The line is display only: the result digest is the one without it.
+    bare = first.model_copy(
+        update={"rows": tuple(row.model_copy(update={"statement": None}) for row in first.rows)}
+    )
+    from cruxible_core.curation.audit import audit_result_digest
+
+    assert audit_result_digest(bare) == first.result_digest
+    assert first.coverage.candidate_claim_count == 3
+    assert first.coverage.returned_claim_count == 2
+    assert first.coverage.omitted_claim_count == 1
+    assert first.coverage.omission_reasons == ("row_budget_exceeded",)
+    assert len(first.coverage.covered_claims) == 3
+    assert first.next_cursor is not None
+    omitted = next(
+        row.accepted
+        for row in claims
+        if row.accepted.claim.identity not in {item.claim_identity for item in first.rows}
+    )
+    record_consumption(
+        instance,
+        context=ConsumptionContextV1(
+            actor_context=_actor(),
+            access_profile_id="test-audit-pages",
+        ),
+        operation="playbill.claim.get",
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        artifacts=((omitted.claim.identity, omitted.artifact_digest),),
+    )
+    with pytest.raises(AuditCursorInvalid):
+        service_playbill_audit(
+            instance,
+            request=first_request.model_copy(update={"cursor": first.next_cursor}),
+            actor_context=_actor(),
+        )
+
+    # A fresh patrol at the new fold-start head delivers every row exactly once.
+    restarted = service_playbill_audit(instance, request=first_request, actor_context=_actor())
+    assert restarted.next_cursor is not None
+    second = service_playbill_audit(
+        instance,
+        request=first_request.model_copy(update={"cursor": restarted.next_cursor}),
+        actor_context=_actor(),
+    )
+    assert len(second.rows) == 1
+    assert second.next_cursor is None
+    delivered = (*restarted.rows, *second.rows)
+    assert len({row.claim_identity for row in delivered}) == 3
+    assert {row.claim_identity for row in delivered} == {
+        row.accepted.claim.identity for row in claims
+    }
+    assert len(completed_audit_runs(instance)) == 3
+    retry = service_playbill_audit(
+        instance,
+        request=first_request.model_copy(update={"cursor": restarted.next_cursor}),
+        actor_context=_actor(),
+    )
+    assert retry.model_dump(mode="json") == second.model_dump(mode="json")
+    assert len(completed_audit_runs(instance)) == 3
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    instance.review_operational_store().append(
+        family="block_observation",
+        partition_id="audit-test-drift",
+        event_id="audit-test-drift",
+        payload={"tag": "audit-test-operational-drift-v1", "event_id": "audit-test-drift"},
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+    )
+    with pytest.raises(AuditCursorInvalid):
+        service_playbill_audit(
+            instance,
+            request=first_request.model_copy(update={"cursor": restarted.next_cursor}),
+            actor_context=_actor(),
+        )
+
+
+def test_failed_fold_writes_no_completed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    def fail(_instance):  # type: ignore[no-untyped-def]
+        raise RuntimeError("rank fold failed")
+
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit._audit_consumption_touch_counts", fail
+    )
+    with pytest.raises(RuntimeError, match="rank fold failed"):
+        service_playbill_audit(instance, request=_request(), actor_context=_actor())
+    assert completed_audit_runs(instance) == ()
+
+
+def test_audit_caps_self_heating_without_changing_receipts_or_other_consumers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    facts_at_head = build_accepted_query_facts(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+    )
+    claim = facts_at_head.claims[0].accepted
+    artifact = (claim.claim.identity, claim.artifact_digest)
+    history = instance.accepted_history()
+    first_generation = history[1]
+    first_coordinate = AcceptedCoordinate(
+        git_oid=first_generation.oid,
+        semantic_root=first_generation.semantic_root.tagged,
+        generation_root=first_generation.generation_root.tagged,
+        compiler_digest=instance.descriptor.compiler.rule_digest,
+    )
+    head_coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    def context(reader: str, profile: str) -> ConsumptionContextV1:
+        return ConsumptionContextV1(
+            actor_context=GovernedActorContext(
+                actor_type="service_account",
+                actor_id=reader,
+                org_id="org-test",
+                operation_id=f"op-{reader}-{profile}",
+                timestamp=NOW,
+            ),
+            access_profile_id=profile,
+        )
+
+    # The same reader at the historical coordinate is one touch.  At the head,
+    # operation and profile multiplicity collapse to one separate touch.
+    record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=first_coordinate,
+        artifacts=(artifact,),
+    )
+    head_first = record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    head_retry = record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.search.match",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    record_consumption(
+        instance,
+        context=context("reader-a", "alternate-instance-profile"),
+        operation="playbill.search.match",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    # A different reader and a successor digest each contribute one.
+    record_consumption(
+        instance,
+        context=context("reader-b", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    successor_digest = typed_digest(
+        Sha256Value,
+        "playbill-audit-successor-fixture-v1",
+        {"predecessor": claim.artifact_digest},
+    ).tagged
+    record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=((claim.claim.identity, successor_digest),),
+    )
+
+    assert head_first == head_retry
+    raw_before = instance.review_operational_store().events(family="consumption")
+    aggregate_before = consumption_aggregate(instance)
+    assert aggregate_before.artifacts[0].qualifying_touch_count == 6
+    assert _audit_consumption_touch_counts(instance) == {claim.claim.identity.qualified: 4}
+
+    store = instance.review_operational_store()
+    original_changes = store.family_changes
+    consumption_reads = 0
+
+    def counted_changes(family, cursor):  # type: ignore[no-untyped-def]
+        nonlocal consumption_reads
+        if family == "consumption":
+            consumption_reads += 1
+        return original_changes(family, cursor)
+
+    monkeypatch.setattr(instance, "review_operational_store", lambda: store)
+    # The audit reads the maintained consumption tally, advanced from the store's
+    # change feed, never the whole consumption history.
+    monkeypatch.setattr(store, "family_changes", counted_changes)
+    accepted_before = instance.accepted_coordinate()
+    first = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+    second = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+
+    consumption_refs = [
+        ref
+        for row in first.rows
+        for ref in row.evidence_refs
+        if ref.kind == "consumption_aggregate"
+    ]
+    assert consumption_refs, "audit rows must carry the consumption evidence ref"
+    for ref in consumption_refs:
+        assert ref.facts["fold"] == "audit_reader_capped_v1"
+
+    row = next(item for item in first.rows if item.claim_identity == claim.claim.identity)
+    assert row.factors.qualifying_consumption_touch_count == 4
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert consumption_reads == 2  # exactly once per complete audit fold
+    assert instance.accepted_coordinate() == accepted_before
+    assert store.events(family="consumption") == raw_before
+    assert consumption_aggregate(instance) == aggregate_before
+    assert store.events(family="curation") == ()
+    assert len(completed_audit_runs(instance)) == 1
+
+
+def test_observation_gap_and_resume_markers_do_not_break_the_fold(tmp_path: Path) -> None:
+    """A daemon that once served reads with receipts off leaves gap markers."""
+
+    instance, _owner = seed_claims(tmp_path)
+    facts_at_head = build_accepted_query_facts(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+    )
+    claim = facts_at_head.claims[0].accepted
+    artifact = (claim.claim.identity, claim.artifact_digest)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    context = ConsumptionContextV1(
+        actor_context=GovernedActorContext(
+            actor_type="service_account",
+            actor_id="reader-a",
+            org_id="org-test",
+            operation_id="op-reader-a",
+            timestamp=NOW,
+        ),
+        access_profile_id="instance",
+    )
+    record_consumption(
+        instance,
+        context=context,
+        operation="playbill.claim.get",
+        coordinate=coordinate,
+        artifacts=(artifact,),
+    )
+    note_consumption_unobserved(instance, context=context, coordinate=coordinate)
+    tags = {
+        payload.get("tag")
+        for _event, payload in instance.review_operational_store().events(family="consumption")
+    }
+    assert "playbill-consumption-gap-v1" in tags
+
+    result = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+
+    assert result.coverage.access_permitted
+    assert _audit_consumption_touch_counts(instance) == {claim.claim.identity.qualified: 1}
+
+
+def test_byte_budget_records_exact_omission_without_skipping_the_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    subject_row = subject("project.work_item", "wi-byte-budget")
+    claim_row = claim_fact(
+        9,
+        subject_row=subject_row,
+        predicate=PREDICATE,
+        value="ready",
+    )
+    projected = ClaimQueryFactsV1(
+        coordinate=instance.accepted_coordinate(),
+        subjects=(subject_row,),
+        claims=(claim_row,),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit.build_accepted_query_facts",
+        lambda *_args, **_kwargs: projected,
+    )
+
+    result = service_playbill_audit(
+        instance,
+        request=PlaybillAuditRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfile(profile_id="test-audit-bytes"),
+            budget=AuditBudgetV1(max_rows=10, max_bytes=1_024),
+        ),
+        actor_context=_actor(),
+    )
+
+    assert result.rows == ()
+    assert result.coverage.candidate_claim_count == 1
+    assert result.coverage.returned_claim_count == 0
+    assert result.coverage.omitted_claim_count == 1
+    assert result.coverage.omission_reasons == ("byte_budget_exceeded",)
+    assert result.next_cursor is None
+    assert len(completed_audit_runs(instance)) == 1
+
+
+def test_audit_scope_and_budget_are_closed_and_canonical() -> None:
+    assert (
+        AuditScopeV1(
+            claim_type_identities=("ClaimType:project.work_item.status",),
+            subject_kinds=("project.work_item",),
+        ).tag
+        == "playbill-audit-scope-v1"
+    )
+    with pytest.raises(ValueError, match="byte-sorted"):
+        AuditScopeV1(subject_kinds=("z", "a"))
+    with pytest.raises(ValueError):
+        AuditBudgetV1(max_rows=0)
+
+
+def test_rank_order_is_score_then_every_integer_factor_then_claim_path() -> None:
+    class Row:
+        def __init__(self, score: int, stake: int, weakness: int, stale: int, path: str) -> None:
+            self.rank_score = score
+            self.factors = type(
+                "Factors",
+                (),
+                {"stake": stake, "weakness": weakness, "staleness": stale},
+            )()
+            self.claim_path = path
+
+    rows = (
+        Row(20, 2, 5, 2, "claims/z.json"),
+        Row(20, 4, 1, 5, "claims/a.json"),
+        Row(20, 4, 1, 5, "claims/b.json"),
+        Row(21, 1, 1, 21, "claims/c.json"),
+    )
+    ordered = sorted(rows, key=audit_row_order)  # type: ignore[arg-type]
+    assert [item.claim_path for item in ordered] == [
+        "claims/c.json",
+        "claims/a.json",
+        "claims/b.json",
+        "claims/z.json",
+    ]
+
+
+def _capture(
+    suffix: str,
+    *,
+    observed_at: datetime = NOW - timedelta(hours=1),
+    control_domain: str = "shared-owner",
+    provenance_grade: str = "self-asserted",
+) -> CaptureVerdictEvidence:
+    return CaptureVerdictEvidence(
+        capture_digest=typed_digest(
+            Sha256Value,
+            "playbill-audit-test-capture-v1",
+            {"suffix": suffix},
+        ).tagged,
+        admission="direct",
+        basis_kind="replay_verified",
+        producer=ArtifactIdentity(kind="Provider", name=f"provider-{suffix}"),
+        control_domain=control_domain,
+        epistemic_grade="observed",
+        provenance_grade=provenance_grade,  # type: ignore[arg-type]
+        observed_at=observed_at,
+        current_replay_available=True,
+    )
+
+
+def _history_for(row, *, first: int = 2, verification: int | None = None):  # type: ignore[no-untyped-def]
+    key = (row.accepted.path, row.accepted.statement_digest)
+    return _AuditHistoryIndex(
+        claim_lineages={row.accepted.path: (row.accepted.artifact_digest,)},
+        first_statement_generation={key: first},
+        lineage_creation_actor={key: "owner"},
+        attestation_first_generation=(
+            {}
+            if verification is None
+            else {
+                (
+                    row.accepted.path,
+                    row.accepted.statement_digest,
+                    row.attestations[0].attestation_digest,
+                ): verification
+            }
+        ),
+    )
+
+
+def test_factor_fold_exposes_raw_counts_flags_and_exact_integer_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject_row = subject("project.work_item", "wi-42")
+    base = claim_fact(1, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    captures = (_capture("a"), _capture("b"))
+    row = base.model_copy(update={"captures": captures})
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit._logical_source_keys",
+        lambda _instance, items: {item.capture_digest: "db.work_items" for item in items},
+    )
+    dependents = (
+        AuditDependentRefV1(
+            kind="Claim",
+            identity=ArtifactIdentity(kind="Claim", name="CLM-dependent"),
+            path="claims/CLM-dependent.json",
+        ),
+        AuditDependentRefV1(
+            kind="Procedure",
+            identity=ArtifactIdentity(kind="Procedure", name="triage"),
+            path="procedures/triage.json",
+        ),
+    )
+
+    result = _row(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        row=row,
+        subject_identity=subject_row.shell.identity,
+        generation=7,
+        evaluation_time=NOW,
+        providers={},
+        dependents=dependents,
+        qualifying_consumption_touch_count=3,
+        history=_history_for(row),
+    )
+
+    assert result.factors.unique_dependent_count == 2
+    assert result.factors.qualifying_consumption_touch_count == 3
+    assert result.factors.stake == 6
+    assert result.factors.single_source
+    assert result.factors.proposer_observed_only
+    assert result.factors.zero_corroboration
+    assert not result.factors.near_freshness_horizon
+    assert result.factors.weakness == 4
+    assert result.factors.never_verified
+    assert result.factors.staleness == 6
+    assert result.rank_score == 144
+    assert "recommend" not in str(result.model_dump(mode="json")).lower()
+
+
+def test_logical_source_factor_uses_accepted_identity_and_does_not_invent_one_for_cas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external = _capture("external")
+    ledger = _capture("ledger")
+    cas = _capture("cas")
+    sources = {
+        external.capture_digest: LogicalSourceIdentity(plane="external", identity="db.work_items"),
+        ledger.capture_digest: LogicalSourceIdentity(
+            plane="ledger", identity="documents/runbook.md"
+        ),
+        cas.capture_digest: None,
+    }
+    store = SimpleNamespace(read=lambda digest, *, access: digest)  # noqa: ARG005
+    instance = SimpleNamespace(body_store=lambda: store)
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit.parse_capture_envelope",
+        lambda raw: SimpleNamespace(source=raw),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit.accepted_logical_source",
+        lambda source: sources[source],
+    )
+
+    assert _logical_source_keys(instance, (external, ledger, cas)) == {
+        external.capture_digest: "external:db.work_items",
+        ledger.capture_digest: "ledger:documents/runbook.md",
+        cas.capture_digest: None,
+    }
+
+
+def test_near_horizon_is_one_quarter_of_the_exact_v2_expiration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject_row = subject("project.work_item", "wi-42")
+    base = claim_fact(2, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    capture = _capture("near", observed_at=NOW - timedelta(microseconds=350))
+    row = base.model_copy(
+        update={
+            "captures": (capture,),
+            "rule": base.rule.model_copy(
+                update={"max_evidence_age": CanonicalDuration(microseconds=400)}
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit._logical_source_keys",
+        lambda _instance, items: {item.capture_digest: "db.work_items" for item in items},
+    )
+
+    result = _row(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        row=row,
+        subject_identity=subject_row.shell.identity,
+        generation=2,
+        evaluation_time=NOW,
+        providers={},
+        dependents=(),
+        qualifying_consumption_touch_count=0,
+        history=_history_for(row),
+    )
+
+    assert result.factors.near_freshness_horizon
+
+
+def _support_attestation(row, capture: CaptureVerdictEvidence):  # type: ignore[no-untyped-def]
+    return VerifiedClaimAttestationV1(
+        attestation_digest=typed_digest(
+            Sha256Value, "playbill-audit-test-attestation-v1", {"value": "reviewer"}
+        ).tagged,
+        statement=ClaimAttestationStatementV1(
+            instance_id="inst-audit",
+            referent_coordinate=AcceptedCoordinate(
+                git_oid="1" * 64,
+                semantic_root="sha256:" + "2" * 64,
+                generation_root="sha256:" + "3" * 64,
+                compiler_digest="sha256:" + "4" * 64,
+            ),
+            subject=row.accepted.claim.statement.subject,
+            subject_content_digest=row.accepted.claim.backing.referent_context.subject_content_digest,
+            claim_statement_digest=row.accepted.statement_digest,
+            stance="support",
+            provider_or_principal=ArtifactIdentity(kind="Principal", name="reviewer"),
+            signing_key_id="reviewer-key",
+            capture_digests=(capture.capture_digest,),
+            observed_at=NOW - timedelta(minutes=5),
+        ),
+        attestation_grade="verified_principal",
+        control_domain="reviewer",
+        coverage="exact_subject",
+        current=True,
+    )
+
+
+def test_independent_verification_advances_recency_from_the_statement_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject_row = subject("project.work_item", "wi-42")
+    base = claim_fact(3, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    capture = _capture("support", control_domain="source")
+    attestation = _support_attestation(base, capture)
+    row = base.model_copy(update={"captures": (capture,), "attestations": (attestation,)})
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.audit._logical_source_keys",
+        lambda _instance, items: {item.capture_digest: "db.work_items" for item in items},
+    )
+
+    result = _row(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        row=row,
+        subject_identity=subject_row.shell.identity,
+        generation=7,
+        evaluation_time=NOW,
+        providers={},
+        dependents=(),
+        qualifying_consumption_touch_count=0,
+        history=_history_for(row, first=2, verification=5),
+    )
+
+    assert not result.factors.never_verified
+    assert result.factors.last_independent_verification_generation == 5
+    assert result.factors.staleness == 3
+    assert not result.factors.proposer_observed_only
+
+
+def _law(row, *, attestations=()):  # type: ignore[no-untyped-def]
+    return ClaimLawEvidence(
+        law_digest="sha256:" + "1" * 64,
+        adjudication_rule_digest="sha256:" + "2" * 64,
+        statement_digest=row.accepted.statement_digest,
+        artifact_digest=row.accepted.artifact_digest,
+        initial_verdict="supported",
+        evidence_basis=("direct",),
+        verdict_result=ClaimVerdictResult(
+            claim_statement_digest=row.accepted.statement_digest,
+            adjudication_rule_digest="sha256:" + "2" * 64,
+            evaluation_time=NOW,
+            verdict="supported",
+            currency="current",
+            basis_kinds=(),
+            authority_basis=(),
+            provenance_grades=(),
+            epistemic_grades=(),
+            supporting_evidence_digests=(),
+            contradicting_evidence_digests=(),
+            unsure_evidence_digests=(),
+            control_components=(),
+        ),
+        verified_attestations=attestations,
+        verified_attestation_digests=tuple(item.attestation_digest for item in attestations),
+    )
+
+
+def _generation(sequence: int, oid: str, row, *, actor: str, attestations=()):  # type: ignore[no-untyped-def]
+    member = SimpleNamespace(
+        path=row.accepted.path,
+        result={"claim_evidence": _law(row, attestations=attestations).model_dump(mode="json")},
+    )
+    return SimpleNamespace(
+        sequence=sequence,
+        oid=oid,
+        record=SimpleNamespace(
+            actor_binding=SimpleNamespace(actor_id=actor),
+            law_evidence=(member,),
+        ),
+    )
+
+
+class _FakeHistoryReader:
+    """The history-index reads the audit makes, over the fake generations."""
+
+    def __init__(self, histories, trees) -> None:  # type: ignore[no-untyped-def]
+        self.histories, self.trees = histories, trees
+
+    def member_versions(self, paths):  # type: ignore[no-untyped-def]
+        return {
+            path: tuple(
+                (generation.sequence, None)
+                for generation in self.histories
+                if path in self.trees[generation.oid]
+            )
+            for path in paths
+        }
+
+    def claim_law_locations_of(self, paths):  # type: ignore[no-untyped-def]
+        return tuple(
+            SimpleNamespace(sequence=generation.sequence, member_ordinal=0, member_path=member.path)
+            for generation in self.histories
+            for member in generation.record.law_evidence
+            if member.path in paths
+        )
+
+    def _generation(self, sequence):  # type: ignore[no-untyped-def]
+        return next(item for item in self.histories if item.sequence == sequence)
+
+    def generation(self, sequence):  # type: ignore[no-untyped-def]
+        if sequence == 0:
+            return SimpleNamespace(git_oid="genesis")
+        return SimpleNamespace(git_oid=self._generation(sequence).oid)
+
+    def read_member_law_evidence(self, location, _records):  # type: ignore[no-untyped-def]
+        record = self._generation(location.sequence).record
+        return next(item for item in record.law_evidence if item.path == location.member_path)
+
+    def read_generation_facts(self, sequence, _records):  # type: ignore[no-untyped-def]
+        record = self._generation(sequence).record
+        return SimpleNamespace(actor_id=record.actor_binding.actor_id)
+
+
+def test_history_index_carries_backing_only_verification_and_resets_on_statement_change() -> None:
+    subject_row = subject("project.work_item", "wi-42")
+    first = claim_fact(4, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    capture = _capture("history")
+    attestation = _support_attestation(first, capture)
+    backing_revision = first.model_copy(update={"attestations": (attestation,)})
+    changed = claim_fact(4, subject_row=subject_row, predicate=PREDICATE, value="blocked")
+    histories = (
+        _generation(1, "one", first, actor="owner"),
+        _generation(2, "two", backing_revision, actor="reviewer", attestations=(attestation,)),
+        _generation(3, "three", changed, actor="owner-two"),
+    )
+    trees = {
+        "one": {first.accepted.path: render_claim(first.accepted.claim)},
+        "two": {backing_revision.accepted.path: render_claim(backing_revision.accepted.claim)},
+        "three": {changed.accepted.path: render_claim(changed.accepted.claim)},
+    }
+    fake = SimpleNamespace(
+        accepted_history=lambda: histories,
+        blobs_at=lambda oid, paths: {p: trees[oid][p] for p in paths if p in trees.get(oid, {})},
+        accepted_history_reader=lambda: nullcontext(_FakeHistoryReader(histories, trees)),
+        retained_record_reader=lambda: None,
+    )
+
+    carried = _history_index(
+        fake,  # type: ignore[arg-type]
+        current_claims={backing_revision.accepted.path: backing_revision},
+        target_generation=2,
+    )
+    reset = _history_index(
+        fake,  # type: ignore[arg-type]
+        current_claims={changed.accepted.path: changed},
+        target_generation=3,
+    )
+
+    carried_key = (backing_revision.accepted.path, backing_revision.accepted.statement_digest)
+    reset_key = (changed.accepted.path, changed.accepted.statement_digest)
+    assert carried.first_statement_generation[carried_key] == 1
+    assert carried.attestation_first_generation[(*carried_key, attestation.attestation_digest)] == 2
+    assert carried.lineage_creation_actor[carried_key] == "owner"
+    assert reset.first_statement_generation[reset_key] == 3
+    assert reset.lineage_creation_actor[reset_key] == "owner-two"
+    assert not any(key[:2] == reset_key for key in reset.attestation_first_generation)
+
+
+def test_reverse_index_matches_dependency_impact_and_builds_tree_index_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cruxible_core.curation.audit as audit_module
+
+    subject_row = subject("project.work_item", "wi-42")
+    source = claim_fact(5, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    dependent = claim_fact(6, subject_row=subject_row, predicate=PREDICATE, value="blocked")
+    backing = dependent.accepted.claim.backing.model_copy(
+        update={
+            "input_claim_digests": (source.accepted.artifact_digest,),
+            "reducer_digest": "sha256:" + "9" * 64,
+        }
+    )
+    dependent_claim = dependent.accepted.claim.model_copy(update={"backing": backing})
+    dependent = dependent.model_copy(
+        update={
+            "accepted": AcceptedClaim(
+                path=dependent.accepted.path,
+                claim=dependent_claim,
+                statement_digest=claim_statement_digest(dependent_claim.statement).tagged,
+                artifact_digest=claim_artifact_digest(dependent_claim).tagged,
+            )
+        }
+    )
+    fact_set = facts("audit-impact", (subject_row,), (source, dependent))
+    tree = {
+        source.accepted.path: render_claim(source.accepted.claim),
+        dependent.accepted.path: render_claim(dependent.accepted.claim),
+    }
+    calls = 0
+    original = audit_module.dependency_artifacts
+
+    def counted(value):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(audit_module, "dependency_artifacts", counted)
+    lineages = {source.accepted.path: (source.accepted.artifact_digest,)}
+    index = build_reverse_dependency_index(
+        tree=tree,
+        facts=fact_set,
+        claim_lineages=lineages,
+    )
+    impact = build_dependency_impact(
+        DependencyImpactRequestV1(
+            at=AcceptedCoordinate.from_internal(fact_set.coordinate),
+            address=SemanticAddress.claim_statement(source.accepted.path),
+            evaluation_time=NOW,
+        ),
+        facts=fact_set,
+        source_lineages=lineages,
+    )
+
+    assert calls == 1
+    assert {item.identity.qualified for item in index[source.accepted.path]} == {
+        item.identity for item in impact.dependents
+    }
+
+
+def _walked_history_index(
+    instance: PlaybillInstance,
+    *,
+    current_claims: dict[str, Any],
+    target_generation: int,
+) -> _AuditHistoryIndex:
+    """The audit history index as it was first computed: every generation, every Claim at each."""
+
+    from cruxible_client.contracts.accepted_attestations import (
+        AcceptedClaimAttestationEvidence,
+        attestation_identity,
+    )
+    from cruxible_client.contracts.claims import (
+        claim_artifact_digest,
+        parse_claim,
+        parse_claim_law_evidence,
+    )
+
+    paths = set(current_claims)
+    lineages: dict[str, set[str]] = {path: set() for path in paths}
+    first: dict[tuple[str, str], int] = {}
+    actors: dict[tuple[str, str], str] = {}
+    attestations: dict[tuple[str, str, str], int] = {}
+    for generation in instance.accepted_history():
+        if generation.sequence > target_generation:
+            break
+        tree = instance.blobs_at(generation.oid, tuple(sorted(paths)))
+        for path in paths:
+            raw = tree.get(path)
+            if raw is not None:
+                lineages[path].add(claim_artifact_digest(parse_claim(raw, path=path)).tagged)
+        record = generation.record
+        if record is None:
+            continue
+        for member in getattr(record, "law_evidence", ()):
+            raw_law = member.result.get("claim_evidence")
+            if raw_law is None or member.path not in paths:
+                continue
+            law = parse_claim_law_evidence(raw_law)
+            key = (member.path, law.statement_digest)
+            first.setdefault(key, generation.sequence)
+            actors.setdefault(key, record.actor_binding.actor_id)
+            for attestation in law.verified_attestations:
+                attestations.setdefault(
+                    (member.path, law.statement_digest, attestation.attestation_digest),
+                    generation.sequence,
+                )
+    for path, row in current_claims.items():
+        first.setdefault((path, row.accepted.statement_digest), target_generation)
+        lineages[path].add(row.accepted.artifact_digest)
+    with instance.accepted_history_reader() as retained:
+        for path, row in current_claims.items():
+            for item in row.attestations:
+                if isinstance(item, AcceptedClaimAttestationEvidence):
+                    attestations[(path, row.accepted.statement_digest, item.attestation_digest)] = (
+                        min(
+                            v.occurrence_sequence
+                            for v in retained.occurrences(
+                                attestation_identity(item.envelope).qualified
+                            )
+                            if v.occurrence_sequence <= target_generation
+                        )
+                    )
+    return _AuditHistoryIndex(
+        claim_lineages={
+            path: tuple(sorted(digests, key=lambda item: item.encode("ascii")))
+            for path, digests in lineages.items()
+        },
+        first_statement_generation=first,
+        lineage_creation_actor=actors,
+        attestation_first_generation=attestations,
+    )
+
+
+def test_the_indexed_history_index_equals_the_walk_over_every_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Perf E1: the audit's history facts come from the history index, sized by these Claims.
+
+    Review F-006: no page enumerates accepted history; each generation that
+    touched the audited Claims is one primary-key lookup.
+    """
+
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+
+    instance, _owner = seed_write_surface(tmp_path)
+    for round_number, status in enumerate(("ready", "blocked", "done", "ready")):
+        request = WriteRequest.model_validate(
+            {
+                "because": f"Round {round_number}.",
+                "changes": [
+                    {"op": "set", "subject": f"{KIND}/wi-1", "field": "status", "value": status},
+                    {
+                        "op": "set",
+                        "subject": f"{KIND}/audit-{round_number}",
+                        "field": "title",
+                        "value": f"Item {round_number}",
+                    },
+                ],
+            }
+        )
+        assert service_playbill_write(instance, request=request, caller=caller()).status == (
+            "accepted"
+        )
+    head = instance.accepted_coordinate()
+    facts_at_head = build_accepted_query_facts(instance, coordinate=head)
+    current = {row.accepted.path: row for row in facts_at_head.claims}
+    sequence = instance.accepted_history()[-1].sequence
+    from cruxible_core.indexes.history.history_index import HistoryReader
+
+    expected = {
+        target: _walked_history_index(instance, current_claims=current, target_generation=target)
+        for target in (sequence, sequence - 1)
+    }
+    lookups: list[int] = []
+    real_generation = HistoryReader.generation
+
+    def counted(self, wanted):  # type: ignore[no-untyped-def]
+        lookups.append(wanted)
+        return real_generation(self, wanted)
+
+    monkeypatch.setattr(HistoryReader, "generation", counted)
+    monkeypatch.setattr(
+        instance, "accepted_history", lambda: pytest.fail("audit enumerated accepted history")
+    )
+    for target, walked in expected.items():
+        lookups.clear()
+        assert _history_index(instance, current_claims=current, target_generation=target) == walked
+        with instance.accepted_history_reader() as reader:
+            touched = {
+                found
+                for versions in reader.member_versions(tuple(current)).values()
+                for found, _digest in versions
+                if found <= target
+            }
+        # Only generations that touched the audited Claims (and genesis) are looked up.
+        assert lookups and set(lookups) <= touched | {0}, (lookups, touched)

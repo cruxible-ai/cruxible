@@ -1,0 +1,302 @@
+"""Schema laws for the reduced Cruxible MCP tool catalog."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+
+from cruxible_core.curation.curation_calibration import (
+    AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+    AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+    AUDIT_BUDGET_MAX_MAX_BYTES,
+    AUDIT_BUDGET_MAX_MAX_ROWS,
+    AUDIT_BUDGET_MIN_MAX_BYTES,
+    AUDIT_BUDGET_MIN_MAX_ROWS,
+)
+from cruxible_core.mcp.server import create_server
+from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+
+
+@pytest.fixture(autouse=True)
+def _full_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
+
+
+def _schemas() -> dict[str, Any]:
+    return {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
+
+
+def test_registered_schema_catalog_matches_permission_catalog() -> None:
+    assert set(_schemas()) == set(TOOL_PERMISSIONS)
+
+
+def test_get_publishes_its_protocol_enums_and_init_takes_only_a_principal() -> None:
+    schemas = _schemas()
+    # A bare folder starts by tool alone (maintainer ruling 2026-11-10); host
+    # creation stays an operator step on the CLI and HTTP.
+    assert set(schemas["cruxible_init"].inputSchema["properties"]) == {"principal_id"}
+    assert "cruxible_host_create" not in schemas
+
+    get = schemas["cruxible_get"].inputSchema
+    assert get["properties"]["detail"]["enum"] == [
+        "summary",
+        "evidence",
+        "why",
+        "history",
+        "incoming",
+        "pairs",
+        "runs",
+        "backlinks",
+        "proof",
+        "body",
+    ]
+
+
+def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation() -> None:
+    schema = _schemas()["cruxible_line_run"].inputSchema
+
+    assert set(schema["properties"]) == {
+        "resolution_contract",
+        "event",
+        "repeat",
+        "instance_id",
+        "line",
+        "evaluation_time",
+        "occurrence_id",
+        "parameters",
+    }
+    # The evaluation instant is an assertion the daemon checks, never the
+    # occurrence's own instant, so it is optional on every surface.
+    assert set(schema["required"]) == {"line"}
+
+
+def test_prediction_settlement_exposes_only_the_observation_id() -> None:
+    schemas = _schemas()
+    predict = schemas["cruxible_prediction_propose"].inputSchema
+    settle = schemas["cruxible_prediction_settle"].inputSchema
+
+    assert set(predict["properties"]) == {"instance_id", "request"}
+    assert set(predict["required"]) == {"request"}
+    # Exact references and mandated terminal evidence stay in SDK/HTTP.
+    assert set(settle["properties"]) == {"instance_id", "prediction_id", "observation"}
+    assert set(settle["required"]) == {"prediction_id", "observation"}
+    assert "$defs" not in settle
+
+
+def test_every_instance_id_is_optional_and_names_its_default() -> None:
+    # A cold agent must be able to call any tool without first learning an
+    # instance id; the server's CRUXIBLE_INSTANCE_ID supplies it.
+    offenders: list[str] = []
+    for name, tool in _schemas().items():
+        properties = tool.inputSchema.get("properties", {})
+        if "instance_id" not in properties:
+            continue
+        if "instance_id" in tool.inputSchema.get("required", ()):
+            offenders.append(f"{name}: required")
+        elif "CRUXIBLE_INSTANCE_ID" not in (properties["instance_id"].get("description", "")):
+            offenders.append(f"{name}: undocumented default")
+    assert offenders == []
+
+
+def test_agent_schema_never_accepts_private_keys_or_local_paths() -> None:
+    forbidden = {"private_key", "private_key_path", "local_path", "workspace_root"}
+    violations: list[str] = []
+    for name, tool in _schemas().items():
+        properties = set(tool.inputSchema.get("properties", {}))
+        overlap = properties & forbidden
+        if overlap:
+            violations.append(f"{name}: {sorted(overlap)}")
+    assert violations == []
+
+
+def test_playbill_tools_publish_typed_output_schemas() -> None:
+    schemas = _schemas()
+    for name, tool in schemas.items():
+        assert tool.outputSchema is not None, name
+
+
+def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None:
+    schemas = _schemas()
+    compile_schema = schemas["cruxible_authoring_compile"].inputSchema
+    submit_schema = schemas["cruxible_authoring_submit"].inputSchema
+
+    assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
+    assert set(submit_schema["properties"]) == {"instance_id", "payload", "intent_id", "accept"}
+    assert submit_schema["properties"]["accept"]["default"] == "if_allowed"
+    assert submit_schema["properties"]["accept"]["enum"] == ["if_allowed", "never"]
+    forbidden = {"base", "claim_id", "candidate_digest", "predecessor_digest"}
+    assert forbidden.isdisjoint(compile_schema["properties"])
+    assert forbidden.isdisjoint(submit_schema["properties"])
+
+    example_schema = schemas["cruxible_authoring_example"].inputSchema
+    assert example_schema["properties"]["name"]["enum"] == [
+        "claim-existing-capture",
+        "claim-flow-a",
+        "claim-self-source",
+        "claim-subject-relation",
+        "claim-revision",
+        "procedure",
+        "claim-adjudicate-contradicting-evidence",
+        "claim-cite-supporting-evidence",
+        "claim-adjudicate-unreviewed-evidence",
+        "query-claims-by-type",
+        "query-ontology",
+        "query-procedures",
+        "subject",
+        "subject-kind",
+        "approval-policy",
+        "procedure-runtime-policy",
+        "procedure-mandate",
+        "line",
+        "trigger",
+        "change-set",
+        "claim-type-succession",
+    ]
+    bind_schema = schemas["cruxible_authoring_bind"].inputSchema
+    assert set(bind_schema["properties"]) == {
+        "instance_id",
+        "source_path",
+        "anchor",
+        "payload",
+        "window_lines",
+        "occurrence",
+    }
+    assert forbidden.isdisjoint(bind_schema["properties"])
+
+
+def test_since_schema_exposes_the_frozen_history_wire() -> None:
+    schema = _schemas()["cruxible_since"].inputSchema
+    assert set(schema["properties"]) == {
+        "instance_id",
+        "generation",
+        "at",
+        "access_profile",
+        "max_rows",
+        "max_bytes",
+        "cursor",
+    }
+    assert set(schema["required"]) == {"generation"}
+    assert schema["properties"]["max_rows"]["maximum"] == 1000
+    assert schema["properties"]["max_bytes"]["maximum"] == 1_048_576
+
+
+def test_audit_schema_uses_the_central_budget_calibration() -> None:
+    schema = _schemas()["cruxible_audit"].inputSchema
+    rows = schema["properties"]["max_rows"]
+    bytes_ = schema["properties"]["max_bytes"]
+
+    assert (rows["default"], rows["minimum"], rows["maximum"]) == (
+        AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+        AUDIT_BUDGET_MIN_MAX_ROWS,
+        AUDIT_BUDGET_MAX_MAX_ROWS,
+    )
+    assert (bytes_["default"], bytes_["minimum"], bytes_["maximum"]) == (
+        AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+        AUDIT_BUDGET_MIN_MAX_BYTES,
+        AUDIT_BUDGET_MAX_MAX_BYTES,
+    )
+
+
+def test_tool_parameters_use_declared_types_except_instance_defined_query_parameters() -> None:
+    import ast
+    from pathlib import Path
+
+    from cruxible_core.mcp import tools
+
+    tree = ast.parse(Path(tools.__file__).read_text())
+    offenders: list[str] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef) or not function.name.startswith("cruxible_"):
+            continue
+        for parameter in (*function.args.args, *function.args.kwonlyargs):
+            if (function.name, parameter.arg) == ("cruxible_query", "params"):
+                continue  # Its accepted QueryDefinition declares the names and scalar types.
+            annotation = parameter.annotation
+            names = (
+                {node.id for node in ast.walk(annotation) if isinstance(node, ast.Name)}
+                if annotation is not None
+                else set()
+            )
+            if annotation is None or names & {"dict", "object", "Any"}:
+                offenders.append(f"{function.name}.{parameter.arg}")
+    assert offenders == [], f"untyped MCP parameters: {offenders}"
+
+
+def test_procedure_slot_bindings_use_instance_names_with_typed_provider_values() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from cruxible_core.mcp.tools import McpProcedureBindings
+
+    schema = _schemas()["cruxible_procedure_run"].inputSchema
+    assert schema["properties"]["bindings"]["anyOf"][0] == {"$ref": "#/$defs/McpProcedureBindings"}
+    binding_schema = schema["$defs"]["McpProcedureBindings"]
+    from cruxible_client.contracts.procedures.bindings import (
+        MAX_PROCEDURE_BINDINGS,
+        MAX_PROCEDURE_PROVIDER_REFERENCE,
+        MAX_PROCEDURE_SLOT_NAME,
+    )
+
+    # A value names ``Provider:<name>#<operation>``; a key is a slot or
+    # ``<invoke node path>.<slot>``.
+    assert binding_schema["additionalProperties"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": MAX_PROCEDURE_PROVIDER_REFERENCE,
+    }
+    assert MAX_PROCEDURE_PROVIDER_REFERENCE == len("Provider:") + 384 + len("#") + 256
+    assert binding_schema["propertyNames"] == {
+        "minLength": 1,
+        "maxLength": MAX_PROCEDURE_SLOT_NAME,
+    }
+    assert binding_schema["maxProperties"] == MAX_PROCEDURE_BINDINGS == 256
+    assert McpProcedureBindings.model_validate({"fetch": "web/build#web.fetch"}).root == {
+        "fetch": "web/build#web.fetch"
+    }
+    assert McpProcedureBindings.model_validate({"fetch": "web/build#fetch"}).root == {
+        "fetch": "web/build#fetch"
+    }
+    longest = "Provider:" + "p" * 384 + "#" + "o" * 256
+    assert len(longest) == 650
+    assert McpProcedureBindings.model_validate({"a" * 512: longest}).root == {"a" * 512: longest}
+    for invalid in ({"a" * 513: longest}, {"fetch": longest + "x"}):
+        with pytest.raises(ValidationError):
+            McpProcedureBindings.model_validate(invalid)
+    with pytest.raises(ValidationError):
+        McpProcedureBindings.model_validate({"fetch": {"provider": "web/build"}})
+
+
+def test_depublish_names_the_stored_file_identity() -> None:
+    schema = _schemas()["cruxible_block_depublish"].inputSchema
+    assert set(schema["properties"]) == {"instance_id", "file_id", "block_id", "dry_run", "at"}
+    assert set(schema["required"]) == {"file_id", "block_id"}
+    assert schema["properties"]["file_id"]["description"] == (
+        "The stored projection file identity; the file and catalog entry need not still exist."
+    )
+
+
+def test_bare_key_reference_schema_agrees_across_sdk_cli_http_and_mcp() -> None:
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.authoring.inputs import AuthoringInput
+    from cruxible_client.contracts.subject_kinds import SubjectKeyReference
+    from cruxible_core.server.playbill_request_models import AuthoringInputCompileRequest
+
+    expected = SubjectKeyReference.model_json_schema()
+    schemas = [
+        TypeAdapter(AuthoringInput).json_schema(),  # CLI's input adapter
+        AuthoringInputCompileRequest.model_json_schema(),
+        _schemas()["cruxible_authoring_compile"].inputSchema,
+        _schemas()["cruxible_authoring_submit"].inputSchema,
+    ]
+    for schema in schemas:
+        reference = schema["$defs"]["SubjectKeyReference"]
+        assert reference == expected
+        assert {part["type"] for part in reference["properties"]["key"]["anyOf"]} == {
+            "object",
+            "string",
+            "integer",
+            "boolean",
+        }

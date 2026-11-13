@@ -1,0 +1,2132 @@
+"""Typed, attribute-addressed access to one accepted world.
+
+Every authoring surface below `Cruxible` still speaks strings: a predicate is a
+dotted name, a Subject is a `kind/id` shorthand, and a literal is whatever the
+caller typed. That is exactly the ergonomics markdown already has, so the SDK
+gave up its one structural advantage -- it knows the accepted ontology and can
+hand it back as objects with fields. `cx.world()` reads the accepted ClaimType
+vocabulary once and exposes it as a tree: kinds nest, Subjects answer by
+attribute or index, predicates carry their own structure and their own
+admissible values, and every ref it mints carries the coordinate it was read at.
+
+The world is a READ, never an authority. It refuses once the connection's
+orientation moves, under the same law as every other typed ref, because a name
+that resolved at one coordinate may name something else at the next.
+
+    w = cx.world()
+
+    vulnerability = w.sec.vulnerability["cve-2026-69247"]
+    vulnerability.severity                      # live Claims under that predicate
+    w.sec.vuln.severity.cardinality             # the ClaimType's own structure
+
+    click = w.sec.package.define("click", ecosystem="pypi")    # a new Subject, by its key
+    w.write(
+        click,
+        vulnerability.edit().add(affects_package=click),       # the same change set names it
+        because="The advisory names this package.",
+    )
+    click.address                               # the id core assigned, once accepted
+"""
+
+from __future__ import annotations
+
+import keyword
+import re
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from cruxible_client.authoring.sdk_types import (
+    AbsentSubject,
+    Cardinality,
+    ClaimRole,
+    ClaimTypeRef,
+    ClaimValueError,
+    LiteralValue,
+    ReferentSensitivity,
+    SdkError,
+    SubjectRef,
+)
+from cruxible_client.authoring.section_evidence import AuthoredSection
+from cruxible_client.contracts.builtin_claim_types import DESCRIPTOR_KINDS
+from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
+from cruxible_client.contracts.claim_type_structure import (
+    ClaimTypeStructure,
+    check_claim_type_structure,
+)
+from cruxible_client.contracts.claim_types import (
+    ClaimTypeMemberDescription,
+    EvidenceRequirement,
+    RevisionEvidence,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.records import RecordConstructor
+from cruxible_client.contracts.shapes import (
+    Contract,
+    ContractRef,
+    ContractResolver,
+    FieldType,
+    NestedType,
+    SubjectType,
+    claim_literal_problem,
+    claim_value_kind,
+    render_type,
+    subject_value_kinds,
+    value_members,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_client.authoring.compact_query import CompactQuery
+    from cruxible_client.authoring.sdk import ClaimView, Cruxible
+    from cruxible_client.contracts.compact_query import QueryClaimValue
+    from cruxible_client.contracts.orient import OrientSubjectKind
+    from cruxible_client.contracts.subject_kinds import SubjectKeyValue
+    from cruxible_client.contracts.write import (
+        Change,
+        CreateKeyPart,
+        DocOp,
+        Evidence,
+        RetireChange,
+        WriteAccept,
+        WriteOutcome,
+        WriteRetireReason,
+        WriteRole,
+    )
+
+_SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _write_value(value: object) -> Any:
+    if isinstance(value, SubjectRef):
+        return value.address
+    if isinstance(value, LiteralValue):
+        return value.value
+    return value
+
+
+class WorldStructureError(SdkError):
+    """The world cannot answer this name at the shape it was asked for."""
+
+    code = "cruxible.sdk.world_structure_refused"
+
+
+class Names(tuple[str, ...]):
+    """A byte-sorted tuple of names that also answers when called.
+
+    ``w.kinds`` and ``w.kinds()`` are the same tuple, so neither spelling is a
+    wrong guess. Next: ``w.kind(name)`` or ``w.claim_type(name)`` for one of
+    them, or ``w.describe()`` for the whole vocabulary.
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> tuple[str, ...]:
+        """Return the names themselves. Next: ``w.kind(name)`` for one of them."""
+
+        return tuple(self)
+
+
+def _is_identifier(value: str) -> bool:
+    """Return whether this ID can be spelled as a Python attribute."""
+
+    return value.isidentifier() and not keyword.iskeyword(value)
+
+
+# One law for every collision in this module: the fixed surface wins on
+# attribute access, and index access reaches the discovered name. `w.sec.package`
+# is the accepted structure even when a Subject is called `package`;
+# `subject.claims` is every Claim even when a predicate leaf is called `claims`;
+# `severity.cardinality` is the ClaimType's structure even when an enum member
+# is called `cardinality`. Each of those names stays reachable -- by index, or
+# by the ClaimType's call form -- and `__dir__` and the generated stub advertise
+# only what attribute access really answers.
+CLAIM_TYPE_MEMBERS = frozenset(
+    {
+        "address",
+        "allowed_subject_kinds",
+        "as_kind",
+        "cardinality",
+        "coordinate",
+        "default_role",
+        "description",
+        "evidence_requirement",
+        "kind",
+        "member_descriptions",
+        "members",
+        "permitted_roles",
+        "predicate",
+        "referent_sensitivity",
+        "revision_evidence",
+        "value",
+        "value_type",
+    }
+)
+
+SUBJECT_MEMBERS = frozenset(
+    {
+        "add",
+        "address",
+        "claims",
+        "coordinate",
+        "edit",
+        "explain",
+        "kind",
+        "retire",
+        "set",
+        "subject_id",
+        "subject_kind",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Literal schema admission
+# ---------------------------------------------------------------------------
+
+_TYPE_CHECKS: Mapping[str, tuple[type, ...]] = {
+    "array": (list, tuple),
+    "boolean": (bool,),
+    "integer": (int,),
+    "null": (type(None),),
+    # Claim values are canonical JSON, which holds no fractions: a number is an integer.
+    "number": (int,),
+    "object": (dict,),
+    "string": (str,),
+}
+
+
+def _refuse(predicate: str, reason: str) -> ClaimValueError:
+    return ClaimValueError(predicate=predicate, reason=reason)
+
+
+def admit_literal(
+    value: object, *, predicate: str, field_type: FieldType, resolve: ContractResolver | None = None
+) -> CanonicalValue:
+    canonical = normalize_canonical(value)
+    problem = claim_literal_problem(canonical, field_type, resolve=resolve)
+    if problem is not None:
+        raise _refuse(predicate, f"value fails {render_type(field_type)}: {problem}")
+    return canonical
+
+
+# ---------------------------------------------------------------------------
+# The world tree
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Node:
+    """One dotted name in the world, which may be a kind, a predicate, or both."""
+
+    path: str
+    children: dict[str, _Node] = field(default_factory=dict)
+    subject_kind: bool = False
+    structure: ClaimTypeStructure | None = None
+    meaning: _Meaning | None = None
+    #: The kind's live SubjectKind: how a new Subject of it is named. None for a
+    #: kind no SubjectKind declares, which no World can create Subjects of.
+    identity: _Identity | None = None
+
+
+@dataclass(frozen=True)
+class _Identity:
+    """One kind's SubjectKind identity rule: its key ClaimTypes in key order, or minted."""
+
+    rule: Literal["keys", "minted"]
+    keys: tuple[str, ...] = ()
+    unique: bool = True
+
+    def key_words(self) -> dict[str, str]:
+        """Each key part's ``define()`` keyword (its leaf, keyword-escaped) -> its predicate."""
+
+        from cruxible_client.authoring.compact_query import keyword_name
+
+        words: dict[str, str] = {}
+        for predicate in self.keys:
+            spelled = keyword_name(predicate.rsplit(".", 1)[-1])
+            if spelled is not None:
+                words[spelled] = predicate
+        return words
+
+
+@dataclass(frozen=True)
+class _Meaning:
+    """What a predicate means and how its Claims are backed."""
+
+    description: str | None = None
+    member_descriptions: tuple[ClaimTypeMemberDescription, ...] = ()
+    default_role: ClaimRole | None = None
+    evidence_requirement: EvidenceRequirement = "self"
+    revision_evidence: RevisionEvidence = "accumulate"
+
+
+@dataclass(frozen=True, repr=False)
+class WorldClaimType(ClaimTypeRef):
+    """One accepted predicate, carrying its structure and its admissible values.
+
+    Passing this where a predicate is wanted works exactly as a `ClaimTypeRef`
+    does, because it is one. What it adds is the read every caller otherwise
+    makes by hand: what the ClaimType admits as an object, at what cardinality,
+    for which roles, and -- for a literal schema with an enum -- each member as
+    a typed value that can only state a Claim under this predicate.
+    """
+
+    value_type: FieldType
+    cardinality: Cardinality
+    allowed_subject_kinds: tuple[str, ...]
+    permitted_roles: tuple[ClaimRole, ...]
+    referent_sensitivity: ReferentSensitivity
+    #: What the predicate means, and what each enum member means.
+    description: str | None
+    member_descriptions: tuple[ClaimTypeMemberDescription, ...]
+    #: The role a write takes when it names none.
+    default_role: ClaimRole | None
+    #: What backs a Claim: ``none``, ``self`` or ``captured``.
+    evidence_requirement: EvidenceRequirement
+    #: What a statement-changing revision keeps: ``replace`` or ``accumulate``.
+    revision_evidence: RevisionEvidence
+    _world: World = field(repr=False, compare=False)
+    _node: _Node = field(repr=False, compare=False)
+
+    @property
+    def predicate(self) -> str:
+        """The full dotted predicate. Next: ``cx.query(kind, select=[leaf])`` for its values."""
+
+        return self.address
+
+    @property
+    def members(self) -> tuple[str, ...]:
+        """Return the enum members this predicate's literal schema names.
+
+        Next: ``claim_type.<member>`` or ``claim_type("<member>")`` for a typed value.
+        """
+
+        return value_members(self.value_type)
+
+    @property
+    def as_kind(self) -> KindNamespace:
+        """Reach the Subject kind this dotted name also names.
+
+        A ClaimType wins attribute access over a Subject kind of the same dotted
+        name, which would otherwise leave `define()` and `subject_ids`
+        unreachable. This is that escape.
+
+        Next: ``claim_type.as_kind["<id>"]``.
+        """
+
+        self._world._assert_current()
+        if not self._node.subject_kind:
+            raise WorldStructureError(
+                f"{self.address!r} is an accepted predicate but not an accepted "
+                "Subject kind, so it names no Subjects"
+            )
+        return KindNamespace(self._world, self._node)
+
+    def __call__(self, value: object) -> LiteralValue:
+        """Mint one literal object for this predicate, admitted before the wire."""
+
+        self._world._assert_current()
+        if isinstance(self.value_type, SubjectType):
+            raise WorldStructureError(
+                f"ClaimType {self.address!r} takes a {claim_value_kind(self.value_type)} object, "
+                "so it has no literal values to construct"
+            )
+        return LiteralValue(
+            predicate=self.address,
+            value=admit_literal(
+                value,
+                predicate=self.address,
+                field_type=self.value_type,
+                resolve=self._resolve_contract,
+            ),
+            coordinate=self.coordinate,
+        )
+
+    def value(self, **fields: object) -> LiteralValue:
+        """Construct a structured literal using this accepted ClaimType's fields.
+
+        Next: pass it as ``value=`` to a write.
+        """
+        if not isinstance(self.value_type, NestedType):
+            raise WorldStructureError(f"{self.address!r} names no nested Contract")
+        contract = self._resolve_contract(self.value_type.contract)
+        if contract is None:
+            raise WorldStructureError(f"{self.value_type.contract.spelling} is unavailable")
+        return self(RecordConstructor(contract, _resolve=self._resolve_contract)(**fields))
+
+    def _resolve_contract(self, ref: ContractRef) -> Contract | None:
+        result = self._world._playbill._get(ref.identity.qualified, "proof", None, self.coordinate)
+        if result.proof is None:
+            return None
+        return Contract.model_validate(result.proof["envelope"])
+
+    def __getitem__(self, subject_id: str) -> WorldSubject:
+        """Read a Subject when this dotted name is also an accepted kind."""
+
+        return KindNamespace(self._world, self._node)[subject_id]
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        child = self._node.children.get(name)
+        if child is not None:
+            return self._world._materialize(child)
+        members = self.members
+        if name in members:
+            return self(name)
+        if self._node.subject_kind:
+            raise AttributeError(
+                f"{self.address!r} is an accepted predicate and an accepted Subject "
+                f"kind, and the predicate wins attribute access, so it has no {name!r}; "
+                f"reach the kind with {self.address.rsplit('.', 1)[-1]}.as_kind and a "
+                f"Subject with {self.address.rsplit('.', 1)[-1]}[{name!r}]"
+            )
+        if members:
+            spelled = ", ".join(sorted(members))
+            raise AttributeError(
+                f"{self.address!r} names no enum member {name!r}; its literal schema "
+                f"admits: {spelled}"
+            )
+        raise AttributeError(
+            f"{self.address!r} declares no enum in its literal schema, so it has no "
+            f"member {name!r}; construct a value with {self.address.rsplit('.', 1)[-1]}(...)"
+        )
+
+    def __dir__(self) -> list[str]:
+        # A member named like one of this class's own fields is shadowed by the
+        # field. Advertising it would promise an attribute read that answers the
+        # structure instead; the call form `severity('cardinality')` mints it.
+        reachable = (member for member in self.members if member not in CLAIM_TYPE_MEMBERS)
+        return sorted({*super().__dir__(), *self._node.children, *reachable})
+
+
+@dataclass(frozen=True, repr=False)
+class WorldSubject(SubjectRef):
+    """One accepted Subject, readable through the verbs that already serve it.
+
+    A predicate's last segment answers as an attribute -- `vulnerability.severity`
+    is the live Claims under `sec.vuln.severity`. A leaf that collides with one
+    of this class's own names (`claims`, `explain`, `address`, `coordinate`,
+    `kind`, `subject_kind`, `subject_id`) is shadowed by the member, so it is
+    reachable only by index: `vulnerability["sec.vuln.claims"]`, which also takes
+    a bare leaf and a `ClaimTypeRef`. `__dir__` advertises only the leaves
+    attribute access really answers.
+    """
+
+    _world: World = field(repr=False, compare=False)
+
+    @property
+    def subject_kind(self) -> str:
+        """The Subject's kind. Next: ``w.kind(subject.subject_kind)``."""
+
+        return self.address.split("/", 1)[0]
+
+    @property
+    def subject_id(self) -> str:
+        """The Subject's ID. Next: ``cx.get(subject)`` for its fields and flags."""
+
+        return self.address.split("/", 1)[1]
+
+    @property
+    def claims(self) -> tuple[ClaimView, ...]:
+        """Every live Claim this Subject is the subject of.
+
+        Next: ``cx.get(view.claim_id, detail="evidence")`` for what backs one.
+        """
+
+        return self._world._claims_about(self.address)
+
+    def explain(self) -> object:
+        """Read this Subject's governance and provenance context.
+
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
+        """
+
+        self._world._assert_current()
+        return self._world._playbill._get(self.address, "why", None, self.coordinate).why
+
+    def set(
+        self,
+        /,
+        *,
+        because: str,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        **fields: object,
+    ) -> WriteOutcome:
+        """Set single-value fields of this Subject, by leaf: ``set(status="done", because=...)``.
+
+        ``evidence=cx.section(file, path, text=...)`` carries prose and its citation.
+        Every field set here is one change of one change set. The names are
+        checked against this World before the wire; a leaf that is a Python
+        keyword takes one trailing underscore (``class_``). A value may be a new
+        Subject's draft (``w.<kind>.define(...)``), created in the same change
+        set. References from this World stay valid after it: the next write is
+        checked from this World's coordinate plus its own writes, so only a slot
+        someone else moved refuses.
+
+        Next: ``outcome.next`` for what is still needed; ``cx.get(subject)`` reads it back.
+        """
+
+        edit = self.edit().set(evidence=evidence, role=role, contend=contend, **fields)
+        return edit.write(because=because, dry_run=dry_run, accept=accept)
+
+    def add(
+        self,
+        /,
+        *,
+        because: str,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        **fields: object,
+    ) -> WriteOutcome:
+        """Add one more value to many-valued fields of this Subject, by leaf.
+
+        A value already there is answered as done; ``expect_absent=True`` refuses
+        it instead (``cruxible.write.value_already_present``).
+
+        Next: ``outcome.next`` for what is still needed.
+        """
+
+        edit = self.edit().add(evidence=evidence, role=role, expect_absent=expect_absent, **fields)
+        return edit.write(because=because, dry_run=dry_run, accept=accept)
+
+    def retire(
+        self,
+        field: str | ClaimTypeRef,
+        /,
+        *,
+        because: str,
+        reason: WriteRetireReason = "was-rescinded",
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+    ) -> WriteOutcome:
+        """Retire the one live value of a field of this Subject.
+
+        Next: ``outcome.next``; ``cx.get(subject)`` shows the field without it.
+        """
+
+        edit = self.edit().retire(field, reason=reason)
+        return edit.write(because=because, dry_run=dry_run, accept=accept)
+
+    def edit(self) -> WorldSubjectEdit:
+        """Start changes to this Subject that are written later, in one change set.
+
+        ``edit().set(...)``, ``.add(...)`` and ``.retire(...)`` take exactly what
+        ``set``, ``add`` and ``retire`` take, but return the edit instead of
+        writing, so it can be sent beside new Subjects' drafts.
+
+        Next: ``w.write(edit, *drafts, because=...)`` or ``edit.write(because=...)``.
+        """
+
+        return WorldSubjectEdit(address=self.address, _world=self._world)
+
+    def __getitem__(self, predicate: str | ClaimTypeRef) -> tuple[ClaimView, ...]:
+        """Read the live Claims under one predicate, named in full or by leaf."""
+
+        name = predicate.address if isinstance(predicate, ClaimTypeRef) else predicate
+        kind = self.address.split("/", 1)[0]
+        resolved = (
+            self._world.claim_type(name)
+            if "." in name and self._world._node_at(name) is not None
+            else self._world._predicate_for(kind, name)
+        )
+        return self._world._claims_about(self.address, predicate=resolved.address)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name in SUBJECT_MEMBERS:
+            # Reaching here for one of this class's OWN names means the member
+            # ran and raised: Python routes an AttributeError escaping a
+            # property or a method back into __getattr__, which would then
+            # report a real fault -- a mis-built contract object deep inside a
+            # Claim read -- as "no accepted predicate 'claims' is admitted for
+            # this Subject kind". A naming mistake and a broken read would look
+            # identical, and only one of them is the caller's to fix.
+            raise AttributeError(
+                f"reading {name!r} on Subject {self.address!r} failed inside the member "
+                f"itself; {name!r} is one of this Subject's own names, not a predicate"
+            )
+        predicate = self._world._predicate_for(self.address.split("/", 1)[0], name)
+        return self._world._claims_about(self.address, predicate=predicate.address)
+
+    def __dir__(self) -> list[str]:
+        leaves = self._world._predicate_leaves(self.address.split("/", 1)[0])
+        return sorted({*super().__dir__(), *leaves})
+
+
+@dataclass(frozen=True, eq=False)
+class _FieldChange:
+    """One field change a draft or an edit carries until ``World.write`` sends it.
+
+    Compared by identity: a draft derived by ``.set``/``.add`` shares its
+    parent's changes, so a change is sent once however many drafts carry it.
+    """
+
+    op: Literal["set", "add"]
+    field: str
+    value: object
+    evidence: Evidence | AuthoredSection | None = None
+    role: WriteRole | None = None
+    contend: bool = False
+    expect_absent: bool = False
+
+
+class _Landing:
+    """Where one new Subject landed: shared by a draft and every draft derived from it."""
+
+    __slots__ = ("ref",)
+
+    def __init__(self) -> None:
+        self.ref: str | None = None
+
+
+class WorldWritable:
+    """What ``World.write`` sends: a new Subject's draft or an accepted Subject's edit."""
+
+    __slots__ = ()
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class WorldNewSubject(WorldWritable):
+    """A new Subject of one kind, drafted by ``w.<kind>.define(...)``; nothing is sent yet.
+
+    The draft is frozen: ``.set``/``.add`` return a new draft carrying one more
+    change. Pass it as a Subject value anywhere in the same ``w.write`` (or to
+    ``edit().set``): it is sent as a reference to its own ``create``, so the
+    order of drafts never matters. ``w.write`` (or ``draft.write``) creates it,
+    or lands on the one live Subject its key already names. Once accepted,
+    ``address`` is the id core assigned. Reads at this World's coordinate still
+    do not see it: ``cx.world()`` again for those.
+    """
+
+    subject_kind: str
+    _world: World = field(repr=False)
+    _key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
+    _create_new: bool = False
+    _expect_new: bool = False
+    _changes: tuple[_FieldChange, ...] = ()
+    _landing: _Landing = field(default_factory=_Landing, repr=False)
+
+    @property
+    def address(self) -> str | None:
+        """The Subject's ``kind/id`` once a write of it was accepted, else None.
+
+        Next: ``cx.get(draft.address)`` reads it back.
+        """
+
+        return self._landing.ref
+
+    def set(
+        self,
+        /,
+        *,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        **fields: object,
+    ) -> WorldNewSubject:
+        """Set fields; evidence may carry ``cx.section(..., text=...)`` prose.
+
+        Next: ``.write(because=...)`` authors the section and creates this Subject.
+        """
+
+        changes = self._world._field_changes(
+            self.subject_kind, "set", fields, evidence=evidence, role=role
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def add(
+        self,
+        /,
+        *,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        **fields: object,
+    ) -> WorldNewSubject:
+        """This draft with one more value in many-valued fields. Next: ``.write(because=...)``."""
+
+        changes = self._world._field_changes(
+            self.subject_kind, "add", fields, evidence=evidence, role=role
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def write(
+        self, *, because: str, dry_run: bool = False, accept: WriteAccept = "if_allowed"
+    ) -> WriteOutcome:
+        """Send this draft alone, as one change set: ``w.write(draft, because=...)``.
+
+        Next: ``draft.address`` once accepted; ``outcome.next`` otherwise.
+        """
+
+        return self._world.write(self, because=because, dry_run=dry_run, accept=accept)
+
+    def __repr__(self) -> str:
+        landed = "" if self._landing.ref is None else f" -> {self._landing.ref}"
+        return f"<WorldNewSubject {self.subject_kind} key={self._key!r}{landed}>"
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class WorldSubjectEdit(WorldWritable):
+    """Changes to one accepted Subject, started by ``subject.edit()``; nothing is sent yet.
+
+    Frozen: ``.set``, ``.add`` and ``.retire`` return a new edit with one more
+    change. ``w.write(edit, ...)`` sends it beside new Subjects' drafts.
+    """
+
+    address: str
+    _world: World = field(repr=False)
+    _changes: tuple[_FieldChange | RetireChange, ...] = ()
+
+    def set(
+        self,
+        /,
+        *,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        **fields: object,
+    ) -> WorldSubjectEdit:
+        """Set fields with optional ``cx.section(..., text=...)`` evidence.
+
+        Next: ``.write(because=...)``, then inspect ``outcome.docs`` for file conflicts.
+        """
+
+        kind = self.address.split("/", 1)[0]
+        changes = self._world._field_changes(
+            kind, "set", fields, evidence=evidence, role=role, contend=contend
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def add(
+        self,
+        /,
+        *,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
+        **fields: object,
+    ) -> WorldSubjectEdit:
+        """This edit with one more value in many-valued fields, as ``WorldSubject.add``."""
+
+        kind = self.address.split("/", 1)[0]
+        changes = self._world._field_changes(
+            kind, "add", fields, evidence=evidence, role=role, expect_absent=expect_absent
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def retire(
+        self,
+        field: str | ClaimTypeRef,
+        /,
+        *,
+        reason: WriteRetireReason = "was-rescinded",
+    ) -> WorldSubjectEdit:
+        """This edit with one field's live value retired, as ``WorldSubject.retire``."""
+
+        from cruxible_client.contracts.write import RetireChange, SlotRef
+
+        name = field.address if isinstance(field, ClaimTypeRef) else field
+        predicate = (
+            name
+            if "." in name and self._world._node_at(name) is not None
+            else self._world._write_field(self.address.split("/", 1)[0], name)
+        )
+        change = RetireChange(target=SlotRef(subject=self.address, field=predicate), reason=reason)
+        return replace(self, _changes=(*self._changes, change))
+
+    def write(
+        self, *, because: str, dry_run: bool = False, accept: WriteAccept = "if_allowed"
+    ) -> WriteOutcome:
+        """Send this edit alone, as one change set. Next: ``outcome.next``."""
+
+        return self._world.write(self, because=because, dry_run=dry_run, accept=accept)
+
+    def __repr__(self) -> str:
+        return f"<WorldSubjectEdit {self.address} changes={len(self._changes)}>"
+
+
+class KindNamespace:
+    """One dotted name in the world: a Subject kind, a prefix, or both.
+
+    Attribute access resolves the world's own structure first -- a nested kind
+    or a predicate -- and only then a Subject ID, because structure is what the
+    world is for and a Subject named `severity` must not shadow the predicate.
+    Index access always means a Subject ID, which is also how an ID that is not
+    a Python identifier is spelled.
+
+    Next: ``kind["<id>"]`` for a Subject, ``kind.where(...)`` for a query,
+    ``kind.define(<key>, <field>=...)`` for a new one.
+    """
+
+    __slots__ = ("_node", "_world")
+
+    def __init__(self, world: World, node: _Node) -> None:
+        self._world = world
+        self._node = node
+
+    @property
+    def subject_kind(self) -> str | None:
+        """Return this namespace's Subject kind, or None if it is only a prefix.
+
+        Next: ``kind.subject_ids``.
+        """
+
+        return self._node.path if self._node.subject_kind else None
+
+    @property
+    def subject_ids(self) -> tuple[str, ...]:
+        """Return every accepted Subject ID of this kind, loading them on first ask.
+
+        Next: ``kind["<id>"]`` for one Subject.
+        """
+
+        return tuple(self._subjects())
+
+    def define(
+        self,
+        /,
+        *key: SubjectKeyValue,
+        create_new: bool = False,
+        expect_new: bool = False,
+        **fields: object,
+    ) -> WorldNewSubject:
+        """Draft one new Subject of this kind by its key, with fields; core assigns its id.
+
+        The kind's SubjectKind says what the key is: a one-key kind takes its
+        value positionally or by its key's leaf; a composite kind takes each key
+        part by its leaf; a minted kind takes none. Every other keyword is a
+        field: set when it holds one value, added when it holds many. A key one
+        live Subject already holds lands on that Subject and creates nothing
+        (``resolved: existing``, so a seed run again answers as done);
+        ``expect_new=True`` refuses ``cruxible.write.subject_exists`` instead.
+        ``create_new=True`` makes a further holder of a ``hint`` kind's key.
+
+        Next: ``w.write(draft, ..., because=...)`` or ``draft.write(because=...)``.
+        """
+
+        kind = self._require_kind()
+        self._world._assert_current()
+        identity = self._node.identity
+        if identity is None:
+            raise WorldStructureError(
+                f"no accepted SubjectKind declares {kind}, so no new {kind} Subject can be "
+                "created; author one first (`cruxible authoring example subject-kind` prints "
+                "one), then read a new World"
+            )
+        return self._world._define(
+            kind, identity, key, dict(fields), create_new=create_new, expect_new=expect_new
+        )
+
+    def where(self, /, **filters: object) -> CompactQuery:
+        """Start a compact query over this kind, filtered all-of by keyword.
+
+        ``where(adoption_state="adopted", implementation_state__ne="completed")``;
+        suffixes ``__ne``, ``__lt``, ``__lte``, ``__gt``, ``__gte``, ``__in``,
+        ``__exists`` and ``__contains`` pick the operator. A leaf that is
+        ``self``, a Python keyword, contains ``__`` or ends in ``_`` takes one
+        trailing underscore before any suffix (``self_``, ``class___ne``).
+        Names and enum values are checked against this World before the wire.
+
+        Next: ``.select(...)``, then ``.run()`` or iterate it.
+        """
+
+        return self._query().where(**filters)
+
+    def select(self, *fields: str) -> CompactQuery:
+        """Start a compact query over this kind that shows only these columns.
+
+        Next: ``.run()`` or iterate it.
+        """
+
+        return self._query().select(*fields)
+
+    def _query(self) -> CompactQuery:
+        from cruxible_client.authoring.compact_query import CompactQuery
+
+        kind = self._require_kind()
+        self._world._assert_current()
+        return CompactQuery(self._world, kind)
+
+    def _require_kind(self) -> str:
+        if not self._node.subject_kind:
+            spelled = ", ".join(sorted(self._node.children)) or "nothing"
+            raise WorldStructureError(
+                f"{self._node.path!r} is not an accepted Subject kind; it only nests: {spelled}"
+            )
+        return self._node.path
+
+    def _subjects(self) -> Mapping[str, WorldSubject]:
+        return self._world._subjects_of(self._require_kind())
+
+    def __getitem__(self, subject_id: str) -> WorldSubject:
+        kind = self._require_kind()
+        found = self._world._subject_of(kind, subject_id)
+        if found is None:
+            raise AbsentSubject(
+                subject_kind=kind,
+                subject_id=subject_id,
+                coordinate=self._world.coordinate,
+            )
+        return found
+
+    def __contains__(self, subject_id: object) -> bool:
+        return (
+            isinstance(subject_id, str)
+            and self._world._subject_of(self._require_kind(), subject_id) is not None
+        )
+
+    def __iter__(self) -> Iterator[WorldSubject]:
+        return iter(self._subjects().values())
+
+    def __len__(self) -> int:
+        return len(self._subjects())
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        child = self._node.children.get(name)
+        if child is not None:
+            return self._world._materialize(child)
+        if not self._node.subject_kind:
+            spelled = ", ".join(sorted(self._node.children)) or "nothing"
+            raise AttributeError(
+                f"{self._node.path!r} is not an accepted Subject kind and nests no "
+                f"{name!r}; it nests: {spelled}"
+            )
+        return self[name]
+
+    def __dir__(self) -> list[str]:
+        names = {*super().__dir__(), *self._node.children}
+        if self._node.subject_kind:
+            names.update(item for item in self._subjects() if _is_identifier(item))
+        return sorted(names)
+
+    def __repr__(self) -> str:
+        shape = "kind" if self._node.subject_kind else "namespace"
+        return f"<KindNamespace {self._node.path!r} ({shape})>"
+
+
+#: The verbs ``World.describe()`` names, as (call, what it does).
+_DESCRIBED_VERBS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "Read:",
+        (
+            ("cx.orient()", "map accepted state; orient(kind=...) for one kind"),
+            ('cx.query("<kind>", where=[...])', "one page of values with verdict flags"),
+            ('cx.get("<ref>")', "one thing: kind/id, CLM-..., a predicate, CAP-..."),
+            ("grep -r <text> .cruxible/floor/current/", "the exported floor, one file per Subject"),
+            ('w.<kind>["<id>"].<field>', "the live Claims under one field"),
+            ("w.<kind>.where(<field>=...)", "a compact query over one kind"),
+        ),
+    ),
+    (
+        "Write:",
+        (
+            ('w.<kind>["<id>"].set(<field>=...)', "replace a single value (because=...)"),
+            ('w.<kind>["<id>"].add(<field>=...)', "add to a many-valued field"),
+            ('w.<kind>["<id>"].retire("<field>")', "end the live value"),
+            ("w.<kind>.define(<key>, <field>=...)", "draft a new Subject by its key"),
+            ('w.write(*drafts, *edits, because="...")', "drafts and edit()s as one change set"),
+        ),
+    ),
+    ("Then:", (("cx.next(expiring_within=...)", "what needs attention"),)),
+)
+
+
+class World:
+    """The accepted ontology of one instance, as objects rather than strings.
+
+    Every name here answers at exactly one coordinate through a borrowed pinned
+    context. Moving the live client's head does not move or invalidate this
+    World. Vocabulary, lazy reads, pagination and caches share its coordinate.
+
+    `kind()` and `claim_type()` are the escapes for a dotted name attribute
+    access cannot spell: a Python keyword segment, or a kind a predicate of the
+    same name wins.
+
+    Next: ``print(w.describe())`` for every verb and field, ``w.kinds`` for the kinds,
+    ``w.<kind>["<id>"]`` for one Subject.
+    """
+
+    __slots__ = (
+        "_claim_cache",
+        "_coordinate",
+        "_write_basis",
+        "_playbill",
+        "_root",
+        "_row_cache",
+        "_subject_cache",
+        "_subject_lookups",
+        "_subjects_loaded",
+        "_view_cache",
+        "unstructured_predicates",
+    )
+
+    def __init__(
+        self,
+        cx: Cruxible,
+        *,
+        coordinate: AcceptedCoordinate,
+        root: _Node,
+        unstructured_predicates: tuple[str, ...],
+    ) -> None:
+        self._playbill = cx
+        self._coordinate = coordinate
+        self._root = root
+        self._subject_cache: dict[str, dict[str, WorldSubject]] = {}
+        self._subject_lookups: dict[tuple[str, str], WorldSubject | None] = {}
+        self._subjects_loaded: set[str] = set()
+        self._row_cache: dict[str, tuple[Mapping[str, object], ...]] = {}
+        self._claim_cache: dict[tuple[str, str | None], tuple[ClaimView, ...]] = {}
+        self._view_cache: dict[str, ClaimView] = {}
+        self.unstructured_predicates = unstructured_predicates
+        # The coordinate this World's writes are checked from: its own, advanced
+        # past each of its own accepted writes while no one else wrote between.
+        self._write_basis = coordinate.git_oid
+
+    @property
+    def coordinate(self) -> AcceptedCoordinate:
+        """The accepted coordinate every name in this World answers at.
+
+        Next: ``cx.at(w.coordinate)`` for other reads at the same state.
+        """
+
+        return self._coordinate
+
+    @property
+    def kinds(self) -> Names:
+        """Every accepted Subject kind this world knows, byte-sorted.
+
+        An attribute and a call alike: ``w.kinds`` or ``w.kinds()``. Next:
+        ``w.kind("dev.batch")`` (or ``w.dev.batch``) for one kind, or
+        ``cx.orient(kind=...)`` for its counts and sample Subjects.
+        """
+
+        self._assert_current()
+        return Names(self._kind_paths())
+
+    @property
+    def predicates(self) -> Names:
+        """Every accepted predicate this world knows, byte-sorted.
+
+        An attribute and a call alike: ``w.predicates`` or ``w.predicates()``.
+        Next: ``w.claim_type(predicate)`` for one predicate's structure.
+        """
+
+        self._assert_current()
+        return Names(self._predicate_paths())
+
+    def describe(self) -> str:
+        """Name the verbs that act on this world, then its vocabulary, as text to read.
+
+        Each Subject kind is listed with its fields: the leaf a Subject answers
+        by attribute, then what the field holds (``literal``, ``-> kind`` for
+        a Subject), its cardinality, enum members and
+        description. Next: ``print(w.describe())``, then one of the verbs it
+        lists -- ``cx.query(kind, ...)`` to read values, ``cx.get(ref)`` for
+        one thing, ``w.<kind>[id].set(...)`` to write.
+        """
+
+        self._assert_current()
+        lines = [
+            f"World at {self._coordinate.git_oid[:12]}: "
+            f"{len(self._kind_paths())} Subject kinds, {len(self._predicate_paths())} predicates.",
+        ]
+        for heading, verbs in _DESCRIBED_VERBS:
+            lines.append(heading)
+            lines.extend(f"  {call:<40} {what}" for call, what in verbs)
+        lines.append("Vocabulary:")
+        for kind in self._kind_paths():
+            lines.append(f"  {kind}")
+            for leaf, names in sorted(self._leaf_map(kind).items()):
+                # A leaf two predicates share is reachable only by full name.
+                for name in names:
+                    label = leaf if len(names) == 1 else name
+                    lines.append("    " + self._describe_field(label, name))
+        if self.unstructured_predicates:
+            lines.append("  unreadable by this client: " + ", ".join(self.unstructured_predicates))
+        return "\n".join(lines)
+
+    def _describe_field(self, label: str, predicate: str) -> str:
+        """One field line of ``describe()``: what it holds, how many, and what it means."""
+
+        node = self._node_at(predicate)
+        assert node is not None and node.structure is not None
+        structure = node.structure
+        held = (
+            "-> " + " | ".join(subject_value_kinds(structure.value))
+            if claim_value_kind(structure.value) == "subject"
+            else claim_value_kind(structure.value)
+        )
+        parts = [f"{label}: {held}, {structure.cardinality}"]
+        members = value_members(structure.value)
+        if members:
+            parts.append("[" + ", ".join(members) + "]")
+        if node.meaning is not None and node.meaning.description:
+            parts.append("-- " + node.meaning.description.splitlines()[0])
+        return " ".join(parts)
+
+    def _kind_paths(self) -> tuple[str, ...]:
+        return tuple(sorted(self._walk(lambda node: node.subject_kind)))
+
+    def _predicate_paths(self) -> tuple[str, ...]:
+        return tuple(sorted(self._walk(lambda node: node.structure is not None)))
+
+    def stub(self) -> str:
+        """Render this world as a `.pyi` module stub.
+
+        Next: write it beside your script as a ``.pyi`` so an editor checks every name.
+        """
+
+        from cruxible_client.authoring.world_stub import render_world_stub
+
+        return render_world_stub(self)
+
+    def _walk(self, admits: Any) -> list[str]:
+        found: list[str] = []
+        stack = [self._root]
+        while stack:
+            node = stack.pop()
+            if node.path and admits(node):
+                found.append(node.path)
+            stack.extend(node.children.values())
+        return found
+
+    def _assert_current(self) -> None:
+        self._playbill._assert_coordinate(self._coordinate)
+
+    def _write_field(self, subject_kind: str, keyword_or_leaf: str) -> str:
+        """The full predicate one write keyword names for a kind, checked here."""
+
+        # The keyword escape (`class_`, `self_`) adds exactly one underscore to a
+        # leaf that could not be a keyword as it stands; no other leaf ends in one.
+        leaf = keyword_or_leaf[:-1] if keyword_or_leaf.endswith("_") else keyword_or_leaf
+        return self._predicate_for(subject_kind, leaf).address
+
+    def write(
+        self,
+        *items: WorldWritable,
+        because: str,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+    ) -> WriteOutcome:
+        """Send new Subjects' drafts and accepted Subjects' edits as one change set.
+
+        Each draft is one ``create`` change, sent first, and the drafts and edits
+        name it by a label the write assigns, so a draft may be the value of
+        another in any order; a draft named only as a value is created too.
+        Checked from this World's write basis, like every write of it. Once
+        accepted, each draft's ``address`` is the id the outcome reports.
+
+        Next: ``outcome.next``; ``cx.world()`` again to read what landed.
+        """
+
+        from cruxible_client.contracts.write import (
+            AddChange,
+            CreateChange,
+            CreatedSubject,
+            SetChange,
+        )
+
+        if not items:
+            raise TypeError("write() needs at least one draft or edit")
+        labels: dict[int, str] = {}
+        sent: dict[int, list[_FieldChange]] = {}
+        creates: list[tuple[_Landing, CreateChange]] = []
+        changes: list[Change] = []
+        docs: list[DocOp] = []
+        authored: set[int] = set()
+
+        def mine(item: WorldWritable) -> None:
+            if getattr(item, "_world", None) is not self:
+                raise WorldStructureError(
+                    f"{item!r} was drafted from another World; draft it from this one"
+                )
+
+        def value(raw: object) -> Any:
+            if isinstance(raw, WorldNewSubject):
+                return CreatedSubject(created=label(raw))
+            return _write_value(raw)
+
+        def send(
+            subject: str | CreatedSubject,
+            items: Sequence[_FieldChange],
+            done: list[_FieldChange],
+        ) -> None:
+            for item in items:
+                if any(item is earlier for earlier in done):
+                    continue
+                done.append(item)
+                evidence = item.evidence
+                if isinstance(evidence, AuthoredSection):
+                    if id(evidence) not in authored:
+                        authored.add(id(evidence))
+                        docs.append(evidence.operation)
+                    evidence = evidence.citation
+                changes.append(
+                    SetChange(
+                        subject=subject,
+                        field=item.field,
+                        value=value(item.value),
+                        evidence=evidence,
+                        role=item.role,
+                        contend=item.contend,
+                    )
+                    if item.op == "set"
+                    else AddChange(
+                        subject=subject,
+                        field=item.field,
+                        value=value(item.value),
+                        evidence=evidence,
+                        role=item.role,
+                        expect_absent=item.expect_absent,
+                    )
+                )
+
+        def label(draft: WorldNewSubject) -> str:
+            mine(draft)
+            key = id(draft._landing)
+            name = labels.get(key)
+            if name is None:
+                name = labels[key] = f"new-{len(labels) + 1}"
+                creates.append(
+                    (
+                        draft._landing,
+                        CreateChange(
+                            label=name,
+                            subject_kind=draft.subject_kind,
+                            key=draft._key,
+                            create_new=draft._create_new,
+                            expect_new=draft._expect_new,
+                        ),
+                    )
+                )
+            send(CreatedSubject(created=name), draft._changes, sent.setdefault(key, []))
+            return name
+
+        for item in items:
+            if isinstance(item, WorldNewSubject):
+                label(item)
+            elif isinstance(item, WorldSubjectEdit):
+                mine(item)
+                done = sent.setdefault(id(item), [])
+                for change in item._changes:
+                    if isinstance(change, _FieldChange):
+                        send(item.address, (change,), done)
+                    else:
+                        changes.append(change)
+            else:
+                raise TypeError(f"write() takes drafts and edits, not {type(item).__name__}")
+        outcome = self._write(
+            [create for _landing, create in creates] + changes,
+            docs=docs,
+            because=because,
+            dry_run=dry_run,
+            accept=accept,
+        )
+        if outcome.status == "accepted":
+            for position, (landing, _create) in enumerate(creates):
+                landing.ref = outcome.changes[position].subject
+        return outcome
+
+    def _define(
+        self,
+        kind: str,
+        identity: _Identity,
+        key: tuple[SubjectKeyValue, ...],
+        fields: dict[str, object],
+        *,
+        create_new: bool,
+        expect_new: bool,
+    ) -> WorldNewSubject:
+        """One draft: its key read by the kind's identity rule, the other keywords as fields."""
+
+        from cruxible_client.contracts.write import CreateKeyPart
+
+        sent: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
+        if identity.rule == "minted":
+            if key or create_new:
+                raise TypeError(
+                    f"{kind} is minted: core names its Subjects, so define() takes no key"
+                )
+        else:
+            words = identity.key_words()
+            given = {words[name]: fields.pop(name) for name in list(fields) if name in words}
+            if key:
+                if len(key) != 1 or len(identity.keys) != 1 or given:
+                    raise TypeError(
+                        f"{kind} is named by its key ({', '.join(identity.keys)}): pass "
+                        + (
+                            "its value once, positionally or by keyword"
+                            if len(identity.keys) == 1
+                            else "each part by keyword"
+                        )
+                    )
+                given = {identity.keys[0]: key[0]}
+            missing = [predicate for predicate in identity.keys if predicate not in given]
+            if missing:
+                raise TypeError(f"define() needs the key of {kind}: {', '.join(missing)}")
+            values: dict[str, SubjectKeyValue] = {}
+            for predicate, raw in given.items():
+                part = raw.value if isinstance(raw, LiteralValue) else raw
+                if not isinstance(part, (str, int, bool)) or part == "":
+                    raise TypeError(
+                        f"{predicate}: a key part is a non-empty string, an integer or a "
+                        f"boolean, not {part!r}"
+                    )
+                values[predicate] = part
+            if create_new and identity.unique:
+                raise TypeError(
+                    f"{kind} keys are unique: a key names one Subject, so create_new does not apply"
+                )
+            sent = (
+                values[identity.keys[0]]
+                if len(identity.keys) == 1
+                else tuple(
+                    CreateKeyPart(predicate=predicate, value=values[predicate])
+                    for predicate in identity.keys
+                )
+            )
+        changes: list[_FieldChange] = []
+        for name, raw in fields.items():
+            predicate = self._write_field(kind, name)
+            node = self._node_at(predicate)
+            assert node is not None and node.structure is not None
+            changes.append(
+                _FieldChange(
+                    op="add" if node.structure.cardinality == "many" else "set",
+                    field=predicate,
+                    value=raw,
+                )
+            )
+        return WorldNewSubject(
+            subject_kind=kind,
+            _world=self,
+            _key=sent,
+            _create_new=create_new,
+            _expect_new=expect_new,
+            _changes=tuple(changes),
+        )
+
+    def _field_changes(
+        self,
+        kind: str,
+        op: Literal["set", "add"],
+        fields: Mapping[str, object],
+        *,
+        evidence: Evidence | AuthoredSection | None,
+        role: WriteRole | None,
+        contend: bool = False,
+        expect_absent: bool = False,
+    ) -> tuple[_FieldChange, ...]:
+        """One change per field keyword, each name checked against this World."""
+
+        self._assert_current()
+        if not fields:
+            raise TypeError("a write needs at least one field=value")
+        return tuple(
+            _FieldChange(
+                op=op,
+                field=self._write_field(kind, name),
+                value=value,
+                evidence=evidence,
+                role=role,
+                contend=contend,
+                expect_absent=expect_absent,
+            )
+            for name, value in fields.items()
+        )
+
+    def _write(
+        self,
+        changes: Sequence[Change],
+        *,
+        because: str,
+        dry_run: bool,
+        docs: Sequence[DocOp] = (),
+        accept: WriteAccept,
+    ) -> WriteOutcome:
+        """Send this World's changes, checked from its write basis; keep references valid.
+
+        A World is a snapshot, so its references would go stale the moment its
+        own write moved the head. Instead its writes are checked from its
+        coordinate advanced past its own accepted writes -- as long as nothing
+        else was accepted in between -- so a field refuses only when someone
+        else changed it.
+        """
+
+        from cruxible_client.contracts.write import WriteRequest
+
+        if not changes:
+            raise TypeError("a write needs at least one field=value")
+        outcome = self._playbill._write(
+            WriteRequest(
+                because=because,
+                changes=tuple(changes),
+                docs=tuple(docs),
+                dry_run=dry_run,
+                accept=accept,
+                at=self._write_basis,
+                surface="sdk",
+                full_coordinate=True,
+            )
+        )
+        base = outcome.base
+        if (
+            outcome.status == "accepted"
+            and base is not None
+            and self._write_basis[: len(base.git_oid)] == base.git_oid
+        ):
+            self._write_basis = outcome.coordinate.git_oid
+        return outcome
+
+    def _materialize(self, node: _Node) -> KindNamespace | WorldClaimType:
+        """Resolve one node to the object its accepted structure makes it.
+
+        A predicate wins over a bare namespace: names it nests stay reachable
+        through the ClaimType's own attribute access, and Subject IDs, when the
+        same dotted name is also an accepted Subject kind, stay reachable by
+        index. That keeps one deterministic answer for a name that is both.
+        """
+
+        self._assert_current()
+        structure = node.structure
+        if structure is None:
+            return KindNamespace(self, node)
+        meaning = node.meaning or _Meaning()
+        return WorldClaimType(
+            address=structure.predicate,
+            coordinate=self._coordinate,
+            value_type=structure.value,
+            cardinality=Cardinality(structure.cardinality),
+            allowed_subject_kinds=structure.allowed_subject_kinds,
+            permitted_roles=tuple(ClaimRole(role) for role in structure.permitted_roles),
+            referent_sensitivity=ReferentSensitivity(structure.referent_sensitivity),
+            description=meaning.description,
+            member_descriptions=meaning.member_descriptions,
+            default_role=meaning.default_role,
+            evidence_requirement=meaning.evidence_requirement,
+            revision_evidence=meaning.revision_evidence,
+            _world=self,
+            _node=node,
+        )
+
+    def _node_at(self, path: str) -> _Node | None:
+        node = self._root
+        for segment in path.split("."):
+            child = node.children.get(segment)
+            if child is None:
+                return None
+            node = child
+        return node
+
+    def claim_type(self, predicate: str) -> WorldClaimType:
+        """Read one accepted predicate by its full dotted name.
+
+        Next: its ``members``, ``cardinality`` and ``description``; ``cx.query(kind,
+        select=[...])`` for its values.
+        """
+
+        node = self._node_at(predicate)
+        if node is None or node.structure is None:
+            raise WorldStructureError(f"{predicate!r} is not an accepted predicate")
+        built = self._materialize(node)
+        assert isinstance(built, WorldClaimType)
+        return built
+
+    def kind(self, subject_kind: str) -> KindNamespace:
+        """Read one accepted Subject kind by its full dotted name.
+
+        The escape for a kind whose segments attribute access cannot spell -- a
+        Python keyword such as `dev.class` -- and for one a predicate of the same
+        dotted name wins, exactly as `claim_type` is the escape for a predicate.
+
+        Next: ``kind["<id>"]`` for one Subject, ``kind.where(...)`` to query it.
+        """
+
+        node = self._node_at(subject_kind)
+        if node is None or not node.subject_kind:
+            raise WorldStructureError(f"{subject_kind!r} is not an accepted Subject kind")
+        self._assert_current()
+        return KindNamespace(self, node)
+
+    def _leaf_map(self, subject_kind: str) -> Mapping[str, list[str]]:
+        """Map each predicate last segment to every predicate it names for a kind."""
+
+        by_leaf: dict[str, list[str]] = {}
+        for predicate in self._predicate_paths():
+            node = self._node_at(predicate)
+            assert node is not None and node.structure is not None
+            if subject_kind not in node.structure.allowed_subject_kinds:
+                continue
+            by_leaf.setdefault(predicate.rsplit(".", 1)[-1], []).append(predicate)
+        return by_leaf
+
+    def _predicate_leaves(self, subject_kind: str) -> Mapping[str, str]:
+        """Map each leaf attribute access really answers to the predicate it names.
+
+        A leaf that is ambiguous, or that a `WorldSubject` member already claims,
+        is left out: it is reachable by index, and advertising it here -- in
+        `dir()` and in the generated stub -- would promise an attribute read that
+        answers something else.
+        """
+
+        return {
+            leaf: names[0]
+            for leaf, names in self._leaf_map(subject_kind).items()
+            if len(names) == 1 and leaf not in SUBJECT_MEMBERS and _is_identifier(leaf)
+        }
+
+    def _predicate_for(self, subject_kind: str, leaf: str) -> WorldClaimType:
+        by_leaf = self._leaf_map(subject_kind)
+        candidates = sorted(by_leaf.get(leaf, ()))
+        if len(candidates) == 1:
+            return self.claim_type(candidates[0])
+        if candidates:
+            spelled = ", ".join(candidates)
+            raise AttributeError(
+                f"{leaf!r} names more than one predicate admitted for {subject_kind!r}: "
+                f"{spelled}; read the one you mean by its full name"
+            )
+        spelled = ", ".join(sorted(self._predicate_leaves(subject_kind))) or "nothing"
+        raise AttributeError(
+            f"no accepted predicate {leaf!r} is admitted for Subject kind "
+            f"{subject_kind!r}; it admits: {spelled}"
+        )
+
+    def _subject_of(self, subject_kind: str, subject_id: str) -> WorldSubject | None:
+        """Resolve one id, alias or key at this World's coordinate, once per spelling."""
+
+        from cruxible_client.contracts.errors import ReadRefusalError
+        from cruxible_client.contracts.get_reads import GetSubjectCard
+
+        self._assert_current()
+        # Canonical live ids always win over aliases and keys, including when
+        # an explicit inventory read already populated this kind's cache.
+        subjects = self._subject_cache.get(subject_kind, {})
+        if subject_id in subjects:
+            return subjects[subject_id]
+        lookup = (subject_kind, subject_id)
+        if lookup in self._subject_lookups:
+            return self._subject_lookups[lookup]
+        try:
+            result = self._playbill._get_subject(
+                f"Subject:{subject_kind}/{subject_id}",
+                self._coordinate,
+            )
+        except ReadRefusalError as exc:
+            if exc.error_code != "cruxible.get.ref_not_found":
+                raise
+            self._subject_lookups[lookup] = None
+            return None
+        card = result.card
+        if (
+            result.kind != "subject"
+            or not isinstance(card, GetSubjectCard)
+            or card.kind != subject_kind
+            or not card.subject.startswith(subject_kind + "/")
+            or card.subject != result.ref
+            or card.lifecycle not in ("live", "retired")
+        ):
+            raise WorldStructureError(
+                "Subject lookup did not return the requested kind and lifecycle"
+            )
+        found = None
+        if card.lifecycle == "live":
+            canonical_id = card.subject.split("/", 1)[1]
+            subjects = self._subject_cache.setdefault(subject_kind, {})
+            found = subjects.get(canonical_id)
+            if found is None:
+                found = subjects[canonical_id] = WorldSubject(
+                    address=card.subject, coordinate=self._coordinate, _world=self
+                )
+        self._subject_lookups[lookup] = found
+        return found
+
+    def _subjects_of(self, subject_kind: str) -> Mapping[str, WorldSubject]:
+        """Read a complete kind only for explicit enumeration, never for a lookup."""
+
+        self._assert_current()
+        if subject_kind not in self._subjects_loaded:
+            # Finish every page before installing the inventory. Keep handles
+            # already resolved by id/alias/key, in the inventory's id order.
+            ids = self._live_subject_ids(subject_kind)
+            previous = self._subject_cache.get(subject_kind, {})
+            self._subject_cache[subject_kind] = {
+                subject_id: previous[subject_id]
+                if subject_id in previous
+                else WorldSubject(
+                    address=f"{subject_kind}/{subject_id}",
+                    coordinate=self._coordinate,
+                    _world=self,
+                )
+                for subject_id in ids
+            }
+            self._subjects_loaded.add(subject_kind)
+        return self._subject_cache[subject_kind]
+
+    def _live_subject_ids(self, subject_kind: str) -> list[str]:
+        from cruxible_client.contracts.compact_query import (
+            QUERY_MAX_LIMIT,
+            QueryRequest,
+        )
+
+        cx = self._playbill
+        live: list[str] = []
+        after: str | None = None
+        while True:
+            last: str | None = None
+            cursor: str | None = None
+            while True:
+                page = cx._client.query(
+                    cx._instance_id,
+                    request=QueryRequest.model_validate(
+                        {
+                            "kind": subject_kind,
+                            "select": ("subject_id",),
+                            "where": ()
+                            if after is None
+                            else ({"field": "subject_id", "gt": after},),
+                            "order_by": ("subject_id",),
+                            "status": ("live", "retired"),
+                            "limit": QUERY_MAX_LIMIT,
+                            "cursor": cursor,
+                            "at": None
+                            if cursor is not None
+                            else self._coordinate.model_dump(mode="json"),
+                        }
+                    ),
+                )
+                if page.receipt.coordinate.model_dump(mode="json") != (
+                    self._coordinate.model_dump(mode="json")
+                ):
+                    raise WorldStructureError(
+                        "Subject listing returned a different accepted coordinate"
+                    )
+                for row in page.rows:
+                    lifecycle = row.get("lifecycle")
+                    if lifecycle not in ("live", "retired"):
+                        raise WorldStructureError(
+                            f"the {subject_kind} Subject listing did not state each "
+                            "Subject's lifecycle"
+                        )
+                    last = str(row["subject_id"])
+                    if lifecycle == "live":
+                        live.append(last)
+                if page.next_cursor is None:
+                    break
+                if not page.rows or page.next_cursor == cursor:
+                    raise WorldStructureError(
+                        f"the {subject_kind} Subject listing is truncated and its cursor "
+                        "does not advance; no Subjects were cached"
+                    )
+                cursor = page.next_cursor
+            if not page.truncated:
+                return live
+            if not page.capped:
+                raise WorldStructureError(
+                    f"the {subject_kind} Subject listing is truncated with no cursor to "
+                    "continue it; no Subjects were cached"
+                )
+            if last is None or (after is not None and last <= after):
+                raise WorldStructureError(
+                    f"the {subject_kind} Subject listing hit the server cap "
+                    f"({', '.join(page.capped)}) without advancing; no Subjects were cached"
+                )
+            after = last
+
+    def prefetch(
+        self,
+        *,
+        subjects: Sequence[str | SubjectRef],
+        predicates: Sequence[str | ClaimTypeRef] = (),
+        page_size: int = 128,
+        max_claims: int = 4096,
+    ) -> tuple[ClaimView, ...]:
+        """Fill selected attribute caches in bounded, coordinate-pinned pages.
+
+        Strings are subject kind/id addresses or paths and fully qualified predicates.
+        Every live contender is retained. A selection wider than one batched read
+        admits (256 Subjects or predicates) is read in as many batches as it
+        needs, all at this World's coordinate. If the explicit budget is
+        exceeded, no partial attribute cache is installed and the caller can
+        narrow the selection or increase ``max_claims``.
+
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
+        """
+        from datetime import datetime
+
+        from cruxible_client.contracts.claim_reads import (
+            MAX_CLAIM_READ_BATCH,
+            ClaimReadBatchRequest,
+        )
+
+        self._assert_current()
+        if max_claims < 1:
+            raise ValueError("max_claims must be positive")
+        for ref in (*subjects, *predicates):
+            if isinstance(ref, (SubjectRef, ClaimTypeRef)):
+                self._playbill._assert_coordinate(ref.coordinate)
+        paths = tuple(ref.address if isinstance(ref, SubjectRef) else ref for ref in subjects)
+        addresses = tuple(
+            path.removeprefix("subjects/").removesuffix(".json")
+            if path.startswith("subjects/")
+            else path
+            for path in paths
+        )
+        paths = tuple(f"subjects/{address}.json" for address in addresses)
+        names = tuple(ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates)
+        for values in (paths, names):
+            if len(set(values)) != len(values) or any(not value for value in values):
+                raise ValueError("selectors must be nonempty and unique")
+        evaluation_time = datetime.fromisoformat(self._playbill._evaluation_time())
+        wanted_paths = set(paths)
+        wanted_names = set(names)
+        seen: set[str] = set()
+        views: list[ClaimView] = []
+        # Disjoint Subject and predicate batches: each Claim falls in exactly one.
+        # An empty selection still builds its one request, which refuses it.
+        batch = MAX_CLAIM_READ_BATCH
+        for subject_start in range(0, max(len(paths), 1), batch):
+            for name_start in range(0, max(len(names), 1), batch):
+                request = ClaimReadBatchRequest.model_validate(
+                    {
+                        "at": self._coordinate.model_dump(mode="json"),
+                        "subject_paths": paths[subject_start : subject_start + batch],
+                        "predicates": names[name_start : name_start + batch],
+                        "limit": page_size,
+                        "evaluation_time": evaluation_time,
+                    }
+                )
+                cursor: str | None = None
+                while True:
+                    result = self._playbill._client.read_claim_batch(
+                        self._playbill._instance_id,
+                        request=request.model_copy(update={"cursor": cursor}),
+                    )
+                    self._assert_current()
+                    if result.coordinate.model_dump(mode="json") != self._coordinate.model_dump(
+                        mode="json"
+                    ):
+                        raise WorldStructureError(
+                            "prefetch returned a different accepted coordinate"
+                        )
+                    for raw in result.claims:
+                        if raw.coordinate != result.coordinate:
+                            raise WorldStructureError(
+                                "prefetch Claim returned a different coordinate"
+                            )
+                        view = self._playbill._typed_claim_view(raw)
+                        if (
+                            view.claim_id in seen
+                            or view.subject not in request.subject_paths
+                            or view.subject not in wanted_paths
+                            or (names and view.predicate not in request.predicates)
+                            or (names and view.predicate not in wanted_names)
+                            or view.lifecycle_state != "live"
+                        ):
+                            raise WorldStructureError(
+                                "prefetch returned an invalid or duplicate selection"
+                            )
+                        seen.add(view.claim_id)
+                        views.append(view)
+                    if len(views) > max_claims:
+                        raise WorldStructureError(
+                            "prefetch exceeds max_claims; narrow the selection"
+                        )
+                    if not result.truncated:
+                        if result.cursor is not None:
+                            raise WorldStructureError(
+                                "complete prefetch page unexpectedly has a cursor"
+                            )
+                        break
+                    if not result.claims or result.cursor is None or result.cursor == cursor:
+                        raise WorldStructureError("prefetch pagination does not advance")
+                    cursor = result.cursor
+        # Commit only complete selections, including genuinely empty attributes.
+        for address, path in zip(addresses, paths, strict=True):
+            selected = tuple(view for view in views if view.subject == path)
+            for name in names or (None,):
+                self._claim_cache[(address, name)] = tuple(
+                    view for view in selected if name is None or view.predicate == name
+                )
+            if not names:
+                for name in {view.predicate for view in selected}:
+                    self._claim_cache[(address, name)] = tuple(
+                        view for view in selected if view.predicate == name
+                    )
+        for view in views:
+            self._view_cache[view.claim_id] = view
+        return tuple(views)
+
+    def values(
+        self,
+        *,
+        subjects: Sequence[str | SubjectRef],
+        predicates: Sequence[str | ClaimTypeRef] = (),
+        whole: bool = False,
+    ) -> tuple[QueryClaimValue, ...]:
+        """Each live Claim's value, verdict and status for these Subjects, through ``query``.
+
+        Lighter than ``prefetch`` when only values and verdicts are wanted: one
+        ``query`` per Subject kind asks for each cell's Claims, including those
+        resolution overturned or found ineligible. Strings are subject kind/id addresses
+        or paths and fully qualified predicates. A string value over 500
+        characters is a ``TruncatedText`` (``preview``, ``length``), never the
+        value: ``cx.read_whole(item.value)`` reads it whole at this World's coordinate.
+        ``whole=True`` reads every such value whole, in a few batched reads
+        (``Cruxible.read_whole_many``), and returns it in place of its preview.
+        An object value is a ``ShownObject`` whose ``object`` is the value, whole.
+
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
+        """
+        from cruxible_client.contracts.compact_query import QUERY_MAX_SELECT
+
+        self._assert_current()
+        for ref in (*subjects, *predicates):
+            if isinstance(ref, (SubjectRef, ClaimTypeRef)):
+                self._playbill._assert_coordinate(ref.coordinate)
+        addresses = [
+            address.removeprefix("subjects/").removesuffix(".json")
+            for address in (ref.address if isinstance(ref, SubjectRef) else ref for ref in subjects)
+        ]
+        names = {ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates}
+        by_kind: dict[str, list[str]] = {}
+        for address in dict.fromkeys(addresses):
+            kind, _, subject_id = address.partition("/")
+            by_kind.setdefault(kind, []).append(subject_id)
+        cx = self._playbill
+        # Every page is one answer: this World's coordinate and one evaluation
+        # instant, however many Subject and predicate batches it takes.
+        evaluation_time = cx._evaluation_time()
+        values: list[QueryClaimValue] = []
+        for kind, ids in by_kind.items():
+            admitted = {full for group in self._leaf_map(kind).values() for full in group}
+            select = sorted(admitted & names if names else admitted)
+            for start in range(0, len(ids), 256) if select else ():
+                for first in range(0, len(select), QUERY_MAX_SELECT):
+                    values.extend(
+                        self._value_page(
+                            kind,
+                            ids[start : start + 256],
+                            select[first : first + QUERY_MAX_SELECT],
+                            evaluation_time=evaluation_time,
+                        )
+                    )
+        if not whole:
+            return tuple(values)
+        from cruxible_client.contracts.read_values import TruncatedText
+
+        previews = [item.value for item in values if isinstance(item.value, TruncatedText)]
+        read = cx.read_whole_many(previews) if previews else {}
+        return tuple(
+            item.model_copy(update={"value": read[item.value.read_whole.ref]})
+            if isinstance(item.value, TruncatedText) and item.value.read_whole is not None
+            else item
+            for item in values
+        )
+
+    def _value_page(
+        self,
+        kind: str,
+        ids: Sequence[str],
+        select: Sequence[str],
+        *,
+        evaluation_time: str,
+    ) -> list[QueryClaimValue]:
+        """Every Claim value of one Subject and predicate batch, every page of it."""
+        from cruxible_client.contracts.compact_query import (
+            QUERY_MAX_LIMIT,
+            QueryClaim,
+            QueryClaimValue,
+            QueryRequest,
+        )
+
+        cx = self._playbill
+        values: list[QueryClaimValue] = []
+        cursor: str | None = None
+        while True:
+            page = cx._client.query(
+                cx._instance_id,
+                request=QueryRequest.model_validate(
+                    {
+                        "kind": kind,
+                        "where": [{"field": "subject_id", "in": list(ids)}],
+                        "select": list(select),
+                        "status": ("live", "overturned", "ineligible"),
+                        "claims": True,
+                        "limit": QUERY_MAX_LIMIT,
+                        "cursor": cursor,
+                        "at": None
+                        if cursor is not None
+                        else self._coordinate.model_dump(mode="json"),
+                        "evaluation_time": None if cursor is not None else evaluation_time,
+                    }
+                ),
+            )
+            self._assert_current()
+            if page.receipt.coordinate.model_dump(mode="json") != (
+                self._coordinate.model_dump(mode="json")
+            ):
+                raise WorldStructureError("Claim values returned a different accepted coordinate")
+            predicate_of = {
+                column.name: column.predicate for column in page.columns if column.predicate
+            }
+            for row in page.rows:
+                cells = row.get("claims") or {}
+                if not isinstance(cells, dict):
+                    raise WorldStructureError("Claim values returned a row with no Claim cells")
+                for column, entries in cells.items():
+                    if not isinstance(entries, list):
+                        raise WorldStructureError("Claim values returned a malformed Claim cell")
+                    values.extend(
+                        QueryClaimValue(
+                            **dict(QueryClaim.model_validate(entry)),
+                            subject=str(row["subject"]),
+                            predicate=predicate_of[column],
+                        )
+                        for entry in entries
+                    )
+            if not page.truncated:
+                return values
+            if page.next_cursor is None or page.next_cursor == cursor or not page.rows:
+                raise WorldStructureError(
+                    f"the {kind} Claim values are truncated and cannot be continued"
+                )
+            cursor = page.next_cursor
+
+    def _claims_about(
+        self,
+        subject_address: str,
+        *,
+        predicate: str | None = None,
+    ) -> tuple[ClaimView, ...]:
+        self._assert_current()
+        cached = self._claim_cache.get((subject_address, predicate))
+        if cached is None and (subject_address, None) in self._claim_cache:
+            cached = tuple(
+                view
+                for view in self._claim_cache[(subject_address, None)]
+                if predicate is None or view.predicate == predicate
+            )
+        if cached is not None:
+            return cached
+        # One bounded, coordinate-pinned batch read of every live Claim about
+        # the Subject (or of one predicate), walked to its last page.
+        self.prefetch(
+            subjects=(subject_address,), predicates=() if predicate is None else (predicate,)
+        )
+        return self._claim_cache[(subject_address, predicate)]
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        child = self._root.children.get(name)
+        if child is None:
+            spelled = ", ".join(sorted(self._root.children)) or "nothing"
+            raise AttributeError(
+                f"this world names no {name!r}; it names: {spelled}. Repair: refresh "
+                "the connection if the vocabulary was accepted after this world was read."
+            )
+        return self._materialize(child)
+
+    def __dir__(self) -> list[str]:
+        return sorted({*super().__dir__(), *self._root.children})
+
+    def __repr__(self) -> str:
+        # Deliberately does not assert the coordinate: a debugger looking at a
+        # stale world must still be able to see what it was.
+        return (
+            f"<World at {self._coordinate.git_oid} "
+            f"kinds={len(self._kind_paths())} predicates={len(self._predicate_paths())}>"
+        )
+
+
+def _insert(root: _Node, path: str) -> _Node:
+    node = root
+    for segment in path.split("."):
+        child = node.children.get(segment)
+        if child is None:
+            prefix = f"{node.path}.{segment}" if node.path else segment
+            child = _Node(path=prefix)
+            node.children[segment] = child
+        node = child
+    return node
+
+
+def _replace(root: _Node, path: str, **updates: object) -> None:
+    parent = root
+    segments = path.split(".")
+    for segment in segments[:-1]:
+        parent = parent.children[segment]
+    existing = parent.children[segments[-1]]
+    parent.children[segments[-1]] = _Node(
+        path=existing.path,
+        children=existing.children,
+        subject_kind=cast(bool, updates.get("subject_kind", existing.subject_kind)),
+        structure=cast("ClaimTypeStructure | None", updates.get("structure", existing.structure)),
+        meaning=cast("_Meaning | None", updates.get("meaning", existing.meaning)),
+        identity=cast("_Identity | None", updates.get("identity", existing.identity)),
+    )
+
+
+def _meaning(envelope: Mapping[str, object]) -> _Meaning:
+    """Read a ClaimType's v7 meaning; anything unreadable keeps the pre-v7 meaning."""
+
+    description = envelope.get("description")
+    members: list[ClaimTypeMemberDescription] = []
+    raw_members = envelope.get("member_descriptions")
+    for item in raw_members if isinstance(raw_members, list) else ():
+        try:
+            members.append(ClaimTypeMemberDescription.model_validate(item))
+        except ValueError:
+            continue
+    role = envelope.get("default_role")
+    requirement = envelope.get("evidence_requirement")
+    revision = envelope.get("revision_evidence")
+    return _Meaning(
+        description=description if isinstance(description, str) else None,
+        member_descriptions=tuple(members),
+        default_role=ClaimRole(role) if role in {item.value for item in ClaimRole} else None,
+        evidence_requirement=(
+            cast(EvidenceRequirement, requirement)
+            if requirement in {"none", "self", "captured"}
+            else "self"
+        ),
+        revision_evidence=(
+            cast(RevisionEvidence, revision)
+            if revision in {"replace", "accumulate"}
+            else "accumulate"
+        ),
+    )
+
+
+def build_world(
+    cx: Cruxible,
+    *,
+    coordinate: AcceptedCoordinate,
+    claim_type_envelopes: Sequence[Mapping[str, object]],
+    subject_kinds: Sequence[OrientSubjectKind] = (),
+) -> World:
+    """Assemble one world from the accepted ClaimType vocabulary and its SubjectKinds.
+
+    Subject kinds come from the vocabulary rather than from the Subjects
+    themselves, which is what lets `cx.world()` name every kind without reading
+    a single Subject: a kind with no ClaimType admitting it is a kind nothing
+    can be said about. Each kind's SubjectKind (``subject_kinds``) says how a
+    new Subject of it is named, which is what ``define()`` takes.
+    """
+
+    root = _Node(path="")
+    unstructured: list[str] = []
+    kinds: set[str] = set()
+    for envelope in claim_type_envelopes:
+        lifecycle = envelope.get("lifecycle")
+        if isinstance(lifecycle, Mapping) and lifecycle.get("state") == "retired":
+            continue
+        check = check_claim_type_structure(
+            {
+                "predicate": envelope.get("predicate"),
+                "allowed_subject_kinds": envelope.get("allowed_subject_kinds", ()),
+                "value": envelope.get("value"),
+                "cardinality": envelope.get("cardinality"),
+                "permitted_roles": envelope.get("permitted_roles", ()),
+                "referent_sensitivity": envelope.get("referent_sensitivity", "identity"),
+            }
+        )
+        predicate = envelope.get("predicate")
+        if check.status != "valid" or check.structure is None:
+            # Structure this client cannot read is daemon/client skew, not a
+            # caller mistake. Naming it on the world keeps it visible instead of
+            # dropping a predicate silently.
+            if isinstance(predicate, str):
+                unstructured.append(predicate)
+            continue
+        structure = check.structure
+        _insert(root, structure.predicate)
+        _replace(root, structure.predicate, structure=structure, meaning=_meaning(envelope))
+        kinds.update(structure.allowed_subject_kinds)
+        kinds.update(subject_value_kinds(structure.value))
+    # A descriptor ClaimType (semantic.alias) admits the pseudo-kind
+    # semantic.subject -- every Subject -- which is never a kind of its own.
+    kinds.difference_update(DESCRIPTOR_KINDS)
+    declared_kinds: set[str] = set()
+    for subject_kind in sorted(kinds):
+        if not all(_SEGMENT_RE.fullmatch(segment) for segment in subject_kind.split(".")):
+            continue
+        _insert(root, subject_kind)
+        _replace(root, subject_kind, subject_kind=True)
+        declared_kinds.add(subject_kind)
+    for declared in subject_kinds:
+        # A SubjectKind no accepted ClaimType admits names a kind nothing can be
+        # said about: the World has no node to put it on.
+        if declared.kind not in declared_kinds:
+            continue
+        _replace(
+            root,
+            declared.kind,
+            identity=_Identity(
+                rule=declared.rule,
+                keys=tuple(declared.keys),
+                unique=declared.uniqueness != "hint",
+            ),
+        )
+    return World(
+        cx,
+        coordinate=coordinate,
+        root=root,
+        unstructured_predicates=tuple(sorted(set(unstructured))),
+    )
+
+
+class _VocabularyOnly:
+    """The session of a World built for its vocabulary alone: it reads nothing.
+
+    The daemon renders the world stub from the ClaimTypes its floor index holds,
+    with no client; a World over this answers names and structure, and any read
+    of state fails because there is no session to read with.
+    """
+
+    def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
+        return None
+
+
+def vocabulary_world(
+    *,
+    coordinate: AcceptedCoordinate,
+    claim_type_envelopes: Sequence[Mapping[str, object]],
+    subject_kinds: Sequence[OrientSubjectKind] = (),
+) -> World:
+    """A World over accepted ClaimType envelopes and SubjectKinds alone, for its stub."""
+
+    return build_world(
+        cast("Cruxible", _VocabularyOnly()),
+        coordinate=coordinate,
+        claim_type_envelopes=claim_type_envelopes,
+        subject_kinds=subject_kinds,
+    )
+
+
+__all__ = [
+    "CLAIM_TYPE_MEMBERS",
+    "KindNamespace",
+    "Names",
+    "SUBJECT_MEMBERS",
+    "World",
+    "WorldClaimType",
+    "WorldNewSubject",
+    "WorldStructureError",
+    "WorldSubject",
+    "WorldSubjectEdit",
+    "WorldWritable",
+    "admit_literal",
+    "build_world",
+    "vocabulary_world",
+]

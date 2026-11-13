@@ -1,226 +1,146 @@
 # Quickstart
 
-Get from install to your first Crux — a governed, kit-backed state model — in
-a few minutes.
+Point Cruxible at one of your projects, let an agent pull in what you ship and
+run, and find out which of your dependencies carry a vulnerability attackers
+are exploiting right now. Every answer traces back to its source, and nothing
+is recorded until it has been reviewed.
 
-The recommended shape is a local Cruxible daemon, launched with
-`cruxible server start`. The daemon
-owns state; the CLI, MCP server, client SDK, GUI, and agent harness talk to it
-through Cruxible surfaces.
+You'll need Python 3.11+, Git, a coding agent that can run commands in your
+repository, and network access to `pypi.org`, `api.osv.dev`, `www.cisa.gov`
+and `epss.empiricalsecurity.com`. If the project has JavaScript dependencies,
+you'll also need Node.js with `npm`: the intake writes their SBOM with
+`npx @cyclonedx/cdxgen`.
 
-This guide assumes a **fresh daemon** with no instance yet. If you already
-have a daemon from the README's Get Started, it holds that instance — leave
-it running and start a second daemon alongside it, on its own port and
-state directory:
+## Supported platforms
 
-```bash
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server-quickstart" \
-  cruxible server start --port 8101
-```
+Supported: Linux x86-64 and macOS on Apple silicon; on Windows, use WSL2.
+Cruxible does not run natively on Windows yet: install Python and Cruxible
+inside your WSL2 Linux distribution and run every command there.
 
-Then use `http://127.0.0.1:8101` wherever the commands below say
-`http://127.0.0.1:8100`. See
-[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#one-daemon-one-instance-02)
-for the model behind this.
+## 1. Install and start Cruxible
 
-## Prerequisites
+~~~bash
+pip install cruxible        # or: uv tool install cruxible
+cruxible server start --socket ~/.cruxible/run/daemon.sock    # in its own terminal; leave it running
+~~~
 
-- Python 3.11 or later (with pip)
-- An MCP-capable AI agent if you want agent orchestration
-- [git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/) only if
-  you develop from source
+## 2. Attach your project
 
-## Install And Start The Daemon
+~~~bash
+cd your-project
+export CRUXIBLE_SERVER_SOCKET=~/.cruxible/run/daemon.sock
+cruxible init
+~~~
 
-```bash
-pip install cruxible
-```
+## 3. Install the security kit
 
-The daemon ships in the default install, and the built-in kit aliases
-(`init --kit agent-operation`, `--kit supply-chain-blast-radius`, ...)
-resolve from digest-pinned release bundles — no checkout needed. To hack on
-kits instead, clone the repo and run from the checkout
-(`uv sync --all-extras`); a source tree's `kits/` always wins over the
-published bundles.
+<!-- publish: kit tag -->
+~~~bash
+cruxible kit add security:1.3.0                      # shows what it would install
+cruxible kit add security:1.3.0 --commit --at OID    # OID: the coordinate the preview printed
+cruxible kit pull security:1.3.0 --out security-kit  # its README, examples and agent skills
+~~~
 
-Start the local daemon:
+## 4. Adopt its checks
 
-```bash
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
-```
+The kit's checks come as an example, `examples/automation.json`, that you
+adopt deliberately. Fill in today's date and an expiry 90 days out, submit it,
+and turn on the checks the intake uses:
 
-Without auth, this is sandbox mode: writes are attributed to a built-in
-`operator` identity, visible as such in provenance. Turn auth on (below)
-when agents join and identity should be credential-backed.
+~~~bash
+cp security-kit/examples/automation.json .
+sed -i.bak "s/\"NOW\"/\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"/g; s/\"EXPIRES\"/\"$(date -u -v+90d +%Y-%m-%dT%H:%M:%SZ)\"/g" automation.json
+cruxible authoring submit automation.json --brief
+for l in kev-daily kev-triage kev-attention epss-daily epss-triage sbom-import osv-applicability cve-applicability inventory-import.prod credential-import; do
+  cruxible line enable security.$l
+done
+~~~
 
-The daemon runs in the foreground — run the commands below from another activated
-shell, or start it in the background.
+(On Linux, use `date -u -d '+90 days' …` for the expiry.)
 
-Use a durable state directory such as `~/.cruxible/server` or
-`/var/lib/cruxible`. Do not put long-lived daemon state under `/tmp`,
-`/var/tmp`, or macOS private temp directories; Cruxible warns at startup when
-the configured server state path resolves under a known volatile temp location.
+## 5. Let your agent pull in your state
 
-The daemon binds locally by default. For a simple local hardening layer, start
-it with:
+Give your agent the kit's two skills: `security-intake` pulls your state in,
+and `security-analyst`, which the intake hands over to, works the answers.
+Install them side by side so the links between them resolve.
+`.claude/skills/` is where Claude Code looks; point any other agent at the
+files:
 
-```bash
-CRUXIBLE_SERVER_AUTH=true \
-CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=change-me-once \
-CRUXIBLE_SERVER_STATE_DIR="$HOME/.cruxible/server" cruxible server start
-```
+~~~bash
+mkdir -p .claude/skills
+cp -R security-kit/skills/security-intake security-kit/skills/security-analyst .claude/skills/
+~~~
 
-Claim the bootstrap secret with `cruxible credential claim-bootstrap` to create
-an admin runtime credential, then use that runtime credential as
-`CRUXIBLE_SERVER_BEARER_TOKEN` for authenticated CLI or client calls. See
-[Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md) for the full
-bootstrap and agent-role flow.
+Then ask it:
 
-Use `cruxible-client` in a separate agent environment when the agent should not
-import the runtime directly:
+> Use the security-intake skill on this repository.
 
-```bash
-pip install cruxible-client
-```
+It writes an SBOM and reads it in, asks OSV, KEV and EPSS about your
+dependencies, and asks you where the project runs, which services and
+credentials it has, and where their logs are. Each read is proposed first;
+the agent shows you what it found before it approves anything. (An agent has
+no terminal to answer the approval prompt, so it approves with `proposal
+approve ID --yes` once you've agreed.)
 
-## First Instance: The Supply-Chain Demo
+## 6. Ask the first question
 
-Create an instance from two kits — the agent-operation base and the
-supply-chain demo domain — and connect the CLI context so commands stop
-needing per-call flags. (agent-operation is optional: it is the work-item
-and review operations layer for teams running agents on the loop; for a
-domain-only instance, pass just the domain kit.)
+**Which of our vulnerabilities are exploited, and where do they run?**
 
-```bash
-cruxible --server-url http://127.0.0.1:8100 init --kit agent-operation --kit supply-chain-blast-radius
-cruxible context connect --server-url http://127.0.0.1:8100 --instance-id <instance-id>
-```
+~~~text
+$ cruxible query --name security.urgent_exposures
+subject                                         ...  asset                component                criticality  cve_id         ...  internet_exposed  ...  kev_listed  ...  service
+security.assessment/myapp-1.0.0--cve-2025-3248  ...  app-1.example.com    pkg:pypi/langflow@1.2.0  critical     CVE-2025-3248  ...  true              ...  true        ...  storefront
+security.assessment/myapp-1.0.0--cve-2025-3248  ...  app-2.example.com    pkg:pypi/langflow@1.2.0  critical     CVE-2025-3248  ...  false             ...  true        ...  storefront
+security.assessment/myapp-1.0.0--cve-2025-3248  ...  stage-1.example.com  pkg:pypi/langflow@1.2.0  -            CVE-2025-3248  ...  -                 ...  true        ...  -
+...
+~~~
 
-Build the seeded world. Canonical workflows are preview-first: `run` executes
-against a clone and returns an apply digest; `apply` re-verifies it against
-the current config, lockfile, and head snapshot before committing:
+This lists every exposure: each affected release on each host, KEV-listed
+first, then by how likely exploitation is (EPSS). The exploited ones are the
+rows at the top with `kev_listed` `true`; everything after them is affected
+but not known to be exploited. Here langflow 1.2.0 is exploited in the wild
+and runs on an internet-facing host of a critical service: upgrade it first.
+`cruxible next` lists what needs attention as the daily checks run.
 
-```bash
-cruxible run --workflow build_seed_state
-cruxible apply --workflow build_seed_state --from-last-preview
-cruxible run --workflow ingest_incidents
-cruxible apply --workflow ingest_incidents --from-last-preview
-```
+## 7. Look around in the console
 
-Incident-to-supplier impact is a governed relationship: every live direct
-write is refused, at any permission tier, and in this kit it is minted only
-through proposal and review. The proposal workflow bridges its output into
-a candidate group, each member carrying the signals and evidence that
-matched it:
+~~~bash
+cruxible console
+~~~
 
-```bash
-cruxible propose --workflow propose_incident_impacts_supplier
-cruxible group list --status pending_review
-cruxible group get --group <group-id>
-```
+This opens a read-only console in your browser: the dashboard, what each kind
+of thing holds, open proposals, the Lines and their runs, the ledger. It runs
+on your machine only (`127.0.0.1`), reads from the daemon you started in step 1,
+and cannot change anything; approving and the like stay on the command line.
+The link it prints signs one browser in, once; Ctrl-C stops it.
 
-Review the thesis, member signals, and pending version, then resolve. The
-`--expected-pending-version` flag pins your decision to the exact pending
-state you reviewed — a group that changed underneath you refuses to resolve:
+## If something goes wrong
 
-```bash
-cruxible group resolve --group <group-id> --action approve \
-  --rationale "Confirmed against supplier geography" \
-  --expected-pending-version <pending-version>
-```
+- **`server start` prints `Warning: Provider lane unavailable`.** The daemon
+  runs the kit's checks in a separate process reached through a Unix socket
+  under its state root, and that path is too long, with no `TMPDIR` (macOS)
+  or `XDG_RUNTIME_DIR` (Linux) to fall back on. Everything else works, but
+  `kit add` and the checks refuse with the same cause. The warning names
+  the budget: the directory may be at most 57 bytes long. Set
+  `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR)` on macOS or
+  `XDG_RUNTIME_DIR=/run/user/$UID` on Linux (any short private directory you
+  own, mode 0700, works), or use a shorter `--state-root`, and restart the
+  daemon.
+- **A read returns but nothing is proposed yet.** Reading a file (an SBOM, a
+  scan) returns as soon as it's captured; the import check it starts proposes
+  a moment later, so list open proposals again.
+- **New dependencies or hosts have no assessment.** OSV is asked once a day.
+  After reading in a new SBOM or host inventory, run `cruxible line run
+  security.osv-applicability` to assess them now.
 
-Ask the questions those edges now answer:
+## What's next
 
-```bash
-cruxible query run open_incident_impacts --json
-cruxible query run incident_impacted_suppliers --param incident_id=INC-TW-RAIL-2026-07 --json
-```
+<!-- publish: kit tag -->
 
-Every query returns a receipt ID: the deterministic path from parameters to
-traversed edges to rows. Render it with `cruxible explain --receipt
-<receipt-id>`, or in MCP with `cruxible_receipt(instance_id, "<receipt-id>")`.
-
-The approved supplier impacts unlock the next cascade:
-`cruxible propose --workflow propose_incident_impacts_component` fills the
-queue with component-level candidates, and once judged,
-`single_source_components_for_incident` names exposed components with no
-alternative supplier.
-
-To consume a published reference state instead of a seeded demo (the KEV
-vulnerability brain), see the [KEV Guide](kev-guide.md). To publish states
-of your own, see [Publishing And Subscribing To States](publishing-states.md).
-
-## Point An Agent At Cruxible
-
-Bootstrap and canonical apply usually require an admin surface. Day-to-day
-agent work should use `governed_write` unless the agent is explicitly acting as
-an administrator.
-
-**Claude Code / Cursor**:
-
-```json
-{
-  "mcpServers": {
-    "cruxible": {
-      "command": "cruxible-mcp",
-      "env": {
-        "CRUXIBLE_MODE": "governed_write",
-        "CRUXIBLE_SERVER_URL": "http://127.0.0.1:8100"
-      }
-    }
-  }
-}
-```
-
-**Codex**:
-
-```toml
-[mcp_servers.cruxible]
-command = "cruxible-mcp"
-
-[mcp_servers.cruxible.env]
-CRUXIBLE_MODE = "governed_write"
-CRUXIBLE_SERVER_URL = "http://127.0.0.1:8100"
-```
-
-With auth on, add `CRUXIBLE_INSTANCE_ID` and `CRUXIBLE_SERVER_BEARER_TOKEN` to
-the same `env` blocks so every session starts authenticated as its role — the
-natural shape for synchronous harnesses that run each task in their own
-session. See [Agent Environment](runtime-auth-and-agent-roles.md#agent-environment)
-for choosing between harness-configured and orchestrator-managed credentials,
-and treat any config file carrying a token as credential material.
-
-If the agent should not have direct state access, keep
-`CRUXIBLE_SERVER_STATE_DIR` outside the workspace and install only
-`cruxible-client` in the agent environment. See
-[Isolated Deployment](isolated-deployment.md) for stronger local separation.
-
-## Build Your Own
-
-Use kits for repeatable work:
-
-- A **base kit** supplies cross-domain operating state. Kit initialization uses
-  the configured default base (`agent-operation`) unless you pass `--bare`.
-- A **standalone kit** creates a domain state model without requiring another
-  domain kit.
-- An **overlay kit** extends a published reference state.
-- Provider refs use `kit://...::callable`.
-- Deterministic state loading should be workflow-based: parse source artifacts,
-  shape/filter/join/dedupe rows, make graph objects, preview, then apply.
-- Inference, matching, classification, and reviewable judgment should go
-  through proposal workflows and candidate groups.
-
-For hands-on kit creation, see [Kit Walkthroughs](kit-walkthroughs.md). For the
-manifest and distribution rules, see [Kit Authoring And Distribution](kit-authoring.md).
-
-## Next Steps
-
-- [Concepts](concepts.md) - Architecture and vocabulary
-- [KEV Guide](kev-guide.md) - Subscribe to the vulnerability reference and work the triage queue
-- [Publishing And Subscribing To States](publishing-states.md) - Build, publish, and track reference states
-- [Guide For AI Agents](for-ai-agents.md) - Agent operating recipes
-- [Kit Walkthroughs](kit-walkthroughs.md) - Build and customize kits
-- [Local State And Backups](local-state-and-backups.md) - SQLite and droplet operations
-- [Config Reference](config-reference.md) - YAML schema
-- [MCP Tools Reference](mcp-tools.md) - MCP surface
-- [CLI Reference](cli-reference.md) - Terminal commands
+- The [Security walkthrough](security-walkthrough.md) does the same by hand,
+  step by step, and goes on to an incident: what's exposed, what's patched,
+  and what to rotate.
+- [Concepts](concepts.md) explains the ideas behind what you just did.
+- The [security kit's README](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/README.md)
+  covers everything else it answers.
+- [For AI agents](for-ai-agents.md) covers connecting an agent in depth.

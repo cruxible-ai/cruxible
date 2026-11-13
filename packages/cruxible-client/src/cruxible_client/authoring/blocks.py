@@ -1,0 +1,1652 @@
+"""Client-owned declarations; the machine frames but never authors body prose."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import datetime
+from pathlib import Path
+from typing import cast
+
+from cruxible_client.authoring.context import WorkspaceBinding
+from cruxible_client.authoring.page_writes import (
+    PageWriteError,
+    replace_page_file,
+)
+from cruxible_client.authoring.projection_manifests import (
+    load_projection_manifests,
+    retain_local_manifests,
+)
+from cruxible_client.authoring.selectors import WorkspaceFiles
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring.models import (
+    BlockSyncItem,
+    BlockSyncReadRequest,
+    BlockSyncResult,
+    ProjectionCheckRequest,
+)
+from cruxible_client.contracts.canonical import normalize_canonical
+from cruxible_client.contracts.claims import ClaimStatement, claim_statement_digest
+from cruxible_client.contracts.declared_blocks import (
+    DeclaredBlockPageObservation,
+    ParsedProjectionBlock,
+    ProjectionArtifactBacking,
+    ProjectionBacking,
+    ProjectionBlockStamp,
+    ProjectionBlockStampAny,
+    ProjectionClaimBacking,
+    ProjectionCurrencyPolicy,
+    ProjectionMarkerError,
+    ProjectionProcessingLimitExceeded,
+    ProjectionQueryBacking,
+    ProjectionResolvedParameterBinding,
+    assert_projection_block_frame,
+    check_projection_processing_bytes,
+    declares_projection_block,
+    discover_projection_blocks,
+    frame_projection_block,
+    parse_projection_blocks,
+    projection_manifest,
+    projection_manifest_refs,
+    projection_parameter_digest,
+    projection_processing_policy,
+    projection_query_semantic_result_digest,
+    projection_window_intersecting,
+    read_projection_source,
+    render_compact_projection_opening,
+    render_projection_opening,
+    resolve_projection_manifest_digest,
+)
+from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.file_catalog import refuse_legacy_file_catalogs
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.query.results import QueryResultRow
+from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.workspace_layout import ensure_workspace_directory, workspace_path
+from cruxible_client.errors import CoreError
+from cruxible_client.transport.http import CruxibleClient
+
+
+class ProjectionIndependentEvidenceForbidden(CruxibleError):
+    """A citation's span lies inside a projection block: the client fast path.
+
+    Evidence never comes from a projection window, whatever the citation's role
+    or origin. The daemon refuses the same span with the same code at lowering
+    and at the citation gate; this raises before the wire so an author learns
+    it without a round trip.
+    """
+
+    code = "cruxible.projection.evidence_from_projection"
+
+    def __init__(
+        self,
+        *,
+        source_id: str,
+        block_id: str,
+        start_byte: int,
+        end_byte: int,
+    ) -> None:
+        self.source_id = source_id
+        self.block_id = block_id
+        self.start_byte = start_byte
+        self.end_byte = end_byte
+        super().__init__(
+            f"{self.code}: source {source_id!r} block {block_id!r} intersects "
+            f"selected bytes [{start_byte}, {end_byte}); a projection block is never "
+            "evidence, so cite the Claims it reflects, or cite prose outside the block"
+        )
+
+
+class ProjectionRepinError(CruxibleError):
+    code = "cruxible.projection.repin_refused"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+
+
+class ProjectionRepinConflict(ProjectionRepinError):
+    """The block changed after being proved, and before this write read it.
+
+    A converging sync proves a block against the bytes it scanned, then
+    repins it; the proof names nothing about the page between that scan and
+    repin's own read. Without this check, an author's edit landing in that
+    gap is silently overturned by the render it proved. Nothing is written
+    when this raises.
+    """
+
+    code = "cruxible.projection.repin_conflict"
+
+    def __init__(self, *, source_id: str, block_id: str) -> None:
+        self.source_id = source_id
+        self.block_id = block_id
+        super().__init__(
+            f"block {block_id!r} in file {source_id!r} changed after it was proved "
+            "rendered; re-run sync to re-prove it before converging"
+        )
+
+
+class ProjectionSyncError(CruxibleError):
+    code = "cruxible.projection.sync_refused"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+
+
+def assert_independent_projection_evidence(
+    *,
+    source_id: str,
+    content: bytes,
+    start_byte: int,
+    end_byte: int,
+) -> None:
+    """Refuse a span that touches any stamped block window in ``content``.
+
+    Reads the windows with the evidence-side scanner rather than the page
+    parser: a cited source is evidence, not a projection page, so it is neither
+    held to the page ceilings nor refused for a marker defect of its own. A
+    capture with no marker bytes costs one substring search.
+    """
+
+    window = projection_window_intersecting(content, start_byte=start_byte, end_byte=end_byte)
+    if window is not None:
+        raise ProjectionIndependentEvidenceForbidden(
+            source_id=source_id,
+            block_id=window.block_id,
+            start_byte=start_byte,
+            end_byte=end_byte,
+        )
+
+
+def _proof(
+    client: CruxibleClient,
+    instance_id: str,
+    ref: str,
+    *,
+    coordinate: AcceptedCoordinate,
+    evaluation_time: str | None = None,
+) -> Mapping[str, object]:
+    """One accepted artifact's full envelope through get, pinned to ``coordinate``."""
+
+    from cruxible_client.contracts import AcceptedCoordinate
+    from cruxible_client.contracts.get_reads import GetRequest
+
+    result = client.get(
+        instance_id,
+        request=GetRequest(
+            ref=ref,
+            detail="proof",
+            at=AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")),
+            evaluation_time=(
+                None if evaluation_time is None else datetime.fromisoformat(evaluation_time)
+            ),
+            surface="sdk",
+        ),
+    )
+    if result.proof is None:  # pragma: no cover - proof always answers an artifact
+        raise ProjectionRepinError(f"{ref} answered no proof")
+    return result.proof
+
+
+def _claim_backing(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    name: str,
+    coordinate: AcceptedCoordinate,
+    evaluation_time: str,
+) -> ProjectionClaimBacking:
+    bare = name.removeprefix("Claim:")
+    proof = _proof(
+        client, instance_id, bare, coordinate=coordinate, evaluation_time=evaluation_time
+    )
+    if AcceptedCoordinate.model_validate(proof.get("coordinate")) != coordinate:
+        raise ProjectionRepinError("Claim backing returned a different accepted coordinate")
+    facts = proof.get("facts")
+    envelope = proof.get("envelope")
+    if not isinstance(facts, list) or not isinstance(envelope, Mapping):
+        raise ProjectionRepinError("Claim backing did not disclose its envelope and facts")
+    statement = next(
+        (
+            item.get("value")
+            for item in facts
+            if isinstance(item, Mapping) and item.get("schema_id") == "cruxible.claim.statement"
+        ),
+        None,
+    )
+    lifecycle = next(
+        (
+            item.get("value")
+            for item in facts
+            if isinstance(item, Mapping) and item.get("schema_id") == "cruxible.claim.lifecycle"
+        ),
+        None,
+    )
+    if not isinstance(statement, dict) or not isinstance(lifecycle, dict):
+        raise ProjectionRepinError(
+            "Claim backing did not disclose a complete statement and lifecycle"
+        )
+    state = lifecycle.get("lifecycle")
+    if not isinstance(state, Mapping) or state.get("state") != "live":
+        raise ProjectionRepinError("a projection backing must identify a live Claim")
+    if envelope.get("identity") != f"Claim:{bare}":
+        raise ProjectionRepinError("Claim backing identity differs from the requested Claim")
+    return ProjectionClaimBacking(
+        identity=ArtifactIdentity(kind="Claim", name=bare),
+        statement_digest=claim_statement_digest(ClaimStatement.model_validate(statement)).tagged,
+    )
+
+
+def _claim_backings(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    names: Sequence[str],
+    coordinate: AcceptedCoordinate,
+    evaluation_time: str,
+) -> list[ProjectionClaimBacking]:
+    """Resolve held Claim metadata in bounded batches, without admission reads."""
+    batch = getattr(client, "get_claim_backings", None)
+    if batch is None:
+        # Keep the documented structural client adapters usable. Production
+        # transports expose the batch method; server failures are never hidden
+        # by a retry through a different read surface.
+        return [
+            _claim_backing(
+                client,
+                instance_id,
+                name=name,
+                coordinate=coordinate,
+                evaluation_time=evaluation_time,
+            )
+            for name in names
+        ]
+    result: list[ProjectionClaimBacking] = []
+    for start in range(0, len(names), 256):
+        identities = tuple(name.removeprefix("Claim:") for name in names[start : start + 256])
+        page = batch(instance_id, claim_ids=identities, at=coordinate.model_dump(mode="json"))
+        returned_coordinate = AcceptedCoordinate.model_validate(
+            page.coordinate.model_dump(mode="json")
+        )
+        if returned_coordinate != coordinate:
+            raise ProjectionRepinError(
+                "Claim backing batch returned a different accepted coordinate"
+            )
+        if tuple(item.identity.name for item in page.backings) != identities:
+            raise ProjectionRepinError("Claim backing batch omitted or reordered requested Claims")
+        result.extend(page.backings)
+    return result
+
+
+def _escaped(text: str) -> str:
+    return " ".join(text.split()).replace("|", "\\|")
+
+
+def _shown(value: object) -> str:
+    """A value as a reader reads it: text as written, lists and objects spelled out."""
+
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list | tuple):
+        return ", ".join(_shown(item) for item in value)
+    if isinstance(value, Mapping):
+        return ", ".join(f"{key}: {_shown(value[key])}" for key in sorted(value))
+    return str(value)
+
+
+def _subject_shown(identity: str) -> str:
+    return identity.removeprefix("Subject:")
+
+
+def _rows_body(
+    rows: Sequence[QueryResultRow],
+    *,
+    cell: Callable[[object], str],
+    subject_cell: Callable[[str], str],
+) -> bytes:
+    if not rows:
+        return b"_No rows._\n"
+    names: list[str] = []
+    for row in rows:
+        names.extend(field.name for field in row.fields if field.name not in names)
+    subjects = [row.result_subject_identity or "" for row in rows]
+    if not names:
+        return "".join(f"- {subject_cell(subject)}\n" for subject in subjects).encode("utf-8")
+    lines = [
+        "| subject | " + " | ".join(_escaped(name) for name in names) + " |",
+        "|" + "---|" * (len(names) + 1),
+    ]
+    for subject, row in zip(subjects, rows, strict=True):
+        cells = []
+        for name in names:
+            field = next((item for item in row.fields if item.name == name), None)
+            cells.append(
+                ""
+                if field is None or field.state == "absent"
+                else "(conflicted)"
+                if field.state != "present"
+                else cell(field.value)
+            )
+        lines.append("| " + " | ".join([subject_cell(subject), *cells]) + " |")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def render_query_block_body(rows: Sequence[QueryResultRow]) -> bytes:
+    """Render one query's rows as a block body: a Markdown table, or a list.
+
+    Deterministic in the rows alone, so a re-render at the same backing
+    reproduces the same bytes. Rows with projected fields render a table whose
+    first column is the result Subject (as ``kind/id``); rows without render a
+    bulleted list of Subjects. Values read as written: a list of values is
+    comma-separated, an object is ``key: value`` pairs. An absent field renders
+    empty and a conflicted one says so.
+    """
+
+    return _rows_body(
+        rows,
+        cell=lambda value: _escaped(_shown(value)),
+        subject_cell=lambda identity: _escaped(_subject_shown(identity)),
+    )
+
+
+def _render_query_block_body_v1(rows: Sequence[QueryResultRow]) -> bytes:
+    """The rendering before values were spelled out (`Subject:` ids, JSON values).
+
+    Read only to recognise a block rendered that way as a rendering, so sync
+    re-renders it in the current form instead of treating it as prose.
+    """
+
+    def cell(value: object) -> str:
+        return _escaped(value if isinstance(value, str) else json.dumps(value, sort_keys=True))
+
+    return _rows_body(rows, cell=cell, subject_cell=cell)
+
+
+def _evaluated_query_backing(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    name: str,
+    parameters: Mapping[str, object],
+    coordinate: AcceptedCoordinate,
+    evaluation_time: datetime,
+) -> tuple[ProjectionQueryBacking, tuple[QueryResultRow, ...]]:
+    from cruxible_client.contracts.compact_query import QueryRequest
+
+    bare = name.removeprefix("QueryDefinition:")
+    normalized = normalize_canonical(dict(parameters))
+    assert isinstance(normalized, dict)
+    # The named query's full receipt is the replayable result a backing pins.
+    evaluated = client.query(
+        instance_id,
+        request=QueryRequest.model_validate(
+            {
+                "name": bare,
+                "params": normalized or None,
+                "receipt": "full",
+                "limit": 1,
+                "at": coordinate.model_dump(mode="json"),
+                "evaluation_time": evaluation_time,
+            }
+        ),
+    )
+    if (
+        AcceptedCoordinate.model_validate(evaluated.receipt.coordinate.model_dump(mode="json"))
+        != coordinate
+    ):
+        raise ProjectionRepinError("query backing returned a different accepted coordinate")
+    if evaluated.receipt.replay is None:
+        raise ProjectionRepinError("the named query answered no replay receipt")
+    result = evaluated.receipt.replay.result
+    if result.verdict != "completed":
+        raise ProjectionRepinError("a refused query cannot back a declared projection block")
+    if result.truncation.clipped_budgets:
+        raise ProjectionRepinError("a truncated query cannot back a declared projection block")
+    bindings = tuple(
+        ProjectionResolvedParameterBinding.model_validate(item.model_dump(mode="json"))
+        for item in result.parameters
+    )
+    backing = ProjectionQueryBacking(
+        identity=ArtifactIdentity(kind="QueryDefinition", name=bare),
+        definition_digest=evaluated.receipt.spec_digest,
+        resolved_parameter_bindings=bindings,
+        canonical_param_digest=projection_parameter_digest(bindings),
+        declared_evaluation_time=evaluation_time,
+        semantic_result_digest=projection_query_semantic_result_digest(result),
+    )
+    return backing, tuple(result.rows)
+
+
+def _digest(content: bytes) -> str:
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _relative_path(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ProjectionSyncError(f"file path escapes workspace: {path}") from exc
+
+
+def _result(items: Sequence[BlockSyncItem]) -> BlockSyncResult:
+    ordered = tuple(
+        sorted(
+            items,
+            key=lambda item: (
+                item.path.encode("utf-8"),
+                (item.source_id or "").encode("utf-8"),
+                (item.block_id or "").encode("utf-8"),
+                item.outcome.encode("ascii"),
+            ),
+        )
+    )
+    return BlockSyncResult(
+        items=ordered,
+        changed_file_count=len(
+            {item.path for item in ordered if item.outcome in {"detached", "rendered"}}
+        ),
+        would_change=any(
+            item.outcome in {"detached", "would_detach", "rendered"} for item in ordered
+        ),
+        has_refusals=any(item.blocking for item in ordered),
+    )
+
+
+def _workspace_binding(root: Path) -> WorkspaceBinding | None:
+    path = workspace_path(root, "coverage.json")
+    if not path.is_file():
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(root):
+            raise ProjectionSyncError("workspace coverage binding escapes the workspace")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return WorkspaceBinding.model_validate(payload)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProjectionSyncError(f"workspace coverage binding is invalid: {exc}") from exc
+
+
+def _marker_line(content: bytes) -> int:
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        if b"cruxible:block:" in line:
+            return line_number
+    return 1
+
+
+def _marker_error_item(
+    *,
+    root: Path,
+    path: Path,
+    content: bytes,
+    error: Exception,
+) -> BlockSyncItem:
+    relative = _relative_path(root, path)
+    if isinstance(error, ProjectionProcessingLimitExceeded):
+        return BlockSyncItem(
+            path=relative,
+            outcome="refused",
+            reason="projection_processing_incomplete",
+            detail={
+                "status": "incomplete",
+                "observed_bytes": error.observed,
+                "max_bytes": error.limit,
+                "message": str(error),
+            },
+        )
+    return BlockSyncItem(
+        path=relative,
+        outcome="refused",
+        reason="block_marker_malformed",
+        detail={
+            "message": str(error),
+            "target": f"{relative}:{_marker_line(content)}",
+            "required_change": "restore_projection_marker_grammar",
+            "documentation": "docs/cli-reference.md#projection-block-markers",
+        },
+    )
+
+
+def _not_a_projection_target_item(
+    *,
+    root: Path,
+    path: Path,
+    content: bytes,
+    error: Exception,
+    source_id: str | None = None,
+) -> BlockSyncItem:
+    """Note a discovered file that does not declare a projection block.
+
+    Nothing in a workspace announces which files are projection pages, so a
+    workspace-wide sync infers them from the marker bytes -- and captured prose
+    ABOUT the marker grammar carries those bytes verbatim. Parsing such a file
+    produced a refusal whose only repair was to hand-edit it, which is exactly
+    the repair a capture of accepted bytes cannot take, and the refusal then
+    turned every lawful activation that runs the same walk into a non-zero exit.
+    A file with no declaration at all is not a projection target, so the
+    inferred walk notes it and moves on.
+
+    ONLY that file. A page that declares a block and declares it badly -- a
+    stamped page whose closing marker was deleted, one repeating a block
+    identity -- is a projection target with a defect, and skipping it would hide
+    a real defect behind a clean exit code until somebody happened to name that
+    path. `declares_projection_block` draws the line, and this item is reachable
+    only on its false side.
+    """
+
+    relative = _relative_path(root, path)
+    return BlockSyncItem(
+        path=relative,
+        source_id=source_id,
+        outcome="skipped",
+        reason="source_not_projection_target",
+        detail={
+            "message": str(error),
+            "target": f"{relative}:{_marker_line(content)}",
+            "required_change": "name_the_path_explicitly_if_it_declares_a_projection_block",
+        },
+    )
+
+
+def _discover_source(
+    *,
+    root: Path,
+    path: Path,
+    inferred: bool = False,
+) -> tuple[str | None, BlockSyncItem | None]:
+    content = b""
+    try:
+        if path.is_symlink():
+            raise ProjectionSyncError("file path must not be a symbolic link")
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            raise ProjectionSyncError("file path escapes the workspace or is not a file")
+    except (OSError, ProjectionSyncError) as exc:
+        return None, BlockSyncItem(
+            path=path.name or ".",
+            outcome="refused",
+            reason="source_path_invalid",
+            detail={"message": str(exc)},
+        )
+    try:
+        content = read_projection_source(resolved)
+    except (OSError, ProjectionProcessingLimitExceeded) as exc:
+        return None, _marker_error_item(
+            root=root,
+            path=resolved,
+            content=content,
+            error=exc,
+        )
+    try:
+        blocks = discover_projection_blocks(
+            content, manifests=load_projection_manifests(root, content)
+        )
+        source_ids = {block.source_id for block in blocks}
+        if len(source_ids) != 1:
+            raise ProjectionMarkerError("projection markers disagree on file identity")
+        return next(iter(source_ids)), None
+    except ProjectionMarkerError as exc:
+        if inferred and not declares_projection_block(content):
+            return None, _not_a_projection_target_item(
+                root=root,
+                path=resolved,
+                content=content,
+                error=exc,
+            )
+        return None, _marker_error_item(
+            root=root,
+            path=resolved,
+            content=content,
+            error=exc,
+        )
+
+
+def _discover_workspace_sources(
+    root: Path,
+) -> tuple[dict[Path, str], list[BlockSyncItem]]:
+    selected: dict[Path, str] = {}
+    items: list[BlockSyncItem] = []
+    scanned_bytes = 0
+    candidates = sorted(
+        (
+            path
+            for path in root.rglob("*")
+            if not ({".git", ".cruxible"} & set(path.relative_to(root).parts))
+        ),
+        key=lambda path: path.relative_to(root).as_posix().encode("utf-8"),
+    )
+    for path in candidates:
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            size = path.stat().st_size
+            if scanned_bytes + size > projection_processing_policy().max_bytes:
+                items.append(
+                    BlockSyncItem(
+                        path=".",
+                        outcome="refused",
+                        reason="projection_processing_incomplete",
+                        detail={
+                            "status": "incomplete",
+                            "max_bytes": projection_processing_policy().max_bytes,
+                            "message": "workspace marker scan exhausted its processing budget",
+                        },
+                    )
+                )
+                break
+            with path.open("rb") as handle:
+                content = handle.read(projection_processing_policy().max_bytes - scanned_bytes + 1)
+            scanned_bytes += len(content)
+            check_projection_processing_bytes(scanned_bytes)
+        except ProjectionProcessingLimitExceeded as exc:
+            items.append(_marker_error_item(root=root, path=root, content=b"", error=exc))
+            break
+        except OSError:
+            continue
+        if b"cruxible:block:" not in content:
+            continue
+        source_id, error = _discover_source(root=root, path=path, inferred=True)
+        if error is not None:
+            items.append(error)
+        else:
+            assert source_id is not None
+            selected[path.resolve()] = source_id
+    return selected, items
+
+
+def _outside_bytes(content: bytes, spans: Sequence[tuple[int, int]]) -> bytes:
+    chunks: list[bytes] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        chunks.append(content[cursor:start])
+        cursor = end
+    chunks.append(content[cursor:])
+    return b"".join(chunks)
+
+
+def _sync_item_from_read_refusal(
+    *,
+    path: str,
+    source_id: str,
+    block_id: str,
+    stamp: ProjectionBlockStampAny,
+    read: object,
+) -> BlockSyncItem:
+    reason = getattr(read, "reason", None)
+    detail = getattr(read, "detail", None)
+    values: dict[str, object] = {
+        "message": detail or "block sync read refused",
+        "issues": [i.model_dump(mode="json") for i in getattr(read, "issues", ())],
+        "moved_backings": [b.identity.qualified for b in getattr(read, "moved_backings", ())],
+        "assessment_status": getattr(read, "status", None),
+    }
+    repair: ServedRepair | None
+    if reason == "block_backing_retired":
+        retired = {
+            i.identity.qualified
+            for i in getattr(read, "issues", ())
+            if i.reason == "block_backing_retired"
+        }
+        if retired and len(retired) < len(stamp.backing):
+            surviving_claims = [
+                b.identity.name
+                for b in stamp.backing
+                if isinstance(b, ProjectionClaimBacking) and b.identity.qualified not in retired
+            ]
+            repair = RepairOperation(
+                operation="cruxible.block.repin",
+                arguments={
+                    "source_id": source_id,
+                    "block_id": block_id,
+                    **({"claim": surviving_claims} if surviving_claims else {"clear_claims": True}),
+                },
+            )
+        else:
+            repair = RepairOperation(operation="cruxible.block.detach", arguments={"paths": [path]})
+    elif reason == "block_successor_ambiguous":
+        candidates = getattr(read, "successor_candidates", ())
+        values["successor_candidates"] = [
+            candidate.model_dump(mode="json") for candidate in candidates
+        ]
+        repair = RepairOperation(
+            operation="cruxible.block.repin",
+            arguments={
+                "source_id": source_id,
+                "block_id": block_id,
+                "backing_candidates": [candidate.artifact_digest for candidate in candidates],
+            },
+        )
+    else:
+        repair = None
+    mapped = {
+        "block_workspace_instance_mismatch": "workspace_instance_mismatch",
+        "block_backing_missing": "block_backing_missing",
+        "block_backing_changed": "block_backing_changed",
+        "block_backing_overturned": "block_backing_overturned",
+        "block_backing_retired": "block_backing_retired",
+        "block_successor_ambiguous": "block_successor_ambiguous",
+        "block_query_unchecked": "block_query_unchecked",
+    }
+    reason_key = reason if isinstance(reason, str) else ""
+    local_reason = mapped.get(reason_key, "block_backing_changed")
+    return BlockSyncItem.model_validate(
+        {
+            "path": path,
+            "source_id": source_id,
+            "block_id": block_id,
+            "outcome": {"refused": "refused", "unchecked": "unchecked"}.get(
+                str(getattr(read, "status", "")), "stale"
+            ),
+            "reason": local_reason,
+            "repair": None if repair is None else repair.model_dump(mode="python"),
+            "detail": values,
+        }
+    )
+
+
+#: Pages one block observation request carries (the daemon's ceiling).
+_OBSERVE_PAGE_BATCH = 256
+
+
+def declared_block_page(
+    root: Path, *, source_id: str, document_id: str | None, content: bytes
+) -> DeclaredBlockPageObservation:
+    """What one page's bytes declare: each stamped block's summary, and why any were unread."""
+
+    digest = _digest(content)
+    try:
+        blocks = parse_projection_blocks(
+            content,
+            source_id=source_id,
+            allow_bootstrap=True,
+            manifests=load_projection_manifests(root, content),
+        )
+    except (ProjectionMarkerError, ValueError):
+        return DeclaredBlockPageObservation(
+            source_id=source_id,
+            document_id=document_id,
+            observed_source_digest=digest,
+            byte_length=len(content),
+            marker_notes=("projection_marker_invalid",),
+        )
+    return DeclaredBlockPageObservation(
+        source_id=source_id,
+        document_id=document_id,
+        observed_source_digest=digest,
+        byte_length=len(content),
+        marker_summaries=tuple(
+            block.summary()
+            for block in sorted(blocks, key=lambda item: item.block_id.encode("utf-8"))
+            if block.stamp is not None
+        ),
+        marker_notes=(
+            ("projection_block_unstamped",) if any(block.stamp is None for block in blocks) else ()
+        ),
+    )
+
+
+def record_declared_blocks(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    root: Path,
+    sources: WorkspaceFiles | None,
+    pages: Iterable[tuple[Path, str]],
+) -> int:
+    """Record the declared blocks of the pages this call touched, for block-churn detection.
+
+    Block churn is the one detector that needs the workspace, which the daemon
+    never reads; `block sync` and `block repin` send what they read of the
+    pages they touched (never the whole workspace), re-read now so a page they
+    just rewrote is recorded as written. Returns how many pages were sent.
+    """
+
+    observed: list[DeclaredBlockPageObservation] = []
+    for path, source_id in sorted(pages, key=lambda item: item[1].encode("utf-8")):
+        try:
+            content = read_projection_source(path)
+        except (OSError, ProjectionProcessingLimitExceeded):
+            continue
+        document_id: str | None = None
+        if sources is not None:
+            try:
+                document_id = sources.entry_for_file(source_id).document_id
+            except (ValueError, CruxibleError):
+                document_id = None
+        observed.append(
+            declared_block_page(root, source_id=source_id, document_id=document_id, content=content)
+        )
+    for start in range(0, len(observed), _OBSERVE_PAGE_BATCH):
+        client.observe_blocks(instance_id, pages=observed[start : start + _OBSERVE_PAGE_BATCH])
+    return len(observed)
+
+
+def _rendered_from_its_query(
+    client: CruxibleClient, instance_id: str, block: ParsedProjectionBlock
+) -> bool:
+    """Whether this block's body is its one query's rendering at the stamp it carries.
+
+    A rendered block (`block repin --render`) is a projection of state, so a
+    sync may re-render it; prose an author wrote is theirs to re-declare. The
+    bytes decide: the stamp's query, evaluated again at the stamp's own
+    coordinate and evaluation time, must render exactly the stamped body.
+    """
+
+    stamp = block.stamp
+    if stamp is None or block.body_digest != stamp.body_digest or len(stamp.backing) != 1:
+        return False
+    (backing,) = stamp.backing
+    if not isinstance(backing, ProjectionQueryBacking):
+        return False
+    try:
+        _declared, rows = _evaluated_query_backing(
+            client,
+            instance_id,
+            name=backing.identity.name,
+            parameters={item.name: item.value for item in backing.resolved_parameter_bindings},
+            coordinate=stamp.declared_coordinate,
+            evaluation_time=backing.declared_evaluation_time,
+        )
+    except (CoreError, ValueError):
+        # The stamp's coordinate no longer answers the query: nothing proves
+        # the body was rendered, so it stays the author's.
+        return False
+    return stamp.body_digest in {
+        _digest(render_query_block_body(rows)),
+        _digest(_render_query_block_body_v1(rows)),
+    }
+
+
+def sync_projection_blocks(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    workspace: str | Path,
+    paths: Sequence[str | Path] = (),
+    all_files: bool = False,
+    check: bool = False,
+    detach_paths: Sequence[str | Path] = (),
+    observe_preimages: Callable[[Mapping[Path, bytes]], None] | None = None,
+    converge_at: datetime | None = None,
+) -> BlockSyncResult:
+    """Check all dependencies without authoring prose. Only ``detach_paths`` edits files.
+
+    ``observe_preimages``, when given, is called once with the exact bytes of
+    every page this call read, after every read and before any write. Each
+    detach then replaces a page only if it still holds exactly those bytes
+    (a whole-file compare-and-swap), so a caller that pins its commit to those
+    bytes (R12 ``at``) can raise here and nothing is written.
+
+    ``converge_at`` (`block sync` without ``--check``) also converges what is
+    mechanical: each stale block whose body is its query's rendering is
+    re-rendered from that query at the head, evaluated at ``converge_at``, and
+    repinned (outcome ``rendered``); stale prose is still only reported. The
+    declared blocks of every page checked are then recorded for block-churn
+    detection. Without it the call writes nothing.
+    """
+
+    root = ensure_workspace_directory(Path(workspace).expanduser().resolve())
+    try:
+        binding = _workspace_binding(root)
+    except ProjectionSyncError as exc:
+        return _result(
+            (
+                BlockSyncItem(
+                    path=".cruxible/coverage.json",
+                    outcome="refused",
+                    reason="workspace_binding_invalid",
+                    detail={"message": str(exc)},
+                ),
+            )
+        )
+    if binding is None or not binding.attached:
+        return _result(
+            (
+                BlockSyncItem(
+                    path=".",
+                    outcome="refused",
+                    reason="workspace_not_attached",
+                    detail={"binding": ".cruxible/coverage.json"},
+                ),
+            )
+        )
+    if binding.instance_id != instance_id:
+        return _result(
+            (
+                BlockSyncItem(
+                    path=".",
+                    outcome="refused",
+                    reason="workspace_instance_mismatch",
+                    detail={
+                        "workspace_instance_id": binding.instance_id,
+                        "selected_instance_id": instance_id,
+                    },
+                ),
+            )
+        )
+    if all_files and (paths or detach_paths):
+        raise ProjectionSyncError("--all cannot be combined with explicit or detached paths")
+    if paths and detach_paths:
+        raise ProjectionSyncError("checked paths cannot be combined with detached paths")
+    selected: dict[Path, str] = {}
+    items: list[BlockSyncItem] = []
+    requested = tuple(detach_paths or paths)
+    refuse_legacy_file_catalogs(root)
+    catalog_paths = tuple(
+        path for path in (workspace_path(root, "files.yaml"), root / "files.yaml") if path.is_file()
+    )
+    sources: WorkspaceFiles | None = None
+    if catalog_paths:
+        try:
+            sources = WorkspaceFiles(root)
+        except (ValueError, CruxibleError) as exc:
+            return _result(
+                (
+                    BlockSyncItem(
+                        path=".cruxible/files.yaml",
+                        outcome="refused",
+                        reason="workspace_file_catalog_invalid",
+                        detail={"message": str(exc)},
+                    ),
+                )
+            )
+    if all_files and sources is None:
+        selected, items = _discover_workspace_sources(root)
+    elif all_files:
+        assert sources is not None
+        for entry in sources.file_entries:
+            try:
+                selected[sources.path_for_file(entry.name)] = entry.name
+            except (ValueError, CruxibleError) as exc:
+                items.append(
+                    BlockSyncItem(
+                        path=entry.locator,
+                        source_id=entry.name,
+                        outcome="refused",
+                        reason="source_path_invalid",
+                        detail={"message": str(exc)},
+                    )
+                )
+    else:
+        if not requested:
+            raise ProjectionSyncError("block sync requires --all or at least one path")
+        for requested_path in requested:
+            if sources is None:
+                unresolved = Path(requested_path)
+                path = (unresolved if unresolved.is_absolute() else root / unresolved).expanduser()
+                source_id, error = _discover_source(root=root, path=path)
+                if error is not None:
+                    items.append(error)
+                    continue
+                assert source_id is not None
+                selected[path.resolve()] = source_id
+            else:
+                try:
+                    source = sources.select(requested_path)
+                except ValueError as exc:
+                    display = str(requested_path)
+                    items.append(
+                        BlockSyncItem(
+                            path=display,
+                            outcome="refused",
+                            reason="source_path_invalid",
+                            detail={"message": str(exc)},
+                        )
+                    )
+                    continue
+                selected[source.path] = source.source_id
+    detach = bool(detach_paths)
+    if converge_at is not None and detach:
+        raise ProjectionSyncError("detaching blocks converges nothing else")
+    prepared: list[tuple[Path, str, bytes, tuple[ParsedProjectionBlock, ...]]] = []
+    # Stale blocks a converging sync may re-render: (item index, source, block).
+    stale_rendered: list[tuple[int, str, ParsedProjectionBlock]] = []
+    for path, source_id in sorted(selected.items(), key=lambda item: item[1].encode("utf-8")):
+        relative = _relative_path(root, path)
+        content = b""
+        try:
+            content = read_projection_source(path)
+        except (OSError, ProjectionProcessingLimitExceeded) as exc:
+            items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
+            continue
+        try:
+            blocks = parse_projection_blocks(
+                content,
+                source_id=source_id,
+                allow_bootstrap=True,
+                manifests=load_projection_manifests(root, content),
+            )
+        except ProjectionMarkerError as exc:
+            # `--all` walks the whole catalog, and a catalogued file is a
+            # source, not necessarily a projection page: a captured report ABOUT
+            # the marker grammar carries the marker bytes verbatim and is exact
+            # accepted bytes, so "hand edit it" is the one repair it cannot
+            # take. An inferred selection notes such a source and moves on; a
+            # path the caller named still refuses, because there the caller
+            # asserted that this file declares a block.
+            #
+            # The selection mode is only half the question. A catalogued page
+            # that DOES declare a block and declares it badly is a projection
+            # target with a defect, and it refuses here too -- otherwise a real
+            # marker defect is hidden from `--all`, and from the sync every
+            # activation runs as its last step, behind a zero exit code.
+            if all_files and not declares_projection_block(content):
+                items.append(
+                    _not_a_projection_target_item(
+                        root=root,
+                        path=path,
+                        content=content,
+                        error=exc,
+                        source_id=source_id,
+                    )
+                )
+                continue
+            items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
+            continue
+        prepared.append((path, source_id, content, tuple(blocks)))
+    if observe_preimages is not None:
+        observe_preimages({path: content for path, _, content, _ in prepared})
+    stamps = tuple(
+        block.stamp for _, _, _, blocks in prepared for block in blocks if block.stamp is not None
+    )
+    checked = (
+        client.check_projection_blocks(instance_id, request=ProjectionCheckRequest(stamps=stamps))
+        if stamps
+        else None
+    )
+    if checked is not None and len(checked.results) != len(stamps):
+        raise ProjectionSyncError("projection check returned an incomplete batch")
+    results = iter(() if checked is None else checked.results)
+    for path, source_id, content, blocks in prepared:
+        file_item_start = len(items)
+        relative = _relative_path(root, path)
+        replacements: dict[str, bytes] = {}
+        changed_item_indexes: list[int] = []
+        original_spans: list[tuple[int, int]] = []
+        for block in blocks:
+            stamp = block.stamp
+            if stamp is None:
+                items.append(
+                    BlockSyncItem(
+                        path=relative,
+                        source_id=source_id,
+                        block_id=block.block_id,
+                        outcome="skipped",
+                        reason="block_unstamped",
+                        detail={
+                            "message": (
+                                "unstamped draft blocks are not synchronized; the first "
+                                "stamp requires explicit --claim or --query backing refs"
+                            )
+                        },
+                    )
+                )
+                continue
+            if not detach and block.body_digest != stamp.body_digest:
+                items.append(
+                    BlockSyncItem(
+                        path=relative,
+                        source_id=source_id,
+                        block_id=block.block_id,
+                        outcome="dirty",
+                        reason="block_locally_modified",
+                        repair=RepairOperation(
+                            operation="cruxible.block.repin",
+                            arguments={"source_id": source_id, "block_id": block.block_id},
+                        ),
+                        detail={
+                            "last_synced_body_digest": stamp.body_digest,
+                            "observed_body_digest": block.body_digest,
+                        },
+                    )
+                )
+            read = next(results)
+            # A block the instance no longer registers (depublished) is detached
+            # whatever its backings say: depublish then detach is the take-down.
+            unregistered = detach and getattr(read, "registered", None) is False
+            if read.status not in {"current", "successor"} or unregistered:
+                # A foreign block is the case --detach exists for. Stripping a
+                # marker pair and keeping the body between them is a purely
+                # local text edit: it claims no authority over the block, reads
+                # nothing from the instance that published it, and asserts
+                # nothing about it afterwards. Gating it behind the same
+                # instance check as a sync left an operator moving a worktree
+                # between hosts with one named repair -- re-attach this worktree
+                # to the host that published the markers -- which is the exact
+                # opposite of what they were doing, and one hand-written
+                # stripper as the only way through.
+                detachable = unregistered or (
+                    detach
+                    and (
+                        read.reason == "block_workspace_instance_mismatch"
+                        or (
+                            read.reason == "block_backing_retired"
+                            and (
+                                not read.issues
+                                or (
+                                    len(read.issues) == len(stamp.backing)
+                                    and all(
+                                        i.reason == "block_backing_retired" for i in read.issues
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+                if detachable:
+                    replacement = content[block.body_start : block.body_end]
+                    replacements[block.block_id] = replacement
+                    original_spans.append((block.opening_start, block.closing_end))
+                    changed_item_indexes.append(len(items))
+                    items.append(
+                        BlockSyncItem(
+                            path=relative,
+                            source_id=source_id,
+                            block_id=block.block_id,
+                            outcome="would_detach" if check else "detached",
+                            detail={
+                                "body_digest": block.body_digest,
+                                # The stamp records the coordinate it was
+                                # published at and no instance id, so the
+                                # foreign host is named the only way the file
+                                # can name it.
+                                **(
+                                    {"foreign_declared_git_oid": stamp.declared_coordinate.git_oid}
+                                    if read.reason == "block_workspace_instance_mismatch"
+                                    else {}
+                                ),
+                            },
+                        )
+                    )
+                else:
+                    items.append(
+                        _sync_item_from_read_refusal(
+                            path=relative,
+                            source_id=source_id,
+                            block_id=block.block_id,
+                            read=read,
+                            stamp=stamp,
+                        )
+                    )
+                continue
+            if detach:
+                # A live block the instance still publishes: detaching it would
+                # leave a registration `next` reads as a removed marker.
+                items.append(
+                    BlockSyncItem(
+                        path=relative,
+                        source_id=source_id,
+                        block_id=block.block_id,
+                        outcome="refused",
+                        reason="block_still_published",
+                        repair=RepairOperation(
+                            operation="cruxible.block.depublish",
+                            arguments={"source_id": source_id, "block_id": block.block_id},
+                        ),
+                        detail={
+                            "message": (
+                                "the instance still publishes this block; depublish it, then detach"
+                            )
+                        },
+                    )
+                )
+                continue
+            if read.status == "current" and block.body_digest != stamp.body_digest:
+                continue
+            if read.status == "current":
+                items.append(
+                    BlockSyncItem(
+                        path=relative,
+                        source_id=source_id,
+                        block_id=block.block_id,
+                        outcome="unchanged",
+                        detail={
+                            "backing_count": len(stamp.backing),
+                            "coordinate_git_oid": (
+                                None if read.coordinate is None else read.coordinate.git_oid
+                            ),
+                        },
+                    )
+                )
+                continue
+            # A held member moved under the block. No verb converges the prose
+            # -- the author wrote it -- so the row names every member that moved
+            # and the repin that re-declares the list the block still means. A
+            # converging sync re-renders the block instead when its body is a
+            # rendering of its query (checked after every page is read).
+            if converge_at is not None and block.body_digest == stamp.body_digest:
+                stale_rendered.append((len(items), source_id, block))
+            items.append(
+                BlockSyncItem(
+                    path=relative,
+                    source_id=source_id,
+                    block_id=block.block_id,
+                    outcome="stale",
+                    reason="block_backing_changed",
+                    repair=RepairOperation(
+                        operation="cruxible.block.repin",
+                        arguments={"source_id": source_id, "block_id": block.block_id},
+                    ),
+                    detail={
+                        "moved_backings": [
+                            backing.identity.qualified for backing in read.moved_backings
+                        ],
+                        "backing_count": len(stamp.backing),
+                    },
+                )
+            )
+        policies = {b.block_id: b.stamp.currency_policy for b in blocks if b.stamp is not None}
+        items[file_item_start:] = [
+            item.model_copy(update={"currency_policy": policies[item.block_id]})
+            if item.path == relative and item.block_id in policies
+            else item
+            for item in items[file_item_start:]
+        ]
+        if not replacements:
+            continue
+        replacement = content
+        for block in reversed(blocks):
+            block_replacement = replacements.get(block.block_id)
+            if block_replacement is not None:
+                replacement = (
+                    replacement[: block.opening_start]
+                    + block_replacement
+                    + replacement[block.closing_end :]
+                )
+        final_spans: list[tuple[int, int]] = []
+        offset_delta = 0
+        for block in blocks:
+            block_replacement = replacements.get(block.block_id)
+            if block_replacement is None:
+                continue
+            final_start = block.opening_start + offset_delta
+            final_spans.append((final_start, final_start + len(block_replacement)))
+            offset_delta += len(block_replacement) - (block.closing_end - block.opening_start)
+        try:
+            before_outside = _digest(_outside_bytes(content, original_spans))
+            after_outside = _digest(_outside_bytes(replacement, final_spans))
+            if before_outside != after_outside:
+                raise ProjectionSyncError("bytes outside synchronized markers changed")
+            final_blocks = parse_projection_blocks(
+                replacement,
+                source_id=source_id,
+                allow_bootstrap=True,
+                manifests=load_projection_manifests(root, replacement),
+            )
+            # Detachment is the only edit this verb makes. Nothing renders a
+            # block body, so nothing rewrites one, and the only proof left to
+            # take is that the markers this call stripped are gone and every
+            # byte outside them is untouched.
+            final_by_id = {block.block_id: block for block in final_blocks}
+            if set(replacements) & set(final_by_id):
+                raise ProjectionSyncError("detached projection markers remain in the file")
+            for index in changed_item_indexes:
+                items[index] = items[index].model_copy(
+                    update={
+                        "detail": {
+                            **items[index].detail,
+                            "outside_digest_before": before_outside,
+                            "outside_digest_after": after_outside,
+                        }
+                    }
+                )
+        except (KeyError, ProjectionMarkerError, ProjectionSyncError) as exc:
+            for index in changed_item_indexes:
+                items[index] = BlockSyncItem(
+                    path=relative,
+                    source_id=source_id,
+                    block_id=items[index].block_id,
+                    outcome="refused",
+                    reason="block_frame_invalid",
+                    detail={"message": str(exc)},
+                )
+            continue
+        if check:
+            continue
+        try:
+            replace_page_file(path, expected=content, replacement=replacement)
+        except PageWriteError as exc:
+            for index in changed_item_indexes:
+                items[index] = BlockSyncItem(
+                    path=relative,
+                    source_id=source_id,
+                    block_id=items[index].block_id,
+                    outcome="refused",
+                    reason="block_concurrent_edit",
+                    detail={"message": str(exc)},
+                )
+    if converge_at is not None:
+        _converge(client, instance_id, root=root, items=items, stale=stale_rendered, at=converge_at)
+        record_declared_blocks(
+            client,
+            instance_id,
+            root=root,
+            sources=sources,
+            pages=[(path, source_id) for path, source_id, _content, _blocks in prepared],
+        )
+    return _result(items)
+
+
+def _converge(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    root: Path,
+    items: list[BlockSyncItem],
+    stale: Sequence[tuple[int, str, ParsedProjectionBlock]],
+    at: datetime,
+) -> None:
+    """Re-render each stale block whose body is its query's rendering, in place in ``items``."""
+
+    for index, source_id, block in stale:
+        if not _rendered_from_its_query(client, instance_id, block):
+            continue
+        found = items[index]
+        try:
+            stamp = repin_projection_block(
+                client,
+                instance_id,
+                workspace=root,
+                file=source_id,
+                block_id=block.block_id,
+                evaluation_time=at,
+                render=True,
+                record_blocks=False,
+                proved=block,
+            )
+        except ProjectionRepinConflict as exc:
+            # The page moved under this block between its proof and this
+            # write's own read: the edit is real prose, kept exactly as
+            # found, never the stale render the proof was taken from.
+            items[index] = BlockSyncItem(
+                path=found.path,
+                source_id=source_id,
+                block_id=block.block_id,
+                currency_policy=found.currency_policy,
+                outcome="dirty",
+                reason="block_locally_modified",
+                detail={**found.detail, "message": str(exc)},
+            )
+            continue
+        except (ProjectionRepinError, ProjectionMarkerError, CoreError) as exc:
+            items[index] = BlockSyncItem(
+                path=found.path,
+                source_id=source_id,
+                block_id=block.block_id,
+                currency_policy=found.currency_policy,
+                outcome="refused",
+                reason="block_sync_failed",
+                repair=RepairOperation(
+                    operation="cruxible.block.repin",
+                    arguments={"source_id": source_id, "block_id": block.block_id},
+                ),
+                detail={**found.detail, "message": str(exc)},
+            )
+            continue
+        items[index] = BlockSyncItem(
+            path=found.path,
+            source_id=source_id,
+            block_id=block.block_id,
+            currency_policy=found.currency_policy,
+            outcome="rendered",
+            detail={
+                **found.detail,
+                "declared_generation": stamp.declared_generation,
+                "body_digest": stamp.body_digest,
+            },
+        )
+
+
+def repin_projection_block(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    workspace: str | Path,
+    file: str,
+    block_id: str,
+    claims: Sequence[str] | None = None,
+    queries: Sequence[tuple[str, Mapping[str, object]]] | None = None,
+    artifacts: Sequence[ArtifactIdentity] | None = None,
+    currency_policy: ProjectionCurrencyPolicy | None = None,
+    backing_digest: str | None = None,
+    evaluation_time: datetime,
+    coordinate: AcceptedCoordinate | None = None,
+    body: bytes | None = None,
+    compact: bool = True,
+    render: bool = False,
+    dry_run: bool = False,
+    record_blocks: bool = True,
+    proved: ParsedProjectionBlock | None = None,
+) -> ProjectionBlockStamp:
+    """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
+
+    Omitted body preserves prose. ``render`` instead writes the body from the
+    block's one query backing (``render_query_block_body``), so a rendered
+    table or list needs no hand-written prose. Compact markers are the default; their manifests
+    are retained before the page write. Use a reviewed package Document
+    for ledger recovery.
+    The whole-file compare-and-swap preserves concurrent author edits.
+    ``dry_run`` computes and checks the stamp on this same path and stops before
+    the first write: no manifest, no page edit, no declaration (R12).
+    A repin that writes then records the page's declared blocks for
+    block-churn detection (``record_blocks``; a converging sync records its
+    pages once instead).
+    ``proved`` is the block a caller already proved something about (a
+    converging sync proves a rendered block is its query's rendering) before
+    this call made its own read; this read may land after a concurrent edit
+    the proof never saw. When given, this call raises
+    ``ProjectionRepinConflict`` -- writing nothing -- if the block it reads
+    here no longer matches it, rather than silently overwriting the edit with
+    what the stale proof found.
+    """
+
+    if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+        raise ProjectionRepinError("projection repin requires an absolute evaluation time")
+    instant = ensure_utc(evaluation_time)
+    formatted = cast(str, format_datetime(instant))
+    root = ensure_workspace_directory(Path(workspace).resolve())
+    source_id = file
+    sources = WorkspaceFiles(root)
+    path = sources.path_for_file(source_id)
+    content = read_projection_source(path)
+    blocks = parse_projection_blocks(
+        content,
+        source_id=source_id,
+        allow_bootstrap=True,
+        manifests=load_projection_manifests(root, content),
+    )
+    block = next((item for item in blocks if item.block_id == block_id), None)
+    if block is None:
+        raise ProjectionRepinError(f"file {source_id!r} has no block {block_id!r}")
+    if proved is not None and (
+        block.body_digest != proved.body_digest or block.stamp != proved.stamp
+    ):
+        raise ProjectionRepinConflict(source_id=source_id, block_id=block_id)
+
+    previous = () if block.stamp is None else block.stamp.backing
+    claim_refs = (
+        tuple(claims)
+        if claims is not None
+        else tuple(b.identity.name for b in previous if isinstance(b, ProjectionClaimBacking))
+    )
+    query_refs = (
+        tuple(queries)
+        if queries is not None
+        else tuple(
+            (b.identity.name, {p.name: p.value for p in b.resolved_parameter_bindings})
+            for b in previous
+            if isinstance(b, ProjectionQueryBacking)
+        )
+    )
+    artifact_refs = (
+        tuple(artifacts)
+        if artifacts is not None
+        else tuple(b.identity for b in previous if isinstance(b, ProjectionArtifactBacking))
+    )
+    if backing_digest is not None and any(x is not None for x in (claims, queries, artifacts)):
+        raise ProjectionRepinError("--backing cannot be combined with replacement backing refs")
+    if not claim_refs and not query_refs and not artifact_refs:
+        raise ProjectionRepinError("a block declaration requires at least one explicit backing")
+    if render and (body is not None or backing_digest is not None or len(query_refs) != 1):
+        raise ProjectionRepinError(
+            "--render writes the body from exactly one query backing; it takes no explicit "
+            "body or --backing"
+        )
+    rendered: bytes | None = None
+
+    if backing_digest is not None:
+        if block.stamp is None:
+            raise ProjectionRepinError("--backing requires an existing stamped block")
+        selected = client.read_block_sync_backing(
+            instance_id,
+            request=BlockSyncReadRequest(
+                stamp=block.stamp,
+                preferred_successor_digest=backing_digest,
+                at=coordinate,
+                evaluation_time=instant,
+            ),
+        )
+        if selected.status not in {"current", "successor"} or not selected.current_backings:
+            raise ProjectionRepinError(
+                selected.detail or "the requested backing digest is not a live successor"
+            )
+        assert selected.coordinate is not None
+        assert selected.generation is not None
+        active = selected.coordinate
+        generation = selected.generation
+        backing: list[ProjectionBacking] = list(selected.current_backings)
+    else:
+        head = client.head(
+            instance_id,
+            at=None if coordinate is None else coordinate.model_dump(mode="json"),
+        )
+        active = AcceptedCoordinate.model_validate(head.coordinate.model_dump(mode="json"))
+        if coordinate is not None and active != coordinate:
+            raise ProjectionRepinError("the head read returned a different accepted coordinate")
+        generation = head.generation
+
+        backing = list(
+            _claim_backings(
+                client,
+                instance_id,
+                names=claim_refs,
+                coordinate=active,
+                evaluation_time=formatted,
+            )
+        )
+        for name, parameters in query_refs:
+            query_backing, rows = _evaluated_query_backing(
+                client,
+                instance_id,
+                name=name,
+                parameters=parameters,
+                coordinate=active,
+                evaluation_time=instant,
+            )
+            backing.append(query_backing)
+            if render:
+                rendered = render_query_block_body(rows)
+        for identity in artifact_refs:
+            if identity.kind == "ClaimType":
+                type_proof = _proof(
+                    client, instance_id, f"ClaimType:{identity.name}", coordinate=active
+                )
+                artifact_digest = str(type_proof["artifact_digest"])
+            elif identity.kind == "Subject" and "/" in identity.name:
+                subject_proof = _proof(client, instance_id, identity.name, coordinate=active)
+                envelope = subject_proof["envelope"]
+                assert isinstance(envelope, Mapping)
+                artifact_digest = str(envelope["artifact_digest"])
+            else:
+                raise ProjectionRepinError("artifact backing must be a Subject or ClaimType")
+            backing.append(
+                ProjectionArtifactBacking(identity=identity, artifact_digest=artifact_digest)
+            )
+    body = rendered if rendered is not None else body
+    body_content = content[block.body_start : block.body_end] if body is None else body
+    if not body_content.endswith(b"\n"):
+        raise ProjectionRepinError("projection body must end with LF")
+    stamp = ProjectionBlockStamp(
+        source_id=source_id,
+        block_id=block_id,
+        declared_generation=generation,
+        declared_coordinate=active,
+        backing=tuple(sorted(backing, key=lambda item: item.identity.qualified.encode("utf-8"))),
+        body_digest=_digest(body_content),
+        currency_policy=currency_policy or (block.stamp.currency_policy if block.stamp else "warn"),
+    )
+    compact = compact or b":ref:" in content[block.opening_start : block.opening_end]
+    manifests = load_projection_manifests(root, content)
+    if compact:
+        digest, manifest = projection_manifest(stamp)
+        manifests[digest] = manifest
+    replacement = (
+        content[: block.opening_start]
+        + (
+            render_compact_projection_opening(stamp)
+            if compact
+            else render_projection_opening(stamp)
+        )
+        + body_content
+        + content[block.body_end :]
+    )
+    referenced = {
+        resolve_projection_manifest_digest(ref, manifests)
+        for ref in projection_manifest_refs(replacement)
+    }
+    manifests = {key: manifests[key] for key in referenced}
+    try:
+        assert_projection_block_frame(
+            replacement,
+            source_id=source_id,
+            block_id=block_id,
+            stamp=stamp,
+            body_digest=stamp.body_digest,
+            allow_bootstrap=True,
+            manifests=manifests,
+        )
+    except ProjectionMarkerError as exc:
+        raise ProjectionRepinError("replacement does not reproduce the declared block") from exc
+    if dry_run:
+        return stamp
+    retain_local_manifests(root, manifests)
+    load_projection_manifests(root, replacement)
+    try:
+        replace_page_file(path, expected=content, replacement=replacement)
+    except PageWriteError as exc:
+        raise ProjectionRepinError(str(exc)) from exc
+    # The page now carries a marker this instance has never heard of. A block
+    # was known to the instance only if the retired publication road minted it,
+    # so "is this marker sanctioned?" was answered by a string prefix and
+    # `workspace detach` could not refuse on a block an agent declared. The
+    # declaration is recorded after the write, because a registration for a
+    # marker that never landed would be the same lie in the other direction.
+    client.declare_block(instance_id, stamp.model_dump(mode="json"))
+    if record_blocks:
+        record_declared_blocks(
+            client, instance_id, root=root, sources=sources, pages=((path, source_id),)
+        )
+    return stamp
+
+
+__all__ = [
+    "ParsedProjectionBlock",
+    "ProjectionIndependentEvidenceForbidden",
+    "ProjectionMarkerError",
+    "ProjectionRepinConflict",
+    "ProjectionRepinError",
+    "ProjectionSyncError",
+    "assert_independent_projection_evidence",
+    "frame_projection_block",
+    "parse_projection_blocks",
+    "render_projection_opening",
+    "render_query_block_body",
+    "declared_block_page",
+    "record_declared_blocks",
+    "repin_projection_block",
+    "sync_projection_blocks",
+]

@@ -1,0 +1,2125 @@
+{
+  "cells": [
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 259809,
+          "blobs_read": 78,
+          "git_invocations": 31,
+          "journal_appends": 15,
+          "journal_bytes": 31663,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.05783120897831395,
+            "execute": 0.9903642080025747,
+            "item_closure": 0.005901416996493936,
+            "line_total": 1.0481954169808887,
+            "lowering": 0.010604333016090095,
+            "manager_inspect": 0.0035439589992165565,
+            "proposal_submit": 0.8757180419634096,
+            "provider": 0.008597000036388636,
+            "receipt_persist": 0.013756957952864468,
+            "source_read": 0.00040233402978628874
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 138100736,
+        "proposal_delivered": true,
+        "run_id": "RUN-0cc8b2a34fa3d3c0e47a0cf1fd5260ae7915a4ae356bccb94b22d05a36ed8d0d",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 5,
+      "history": 0,
+      "items": 1,
+      "population": 0,
+      "setup_seconds": {
+        "history": 5.830079317092896e-07,
+        "population": 3.3300602808594704e-07,
+        "total": 6.466223374998663,
+        "workload": 1.8398694589850493,
+        "world": 4.626219792000484
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 173206,
+            "blobs_read": 52,
+            "git_invocations": 31,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.02504612400662154,
+              "execute": 1.071745708992239,
+              "item_closure": 0.009462499991059303,
+              "line_total": 1.0967918329988606,
+              "lowering": 0.014993333024904132,
+              "manager_inspect": 0.003403250011615455,
+              "proposal_submit": 0.8853134170058183,
+              "provider": 0.016575084009673446,
+              "receipt_persist": 0.021264916053041816,
+              "source_read": 0.0003675839980132878
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138100736,
+          "proposal_delivered": true,
+          "run_id": "RUN-857f541908ff842127dee2224bca4bebbb823c1123c73f5f5503c27f4c655201",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 173206,
+            "blobs_read": 52,
+            "git_invocations": 33,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.031178042059764266,
+              "execute": 1.174056916963309,
+              "item_closure": 0.013443542004097253,
+              "line_total": 1.2052349590230733,
+              "lowering": 0.019762041978538036,
+              "manager_inspect": 0.0034161669900640845,
+              "proposal_submit": 0.9119294170523062,
+              "provider": 0.024827125016599894,
+              "receipt_persist": 0.03048170800320804,
+              "source_read": 0.00036395800998434424
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138100736,
+          "proposal_delivered": true,
+          "run_id": "RUN-3f1f73dd85a7f975a60a562beedb0d884ea541c9b94d1d770f8537819bb554e9",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 173206,
+            "blobs_read": 52,
+            "git_invocations": 35,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03829549899091944,
+              "execute": 1.3116066670045257,
+              "item_closure": 0.017396333045326173,
+              "line_total": 1.349902165995445,
+              "lowering": 0.025411457987502217,
+              "manager_inspect": 0.0035926669952459633,
+              "proposal_submit": 0.9814341659657657,
+              "provider": 0.032562708016484976,
+              "receipt_persist": 0.03713520895689726,
+              "source_read": 0.0003162909997627139
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138100736,
+          "proposal_delivered": true,
+          "run_id": "RUN-24c3b3ba94f34fddfeee9fbe50e028a15690485808b64cbc797458ccce98bbcb",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 173206,
+            "blobs_read": 52,
+            "git_invocations": 37,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.09126845799619332,
+              "execute": 1.337241458997596,
+              "item_closure": 0.021836625004652888,
+              "line_total": 1.4285099169937894,
+              "lowering": 0.03156624996336177,
+              "manager_inspect": 0.0038250419893302023,
+              "proposal_submit": 0.9133323749992996,
+              "provider": 0.04154187499079853,
+              "receipt_persist": 0.046064042078796774,
+              "source_read": 0.0002750830026343465
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138100736,
+          "proposal_delivered": true,
+          "run_id": "RUN-11440cbf3fd2bca2c25a7d96cda5f356b48836e21cb9f11231a6bf9b21fe6a43",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 763124,
+            "blobs_read": 222,
+            "git_invocations": 72,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.054114250000566244,
+              "execute": 1.5950141660287045,
+              "item_closure": 0.0416739170323126,
+              "line_total": 1.6491284160292707,
+              "lowering": 0.03691283398075029,
+              "manager_activate": 1.1392951249727048,
+              "manager_inspect": 0.0044274579850025475,
+              "manager_readback": 0.04081116704037413,
+              "proposal_submit": 1.0798320419853553,
+              "provider": 0.05001050001010299,
+              "receipt_persist": 0.053895915974862874,
+              "source_read": 0.0005051670013926923
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 138100736,
+          "proposal_delivered": true,
+          "run_id": "RUN-d929ef26b476c0b31d8bdccf35312c57fe84affd37e6a2111ec133735133088e",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 299289,
+          "blobs_read": 78,
+          "git_invocations": 31,
+          "journal_appends": 22,
+          "journal_bytes": 59342,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.06546575005631894,
+            "execute": 1.1548103749519214,
+            "item_closure": 0.05376616702415049,
+            "line_total": 1.2202761250082403,
+            "lowering": 0.09407837502658367,
+            "manager_inspect": 0.008294874976854771,
+            "proposal_submit": 0.8952350420295261,
+            "provider": 0.009066292026545852,
+            "receipt_persist": 0.017693417030386627,
+            "source_read": 0.00040620798245072365
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 139051008,
+        "proposal_delivered": true,
+        "run_id": "RUN-cb25381b4d33e98dc31542551c47bbac6385459a78b598a7934d28cb804d514b",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 5,
+      "history": 0,
+      "items": 8,
+      "population": 0,
+      "setup_seconds": {
+        "history": 5.00003807246685e-07,
+        "population": 4.5902561396360397e-07,
+        "total": 6.714829707983881,
+        "workload": 1.9795589160057716,
+        "world": 4.735135875002015
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 199526,
+            "blobs_read": 52,
+            "git_invocations": 31,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.030240541032981128,
+              "execute": 1.328828459023498,
+              "item_closure": 0.095902125001885,
+              "line_total": 1.3590690000564791,
+              "lowering": 0.13862733298446983,
+              "manager_inspect": 0.008134124975185841,
+              "proposal_submit": 0.8971776670077816,
+              "provider": 0.01870245800819248,
+              "receipt_persist": 0.028918083000462502,
+              "source_read": 0.0003422090085223317
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 139051008,
+          "proposal_delivered": true,
+          "run_id": "RUN-059f112fc593994a2327827a8d2afec0d3b0af13ef625fdf9ffb8d15adf76345",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 199526,
+            "blobs_read": 52,
+            "git_invocations": 33,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03798175003612414,
+              "execute": 1.5998589999508113,
+              "item_closure": 0.19303458300419152,
+              "line_total": 1.6378407499869354,
+              "lowering": 0.19829500000923872,
+              "manager_inspect": 0.007575083989650011,
+              "proposal_submit": 0.9358299999730662,
+              "provider": 0.030550124996807426,
+              "receipt_persist": 0.03770687500946224,
+              "source_read": 0.00025795900728553534
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 139051008,
+          "proposal_delivered": true,
+          "run_id": "RUN-135deca346a0c068d98c7a9033177bf7b6fda0738564d8217e73e8551df60691",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 199526,
+            "blobs_read": 52,
+            "git_invocations": 35,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04747587494784966,
+              "execute": 1.8954249170492403,
+              "item_closure": 0.1788357500336133,
+              "line_total": 1.94290079199709,
+              "lowering": 0.26486545900115743,
+              "manager_inspect": 0.00800949998665601,
+              "proposal_submit": 1.0751376249827445,
+              "provider": 0.04352908401051536,
+              "receipt_persist": 0.05342145898612216,
+              "source_read": 0.00045074999798089266
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 139051008,
+          "proposal_delivered": true,
+          "run_id": "RUN-f2d2443b41e789f013e0f61a6f44d8a383db1b021a712755b8fbf899649bb3bf",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 199526,
+            "blobs_read": 52,
+            "git_invocations": 37,
+            "journal_appends": 22,
+            "journal_bytes": 59356,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.0596610420034267,
+              "execute": 2.070092707988806,
+              "item_closure": 0.23910345800686628,
+              "line_total": 2.1297537499922328,
+              "lowering": 0.3076885000336915,
+              "manager_inspect": 0.009472792036831379,
+              "proposal_submit": 1.046746833017096,
+              "provider": 0.05326416704338044,
+              "receipt_persist": 0.05948120797984302,
+              "source_read": 0.00030512502416968346
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 139051008,
+          "proposal_delivered": true,
+          "run_id": "RUN-05d437bd8387e6b6f393b49b87ff1d3d112412d1b560418e83bf0bb1e14391fe",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1309712,
+            "blobs_read": 292,
+            "git_invocations": 72,
+            "journal_appends": 22,
+            "journal_bytes": 59358,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.07477454200852662,
+              "execute": 2.6189155409811065,
+              "item_closure": 0.29791187500813976,
+              "line_total": 2.693690082989633,
+              "lowering": 0.4090208330308087,
+              "manager_activate": 1.2644399169948883,
+              "manager_inspect": 0.00824558304157108,
+              "manager_readback": 0.03579429199453443,
+              "proposal_submit": 1.2703159170341678,
+              "provider": 0.06720699998550117,
+              "receipt_persist": 0.11722437397111207,
+              "source_read": 0.0003333750064484775
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 139051008,
+          "proposal_delivered": true,
+          "run_id": "RUN-900d1586eeb736144c4d753b2fb5b86f094aa66bf58465d04dd676d45ed8a4ec",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 628161,
+          "blobs_read": 348,
+          "git_invocations": 91,
+          "journal_appends": 15,
+          "journal_bytes": 31664,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.06817554199369624,
+            "execute": 2.05250370799331,
+            "item_closure": 0.005644208053126931,
+            "line_total": 2.120679249987006,
+            "lowering": 0.010676082980353385,
+            "manager_inspect": 0.005452791985590011,
+            "proposal_submit": 1.9345897909952328,
+            "provider": 0.008992208982817829,
+            "receipt_persist": 0.013547083013691008,
+            "source_read": 0.0005355830071493983
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 138067968,
+        "proposal_delivered": true,
+        "run_id": "RUN-41873b4bd08cf3489f1d8c2eedd5c2f9b19520ebf9c5bc51e87267d3e736b1c7",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 35,
+      "history": 30,
+      "items": 1,
+      "population": 0,
+      "setup_seconds": {
+        "history": 72.85462358401855,
+        "population": 3.33995558321476e-07,
+        "total": 79.43863899999997,
+        "workload": 1.8550724160159007,
+        "world": 4.728771249996498
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 418774,
+            "blobs_read": 232,
+            "git_invocations": 91,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.025419667013920844,
+              "execute": 2.1241282499977387,
+              "item_closure": 0.009999958041589707,
+              "line_total": 2.1495479170116596,
+              "lowering": 0.015455707965884358,
+              "manager_inspect": 0.006077166995964944,
+              "proposal_submit": 1.922645708953496,
+              "provider": 0.022316667018458247,
+              "receipt_persist": 0.02127841702895239,
+              "source_read": 0.0002882080152630806
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138067968,
+          "proposal_delivered": true,
+          "run_id": "RUN-0c20b7ab80734547752306decfb8252c8eb91f0c3c2b610319d58240f94416d0",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 418774,
+            "blobs_read": 232,
+            "git_invocations": 93,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03274424996925518,
+              "execute": 2.2260321660432965,
+              "item_closure": 0.014271583000663668,
+              "line_total": 2.2587764160125516,
+              "lowering": 0.023476457979995757,
+              "manager_inspect": 0.005428791977465153,
+              "proposal_submit": 1.9344253750168718,
+              "provider": 0.0250888749724254,
+              "receipt_persist": 0.03053679200820625,
+              "source_read": 0.00034733302891254425
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138067968,
+          "proposal_delivered": true,
+          "run_id": "RUN-b089e3c85a8608aebd89288e356ac98eaf924bd2db30533c9f8f3421c8089e1c",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 418774,
+            "blobs_read": 232,
+            "git_invocations": 95,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04520029202103615,
+              "execute": 2.326063541986514,
+              "item_closure": 0.017130040971096605,
+              "line_total": 2.37126383400755,
+              "lowering": 0.02590975002385676,
+              "manager_inspect": 0.00561487500090152,
+              "proposal_submit": 1.9942955410224386,
+              "provider": 0.03274400002555922,
+              "receipt_persist": 0.03723291796632111,
+              "source_read": 0.0003064170014113188
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138067968,
+          "proposal_delivered": true,
+          "run_id": "RUN-f99ef82b82bf420f50be3b7077c24dc1cf4ba0e80998224ec6dd6155a146be69",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 418774,
+            "blobs_read": 232,
+            "git_invocations": 97,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04620558302849531,
+              "execute": 2.4063975419849157,
+              "item_closure": 0.02171129104681313,
+              "line_total": 2.452603125013411,
+              "lowering": 0.031368541007395834,
+              "manager_inspect": 0.005452750017866492,
+              "proposal_submit": 1.997108792013023,
+              "provider": 0.041150541976094246,
+              "receipt_persist": 0.045838915975764394,
+              "source_read": 0.00035291595850139856
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 138067968,
+          "proposal_delivered": true,
+          "run_id": "RUN-fbf02ceaf15228b747db694ef43a8488fdddf72f1c7d4383f7dc03991bdf62a9",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1745400,
+            "blobs_read": 942,
+            "git_invocations": 132,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05006620800122619,
+              "execute": 2.62485075002769,
+              "item_closure": 0.025532458035741,
+              "line_total": 2.6749169580289163,
+              "lowering": 0.03599779203068465,
+              "manager_activate": 1.2975424160249531,
+              "manager_inspect": 0.006210791994817555,
+              "manager_readback": 0.04796579200774431,
+              "proposal_submit": 2.1213629160192795,
+              "provider": 0.05127366603119299,
+              "receipt_persist": 0.06051800097338855,
+              "source_read": 0.000356542004738003
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 138067968,
+          "proposal_delivered": true,
+          "run_id": "RUN-98f27f3698474dedd419c712720b388f0449d5a56b8de42cfc31b915cf959b33",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 667641,
+          "blobs_read": 348,
+          "git_invocations": 91,
+          "journal_appends": 22,
+          "journal_bytes": 59342,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.07101566606434062,
+            "execute": 2.20598741696449,
+            "item_closure": 0.05133841698989272,
+            "line_total": 2.2770030830288306,
+            "lowering": 0.0907505420036614,
+            "manager_inspect": 0.016387583047617227,
+            "proposal_submit": 1.9555207500234246,
+            "provider": 0.008456624986138195,
+            "receipt_persist": 0.017942833015695214,
+            "source_read": 0.0006812919746153057
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 140853248,
+        "proposal_delivered": true,
+        "run_id": "RUN-975fd33e752888eb01c5e53c4549ed586aaa196f8354dd51a6281b63898f57e2",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 35,
+      "history": 30,
+      "items": 8,
+      "population": 0,
+      "setup_seconds": {
+        "history": 73.35814562498126,
+        "population": 3.7497375160455704e-07,
+        "total": 79.91921529202955,
+        "workload": 1.9096865000319667,
+        "world": 4.651204666995909
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 445094,
+            "blobs_read": 232,
+            "git_invocations": 91,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03067145898239687,
+              "execute": 2.4441658330033533,
+              "item_closure": 0.09608166699763387,
+              "line_total": 2.47483729198575,
+              "lowering": 0.14454791595926508,
+              "manager_inspect": 0.010700832994189113,
+              "proposal_submit": 2.003031749976799,
+              "provider": 0.0199916249839589,
+              "receipt_persist": 0.029414459073450416,
+              "source_read": 0.0003586670500226319
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 140853248,
+          "proposal_delivered": true,
+          "run_id": "RUN-a0e987e88e01448bedd32642caab7f2af69632cc9d5d7b46f17f6c4c44fc0752",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 445094,
+            "blobs_read": 232,
+            "git_invocations": 93,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.040013375983107835,
+              "execute": 2.7167817080044188,
+              "item_closure": 0.1515946249710396,
+              "line_total": 2.7567950839875266,
+              "lowering": 0.20183595799608156,
+              "manager_inspect": 0.0110064169857651,
+              "proposal_submit": 2.064398208982311,
+              "provider": 0.03370441700099036,
+              "receipt_persist": 0.04196583299199119,
+              "source_read": 0.0003023340250365436
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 140853248,
+          "proposal_delivered": true,
+          "run_id": "RUN-dc08c6a769331bf8737305087775924324ca795f5edf776f3057447cebfe2f27",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 445094,
+            "blobs_read": 232,
+            "git_invocations": 95,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04930654197232798,
+              "execute": 3.0097972080111504,
+              "item_closure": 0.19057304202578962,
+              "line_total": 3.0591037499834783,
+              "lowering": 0.2590157919912599,
+              "manager_inspect": 0.01016941701527685,
+              "proposal_submit": 2.157502000045497,
+              "provider": 0.04489266697783023,
+              "receipt_persist": 0.05993633402977139,
+              "source_read": 0.0003668330027721822
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 140853248,
+          "proposal_delivered": true,
+          "run_id": "RUN-2338e13553e3c6015ae71ef6ae2824e480d2d86ebf5c330ff10575992debc520",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 445094,
+            "blobs_read": 232,
+            "git_invocations": 97,
+            "journal_appends": 22,
+            "journal_bytes": 59356,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.057804498937912285,
+              "execute": 3.4315222920267843,
+              "item_closure": 0.25273633300093934,
+              "line_total": 3.4893267909646966,
+              "lowering": 0.32285045797470957,
+              "manager_inspect": 0.010525249992497265,
+              "proposal_submit": 2.3666046250145882,
+              "provider": 0.055786833981983364,
+              "receipt_persist": 0.06585920799989253,
+              "source_read": 0.0003368749748915434
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 140853248,
+          "proposal_delivered": true,
+          "run_id": "RUN-e33abb04fc85a1f9af035b28714a29bee1a96a6fd23ecbe4f144278885c7d3da",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 2291988,
+            "blobs_read": 1012,
+            "git_invocations": 132,
+            "journal_appends": 22,
+            "journal_bytes": 59358,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.06933274999028072,
+              "execute": 3.4403431250248104,
+              "item_closure": 0.28157254197867587,
+              "line_total": 3.509675875015091,
+              "lowering": 0.38320008403388783,
+              "manager_activate": 1.40148645802401,
+              "manager_inspect": 0.010493249981664121,
+              "manager_readback": 0.050738457997795194,
+              "proposal_submit": 2.198926500044763,
+              "provider": 0.06634362501790747,
+              "receipt_persist": 0.07731020805658773,
+              "source_read": 0.0003638329799287021
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 140853248,
+          "proposal_delivered": true,
+          "run_id": "RUN-da6d2ebb8f876d8bbfad267342b017c5a974852e27f7ee84d6c495a9177d7c9d",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 2328381,
+          "blobs_read": 693,
+          "git_invocations": 113,
+          "journal_appends": 15,
+          "journal_bytes": 31664,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.0917095830081962,
+            "execute": 2.4332761249970645,
+            "item_closure": 0.004924500011838973,
+            "line_total": 2.5249857080052607,
+            "lowering": 0.026670416991692036,
+            "manager_inspect": 0.005588957981672138,
+            "proposal_submit": 2.2993179169716313,
+            "provider": 0.008261459006462246,
+            "receipt_persist": 0.013634667033329606,
+            "source_read": 0.0005221249884925783
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 156991488,
+        "proposal_delivered": true,
+        "run_id": "RUN-a6a9786c803bf20042fb9f65ba20098935fc889ed9c8a2d85e19f8199672114d",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 46,
+      "history": 0,
+      "items": 1,
+      "population": 40,
+      "setup_seconds": {
+        "history": 9.5803989097476e-07,
+        "population": 125.3865726669901,
+        "total": 131.73490858403966,
+        "workload": 1.800766374974046,
+        "world": 4.54746333300136
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 1552254,
+            "blobs_read": 462,
+            "git_invocations": 113,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03172700002323836,
+              "execute": 2.5097139999852516,
+              "item_closure": 0.009403541975189,
+              "line_total": 2.54144100000849,
+              "lowering": 0.02351387497037649,
+              "manager_inspect": 0.0058757500373758376,
+              "proposal_submit": 2.3176039999816567,
+              "provider": 0.016113749996293336,
+              "receipt_persist": 0.021590374934021384,
+              "source_read": 0.00036162498872727156
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 157007872,
+          "proposal_delivered": true,
+          "run_id": "RUN-8cc920046160325caecad754cdfb7ae6f47b48a691cfd6ae3a7a12d03d748198",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1552254,
+            "blobs_read": 462,
+            "git_invocations": 115,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03840679093264043,
+              "execute": 2.644020209030714,
+              "item_closure": 0.012994916003663093,
+              "line_total": 2.6824269999633543,
+              "lowering": 0.028547791996970773,
+              "manager_inspect": 0.006462500023189932,
+              "proposal_submit": 2.378187333000824,
+              "provider": 0.024283208011183888,
+              "receipt_persist": 0.028882251004688442,
+              "source_read": 0.00033366703428328037
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 157024256,
+          "proposal_delivered": true,
+          "run_id": "RUN-93961abd982d57babac659c184e103954346d011dfa97826054d1ad3c19c2bb0",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1552254,
+            "blobs_read": 462,
+            "git_invocations": 117,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04504754097433761,
+              "execute": 2.779886834032368,
+              "item_closure": 0.017200333008076996,
+              "line_total": 2.8249343750067055,
+              "lowering": 0.03389362496091053,
+              "manager_inspect": 0.006285290990490466,
+              "proposal_submit": 2.4400360419531353,
+              "provider": 0.03278354200301692,
+              "receipt_persist": 0.037023707991465926,
+              "source_read": 0.00028783304151147604
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 157040640,
+          "proposal_delivered": true,
+          "run_id": "RUN-f00831bdd82b79c0f2158f622a697fe012ae2fe6d5e0c9b2a2d16fcda2ce745b",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1552254,
+            "blobs_read": 462,
+            "git_invocations": 119,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05264616705244407,
+              "execute": 2.8560310829780065,
+              "item_closure": 0.021041999978478998,
+              "line_total": 2.9086772500304505,
+              "lowering": 0.03973208402749151,
+              "manager_inspect": 0.0060993750230409205,
+              "proposal_submit": 2.4319807499996386,
+              "provider": 0.04107662499882281,
+              "receipt_persist": 0.04569087392883375,
+              "source_read": 0.00032416702015325427
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 157057024,
+          "proposal_delivered": true,
+          "run_id": "RUN-ff664dde84fee469953a0bbf13f6c0ffae07ad8f7029e7e75e39ab65b6b3dcc6",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 6279320,
+            "blobs_read": 1862,
+            "git_invocations": 154,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05871204094728455,
+              "execute": 3.0211518340511248,
+              "item_closure": 0.02556645800359547,
+              "line_total": 3.0798638749984093,
+              "lowering": 0.044375541037879884,
+              "manager_activate": 1.594868290994782,
+              "manager_inspect": 0.005875165981706232,
+              "manager_readback": 0.06354570901021361,
+              "proposal_submit": 2.482860666990746,
+              "provider": 0.049772833997849375,
+              "receipt_persist": 0.05382108403136954,
+              "source_read": 0.00033958302810788155
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 157696000,
+          "proposal_delivered": true,
+          "run_id": "RUN-d97c0c8b5c16476eda24f075f8c94636cf16f221fa5eaa146ca0fe3ce49017c1",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 2367861,
+          "blobs_read": 693,
+          "git_invocations": 113,
+          "journal_appends": 22,
+          "journal_bytes": 59342,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.09324104205006734,
+            "execute": 2.7674056669929996,
+            "item_closure": 0.05007683299481869,
+            "line_total": 2.860646709043067,
+            "lowering": 0.12323345796903595,
+            "manager_inspect": 0.010697999969124794,
+            "proposal_submit": 2.486494707991369,
+            "provider": 0.008395624987315387,
+            "receipt_persist": 0.018181417020969093,
+            "source_read": 0.0005247080116532743
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 156123136,
+        "proposal_delivered": true,
+        "run_id": "RUN-7737214a9abc810b22910d240ebd846c8498aeb826aaf5f1e53030e5d420b14c",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 46,
+      "history": 0,
+      "items": 8,
+      "population": 40,
+      "setup_seconds": {
+        "history": 1.0830117389559746e-06,
+        "population": 124.75262158404803,
+        "total": 131.01464141596807,
+        "workload": 1.821827374980785,
+        "world": 4.440036832995247
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 1578574,
+            "blobs_read": 462,
+            "git_invocations": 113,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03839229204459116,
+              "execute": 3.05212358298013,
+              "item_closure": 0.09744741604663432,
+              "line_total": 3.090515875024721,
+              "lowering": 0.17179024999495596,
+              "manager_inspect": 0.010299000015947968,
+              "proposal_submit": 2.5822645829757676,
+              "provider": 0.02026804198976606,
+              "receipt_persist": 0.030214166035875678,
+              "source_read": 0.0003238749923184514
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 156123136,
+          "proposal_delivered": true,
+          "run_id": "RUN-e9108bf795b3ee4740de686b2296eef10eca6b1011551d4f4d94863cc5966d4c",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1578574,
+            "blobs_read": 462,
+            "git_invocations": 115,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04592129198135808,
+              "execute": 3.21295212500263,
+              "item_closure": 0.1462665839935653,
+              "line_total": 3.258873416983988,
+              "lowering": 0.225288332963828,
+              "manager_inspect": 0.011132790998090059,
+              "proposal_submit": 2.541105541982688,
+              "provider": 0.031273874978069216,
+              "receipt_persist": 0.041458207997493446,
+              "source_read": 0.0003512919647619128
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 156123136,
+          "proposal_delivered": true,
+          "run_id": "RUN-278080da548e1d755f11c84f929a71ac40f8dc278fb2586e920cf6a9ead2d361",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1578574,
+            "blobs_read": 462,
+            "git_invocations": 117,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.059308124997187406,
+              "execute": 3.6316168750054203,
+              "item_closure": 0.1921618749620393,
+              "line_total": 3.6909250000026077,
+              "lowering": 0.39331445802235976,
+              "manager_inspect": 0.011072374996729195,
+              "proposal_submit": 2.6435678750276566,
+              "provider": 0.043948000005912036,
+              "receipt_persist": 0.055104584083892405,
+              "source_read": 0.0003434999962337315
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 156123136,
+          "proposal_delivered": true,
+          "run_id": "RUN-d8dd447074c5be2d7f862aedfc2a7deec43b73e296f0eb575b6144d00d6279f7",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1578574,
+            "blobs_read": 462,
+            "git_invocations": 119,
+            "journal_appends": 22,
+            "journal_bytes": 59356,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.09759666601894423,
+              "execute": 3.686525791999884,
+              "item_closure": 0.23806987499119714,
+              "line_total": 3.784122458018828,
+              "lowering": 0.34534783294657245,
+              "manager_inspect": 0.010889291996136308,
+              "proposal_submit": 2.6030145410331897,
+              "provider": 0.05555762496078387,
+              "receipt_persist": 0.06864729197695851,
+              "source_read": 0.0003430409706197679
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 156123136,
+          "proposal_delivered": true,
+          "run_id": "RUN-08552600ed433ba980cc38ec2b7ea5436fc3df13860af5d09dbb121321d955fd",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 6825908,
+            "blobs_read": 1932,
+            "git_invocations": 154,
+            "journal_appends": 22,
+            "journal_bytes": 59358,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.0748114159796387,
+              "execute": 3.990921917022206,
+              "item_closure": 0.2852564579807222,
+              "line_total": 4.065733333001845,
+              "lowering": 0.3978067919961177,
+              "manager_activate": 1.7654523329692893,
+              "manager_inspect": 0.011167375021614134,
+              "manager_readback": 0.0658850830513984,
+              "proposal_submit": 2.729415666020941,
+              "provider": 0.06647295801667497,
+              "receipt_persist": 0.07592041598400101,
+              "source_read": 0.0003726250142790377
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 156123136,
+          "proposal_delivered": true,
+          "run_id": "RUN-3c2aa4d03d75074ae27c4a0baf7d5de738f06fcb8efceae6a50b69a72313a5a9",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 2696751,
+          "blobs_read": 963,
+          "git_invocations": 173,
+          "journal_appends": 15,
+          "journal_bytes": 31664,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.1614848329918459,
+            "execute": 3.592383124982007,
+            "item_closure": 0.005566208972595632,
+            "line_total": 3.7538679579738528,
+            "lowering": 0.04187745798844844,
+            "manager_inspect": 0.007842083985451609,
+            "proposal_submit": 3.4279522089636885,
+            "provider": 0.009424875024706125,
+            "receipt_persist": 0.013885999971535057,
+            "source_read": 0.0006917500286363065
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 163135488,
+        "proposal_delivered": true,
+        "run_id": "RUN-d438c6d38cc1d31f8859d9c9aad10b4cf2e369b21deaa3e8de155ce5fb0d06c2",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 76,
+      "history": 30,
+      "items": 1,
+      "population": 40,
+      "setup_seconds": {
+        "history": 134.00353204197017,
+        "population": 124.04641316697234,
+        "total": 264.3791282500024,
+        "workload": 1.8309176660259254,
+        "world": 4.498124458012171
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 1797834,
+            "blobs_read": 642,
+            "git_invocations": 173,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03107654198538512,
+              "execute": 3.6361588750150986,
+              "item_closure": 0.009713375009596348,
+              "line_total": 3.6672354170004837,
+              "lowering": 0.02432737499475479,
+              "manager_inspect": 0.0074944160296581686,
+              "proposal_submit": 3.435771584045142,
+              "provider": 0.01645062497118488,
+              "receipt_persist": 0.02157954196445644,
+              "source_read": 0.0003664999967440963
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 163135488,
+          "proposal_delivered": true,
+          "run_id": "RUN-6b03cbccef1be0e9bd31e3b3cfed7628c724fcb35c4c8fab6a9b5a5a7051719a",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1797834,
+            "blobs_read": 642,
+            "git_invocations": 175,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03805604198714718,
+              "execute": 3.9691980829811655,
+              "item_closure": 0.01370966702234,
+              "line_total": 4.007254124968313,
+              "lowering": 0.030289917020127177,
+              "manager_inspect": 0.007975874992553145,
+              "proposal_submit": 3.6999984579742886,
+              "provider": 0.02406070800498128,
+              "receipt_persist": 0.029599374975077808,
+              "source_read": 0.0003376660170033574
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 163135488,
+          "proposal_delivered": true,
+          "run_id": "RUN-9dc26a14c0a083ed539a7ea450843b435fdb2c6254f8446b1906cc975cf93b60",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1797834,
+            "blobs_read": 642,
+            "git_invocations": 177,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04497616703156382,
+              "execute": 3.741587458003778,
+              "item_closure": 0.01770862500416115,
+              "line_total": 3.786563625035342,
+              "lowering": 0.03528470796300098,
+              "manager_inspect": 0.007823624997399747,
+              "proposal_submit": 3.39484712498961,
+              "provider": 0.031618791981600225,
+              "receipt_persist": 0.03715779189951718,
+              "source_read": 0.00035612500505521894
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 163135488,
+          "proposal_delivered": true,
+          "run_id": "RUN-dd43d742a73e22ad361159d7b1aea86c04f63b36e7086a0bafd0e8035b3accbb",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1797834,
+            "blobs_read": 642,
+            "git_invocations": 179,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05212620797101408,
+              "execute": 4.034954583039507,
+              "item_closure": 0.021642624982632697,
+              "line_total": 4.087080791010521,
+              "lowering": 0.0854897090466693,
+              "manager_inspect": 0.007857084041461349,
+              "proposal_submit": 3.5632266249740496,
+              "provider": 0.0399274590308778,
+              "receipt_persist": 0.05436825001379475,
+              "source_read": 0.0003547919914126396
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 163135488,
+          "proposal_delivered": true,
+          "run_id": "RUN-2088c1589c028e6f6c54ccec7943595c8d8da346a8c4c0946c1658b66409a102",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 7261640,
+            "blobs_read": 2582,
+            "git_invocations": 214,
+            "journal_appends": 15,
+            "journal_bytes": 31664,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.059865749964956194,
+              "execute": 4.078993583039846,
+              "item_closure": 0.026016874995548278,
+              "line_total": 4.1388593330048025,
+              "lowering": 0.04540837503736839,
+              "manager_activate": 1.8788940829690546,
+              "manager_inspect": 0.008625833957921714,
+              "manager_readback": 0.07248533301753923,
+              "proposal_submit": 3.5746426670229994,
+              "provider": 0.04992975003551692,
+              "receipt_persist": 0.05509358295239508,
+              "source_read": 0.00031533295987173915
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 163135488,
+          "proposal_delivered": true,
+          "run_id": "RUN-5fb8bea9257405b1835daad0e81d5d36d5dfc5726da28910187ab824e2627dba",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 2736231,
+          "blobs_read": 963,
+          "git_invocations": 173,
+          "journal_appends": 22,
+          "journal_bytes": 59342,
+          "lowerings": 1,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "lowering": 1,
+            "manager_inspect": 1,
+            "proposal_submit": 1,
+            "provider": 1,
+            "receipt_persist": 2,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.10653366602491587,
+            "execute": 3.769749958999455,
+            "item_closure": 0.055015709018334746,
+            "line_total": 3.876283625024371,
+            "lowering": 0.13626179203856736,
+            "manager_inspect": 0.012905041978228837,
+            "proposal_submit": 3.462880957988091,
+            "provider": 0.0104810000048019,
+            "receipt_persist": 0.018604957964271307,
+            "source_read": 0.0006941669853404164
+          },
+          "proposal_submits": 1,
+          "trees_listed": 3
+        },
+        "peak_rss_bytes": 161153024,
+        "proposal_delivered": true,
+        "run_id": "RUN-c2c6c8187a2275bb6cfb4576f949a271398b35c9bd370feeebc9ee05d49edd13",
+        "status": "succeeded",
+        "terminal_code": null
+      },
+      "generations_after_setup": 76,
+      "history": 30,
+      "items": 8,
+      "population": 40,
+      "setup_seconds": {
+        "history": 134.0674248749856,
+        "population": 124.3289175000391,
+        "total": 264.66485604201443,
+        "workload": 1.8648769169813022,
+        "world": 4.403445333999116
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 1824154,
+            "blobs_read": 642,
+            "git_invocations": 173,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03784683399135247,
+              "execute": 4.0054033329943195,
+              "item_closure": 0.09750129200983793,
+              "line_total": 4.043250166985672,
+              "lowering": 0.17871687497245148,
+              "manager_inspect": 0.013045291998423636,
+              "proposal_submit": 3.518926541961264,
+              "provider": 0.02087404200574383,
+              "receipt_persist": 0.029835666995495558,
+              "source_read": 0.0003372920327819884
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 161153024,
+          "proposal_delivered": true,
+          "run_id": "RUN-e385c9ee2a714ec5cc8fc8296fd6a89b84bdd40b88352d3d586ac4e0c4b6521c",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1824154,
+            "blobs_read": 642,
+            "git_invocations": 175,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04659583303146064,
+              "execute": 4.262774333008565,
+              "item_closure": 0.15230483299819753,
+              "line_total": 4.309370166040026,
+              "lowering": 0.23776104202261195,
+              "manager_inspect": 0.012539250019472092,
+              "proposal_submit": 3.571058916975744,
+              "provider": 0.031342375034000725,
+              "receipt_persist": 0.04216395801631734,
+              "source_read": 0.00034920801408588886
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 161153024,
+          "proposal_delivered": true,
+          "run_id": "RUN-21dd1a8dee0ee09dd6caa97df6159d129ade1b5f18e2052592222839d072f5a6",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1824154,
+            "blobs_read": 642,
+            "git_invocations": 177,
+            "journal_appends": 22,
+            "journal_bytes": 59342,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.10688854200998321,
+              "execute": 4.521610499999952,
+              "item_closure": 0.18929591699270532,
+              "line_total": 4.628499042009935,
+              "lowering": 0.2894153749803081,
+              "manager_inspect": 0.012475499999709427,
+              "proposal_submit": 3.6474729999899864,
+              "provider": 0.04350149998208508,
+              "receipt_persist": 0.05354483297560364,
+              "source_read": 0.0003206669935025275
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 161153024,
+          "proposal_delivered": true,
+          "run_id": "RUN-bb6a347b8f69d8a0aff2012a4dbd4f7ab81b5008200e93f5cd78d421dd3ba648",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 1824154,
+            "blobs_read": 642,
+            "git_invocations": 179,
+            "journal_appends": 22,
+            "journal_bytes": 59356,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_inspect": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.06595379096688703,
+              "execute": 4.778585000021849,
+              "item_closure": 0.23760679102269933,
+              "line_total": 4.844538790988736,
+              "lowering": 0.3527079580235295,
+              "manager_inspect": 0.012416292040143162,
+              "proposal_submit": 3.7003072919906117,
+              "provider": 0.054778208024799824,
+              "receipt_persist": 0.06561758398311213,
+              "source_read": 0.0002918749814853072
+            },
+            "proposal_submits": 1,
+            "trees_listed": 2
+          },
+          "peak_rss_bytes": 161153024,
+          "proposal_delivered": true,
+          "run_id": "RUN-963e531f09290c1b3c2c7815c1c882d14a9295d7e668b1692210b788b06ddfce",
+          "status": "succeeded",
+          "terminal_code": null
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 7808228,
+            "blobs_read": 2652,
+            "git_invocations": 214,
+            "journal_appends": 22,
+            "journal_bytes": 59358,
+            "lowerings": 1,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "lowering": 1,
+              "manager_activate": 1,
+              "manager_inspect": 1,
+              "manager_readback": 1,
+              "proposal_submit": 1,
+              "provider": 1,
+              "receipt_persist": 2,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.0752735419664532,
+              "execute": 4.973391583014745,
+              "item_closure": 0.28372108296025544,
+              "line_total": 5.0486651249811985,
+              "lowering": 0.4007448750198819,
+              "manager_activate": 2.0244201670284383,
+              "manager_inspect": 0.012949790980201215,
+              "manager_readback": 0.07735170796513557,
+              "proposal_submit": 3.709516375034582,
+              "provider": 0.06658533401787281,
+              "receipt_persist": 0.07654112501768395,
+              "source_read": 0.00033495802199468017
+            },
+            "proposal_submits": 1,
+            "trees_listed": 9
+          },
+          "peak_rss_bytes": 167870464,
+          "proposal_delivered": true,
+          "run_id": "RUN-dd28074d031e5e9ab92e2015ba53fee8699bac0888aedb9cba0a8bf06f1c89e6",
+          "status": "succeeded",
+          "terminal_code": null
+        }
+      ]
+    }
+  ],
+  "warm": 5
+}

@@ -2,10 +2,1636 @@
 
 ## Unreleased
 
+- **`next` separates setup choices from problems, and says how long a row has
+  been open.** A new severity, `setup`, sorts after `blocking`, `repair` and
+  `warning`: a choice the operator owns rather than something wrong.
+  `line_not_enabled` (a Line accepted but not yet enabled) is the one reason
+  that carries it, so a fresh kit install no longer buries real problems under
+  one warning per Line. `orient` attention counts problems in `next_items` and
+  names them in `top`; setup rows are counted apart in `setup_items`, and the
+  CLI prints `Attention: next=N setup=M ...`. Each row may also carry `since`,
+  when its condition began, read from state that already records it: a Line's
+  acceptance (kept by the Line-upgrade fold when it opens the finding), an
+  upgrade's acceptance, a failed run's finish, a coverage gap's start, the
+  oldest pending match, an attestation, a proposal's admission, a prediction
+  window's close, and, for a conflict, the acceptance of the newest contender
+  or their ClaimType (one index seek per input, and that generation's instant
+  from its record's small memoized facts, never the whole change set). Other
+  reasons leave it out. `since` is not part of `item_id`; a delta carries a
+  kept row whose `since` moved, under the same ID. The queue's own reads stay
+  per row.
+
+- **`orient --section sources`: when each logical source last landed.** One
+  row per logical source runs have landed Captures from, cited or not: how
+  many landings it has, its latest landing (when, the run and Line that
+  landed it, and the Capture's handle, `Capture:` ref, observation time, size
+  and availability, erased included) and the CaptureContract versions they
+  were landed under, each with its count. It reads the same landing records
+  as the activity feed's `capture_landed` events, live at the current head.
+  The Procedure-run journal index keeps per-source landing tallies as it
+  indexes each landing (index schema 9 derives them once from an existing
+  index, keeping its identity), so a page costs its sources, never their
+  landings. Landings whose record can no longer be read are counted as
+  `sources_unattributed`.
+- **Provider interfaces can declare the logical sources they produce.** A v4
+  interface definition takes an optional `produces`: the source names its
+  provider writes on its Captures' `source_identity` (sorted and deduplicated,
+  each a lowercase logical source name). `orient --section interfaces` and
+  `get ProviderInterface:NAME` show it, empty when undeclared. A definition
+  without it keeps its exact bytes and digests; a wheel must list the names
+  sorted, since its interface digest covers its own spelling. The declaration
+  is not yet enforced against what a run stamps.
+- **Old v3 evidence policies keep working after the revision-36 compiler
+  upgrade.** The rule that revision 36 writes v4 identity evidence policies now
+  judges only the ClaimTypes a write creates or changes. Rechecking an
+  unchanged referrer, as the first write after the upgrade does when it
+  installs the v3 coordinator self-source contract, no longer refuses every
+  write with `Broken referrer ClaimType:…`. `cruxible claim-type upgrade`
+  restates each live v3 policy as v4 on revision 36 (`restated` in its result),
+  in the same reviewed change set as any v7 move, carrying every Claim with its
+  backing intact. The restatement admits exactly the same evidence, or the
+  ClaimType is refused with `cruxible.claim_type.policy_restatement_inexact`.
+  `next` reports the compiler facet as `claim_type_upgrade_available` while any
+  ClaimType you authored is pending (the unedited genesis builtins are not
+  counted), and its repair is `cruxible claim-type upgrade`. The refusal for a
+  ClaimType written in the wrong format names `cruxible claim-type upgrade` on
+  revision 36 and `cruxible compiler upgrade` below it.
+- **`orient --section activity`: what just happened, newest first.** One
+  orient section pages accepted generations, Line occurrences and enablement
+  changes, runs started and finished, Captures landed and erased, and inbox
+  items posted and decided, merged newest first, each row an `event` with the
+  `ref` that reads it. It is read live at the current head and pages by key,
+  each source through its own index, so a page costs its rows, never the
+  history. A lost payload lists as an unavailable row. The Line dispatch and
+  inbox projections gain rebuildable activity tables, derived once from the
+  journal on first open.
+- **An activity `run_finished` row says how long the run took.** It carries
+  `elapsed_us`, the attempt's observed wall time from its final record (the
+  run card's measured elapsed), read from the payload the row already decodes
+  for `status`; `at` stays the run's evaluation instant. It is absent when the
+  final payload is lost or records none.
+- **Subject parameters bind whichever form the caller wrote.** A query's Subject
+  parameter now accepts a bare id, `kind/id` or `Subject:kind/id` wherever it is
+  used; a form that cannot match refuses with a repair instead of returning no
+  rows. A receipt whose parameter was spelled in a form that used to match
+  nothing records a different parameter digest, so a measurement that retained
+  that old, always-empty answer no longer re-verifies.
+- **A read-only daemon refuses every run and dispatch.** With
+  `--capability-ceiling read_only`, Line runs, Line dispatch and Procedure runs
+  refuse, observe-only ones included, because each retains a run journal and
+  Captures.
+- **Ledger reads and writes survive live compaction.** A request racing the
+  periodic repack no longer fails with a server error.
+- **The runtime-directory refusal names its byte budget** and a working
+  directory for macOS and Linux.
+
+- **`cruxible instance rebuild-next` repairs the next worker.** An `ADMIN`
+  operator command (and `CruxibleClient.rebuild_next`) drops the `next`
+  worker's facts and Claim rows and derives them again from nothing, clearing
+  the worker's error; a stalled `next` consumer names it as its repair. A body
+  rewritten in place, which no log records, now reaches the Claims that read it
+  at the next daily `evidence.sweep`, which compares the file identity of every
+  body a fact consulted and retries every fact whose derivation failed. `next`
+  reads the kinds with live Subjects and the ProcedureMandates nearing expiry
+  from counts and an expiry index the worker keeps, instead of grouping every
+  Subject and scanning every mandate per read. Reads behind the worker settle
+  its next pass once per pair of positions and replay it, so concurrent reads
+  derive each change once.
+- **The next worker keeps each Claim's facts and rows from what changed.** The
+  `next` worker's `facts` part keeps every Claim's verdict, resolution status,
+  visibility, lineage and citations, and next's Claim rows per key (attestation
+  threshold, slot, new-capture door, stale dependency), and moves them only for
+  the Claims and keys a change reaches: an accepted generation's member paths,
+  attestation door events, body-store landings, re-observations and one
+  `next.expire` deadline armed at the earliest end of any fact or row. `next`
+  at the current heads serves the stored rows, deriving in memory whatever the
+  worker has not yet followed (a read never writes the worker's state), and
+  `orient` counts Claims by status from it while it is current. A read at an
+  earlier coordinate or a pinned door head folds every Claim as before; a page
+  cursor from a read at the heads is refused once either head moves. The
+  whole-queue `queue` part and its per-read body observation are gone. The body store now logs each
+  evidence body that lands and each erase in sequence (`landings.log` in its
+  algorithm directory, written and read through the store's held directory), an
+  intent before the object moves and a completion after; an operation a writer
+  leaves unfinished is settled on its retry, when the store reopens and before
+  every next pass. This replaces the evidence-generation token in the verdict
+  memos. A dependency lineage's 4,096-predecessor budget is now its
+  own rather than shared by every Claim.
+- **Procedures propose Claim retirements.** A `propose_change_set` or
+  `settle_change_set` item may be a retirement
+  (`playbill-procedure-claim-retirement-item-v1`: the Claim ID it `retires`,
+  the retirement `reason`, a required `rationale`, optional
+  `effective_until`), carrying the Claim's live dependent closure and bound by
+  the run's receipt to the retired member. It is reviewed like any proposal;
+  under settle it settles only when the grant's scope lists `retire` for the
+  ClaimType, and otherwise proposes under that grant with
+  `cruxible.settle.outside_mandate_scope` naming the ClaimType. A key Claim
+  retires only with its Subject (`cruxible.procedure.key_claim_retirement`), a
+  Claim not live at the run's state refuses
+  (`cruxible.procedure.retirement_target_not_live`), and retiring a lineage the
+  same terminal revises or dispositions refuses
+  (`cruxible.procedure.retirement_lineage_conflict`).
+- **Each Procedure item keeps its own reason.** A `propose_change_set` or
+  `settle_change_set` item's rationale is recorded with the Claim or Subject it
+  explains (`ProposalItemReason`, up to 16,384 characters, longer ones marked
+  `truncated`) instead of being joined into the change set's 4,096-character
+  rationale, which now names the run and the item count. `proposal review`
+  pages them (`item_reasons`, `--item-reasons-after`, `--item-reasons-limit`;
+  the same fields over HTTP, MCP and the SDK); `get CLM-... --detail why`
+  carries the accepted revision's `reason` with its proposal, Procedure, run and
+  terminal, and `--detail evidence` its `rationale`. Reading one Claim's reason
+  is one record read, whatever the batch size. Provenance only: Captures and
+  citations are unchanged.
+- **Workspace Sources name intent, not transport.** A `workspace.file` Source
+  request (`playbill-workspace-file-source-request-v2`) no longer carries
+  `workspace_binding_digest`: it names the workspace logically (`workspace`,
+  the root's last path component) or not at all -- the instance's attached
+  workspace, else its only authorized root. Several roots and no name refuse
+  `workspace_file_read_refused` with path class `workspace_unnamed`, an unknown
+  or shared name `workspace_unknown`, both listing `workspace_names`. The
+  daemon resolves the root and records its binding digest on the executed
+  request it journals (`playbill-workspace-file-executed-source-request-v2`),
+  the read receipt and the Capture, so provenance is unchanged. An authored
+  request still carrying the digest refuses (path class `binding`); v1 requests
+  in run history still verify. Kits and Procedures that shipped the digest
+  drop it.
+- **Cruxible names every new Subject.** A SubjectKind
+  (`subject_kind` change-set member, `subject-kinds/<kind>.json`, `get
+  SubjectKind:<kind>`, `identity` in `orient`) declares how a kind's Subjects
+  are named: by one or more key ClaimTypes, `unique` or `hint`, or minted. A
+  new Subject must be of a declared kind on every route
+  (`cruxible.subject.kind_undeclared`); existing Subjects of undeclared kinds
+  are grandfathered, and `next` names the SubjectKind to author
+  (`subject_kind_undeclared`). A creation names the kind and key values and
+  core assigns the id: the readable rendering of the canonical key, or a
+  minted `sub-<32 hex>`. Creating by key is one rule everywhere -- no holder
+  creates, one resolves to it, several refuse `key_ambiguous`; `create_new`
+  makes a further holder of a `hint` key. Unique keys are held at candidate
+  evaluation (`cruxible.subject.key_conflict`), so concurrent creations of one
+  key cannot both land. The `subject` input is now the creation shape;
+  `subject_succession` succeeds an existing Subject's shell. Procedure
+  terminals create Subjects with Subject items and name them by key in v3
+  Claim items; settle grants name the kinds they may create
+  (`subject_creation`). The builtin `semantic.distinct_from` ships (new
+  instances seed it; existing ones adopt it with `claim-type propose
+  --builtin`), and the duplicates audit lists `keys` groups for `hint` kinds.
+  Subject identity is compiler revision 33 (`subject-identity-v1`): an
+  instance on an earlier compiler creates no new Subject
+  (`cruxible.subject.compiler_upgrade_required`) until it upgrades, and its
+  existing Subjects stay readable, claimable and retirable. Every new Subject
+  carries a verifiable assignment binding that the candidate boundary
+  recomputes at admission and settlement, so a raw proposal cannot pick an id
+  (`cruxible.subject.id_not_assigned`): a minted or further-holder Subject must
+  match a `created` entry in core's record of the operation that created it
+  (each creation's kind, key, rule, outcome and id, recorded when a stored
+  intent is lowered or a Procedure terminal delivers), so raw proposals create
+  only keyed first holders and a reused member authorizes nothing. Procedure
+  terminals freeze key references against the base and their own Subject
+  items, check them again over the final candidate, and refuse
+  `cruxible.procedure.identity_reference_unstable` when the two differ.
+  AuthoringIntent events are published atomically. Retiring a keyed Subject
+  retires its key Claims in the same change, and a successor carries them
+  unchanged. The SDK's pending Subject references
+  name the creation member and core resolves them to the path it assigns. One
+  resolver serves every route: exact live id, alias, canonical key, exact
+  retired id; a new id never takes an existing alias. Keys compare by their
+  canonical typed encoding through a whole-key index, against the change's own
+  overlay. A ClaimType change that breaks a live kind's key contract refuses
+  (`cruxible.subject_kind.key_claim_type_broken`), and changing a key
+  ClaimType's canonical form is a re-keying
+  (`cruxible.subject_kind.rekey_unhandled`). Kits carry SubjectKinds.
+  Typed projection storage schema 15: every retained projection, historical
+  ones included, is rebuilt under it. See the CLI reference, "Subject kinds and
+  creation".
+
+- The documentation and agent skills describe this surface. New pages: a
+  rewritten quickstart verified end to end, concepts, modeling state (when
+  something is typed state and when it stays cited prose), projection blocks,
+  and a kits guide. The CLI, MCP and SDK references are corrected against the
+  code. The skills `overlay-and-fit` and `classification-at-scale` are
+  replaced by `adopt-kit` and `automate-with-procedures`, since overlays and
+  relationship groups are gone; `create-state`, `review-state` and
+  `prepare-data` are rewritten.
+
+- The MCP server ships in the base install: `mcp` (`>=1.0,<2`) is a base
+  dependency, so `uvx cruxible mcp` and `cruxible-mcp` work on a plain
+  `pip install cruxible`. The `mcp` extra is gone; `cruxible[mcp]` still
+  installs, with an installer warning about the unknown extra. The unused
+  `python-multipart` dependency is dropped.
+
+- **The public name is Cruxible.** Every public surface drops the development
+  name: the CLI is one flat group (`cruxible get`, `cruxible query`,
+  `cruxible workspace attach`, `cruxible stub`), MCP tools are `cruxible_*`,
+  HTTP routes are `/api/v1/{instance_id}/...`, the SDK entry class is
+  `Cruxible` (`cx = Cruxible.connect()`; `CruxibleClient` stays the low-level
+  client), error and refusal codes are `cruxible.<family>.<name>`, and the
+  workspace directory is `.cruxible/` with the advisory git remote
+  `cruxible-ledger`. Public model names carry one name per concept with no
+  internal version suffix. Format tags keep their `playbill-*-vN` spelling in
+  stored and served bytes; MCP input schemas no longer show them and the
+  server fills them in. Records written before the rename keep their old code
+  prefix and still read. The floor format is v6, and a floor of an older
+  format is replaced whole on its next refresh. Some 0.3.2 names now mean
+  something else; see [Upgrading](docs/upgrading.md#same-name-new-meaning).
+
+- Add generation-accepted Triggers and `floor.refresh`. New instances seed an
+  ordinary editable, retirable `floor-refresh` Trigger in genesis. Refreshes
+  coalesce at latest head and skip accepts made before listening. Bound local workspaces
+  default to daemon floor delivery; `workspace attach --no-floor-delivery` and
+  `workspace floor-delivery off` opt out. Local client writes delegate to the
+  same writer. Client and daemon delivery create a self-ignoring floor `.gitignore`,
+  reserved from deltas and preserved on full replay. Apply failures surface a
+  stalled consumer and a floor-write repair.
+
+- **Reads are orient, query and get; the older read surfaces are removed.**
+  Every read of accepted state now goes through three verbs on every surface:
+  `orient` (the map, or one `kind`, or one `section`), `query` and `get`. The
+  per-family reads are cut outright, with no aliases:
+  - MCP tools: `cruxible_playbill_search`, `_discover`, `_expand`,
+    `_list_claims`, `_claim_values`, `_get_claim`, `_claim_history`,
+    `_explain_claim`, `_list_subjects`, `_get_subject`, `_subject_history`,
+    `_list_claim_types`, `_get_claim_type`, `_list_documents`,
+    `_get_document`, `_dereference`, `_history`, `_explain`,
+    `_list_principals`, `_policies_in_force`, `_list_query_definitions`,
+    `_get_query_definition` and `_run_query`.
+  - CLI commands: `playbill document list/get/body/history`, `explain`,
+    `principal list`, the `subject` group, `claim-type list/get`,
+    `claim list/values/get/history/explain`, the `policy` group,
+    `query list/get/run`, `discover`, `search`, `list` and `expand`.
+  - `CruxibleClient` methods: `list_playbill_principals`,
+    `list_playbill_documents`, `get_playbill_document`,
+    `dereference_playbill_document`, `playbill_document_history`,
+    `explain_playbill_subject`, `list_playbill_subjects`,
+    `list_playbill_subject_index`, `get_playbill_subject`,
+    `playbill_subject_history`, `list_playbill_claim_types`,
+    `get_playbill_claim_type`, `list_playbill_claims`,
+    `read_playbill_claim_values`, `get_playbill_claim`,
+    `playbill_claim_history`, `explain_playbill_claim`,
+    `list_playbill_query_definitions`, `list_playbill_policies_in_force`,
+    `get_playbill_query_definition`, `run_playbill_query`,
+    `discover_playbill`, `search_playbill` and `expand_playbill`.
+  - SDK members: `Playbill.search`, `Playbill.list`, `Playbill.explain` and
+    the `SearchPage` type.
+  - Contracts: `PlaybillSearchResult`, `PlaybillDiscoveryResult`,
+    `PlaybillInterfaceInventory`, `PlaybillContextCapsule`,
+    `PlaybillSubjectList`/`Index`/`IndexEntry`/`View`/`History`,
+    `PlaybillClaimList`/`History`/`View`, `PlaybillClaimExplanationV2`/`V3`,
+    `PlaybillClaimTypeList`/`View`, `PlaybillDocumentList`/`View`/`History`,
+    `PlaybillBodyRead`, `PlaybillExplainResult`,
+    `PlaybillExplainUnsupportedDetail`, `PlaybillPrincipalList` and
+    `PlaybillQueryDefinitionList`, with the expand models
+    (`ExpandRequestV1`, `ExpansionBudgetV1`, `ContextCapsuleV1`,
+    `ContextMaterialV1`) in `cruxible_client.contracts.discovery`.
+
+  The replacements: `orient(section=...)` pages `documents`, `procedures`,
+  `claim_types`, `queries`, `interfaces`, `principals` and `policies` beside
+  the operational sections; an `interfaces` row carries `interface_digest`,
+  `providers` (`[{provider, implementation_digest}]`) and
+  `operation_contract`. `get` gains `Principal:<id>`, `ApprovalPolicy:instance`
+  and `ProviderInterface:<name>` references, Documents take `detail="why"`, and
+  body answers carry `body_digest`. A compact `query` lists a kind's live
+  Subjects. `query` gains `status` (opt-in `overturned`, `refused`, `retired`
+  beside the default `live`; `retired` also lists retired Subjects, each row
+  then stating `lifecycle`), `claims=True`
+  (each cell's Claims as `rows[].claims[column]` with claim, value, verdict,
+  status, role and qualifier), an `uncovered` flag, `budgets` for a named
+  query up to its maximum, named-query `params` that may bind an optional
+  parameter to `null`, and `receipt="full"`, which runs the definition's
+  declared budgets (never the compact page's server ceiling) and adds
+  `receipt.replay` (`definition_path`, the `ClaimQueryResultV1` result and the
+  `QueryExecutionReceiptV1` execution receipt). Every query records the Claims
+  its page served as `playbill.claim.get` consumption. In the SDK,
+  `Playbill.refresh()` returns `PlaybillHeadV1` (`instance`, `coordinate`,
+  `generation`) from the new `CruxibleClient.playbill_head` (`GET
+  /{id}/playbill/head`); `Playbill.run_query()` still returns
+  `PlaybillQueryRun`, built from the named query's full receipt;
+  `World.values()` returns `PlaybillQueryClaimValueV1` rows read through
+  `query`, now including overturned and refused live Claims;
+  `WorldSubject.explain()` returns `get`'s `why`; and `claim_view` reads
+  `get(detail="proof")`. `CruxibleClient.playbill_get_batch` (`POST
+  /get-batch`, up to 64 refs) is an SDK-internal route beside the kept
+  `read_playbill_claim_batch` and `get_playbill_claim_backings`. A Playbill
+  opened on an injected client with no workspace reads normally, reports no
+  floor from `orient`, and refuses workspace-file members with
+  `SourceSelectionError`.
+
+  Accepted losses: there is no cross-kind name search (grep the floor under
+  `.playbill/floor/`, then `get` the ref), the `semantic.*` relation edges
+  `expand` returned are not served, and Subject list rows no longer carry live
+  Claim counts. Earlier entries in this section that describe the removed
+  tools, commands and methods (including `search`, `list`, `discover`,
+  `expand`, `explain`, `subject get`/`history` and the incoming-relationship
+  Subject profiles) are superseded by this one.
+
+- **The SDK is discoverable from Python itself.** `World.describe()` lists the
+  verbs (`cx.orient`, `cx.query`, `cx.get`, grepping the floor, the writes)
+  and every Subject kind with its fields; `w.kinds` and `w.predicates` work as
+  attributes and as calls; `dir(cruxible_client)` lists the lazily loaded
+  names; every public SDK member's docstring names the next call; `Cruxible`,
+  `Intent` and `Proposal` print readable reprs (no I/O), and refs print short
+  (`SubjectRef('sec.package/click' @ 0123456789ab)`, `CaptureRef(CAP-... )`,
+  with `CaptureRef.handle`).
+
+- **One `CAP-` handle resolver for reads and writes.** `get`, `read_capture`
+  and the write verbs' `--capture` now resolve a handle or digest prefix through
+  the same bounded lookup: a Capture accepted Claims cite, or one the instance
+  holds that verifies at the coordinate. A handle the write path accepted for a
+  Capture nothing cites yet used to refuse `not_found` in `get` and
+  `read_capture`; it now opens there too. A prefix more Captures share than one
+  lookup examines refuses `cruxible.capture.ref_scan_exhausted` on reads, as it
+  already refused `cruxible.write.capture_scan_exhausted` on writes.
+
+- **Stale proposals stay their author's work, and leave once superseded.** A
+  `proposal_stale` row in `next` now shows only to the proposal's author (the
+  caller's principal; a read without one shows none), since only the author may
+  readmit. A readmission is linked exactly to its source (its target ref
+  recomputed from the source and the coordinate its evaluation names), so a
+  source whose readmission was accepted leaves the queue for good instead of
+  reappearing at the next head, and one whose readmission is still live yields
+  that readmission's row. `proposal readmit` now refuses
+  `cruxible.proposal.readmit_already_accepted` (naming `accepted_as` when a
+  readmission carried the change) apart from
+  `cruxible.proposal.readmit_not_stale`, where it used to say "only a settled
+  stale proposal may be readmitted" for both.
+
+- **`procedure_run_status` withholds another principal's arming credential.**
+  An armed run acts as its arming credential's principal, and the status read
+  returned that actor and the receipt carrying it to every caller. It now
+  applies the Line and run cards' rule: unless the caller is an admin, the
+  arming credential, or a credential bound to the same principal, the
+  attribution answers as `ProcedureRunAttributionWithheld` (everything but
+  the actor) and the receipt as `ProcedureRunReceiptWithheld`, with
+  `receipt_digest` still naming it. `get` with `detail="proof"` uses the same
+  two typed markers instead of a nulled actor and an untyped marker.
+
+- **The write verbs read `@kind/id` as a Subject.** `set`, `retire` and
+  `write` accept `@dev.roadmap_item/x` wherever they take a Subject: the
+  change's subject, a slot, a Subject-valued value and an `expect`. It used to
+  refuse `value_kind_not_admitted` with a repair naming the very kind it was
+  given. No Subject kind starts with `@`, so the sigil is unambiguous there; a
+  literal or exact-content value keeps its text as written.
+
+- **`get` on a Procedure shows its track record, and the SDK reads it.** The
+  Procedure card carries `track_record`: one entry per accepted promotion of
+  the Procedure's run exhaust (promotion name, record range, reducer output
+  and digests). `ProcedureRun.track_record` now reads it through `get` and
+  returns those entries; it used to look for a key search rows never carried,
+  so it always answered `None`.
+
+- **`next` no longer reports `status.hidden`.** The count was always 0: since
+  operational reads, a row whose repair the caller cannot run stays in the
+  queue with `repair_requires`. The field leaves `NextStatus`, and the
+  SDK's `NextPage.hidden` property goes with it.
+
+- **The floor is the grep-first front door to accepted state.** `cruxible floor
+  export` now leads with `current/<kind>/<id>.yaml`: a one-line header (ref,
+  kind, `at <git_oid> gen <n>`), then each field's current value under its short
+  name with the `CLM-` Claim and `CAP-` Capture handles, then the verdict flags
+  as of that coordinate. Exact-content values (rulings) are written as their
+  text, long ones whole in a sibling `.txt` file; Documents are readable
+  `documents/<name>.<ext>` files (bodies only for a caller who may read them);
+  `current/<kind>/INDEX` lists every Subject with a title and its states.
+  Digests, addresses and full statements move to `provenance/` and the
+  manifest. The discovery cards (`subjects/`, `claim-types/`, `procedures/`)
+  and `coverage-manifest.json` are now opt-in (`floor export --with-discovery`,
+  `include=["discovery"]`), and the format is `playbill-floor-export-v4`; the
+  unreleased v3 layout is gone. A daemon re-renders only what the change records touched since its
+  last export, and `orient` reports `floor: {at, generations_behind}` for the
+  workspace's floor. The loop: grep, read the header, `get` the ref for live
+  verdicts, write with the verbs.
+
+- **ClaimTypes no longer need a distinction Claim beside adjacent vocabulary.**
+  The current ClaimType acceptance laws (`playbill.claim-type.v1`, `v3`, `v4`
+  and `v5` at revision 5, `v6` at revision 2) drop the vocabulary reuse check:
+  a new ClaimType whose predicate leaf or structure matches an accepted one,
+  such as `dev.track.title` beside `dev.batch.title`, is accepted without a
+  `semantic.distinct_from` Claim, and the `cruxible.reuse.*` refusals are gone.
+  Generations and pending proposals judged under the previous revisions still
+  settle and replay under them unchanged. The reuse models
+  (`VocabularyReuseLawEvidenceV1`, `DiscoveryHintsV1` and related) and the
+  unused descriptor-seed and descriptor-authority contracts leave
+  `cruxible_client.contracts.discovery`.
+
+- **Kits travel as OCI artifacts.** `cruxible kit push` publishes a kit
+  as a content-addressed OCI artifact (manifest config blob, one deterministic
+  tar layer) and prints its digest-pinned reference; `kit pull` fetches and
+  verifies one without installing it; `kit add` now accepts a kit directory, an
+  OCI image layout, or a registry reference, with bare names resolving under
+  `ghcr.io/cruxible-ai/kits`. Blobs are digest-checked and cached, and registry
+  credentials go only to the registry's own token realm. The transport is the
+  kind-independent `cruxible_client.artifacts` library, so later artifact kinds
+  reuse it.
+
+- **Kits distribute definitions on demand.** `cruxible kit build`
+  exports the live definitions under owned identity prefixes, plus everything
+  they pin, as one self-contained release of lineage-free snapshots; a pin into
+  authority, bindings or state refuses the build. `kit add` diffs a release
+  against the instance and proposes that diff as one change set: it adds what is
+  missing, replaces what changed with successors naming the instance's own
+  digests, retires what the kit dropped, settles every live dependent of a
+  replaced definition with one successor as a succession would, and records a
+  `kit_receipt` Document. Kits carry ClaimTypes, CaptureContracts and
+  QueryDefinitions. It never
+  activates, so approval and activation stay the ordinary steps. Local edits,
+  definitions made outside the kit, changed carried dependencies and
+  overlapping ownership are reported and block the change. `kit status` lists
+  installed kits and edited paths; `kit remove` proposes retiring what a kit
+  owns. The same operations are served over HTTP and MCP, and
+  `cruxible_client.kits` reads and writes kit directories.
+
+- `cruxible mcp` serves the MCP tools over stdio, the same server as
+  `cruxible-mcp`, so launchers that run a package by its own name
+  (`uvx cruxible mcp`) reach it. The MCP registry listing (`server.json`) now
+  launches `cruxible` at the release version instead of the never-published
+  `cruxible-core` 0.2.0, advertises the environment the server actually reads,
+  and is part of the release version lockstep check. The README carries the
+  registry's `mcp-name` ownership marker, and the Context7 rules describe the
+  current authoring flow.
+
+- Closed review branches are removed, while accepted, withdrawn, stale and refused
+  proposal commits remain reachable through the single `refs/settled/archive`
+  ref. Historical review, readmission and curation retain their exact candidate
+  bytes after Git collection; old `refs/settled/<digest>` links no longer resolve.
+  Candidate submissions remain independent snapshots of their accepted base.
+  Native Git leases and atomic pushes protect the archive alongside the active
+  refs. Ref/snapshot size no longer grows with settled-proposal count; retained
+  object storage and archive ancestry still grow with history.
+
+- **A Line's `propose_change_set` terminal produces a durable proposal.** On
+  the served Line lane, each resolved candidate template must be one Claim
+  proposal item (statement, rationale, optional lineage); the daemon attaches
+  the produced Capture in that item's own dependency closure as its evidence,
+  lowers the items through the same change-set authoring every surface uses,
+  evaluates the exact live ProcedureMandate against the paths lowering actually
+  changed, and calls the proposal door once. Run state gains `terminal_egress`,
+  naming the proposal id, the exact candidate digest, the operation key, the
+  mandate bound, and the Claim path each item lowered into; `procedure run`,
+  `line run`, and `procedure status` print them. Producing a proposal never
+  activates it: review, approval, and activation stay with the existing
+  proposal verbs. The proposal ref is keyed on the admitted operation, so a
+  retry recovers the same proposal and receipt, and other member bytes under
+  the same key refuse `effectful_operation_payload_mismatch`. The mandate
+  admission bound is re-established inside the proposal door against the exact
+  head tree the proposal is evaluated at, and that head is verified unchanged
+  under the ledger's activation lock before the first ref moves, so the
+  accepted coordinate a submission was authorized at is the one it is
+  published at: a mandate retired or replaced after admission refuses
+  `procedure_mandate_superseded` with nothing written, and head contention at
+  publication re-evaluates at the new head (bounded) instead of committing a
+  stale effect. Replaying an operation the door already kept needs no live
+  mandate. The proposal door writes a proposal's admission last, after its
+  candidate and evaluation, so an admission on disk always has its group
+  beside it. A `prepared` journal record precedes the door and a resolving
+  record follows it. Daemon startup recovers each admitted run on its own
+  account, whichever boundary it died at: an unresolved preparation is driven
+  through the same idempotent door, a run whose egress already resolved is
+  finalized from that durable record without redelivery, and a publication the
+  door left half written (ref moved, records without their admission) is
+  completed on the same ref when its bytes are the operation's own. Corrupt
+  evidence under one operation is reported and skipped; every other run still
+  recovers. Every recovered attempt reads `terminal_egress_recovered` with its
+  receipt intact.
+  Mandate, item, evidence, and lowering refusals reach the run as typed node
+  refusals with the door's real limiting code. The direct lane is unchanged:
+  it has no requested rung, occurrence, or mandate coordinate, and still names
+  the terminal unsupported before admission.
+- **Declared measurements resolve from real evidence and credit exact grains.**
+  `cruxible procedure measure` (HTTP `POST .../procedures/{name}/measurements`,
+  MCP `cruxible_procedure_measure`, SDK `Procedure.measure()`) is the
+  due/pending/resume door for a Procedure's declared measurements. Activation
+  is the generation that accepted the exact revision; its signed instant plus
+  `check_after`/`expires_after` is the only window, and pending or expired
+  measurements write nothing. Inside the window the door runs the exact
+  accepted QueryDefinition (receipt retained in the query-receipt journal),
+  evaluates the Claim statement's verdict, or counts verified attestations by
+  independent principal, then appends one resolution per activation under the
+  frozen law; refused or truncated queries resolve `indeterminate`. Naming a
+  finalized run binds the standing resolution to the grain that run actually
+  reached -- unit, node, or arm -- as one contract-grade reading keyed on the
+  activation, grain, and run or Line occurrence, so retries replay and
+  attempts never double. Reading and resolution appends are compare-and-sets
+  on their partition heads, so concurrent credits land one reading and
+  concurrent first evaluations retain one lawful resolution; a retry is any
+  later request by the same principal, whatever attribution it re-mints. Claim
+  verdict observations are retained as `claim_verdict_observed` journal
+  records and cited as `journal_record` proofs; attestation evidence is
+  selected at the observation instant over the complete history (occurred
+  events, then each principal's latest, then validity and stance), an expired
+  standing word neither counts nor revives what it superseded, and an absence
+  of attestations never satisfies. `cruxible procedure readings`
+  inspects standing and retained readings read-only, paginated; a cursor
+  carries its page's observation so a moving clock continues the same
+  selection, and every served or replayed reading is re-read through its
+  content address. Seven closed `measurement_*` refusals each carry a runnable
+  repair. Readings and resolutions stay operational exhaust.
+
+- **Shared review commits retain every proposal's notes.** Admissions whose Git
+  identities collide now project deterministic evaluation groups and distinct
+  signed approval payloads. Activation checks original and published aliases.
+  Reconciliation repairs valid incomplete groups after a crash; modified notes
+  still refuse. Review identity computation no longer materializes orphan
+  commits during a refused operation.
+
+- **The state loop uses bounded reads and explicit maintenance.** World prefetch
+  batches typed Claims at one accepted coordinate; backing and lineage reads
+  reuse verified accepted history. Eligible self-source authoring reuses
+  prepared lowering, and Git blob writes are batched. SDK `accept()` returns
+  durable acceptance without refreshing the workspace floor; `refresh_workspace`
+  explicitly pins that separate maintenance step.
+
+- **Ledger publication runs in the background with an acknowledgment barrier.**
+  Local writes record pending work; `ledger publish --timeout 60 --json` waits
+  for its request sequence. Exact ref snapshots publish atomically with leases,
+  and `main` must fast-forward. Settled review refs rebuild from durable evidence
+  even when the proposal was never published while open.
+
+- **Produced Source captures obey the pinned acquisition policy.** Replayability
+  and maximum age are checked before selection. Unsupported cross-source
+  coherence refuses before provider invocation instead of silently running as
+  independent acquisition. Historical run receipts retain their interpretation.
+
+- **Authoring reads reuse validated history and request narrower state.**
+  Unchanged event bytes reuse their parsed validation across store instances;
+  appended or altered events retain canonical, chain, and operation checks.
+  Projection registration reads only current publication fields. Private event
+  snapshots share identical committed payloads, and returned models remain
+  caller-owned. Historical journal bytes and public wire contracts are unchanged.
+
+- **Batch Claim authoring reuses a staged contender index.** Lowering parses the
+  initial Claim population once and updates changed paths as members are staged,
+  preserving sibling dispositions, retirements, and ClaimType succession output.
+  Single-Claim reads also reuse accepted-history law evidence without caching
+  fresh admission accounts or source-dependent evaluations.
+
+- **Historical authoring events remain readable.** Working source observations
+  preserve whether `source_content_base64` was absent, explicitly null, or
+  populated. Reading older events no longer inserts a default null into their
+  digest preimages and blocks unrelated authoring. Existing journal bytes and
+  commitments remain unchanged; projection-window checks still apply.
+
+- **The ledger publishes itself, so review is reachable and not just Git.** A
+  reviewer holding a link to a candidate commit could not clone the thing the
+  link pointed into: the ledger is a bare repository under the instance root
+  that the daemon alone can open, so every ref the review flow projects was
+  invisible to the person it exists for. An instance may now carry a
+  `mirror_url` -- `cruxible ledger set-mirror URL`, or `cruxible init
+  --mirror-url` -- and after every ledger write (a proposal submission and its
+  evaluation note, an approval note, an activation, a withdrawal) the daemon
+  pushes `refs/heads/main`, whichever of the three note refs exist, one branch
+  per OPEN proposal. `main` is pushed without force,
+  because accepted history only extends and a rejected fast-forward means the
+  remote holds something this ledger does not; review refs use exact
+  expected-old leases and known-ref pruning. The mirror's branch list tracks
+  the open inventory. Closed review branches are removed without permanent
+  per-proposal archives; the single archive ref retains their commit OIDs.
+  Withdrawal removes a proposal from that projection because it cannot
+  settle. The publication is never a condition of the write that preceded it: a
+  failed push is the new `ledger_mirror_behind` WARNING row in `cruxible next`,
+  carrying the URL and Git's own reason, because the ledger on disk is the
+  record and the remote is a copy. The URL never carries a credential -- a
+  userinfo URL, plain `http://`, `ext::` and a leading dash are all refused,
+  since `ext::` hands Git a shell command to run -- and the daemon reads its
+  own token from `CRUXIBLE_MIRROR_TOKEN` and passes it through Git's
+  environment-config protocol, so it never enters an argument vector, a config
+  file or an error message. `cruxible ledger clone-url` prints what to
+  clone, refusing typed when there is nothing to print, and the same URL rides
+  `orient --json` as `orientation.mirror_url` so an agent that has just oriented
+  needs no second round trip.
+
+- **A change set can say why it exists, and the commit says it.**
+  `cx.changes(rationale=...)` took a sentence and hashed it: the prose was
+  folded into the SDK program digest and discarded, so the daemon could prove an
+  author had written something and could never read it, and the candidate commit
+  fell back to a mechanical subject naming what changed -- the one thing the
+  member roll underneath already said. The rationale now travels as an optional
+  field on the change-set payload (the SDK and the tagless CLI/MCP input alike,
+  because "say why" may not be an SDK-only capability) and on the proposal
+  admission request. The candidate commit's subject becomes the author's first
+  line, truncated at 72 columns with the untruncated text in the body, and the
+  roll stays underneath; a submission carrying none keeps the subject it always
+  had. It is persisted on the admission record rather than merely passed
+  through, because the advisory review branch rebuilds its message from stored
+  evidence alone and prose that lived only on the request would have made the
+  two lanes disagree. Two identity rulings go with it: the set-level rationale
+  is outside the authoring payload digest, because a set's identity is a
+  property of its members alone and describing a set is not a different set (a
+  Claim's own rationale is untouched -- that one is part of what the author
+  asserted and travels into the capture as evidence); and it is not a field of
+  the proposal-id preimage, though it still reaches that id through the
+  candidate commit OID, because the message is part of the commit object. Old
+  records re-render byte-identically, so nothing already on disk becomes
+  unreadable. Nothing parses a commit message; the rationale travels as a wire
+  field precisely so nothing ever has to.
+
+- **Review is Git, because the ledger is Git.** A reviewer holding the ledger
+  could see a change set's bytes but not what the daemon made of them, and the
+  commit that carried it said only "Record Cruxible proposal". Three things
+  change together. The candidate commit's message is now the change set's own
+  summary -- a subject naming what it does, then one line per member as
+  `<disposition> <kind> <address> [qualifier]`, with the untruncated summary
+  kept in the body when it did not fit 72 columns -- and the settled generation
+  keeps `Accept Cruxible generation N` over the same roll. It is prose and only
+  prose: a guardrail states over the whole package that nothing asks Git for a
+  commit message, so no fact can migrate out of the evidence store into an
+  unversioned subject line. The daemon's own records travel beside it as notes
+  on the candidate commit, written through the same call the generation
+  descriptor has always used: `refs/notes/playbill-eval` carries the admission
+  and the evaluation verdict with every diagnostic behind a refusal, and
+  `refs/notes/playbill-approval` carries the canonical approval list with each
+  signer's own Ed25519 attestation. Both are byte-identical projections of the
+  proposal evidence store, which stays the source of record -- activation reads
+  the store for policy and refuses to settle a candidate whose note disagrees
+  with it, while a note that is merely absent is repaired rather than stranding
+  a proposal admitted before the refs existed. `cruxible proposal review` now
+  prints that pointer and those ref names instead of a second rendering of the
+  diff; `--json` is unchanged and remains the structured read, and `proposal
+  approve` still renders the whole candidate, because that rendering is what a
+  signature covers. `playbill review open` and `playbill review close`, which
+  materialized a detached worktree under `.cruxible/review/`, are DEPRECATED in
+  favour of `git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-id>` in
+  the attached workspace; they still work and now emit the structured
+  deprecation warning, and are removed in 0.6.0.
+
+- **A Procedure can read.** The served run lanes gain one node kind, `source`,
+  on a graph-v4 definition: a Procedure may READ an external source through an
+  accepted Provider, under accepted authority, and retain what it read. Graph-v4
+  Procedures now author through the ordinary SDK path -- the accepted envelope
+  always carried either graph generation, and its definition digest already
+  dispatched on the declared format, so nothing about accepted bytes moved.
+  Effectful terminals (`emit_capture`, `post_inbox`, `propose_change_set`) stay
+  dark, and a graph-v3 Source keeps its existing refusal because it names no
+  interface or implementation for anything to plan.
+
+  A Source run is authorized by accepted state, not by the request: the
+  SourceAcquisitionPolicy that governs it, the CaptureContract each node pins
+  resolved from the accepted tree by digest, and the Provider closure the graph
+  names. A Procedure names its policy on its own envelope, under the pin role
+  `acquisition-policy` -- authored by naming the policy, through
+  `procedure(..., acquisition_policy=...)` or the change-set member's
+  `acquisition_policy` field, with lowering resolving the name and owning the
+  digest. That pin is the binding, exactly as a Line's is the LineSpec's: it is
+  closure-checked at acceptance, and a pinned Procedure reads no other policy,
+  so accepting an unrelated policy elsewhere in the tree cannot change what an
+  already accepted Procedure does. A Procedure with no such pin falls back to
+  accepted state, which requires exactly one live SourceAcquisitionPolicy whose
+  declared inputs are exactly that Procedure's Source aliases; that binding is
+  keyed on Procedure-local alias names, so prefer the pin. A pinned policy that
+  does not declare this Procedure's Source inputs, and a missing or ambiguous
+  policy for an unpinned one, are both `source_acquisition_policy_required`; a
+  rule that denies a declared input is `source_acquisition_refused`; and a read
+  outside an authorized workspace root, over the contract's selection budget, or
+  with no daemon-local reader is `workspace_file_read_refused` with its path
+  class. None of them leave partial run history behind. The Line run route also
+  gains the workspace reader the direct route already had.
+
+  Both run lanes plan their Provider occurrences through ONE planner, which now
+  EVALUATES the accepted policy for every input the graph plans an occurrence
+  for; the Line lane previously recorded a blanket `verdict="selected"` with no
+  decisions at all. A declared input the graph plans NO occurrence for is not
+  scored at plan time -- whether such an input ever arrives is a fact only the
+  read can report, and the declared `on_unavailable`, `on_stale` and
+  `on_oversized` behaviours still fire from that read at execution time. So a
+  Line occurrence over a Procedure that plans a Source occurrence records
+  different selection decisions from this release, and therefore a different
+  `acquisition_plan_digest`, `semantic_replay_key_digest` and `run_id`; a Line
+  over a Source-free Procedure records the same empty decision it always did and
+  keeps the run ids it had, whatever its policy declares. Runs recorded before
+  this release keep their ids and stay readable through `procedure run status`.
+
+  What the run retains is the point: per Source occurrence the run state and
+  `procedure run status` now carry the `SourceReadReceipt` the daemon minted
+  for the exact bytes it read -- real on-disk path, byte length, SHA-256 -- and
+  the digest of the Capture those bytes became (additive, optional). A direct
+  Source run is identified by its evaluation instant, so re-running at the same
+  instant replays the retained observation rather than minting a second reading
+  of a world that moved; reading a changed source means running at a later one.
+  Full lineage from a Claim back to its producing run remains a later contract.
+
+- **Evidence never comes from a projection block, and the daemon says so.** A
+  page is a source: its bytes are captured, its capture is evidence, and a
+  passage of it can be cited. A projection block inside that page is not --
+  it is prose held to accepted Claims, and a Claim citing it would be a page
+  attesting itself into concrete. That law was a client convention: a guard in
+  the SDK, gated on the evidence role, that a copy citation, any other Claim,
+  and any raw wire caller walked past. It is now enforced at the daemon, at
+  both doors. Lowering resolves each citation's span against the cited source's
+  own bytes and refuses `cruxible.projection.evidence_from_projection` when it
+  touches a stamped block, whatever the role or origin; the citation gate every
+  proposal evaluation runs does the same over the capture's bytes, so a
+  hand-built candidate tree is refused too. A page that declares a block is
+  handed over with the observation (additive, optional `source_content_base64`,
+  digest-checked) and kept, so the capture is the manifest of its own windows. A
+  span that cannot be proved outside the windows of a source the instance
+  registers blocks in refuses `cruxible.projection.window_unverifiable` rather
+  than passing. Overlap with the author's own prose outside every window stays
+  allowed: that is what a source block IS.
+
+- **`publish_to` is deleted.** The SDK option that authored a Claim and wrote
+  that same Claim's body back into its own page minted a block whose single
+  backing was the publishing Claim itself -- a source block projected as its own
+  projection, which is precisely the overlap the two-block-kinds law refuses. It
+  was also the only discoverable way to get a governed block into a page, so the
+  discoverable road was the forbidden one. It is removed rather than deprecated,
+  because a deprecation window on this shape is a window in which a page can
+  still attest itself. An intent carrying `insertion_target` refuses typed as
+  `cruxible.authoring.insertion_target_removed`, naming the two roads that
+  remain: a source block (write the prose, capture the page, cite the span it
+  states) and a projection block (`cruxible block repin` over accepted Claims).
+  The mint, the preparation, the confirmation and their served verbs
+  (`cruxible authoring prepare-publication`, `cruxible authoring
+  confirm-insertion`, and the two HTTP routes and MCP tools behind them) go with
+  it. Registrations an instance already holds stay readable, foldable and
+  depublishable: `cruxible authoring abandon-insertion` and `cruxible block
+  depublish` are unchanged.
+
+- **A projection block is a held list and a watched query, and `block sync`
+  reports instead of converging.** A stamp may now carry any number of Claim and
+  artifact backings together with at most one query backing. The held list is
+  what the block is accountable for; the watched query surfaces candidates for
+  it, and when its semantic result digest moves `cruxible next` emits the new
+  `projection_candidates_changed` warning naming the rows that entered and left,
+  repaired by `block repin --claim <entered>` to hold them or by `block repin`
+  alone to re-stamp, which is the agent's explicit no. The ceilings that made
+  the marker a layout constraint rise with it: 512 backings per block (from 64)
+  inside a 128 KiB stamp (from 16 KiB), so a table of governed rows is not cut
+  in two at a row number that means nothing to a reader. Because nothing renders
+  a block, `block sync` no longer converges one: every block reports
+  `unchanged`, `stale` (a held backing moved) or `dirty` (the prose moved away
+  from the stamp), both repaired by a repin, and both counting as refusals for
+  the exit code so an activation's closing sweep cannot answer clean over a page
+  that has drifted. Two edits remain: `--detach`, and `--accept-local`, which
+  says the prose in the page IS the block and records that by re-stamping the
+  block on it -- the held list and declared coordinate untouched, the marker
+  line rewritten, the declaration re-recorded. It writes because under this
+  model the stamp is the alignment proof: a flag that merely silenced the row
+  would claim an alignment nothing checked, and `next` would go on reporting
+  the same page dirty. `--check` previews it as `would_sync` and writes
+  nothing. `--discard-local` is its deprecated spelling -- it never discarded
+  anything here -- accepted for one release behind the structured deprecation
+  warning and removed in 0.6.0.
+
+- **Every projection block is registered with the instance, whichever road
+  declared it.** `block repin` records a declaration through a new served route
+  (`POST /api/v1/{instance_id}/blocks/declare`), and the registration
+  fold unions that with the bound publications an instance already holds, keyed
+  on the pair the page itself names. `unregistered_projection_block` and the
+  `workspace detach` refusal key on that fold instead of on whether a block id
+  happens to begin `pub-`, which was a spelling the retired publication road
+  minted and left every agent-declared block unchecked. `block depublish`
+  releases either kind. The declaration is protocol state and commits nothing
+  about what a block says.
+
+- **Vocabulary that no producer could reach is gone.** The `self_published`
+  citation origin had no writer anywhere in the product, so the
+  `self_published_source_stale` row it fed could never fire and the coverage
+  renderer's "published copy" line could never print; both are removed, and no
+  accepted artifact carries the origin. `projection_backing_stale` stops
+  answering `hand_edit` for a change a verb performs: `cruxible.block.depublish`
+  joins the repair vocabulary and the retired- and overturned-backing rows name
+  it -- but only when there is nothing left to hold. A block holds a LIST, so
+  one member of up to 512 retiring is repaired by a repin that drops it, and the
+  registration is released only when every held member has retired or been
+  overturned; the row carries a `backing_state` discriminator so the two are
+  told apart. A registered block whose marker has left the page also names
+  `block depublish`, whose repair used to be to restore the block a ruling had
+  told the author to delete. The block-sync reasons that describe the removed
+  publication road (`block_not_publication_origin`,
+  `block_publication_registry_unavailable`, `block_successor_body_missing`,
+  `block_successor_body_ambiguous`) go with it. Three others do not describe
+  that road: `block_multi_backing` and `block_query_backing` were retired by the
+  held-list rules, and `workspace_source_catalog_missing` never had a producer
+  at all. Those stay in the vocabulary, unproduced, and are removed in a later
+  release -- narrowing a served vocabulary is a wire removal, and
+  deprecate-then-remove governs it. The same reasoning keeps
+  `BlockSyncReadResult`'s body fields optional rather than forbidden:
+  the daemon never sends one, and a payload minted before this batch still
+  parses. The repairs that named `block sync --all` for a drifted block name
+  `block repin`, because sync converges nothing now. One row goes with the
+  one-backing gate rather than with the vocabulary:
+  `cruxible.projection.backing_lineage_unreadable` was reachable only through
+  that gate, and a block that may hold 512 backings cannot walk 512 succession
+  chains on every queue read. Neither fault it named is unrefused -- a cycle in
+  `predecessor_digest` is a cycle in SHA-256 and cannot be built, and more than
+  one live successor is refused by `block sync` as `block_successor_ambiguous`
+  with every candidate listed, and answered by `block repin --backing DIGEST`.
+  `docs/cli-reference.md` says where each is refused.
+
+- **An orient is a read again.** Deriving every Claim's verdict and resolution
+  status crossed the client's own three-minute default timeout at a few hundred
+  Claims, so `Cruxible.connect()` could fail against a healthy instance. That
+  derivation is memoized per process on the instance, the accepted coordinate,
+  the exact Claim set, and a fingerprint of the two stores a verdict reads
+  besides the accepted tree -- the content-addressed body store and the
+  attestation ledger -- so a second read of the same state evaluates no verdicts
+  at all. The evaluation instant is deliberately NOT part of that key: every
+  served read stamps a fresh one, so keying on it would mean never serving a
+  second read. Time is not ignored, though. A verdict is a step function of the
+  instant whose only breakpoints are what it compares against -- a Claim's
+  effective interval, a capture's observation, source expiry and freshness
+  horizon, an attestation's validity window -- so the entry records the interval
+  over which its answer holds and is served for any instant inside it, and
+  crossing a breakpoint re-derives. `cruxible next` asks the same derivation
+  first, so one answer serves every fold in the request instead of the queue
+  walking every live Claim itself. It is a cache and nothing else: bounded, cold
+  after a restart, cleared on activation, and not a projection table. The
+  registration fold is likewise read once per `next` rather than three times
+  plus once per block.
+
+- **The ledger's per-blob ceiling rises to 64 MiB, and the two member budgets
+  become one number.** A change set's own ledger record costs up to 11,264 bytes
+  per lowered entry, so a 4 MiB blob ceiling settled at most 372 entries while
+  proposal admission advertised 5,000 -- and the disagreement arrived at
+  activation, after the compile had been paid for. `max_change_set_record_bytes`
+  rises with the read ceiling (a guardrail holds them equal), 5,000 entries
+  project to about 53.7 MiB, and the budget a caller is told is the budget that
+  settles. It also lifts a ceiling on evidence: a captured source over 4 MiB was
+  admissible and then unreadable, and a source that size may now back a Claim.
+  Raising a read limit is backward compatible in the only direction that
+  matters -- every blob already accepted was written under the narrower ceiling.
+  Operators mirroring a ledger to GitHub should note that GitHub warns over
+  50 MB and rejects over 100 MB, which is a deployment concern rather than a
+  second product ceiling.
+
+- **An authoring anchor may quote a URL, and a lowering refusal is never a
+  bare 500.** Every security feed interleaves reference URLs with the fields a
+  Claim rests on, and the locator rule on source selectors -- right for every
+  field that names an address -- applied to the anchor too, so no anchor could
+  span "which CVE" and "what severity"; the compile route then died on it with
+  an unhandled `internal server error` whose only diagnosis was the daemon
+  log. An anchor is quoted source bytes and a URL inside it is bytes: the
+  locator rule now exempts exactly that field (credential material is still
+  refused there). A working selection the capture contracts refuse comes back
+  typed as `cruxible.authoring.working_selection_refused` naming the selector
+  and the repair, and any other validator fault inside lowering is rendered as
+  `cruxible.authoring.lowering_invalid` with the validator's own message,
+  logged server-side, rather than escaping the route as a 500.
+
+- **A published block has a way out, and a worktree has a way to move.** Two
+  verbs the lifecycle was missing. `cruxible block depublish SOURCE_ID
+  BLOCK_ID` releases the publication registration that demands a block's frame:
+  `bound` was terminal, so a page that had been published once carried that
+  block, with that id, forever, and removing the marker made `cruxible next`
+  emit a blocking row whose repair was to restore the block a later ruling had
+  told the author to delete. Retiring a backing Claim now releases the markers
+  it backs for the same reason. Depublishing is the FIRST of two steps -- it
+  touches the registration and edits no page -- so until the marker leaves the
+  file `next` reports it as `unregistered_projection_block` with the repair
+  `remove_or_register_projection_block`, a warning rather than a blocking row.
+  `cruxible workspace detach --instance-id ID` releases a governed
+  host from the Git worktree it is attached to. A worktree belongs to exactly
+  one host, and re-binding it named two repairs: "archive and rebuild that
+  host", which was not a verb, and "choose another Git worktree", which splits
+  a repository in two. Detaching changes no governed state and deletes nothing;
+  it is local-socket callers only, for the same reason attaching is, and it
+  refuses while the host still registers published blocks in that worktree,
+  naming them and the `block depublish` repair, because detaching under them
+  would leave a page carrying markers no host owns. Both verbs are served
+  (`POST /api/v1/{instance_id}/blocks/depublish`,
+  `POST /api/v1/{instance_id}/workspace-detach`) and both reach MCP
+  (`cruxible_block_depublish`,
+  `cruxible_host_workspace_detach`). `block sync --detach` also now
+  strips the markers of a host this worktree has left, instead of refusing with
+  a repair that re-attaches it.
+
+- **A Claim can be retired as `superseded`.** `ClaimRetirementReason` gains a
+  third member beside `was-rescinded` and `was-wrong`. The two roads to one
+  succession have to give one answer: a shape withdrawn in favour of a
+  successor was neither rescinded nor wrong, and saying either of those about
+  it put a false reason in the ledger. It is accepted anywhere a retirement
+  reason is (CLI, SDK, MCP and the served retire and ClaimType-migration
+  routes), and is an enum widening on input only: nothing that was accepted
+  before is refused now.
+
+- **The SDK carries exact content as itself.** `cx.claim(value=ExactContent(
+  ...))` builds the exact-content object the wire already carried, keeping the
+  bytes rather than a rendering of them, and refuses before the wire when the
+  ClaimType is not an exact-content type
+  (`cruxible.sdk.exact_content_claim_type_mismatch`). The
+  `claim-exact-content` example is on the served example vocabulary. The
+  tagless CLI and MCP input gains an optional `content_base64` beside `text`,
+  exactly one of which must be given -- so `text` is no longer a required
+  field of that object, which is a request-side widening.
+
+- **BEHAVIOUR CHANGE: an ordinary revision may not move a Claim's subject or
+  its predicate.** `revises=` produced a successor that could point at a
+  different Subject or assert a different predicate while claiming to be the
+  same Claim's next version, which makes a lineage a Claim's history of
+  something else. Both now refuse typed at preflight
+  (`cruxible.claim.revision_subject_moved`,
+  `cruxible.claim.revision_predicate_moved`), at the single evaluation
+  chokepoint every authoring road reaches, and the refusal names the accepted
+  subject or predicate and the written one, with the repair: put the accepted
+  one back, or retire this Claim and author a new lineage about the Subject you
+  mean. Machine-generated successions -- a ClaimType re-derivation, an
+  attributed retirement -- move neither axis and are unaffected.
+
+- **BEHAVIOUR CHANGE: a Provider egress receipt's `observer_backend` must be a
+  namespaced lowercase token.** The field was a free string on a receipt a
+  deployment reads to decide which observer's word it is taking, so
+  `Cloud Proxy` and `cloud proxy` were two different observers with one
+  meaning. It now matches `^[a-z0-9]+(?:[.\-][a-z0-9]+)*$`, which admits
+  `cloud.netns-proxy` and refuses whitespace, empty segments and a trailing
+  newline. Nothing in the tree produced a value this refuses; core is the only
+  writer, and no persisted or pinned artifact carries the field. On the same
+  lane, the provider-lane status gains a `not_applicable` member so a build
+  that cannot run Provider code says so instead of reporting `unavailable`
+  with a reason code that means something else.
+
+- **An MCP client with no daemon is validated through the served request
+  model.** The in-process door reached the facade directly, so a payload the
+  HTTP route's request model refuses -- a control character in a decommission
+  reason, say -- passed the MCP door and raised a raw pydantic error from
+  inside the write. Both doors now decide through the same model object. The
+  decision is identical; the rendering is not, and cannot be: in process there
+  is no HTTP response to put a 422 in, so the local door raises a typed
+  refusal naming the operation. The maintainer's call was the smaller change:
+  `allow_local` is RETAINED for mutating verbs, because MCP-first clients with
+  no daemon write through it today and taking it away is a capability removal.
+  Retiring it for mutating verbs is still owed, and when it happens it goes
+  through the structured-warning deprecation policy -- a warned release, then
+  removal -- rather than breaking in place.
+
+- **The frozen-surface pin now digests the request and response SCHEMA.** The
+  served-surface inventory hashed FastAPI's `{"$ref": ...}`, which is a
+  component NAME, so adding, renaming, retyping or removing a field inside a
+  served request model moved no pin at all, and two routes carrying one model
+  shared one digest. It now digests the resolved schema. Consumers pinning this
+  artifact should expect request-body digests to move on a release that adds no
+  route, verb or tool: that movement is the freeze working rather than noise.
+  Per-tool `facade_operations` rows are a reachability closure too -- the verbs
+  a handler names itself, the verbs its local adapter objects reach, and the
+  verbs its sibling handlers reach -- so a deployment deciding per-verb what
+  may be reached over MCP no longer reads an empty list for a tool that reaches
+  the facade through an adapter.
+
+- **A daemon can allocate more than one Cruxible host per bootstrap secret.**
+  Host creation was authorized only while the runtime bootstrap secret was
+  UNCLAIMED, and every other credential a daemon holds is instance-scoped, so
+  after the first `credential claim-bootstrap` nothing on the daemon could
+  allocate a second host; the only repair was a restart, which mints a fresh
+  secret at the same path and takes every hosted instance down with it. Creating
+  a host now joins the daemon-wide operator actions the bootstrap secret
+  authorizes repeatably, alongside server info, restart and stop. Claiming the
+  admin credential stays one-shot. The refusal an instance-scoped credential
+  gets on any daemon-wide operation now names what to present instead.
+
+- **An open proposal that can never activate can be withdrawn.** A proposal
+  refused at activation by a hard limit was admitted, evaluated, permanently
+  unactivatable and permanently open, so `proposal list` accumulated tombstones
+  with no verb to retire them. `cruxible proposal withdraw PROPOSAL_ID
+  --reason TEXT` (served, and `cruxible_proposal_withdraw` over MCP)
+  writes one immutable withdrawal record beside the admission and reports the
+  proposal `settled` with terminal reason `withdrawn`. It touches no accepted
+  state and leaves every byte of the candidate readable, and it is terminal in
+  fact: approval, activation and readmission all refuse a withdrawn proposal
+  with `cruxible.proposal_withdrawn`, naming who withdrew it, when, and why.
+  The submitting actor may withdraw, and so may a daemon-wide operator, whose
+  authority already allocates and stops hosts -- otherwise a proposal whose
+  author's credential label was rotated would be withdrawable by nobody. An
+  open or stale proposal may be withdrawn, a settled one may not, and a second
+  withdrawal repeats the first answer rather than rewriting its reason.
+
+- **A workspace-wide block sync no longer refuses on a source that merely
+  quotes marker bytes.** `block sync --all` -- and the sync `proposal activate`
+  runs as its last step -- inferred its targets from every catalogued file,
+  so a captured report ABOUT the marker grammar was parsed as a projection page
+  and refused `block_marker_malformed`, whose repair is to hand-edit a file that
+  is exact accepted bytes. An inferred walk now notes such a source
+  `skipped: source_not_projection_target` and moves on, so a lawful activation
+  stops exiting non-zero over it. A path the caller names explicitly still
+  refuses: there the caller asserted the file declares a block. So does a page
+  that DOES declare one, in every selection mode -- a stamped page whose
+  closing marker was deleted, or one repeating a block identity, is a
+  projection target with a defect, and only a source declaring nothing at all
+  is skipped.
+
+- **A change set the ledger could not record is refused before it is
+  compiled.** The ledger writes its record OF a change set as one blob holding
+  an entry per CHANGED PATH -- so a ClaimType succession writes one per
+  dependent it dispositions and a Claim retirement one per Claim in its closure
+  -- measured against the per-blob ceiling; a set well inside every advertised
+  receive budget could still exceed it, and only found out at activation, after
+  a ten-minute compile that could not be reused. The admitted limits now
+  advertise that ceiling and the largest measured cost of one entry across
+  every member kind, and preflight refuses an oversized set typed
+  (`cruxible.authoring.change_set_record_too_large`), naming the projected
+  record size, the ceiling and the entry count that fits: before lowering when
+  the entries a set already declares exceed the bound, and on the exact lowered
+  count -- still before the compile -- when they do not. Every durable identity
+  computed over the receive limits -- a proposal id, a preflight certificate
+  digest, an admission record's canonical bytes -- takes the RECEIVE bounds
+  alone, so advertising a new ceiling does not restate the identity of anything
+  written before it, and an instance upgraded across this release keeps reading
+  the authoring intents and admissions it already holds.
+  Compiling was also the step that could take the daemon out under memory
+  pressure: an allocation failure during lowering is now logged and refused as
+  `cruxible.authoring.compile_budget_exceeded` instead of propagating untyped,
+  and the daemon installs a fatal-fault handler writing to
+  `<state-root>/daemon/logs/fatal.log`, beside its request log, so a death it
+  cannot refuse is at least never silent in the log an operator follows.
+  Chunking the record so a five-thousand-member set can be settled is a later,
+  non-patch change.
+
+- **A daemon discovers its isolated Provider executors from what is
+  installed.** At start the daemon iterates the `cruxible.isolated_executors`
+  entry-point group and registers every executor it advertises, so the registry
+  that decides whether the shared hosted profile may run Provider code is built
+  from the packages actually present rather than from an environment variable's
+  claim. Discovery is all-or-nothing: every advertised executor is loaded and
+  its registration read before any of them reaches the registry, so an entry
+  point that cannot be loaded, does not implement the executor seam, or
+  collides with a backend id already registered stops the daemon with a typed
+  refusal -- naming the entry point, its target, its group and the distribution
+  that advertises it -- and registers nothing, not even the executors whose
+  entry points loaded before it. `server info` now reports the registered
+  backend ids on the Provider lane; core registers none. Installation on the
+  daemon's `sys.path` is the whole trust boundary; see
+  `docs/hosted-runtime-image.md`.
+
+- **Reads no longer re-read what an accepted generation already proved.** An
+  accepted tree, a serving projection piece's verification, the Claim read
+  history index and the durable publication fold are each done once and reused
+  behind the same proofs they always ran; the resolution fold lists the
+  projection once instead of once per slot, and every read that wanted one path
+  asks for that path rather than the whole generation. Measured on a 740-Claim
+  instance: `orient` goes from 868 s to 9.2 s on the first request after a
+  restart -- which carries a once-per-process recovery replay -- and 3.0 s on
+  every request after that; `list` and `search` from ~900 s to 3 s; `next` from
+  29 min to 46 s cold and 27 s warm; and `block sync --check` over 26 blocks
+  from 15 min to 6 s. No read answers differently: a tampered projection piece
+  is still refused, and replay drops every memo.
+
+- **BEHAVIOUR CHANGE: "overturned" now means a Claim lost a slot, not that it
+  failed its own admission.** A many-cardinality slot selects every eligible
+  contender, so a Claim that is not selected there lost to nothing; it reads
+  `refused`. `overturned` is kept for a single-valued slot the Claim did not
+  take. A governed block whose backing Claim was merely uncovered therefore
+  stops reporting `projection_backing_stale`. The two depublication rows also
+  carry the `hand_edit` operation their required change always described, since
+  no verb republishes a retired or overturned backing.
+
+- **BEHAVIOUR CHANGE: a source block and a projection block are never the same
+  block.** Publishing a projection block whose backing Claim cites bytes of that
+  same source inside the body being framed is refused, typed
+  (`cruxible.authoring.publication_claim_projected_as_itself`), naming the
+  overlapping citations. Separately, a coordinator self-source citation is no
+  longer skipped ahead of admission: a ClaimType whose evidence-admission policy
+  names that contract for the Claim's role covers text authored in a governed
+  page, and a ClaimType that does not name it still reads such a Claim as
+  uncovered.
+
+- **A defective coverage scan reports once per source, and names why.** When a
+  source's own coverage scan never arrived, came back less than complete, or had
+  a whole class of its evidence discarded by a per-source count cap, no citation
+  to that source can be proved whatever the citation says. `next` now emits one
+  `citation_source_unobserved` row for such a source, carrying
+  `unobserved_cause: "source_scan_incomplete"`, the `source_scan_notes` the scan
+  reported (a count-cap note among them when a cap did bite) and
+  `collapsed_citation_count`, instead of one look-alike row per citation. A
+  healthy scan is unchanged: a citation unobserved there is a finding about that
+  citation and keeps its own row.
+
+- **`CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S`** (default 900 s) gives the single
+  orientation an SDK `Cruxible.connect()` runs its own read budget, separate
+  from `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180 s) and never below it, so a
+  healthy but large instance cannot read as an unreachable server. Both knobs
+  are documented in the CLI reference. `CRUXIBLE_CLIENT_TIMEOUT_S` is now
+  validated: a value that is not a positive number is refused as a typed
+  configuration error, where `0`, a negative number or unparsable text used to
+  be accepted or raise an untyped error.
+
+- **The accepted world is typed Python, not strings.** `cx.world()` reads the
+  accepted ClaimType vocabulary once and hands it back as objects: dotted kinds
+  nest (`w.sec.package`, `w.dev.batch`), a Subject answers by attribute or by
+  index, a predicate is a `ClaimTypeRef` carrying its own structure, and a
+  literal schema's enum members are values that can only state a Claim under
+  their own predicate -- passing one to another ClaimType refuses, typed, at the
+  builder rather than after a proposal. A non-enum schema validates before the
+  wire, so a 39-character digest refuses at the call site. Every ref carries the
+  coordinate the world was read at and refuses once the connection's orientation
+  moves. Read-back (`subject.claims`, `subject.<predicate>`) walks every page of
+  the accepted list, so a Subject with more Claims than one page still answers in
+  full. `cruxible world stub [--out]` writes the whole vocabulary out as
+  a coordinate-stamped `.pyi` whose classes are closed, so a misspelled kind,
+  Subject, predicate or enum member is a type error rather than `Any`.
+
+- **BEHAVIOUR CHANGE: `ChangeSetDraft.subject(...)` and `.claim_type(...)`
+  return a ref, not the draft.** They now answer a `PendingSubjectRef` /
+  `PendingClaimTypeRef` at the current coordinate, usable directly as
+  `subject=`, `predicate=` or `value=` elsewhere in the same set, so a set that
+  defines a Subject and says something about it never retypes the address.
+  Callers that chained on the return (`draft.subject(...).claim(...)`) must
+  write the two calls separately; `.claim(...)` and `.retire(...)` still return
+  the draft and still chain.
+
+- **BEHAVIOUR CHANGE: a `Cruxible` connection no longer demands a workspace
+  file catalog.** The catalog is resolved the first time a surface actually
+  selects from the working tree, so a read-only connection -- orientation,
+  search, `world()`, the new stub leaf -- works from any directory. The refusal
+  is unchanged and still typed; it now lands on `cx.file(...)` and the other
+  workspace-selecting surfaces rather than at connect, which also means a
+  malformed catalog is reported when it is first used.
+
+- **BEHAVIOUR CHANGE: a fresh Cruxible ledger is SHA-1, not SHA-256.** An
+  instance initialized with no attached workspace now writes a SHA-1 Git
+  ledger, because common Git viewers do not recognize a SHA-256 repository and
+  a ledger nobody can open is not evidence anyone can read (maintainer ruling
+  2026-09-03). An attached workspace's own format still wins. `cruxible init
+  --object-format` (request field `git_object_format` on HTTP, the SDK and MCP)
+  chooses explicitly; an explicit value that contradicts the attached workspace
+  refuses with the typed `cruxible.init.object_format_conflict` before any state
+  is written. Instances already initialized keep their pinned format forever and
+  reopen unchanged.
+
+- **Operations verbs for ending a daemon and an instance.** `cruxible server
+  stop` asks a running daemon to shut down gracefully over the configured
+  transport and reports what it OBSERVED: the daemon must stop answering, and
+  when its state root is a directory on the machine running the command its
+  lock must be free. It exits non-zero with the typed
+  `cruxible.server.stop_not_confirmed` when the root was not released, and says
+  plainly that release is not observable when the daemon is bound to TCP on
+  another host. `server start` now takes an exclusive `flock` on
+  `<state-root>/daemon/lock` before it opens any store, so a second daemon over
+  one state root refuses with the typed `cruxible.server.state_root_locked`
+  naming the holder's pid and transport; the kernel frees the lock however the
+  holder died, so a stale file never blocks the next start.
+  `cruxible instance decommission` (HTTP `POST
+  /api/v1/{instance_id}/instance/decommission`, MCP
+  `cruxible_instance_decommission`, ADMIN) ends one instance's governed
+  writes without deleting a byte: every governed write door refuses typed
+  `cruxible.instance.decommissioned`, reads keep serving at the accepted
+  coordinate, `orient` and `next` report the terminal state, and archiving the
+  directory stays the operator's own step.
+
+- **Subject profiles list incoming relationships.** `subject get` (CLI, SDK,
+  MCP) now returns the live Claims whose subject-valued object is the profiled
+  Subject, grouped by predicate and carrying claim ids, so an `affects_package`
+  edge from a vulnerability is visible from the package.
+
+- **The Subject address is the canonical CLI argument.** `subject get
+  KIND/NAME` and `subject history KIND/NAME` are the supported forms, and
+  `explain <subject address>` resolves a Subject instead of answering a Document
+  404. The two-argument `KIND ID` spelling still works and emits a structured
+  deprecation warning; both surfaces are registered for removal in 0.6.0 (see
+  `DEPRECATIONS.md`).
+
+- **MCP `cruxible_init` carries the `seed` decision.** It gains
+  `seed: bool = True` with the same typed `unseeded` row and repair as the CLI,
+  SDK and HTTP surfaces, retiring the earlier "MCP always seeds" declaration.
+
+- **Source-read receipts record the real on-disk names.**
+  `SourceReadReceipt.relative_path` is now the component spelling the kernel
+  confirmed rather than the spelling that was requested, and the new
+  `requested_path` carries the request alongside it. Receipts written before
+  this law still verify.
+
+- **SECURITY: the shared hosted profile executes no customer code.**
+  `runtime/execution_policy.py`'s gate is now enforced before every Provider
+  child process, before Provider seed materialization, and at the served
+  `procedure run` / `line run` / `provider seed` boundaries -- and before any
+  tenant secret is resolved, so no secret material is materialized for a run
+  that will be refused. Execution under `CRUXIBLE_HOSTED_SERVER_PROFILE=shared`
+  is permitted only when an isolated executor is REGISTERED in the running
+  build -- registration goes through a typed seam
+  (`register_isolated_executor()` / `registered_isolated_executors()` taking the
+  new additive `IsolatedExecutorRegistration` contract), and core registers
+  none, so the profile refuses with `customer_code_execution_unsupported` and
+  the detail `isolation backend not implemented`. Naming
+  `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND=docker` no longer re-enables
+  spawning the Provider directly on the host, and an
+  unrecognised non-empty profile value refuses typed with
+  `hosted_profile_unknown` instead of being read as "not shared" (maintainer
+  ruling 2026-09-03).
+
+- **SECURITY: the terminal instance state closes the whole write plane.**
+  Every governed write on a decommissioned instance -- approvals,
+  curation rulings, Claim attestations, predictions and settlements, Procedure
+  binds and Procedure/Line runs -- refuses typed, not only proposal submission.
+  The decommission reason is bounded prose with no control characters, and the
+  daemon state-root lock file is narrowed to `0600` even when an earlier daemon
+  left it wider.
+
+- **Cruxible v1 is wire-frozen (P2-B5).** Governed Lines can trigger due
+  occurrences over HTTP, the CLI, the SDK, and MCP under their accepted
+  mandates; candidate review trees carry deterministic derivative cards;
+  calibration readings succeed through explicit derivation; provider outputs
+  verify against an external materialization seal manifest; and prediction
+  declarations settle from accepted observation evidence or a governed
+  terminal. The exact facade, HTTP, MCP, and CLI inventories are now pinned and
+  move only with ratified succession evidence, every closed refusal vocabulary
+  resolves to a structured repair -- a served command where one repairs it and
+  an explicit hand edit otherwise -- every time-bearing field in the internal
+  taxonomy declares one of four clocks, and the semantic compiler coordinate
+  advances to semantic revision 19, labelled `p2-b5`, to commit the card
+  renderer while every earlier coordinate stays installed and replayable. A
+  Line occurrence's evaluation instant comes from the daemon clock; a caller
+  may assert one only within the daemon's skew bound, which an operator
+  configures in `daemon/procedure-runs.json` and which defaults to the
+  ProcedureMandate skew.
+
+- **Operator and agent workflows now close their setup and selection loops.**
+  Server status reports exact compiler compatibility per governed host, and
+  `cruxible host show` exposes one host without acquiring authority. Proposal
+  commands resolve full digests, unique prefixes, and current target refs
+  through one typed read; Claim reads add a shared statement-first projection.
+  A single client/daemon digest handshake now gates both CLI and SDK entry, while
+  `server install-service` and `cruxible workspace attach` provide credential-free,
+  atomic local setup. Inherited-Git advisories are retained in affected JSON
+  receipts, subject-valued Claim authoring preserves typed Subject objects, and
+  projection repair detects body-only accepted revisions.
+  Server instance counts now mean governed daemon hosts, and instance-scoped
+  host inspection no longer discloses the daemon-local managed-root path.
+
+- **Workspace files enter through bounded reads and governed Provider seeds
+  (P2-B4).** The daemon resolves `workspace.file` only inside attached or
+  operationally allowed roots. It decides on the real on-disk name of every
+  component and denies Git metadata, Cruxible control paths, custody and key
+  files, and the whole daemon state root case-insensitively, so a capitalized
+  spelling refuses on case-folding volumes exactly as it does elsewhere. Each
+  authorized read commits its exact receipt alongside Provider invocation
+  evidence. The real adapter remains in `cruxible-providers`; core ships its
+  exact interface, local wheel/materialization pins, conformance double, and an
+  ordinary proposal seed used by initialization and by CLI/SDK/HTTP. The
+  Provider write family has no MCP parity yet, so `provider seed` is
+  deliberately absent from MCP. Because that seed is a local materialization,
+  initialization refuses rather than trusting an unchecked checkout; `playbill
+  init --no-seed` (request field `seed`) is the explicit opt-out that creates the
+  instance, skips the seed step, and returns a typed `unseeded` Provider-seed row
+  whose `repair` names configuring `seed_materializations` and running `playbill
+  provider seed`. MCP `cruxible_init` carries no such field and always
+  seeds. This prerelease batch also corrects
+  `ProviderInterfaceEntry` v1 in place to match the already-served
+  ProviderInterface discovery row; the generated client snapshot pins that
+  reshape. Cruxible's governed `none` effect class is the no-external-mutation
+  counterpart of the adapter stub's pinned `pure` vocabulary. The governed seed
+  intentionally records only its verified `local_env` launch floor even though
+  the external package manifest also advertises an unseeded container backend.
+  Both new wires mint semantic revision 18, whose immutable label `p2-b4-u2` is
+  what `server status` and `cruxible host show` now report as the current
+  compiler revision; revision 17 stays installed and still replays.
+
+- **Client custody follows one Git-worktree boundary.** Initialization,
+  approval, principal changes, and Claim attestations now anchor custody checks
+  to the worktree containing the process CWD; outside a worktree, no workspace
+  root is inferred. Inherited `GIT_DIR` and `GIT_WORK_TREE` selectors are ignored
+  for that decision, with a typed advisory written to stderr when they select a
+  different worktree.
+
+- **Cruxible workspace context and deterministic repair move together (PC-DF3).**
+  Publication blocks can sync through the read-only sync-backing route while
+  preserving local edits with `block_locally_modified`, `--discard-local`,
+  `--check`, and `--detach`; accepted activation syncs attached workspaces last
+  unless `--no-sync` is selected. Git workspaces now observe
+  `cruxible-ledger/accepted` and proposal remote branches, with `review open` and
+  `review close` managing detached review worktrees. Attached hosts persist
+  `.cruxible/coverage.json` v2 atomically, with `--replace` required for a
+  differing file, and `context show` separates config attachment from daemon
+  registration. The `next` vocabulary now covers workspace attachment,
+  projection repair, curation, and stale publication-block synchronization.
+  The public `BlockSyncOutcome` enum adds `skipped` for an unattached
+  activation-driven sync; an explicit unattached `block sync` remains refused.
+
+- **Source execution now lands versioned Capture evidence (P2-B4).** Source
+  occurrences share the governed Provider driver and journal an erasure-safe
+  output commitment before producing Capture v2 envelopes. Provider and
+  Procedure Captures bind exact daemon-resolved producer receipts, while mixed
+  Capture v1/v2 landing and replay preserve every retained v1 wire and digest.
+
+- **Provider local-runtime fences are bounded and observable (P2-B2).** Provider
+  child groups are killed and reaped on every completion path, with deterministic
+  same-session and best-effort cross-session descendant sweeps, typed process-lease
+  failures, manager-folded crash recovery, bounded lazy re-arm, and a non-blocking
+  Provider-lane status. Local operators can tune the documented
+  `daemon/provider-runtime.json`; non-Provider daemon surfaces remain available
+  while that lane is degraded. Transient process-table failures remain
+  diagnostic-only and surface their bounded count, retained ring occupancy, and
+  last typed message in the existing Provider-lane detail.
+
+- **Human-readable governed state and a single state root (PC-HR).** Current
+  compiler artifacts use pretty canonical JSON at `.json` paths while frozen
+  historical compilers retain their compact `.yaml` verifier. The daemon state
+  root is now `~/.cruxible` (or `CRUXIBLE_STATE_ROOT`), the workspace floor is
+  fixed at the containing worktree's `.cruxible/floor`, and workspace Git refs
+  are advisory. Pre-PC-HR nested state is refused with a typed re-seed error so
+  neither instances nor the auth-required latch can be silently orphaned.
+  `cruxible floor export --output`, `floor_output.path`, `--state-dir`, and
+  `CRUXIBLE_SERVER_STATE_DIR` are removed; claim-type migration output is human
+  readable by default with `--json` for structured output.
+
+- **Procedure compute-interior journals take a pre-release clean cut (PC-P2A).**
+  Direct runs now bind replay-stable accepted-state material and semantic run
+  identity in the v2 admission payload. Run journals written before this batch
+  do not carry that payload and are intentionally unreadable by the new served
+  reader; rebuild pre-release worlds rather than treating those journals as
+  recoverable v2 runs. SDK runs use the current lane by default and select the
+  read-only replay lane only when the caller explicitly supplies `at=`.
+
+- **Claim admission now separates corroboration scope from freeze scope (PC-C4).**
+  Corroboration requirements apply only to Claims authored under their own
+  ClaimType, while freeze requirements continue to protect every applicable
+  ClaimType on the same Subject. Claim v2/v3 admission laws advance in place
+  for this prerelease correction. Next v2 deltas also report removed item IDs
+  as presentation-only public wire without changing the whole-queue digest.
+
+- **Claim retirement closure is one coordinated disposition.** A retiring
+  dependent may advance a Claim-target pin by one verified succession hop only
+  when that target also retires in the same complete ChangeSet; the earlier
+  pre-release mixed-disposition ClaimType migration (live target successor plus
+  dependent retirement) is deliberately withdrawn. Publication confirmation
+  now binds the declared block frame rather than whole-file digests; prerelease
+  v1-shaped in-flight insertion expectations must be recreated after this wire
+  contraction.
+
+- **Governed approval-policy spine and solo initialization (PC-C3).** New
+  instances carry the `governance/approval-policy.yaml` singleton in the signed
+  genesis tree. One ordinary principal is sufficient by default; operators can
+  opt into creator-excluded independent approval with a second principal and
+  `cruxible init --require-independent-approval`. Tightening is an ordinary
+  governed successor while loosening must satisfy the current independent
+  policy. Local key directories remain attribution/repository-hygiene
+  boundaries, not security boundaries; organization review rides repository
+  protection, with real custody separation reserved for the Cloud broker seam.
+
+- **Principal-authored Claim attestations (PC-ATT).** A signed evidence-plane
+  ledger records exact-Claim observations against accepted coordinates, exposes
+  idempotent append through SDK, HTTP, MCP, and CLI composition, and contributes
+  deterministic outstanding-evidence and attestation-threshold rows to
+  `cruxible next`. An admin recovery command rolls forward the sole durable
+  unpublished event after an interrupted append without rewriting governed state.
+
+- **Scheduled 0.5.0 deprecations collected.** The already-absent legacy
+  outcome-record and outcome-profile functions and the
+  `ProcedureTransitionResult.warnings` string-list surface have been removed
+  from the live deprecation registry. Their original schedules remain in
+  `DEPRECATIONS.md` as release history, and newly registered deprecations now
+  default to removal in 0.6.0.
+
+- **Claim corroboration and role-free artifact governance (PC-C1).** Claim
+  admission can now require daemon-bound, accepted-state QueryDefinitions and
+  persists deterministic evaluation accounts for proposal and replay checks.
+  Per-artifact authority-role wire is removed; principals instead declare the
+  closed `ordinary`, `recovery`, or instance-owned `daemon` kind. `principal
+  add` uses `--kind` rather than `--role`. PC-C3 subsequently moved approval
+  policy into the governed singleton spine and restored solo initialization.
+  This remains a pre-release clean cut and existing prerelease worlds must be
+  rebuilt.
+
+- **Activation attribution + lifecycle key-possession (PC-G12q fix round).**
+  Activation mutation receipts now carry a required `activated_by` naming the
+  governed actor (public client contract re-pinned); the HTTP request log
+  independently records the credential for the same request. Principal
+  lifecycle transitions require the proposing actor's own cryptographic
+  approval with its current key (the affected principal only for
+  self-rotation) — the one case where a creator's
+  self-signature is mandatory rather than refused. PC-C3 now derives ordinary
+  candidate approval behavior from the governed approval-policy singleton.
+
+- **Cruxible delegates authorization to repository ref governance (PC-G12q).**
+  The in-daemon approval quorum is withdrawn: candidates require no approval by
+  default, creator-suffices activation remains a separate attributed act, and
+  non-creators may still record verified voluntary approvals. PC-C3 supersedes
+  the interim forced-independent posture with a governed opt-in approval policy.
+
+- **Cruxible publication prepare retries now distinguish live persistence from
+  terminal replay (pre-release compatibility note).** The exported
+  `insertion_prepare_operation_v2_key` helper now requires the live expectation
+  digest, preventing a stale source replay from serving a superseded preparation.
+  Terminalizing prepare attempts retain a digest-free expectation-plus-observation
+  identity so a lost prepared-to-expired or prepared-to-currency-changed response
+  replays byte-identically after the terminal state change. Prepare events written
+  by intermediate pre-release builds under the former preimage do not cache-hit;
+  recreate any in-flight authoring intent carried across such an upgrade.
+
+- **Cruxible publication confirmations now require their discriminating wire tag.**
+  The confirmation endpoint accepts the explicit v1 or v2 request variants; a
+  legacy v1-shaped body that omits `tag` now receives a typed request refusal
+  instead of being inferred. This is an intentional pre-release behavior change
+  needed to keep the two confirmation protocols unambiguous.
+
+- **Governance: role gates leave the hot path (PC-G12e).** Ordinary governed
+  artifacts are now admitted by credential tier, principal identity, and
+  semantic law — role labels no longer gate proposal, approval, settlement,
+  or recovery, and every acceptance-law and compiler coordinate was re-pinned
+  in place (pre-release: existing ledgers do not replay across this change;
+  rebuild from fixtures). Creator self-approval refuses
+  `cruxible.approval.creator_forbidden`. Attestation-consequence thresholds lose their
+  hard-coded minimum (declared `>=0`); threshold counting uses distinct
+  principal identities in the queue fold only. Revoked keys can never be
+  re-armed with the same material, and dormant role bytes are immutable
+  pending a future governance redesign.
+
+- **Cruxible citation liveness now fails closed at every observation boundary.**
+  Source-local scan proofs are withheld whenever the matching occurrence cards
+  are clipped or rejected, partial scan budgets can no longer assert factual
+  absence, and instance-invisible source observations disclose no liveness
+  detail. Legacy drift observations now name `observed_window_digest` (instead
+  of `observed_commitment_digest`) and require `claim_id`; a legacy observation
+  for an invisible Claim is rejected with a typed 400 rather than silently
+  ignored.
+
+- **ClaimType migration now carries retired Claim dependents forward.** The
+  shipped request previously omitted retired Claims from the dependent set.
+  Callers must now disposition each retired Claim as `successor` so its stored
+  adjudication evidence is re-derived against the successor ClaimType while its
+  retired lifecycle is preserved. Omitting one refuses with
+  `cruxible.claim_type.migration_dependent_set_mismatch` and names the missing
+  Claim; run v2 preflight to obtain the complete required dependent inventory.
+
+- Add `cruxible whoami` and a deterministic open/settled proposal inventory
+  across HTTP, client, MCP, and CLI so agents can recover their writer identity
+  and pending work without reconstructing credential or proposal context.
+
+- Version the Cruxible floor as `playbill-floor-export-v2`: JSON cards are now
+  deterministically pretty-printed, and the v2 manifest inventory and floor
+  digest bind those exact grep-friendly bytes while v1 readers remain intact.
+
+- Curate the default Cruxible MCP catalog around authoring and discovery, with
+  `expert`/`full` retaining the complete surface, and render one deduplicated
+  orientation header on human `playbill search`, `list`, and `orient` output.
+
+- **PC-DEL3 removes the unreleased legacy Cruxible wire and zero-use surfaces.**
+  The unused native projection family is gone. Coverage results and source
+  observations now expose only their live v3/v4 variants; publication
+  authoring exposes only v2. The Claim-v1 direct write path and parser are
+  retired in favor of ClaimInput through the AuthoringIntent coordinator, and
+  seed apply is retired while the pure seed planner remains. The parked
+  coverage hook stays registered and runnable for compatibility; new harnesses
+  use the coverage middleware. Claim-v1 compatibility had previously
+  been announced through 0.5.0; this unreleased lineage removes it early, so
+  pre-release fixtures and ledgers carrying `playbill-claim-v1` must be rebuilt
+  or migrated before upgrading.
+
+- **Flow-A authoring remains the canonical Claim path after the retirement.**
+  Client-side source binding (`cruxible authoring bind`), model-generated
+  authoring examples (including the `cruxible_authoring_example`
+  MCP tool), bare and qualified Claim reads, and the actor/repair-authority
+  refusal texts all continue unchanged.
+
 Every user-visible fix or feature adds its entry here in the same change
 that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
+
+- **The 0.4.0 deprecation removals landed (BREAKING).** Every surface the
+  registry stamped `removal_version: 0.4.0` and that a caller could stop sending
+  is gone, along with its acceptance path, its registry entry, and the
+  transport emitters that carried its warning. Removed: the `approve` feedback
+  action (use `accept`), the `flag` feedback action (use
+  `cruxible attest record --stance contradict`), the `group_override` feedback
+  write path (retired outright — see below), and the retired declared-actor inputs
+  `source`, `proposed_by`, `resolved_by`, and `opened_by` (the kind is derived
+  from `actor_context`). These were accepted-and-ignored compatibility inputs
+  through 0.3; sending one now FAILS, at every public boundary, by name — `422`
+  on HTTP, a typed tool error on MCP (the tool does not run), a `ValidationError`
+  on the client input contracts and the Python request models, and a
+  `BadParameter` naming the offending item on `feedback batch`. Each refusal
+  names the retired key and what to send instead. The refusal is scoped to the
+  retired names: an unrelated unknown field is still tolerated, because
+  forbidding extras wholesale is a wider contract change than this schedule
+  promised. Retired ACTIONS refuse the same way, as an unknown enum member on
+  HTTP/MCP and an unknown `--action` choice on the CLI. `FeedbackInputAction`
+  is removed from the client contracts: the input vocabulary and the write
+  vocabulary are the same thing again, so `FeedbackAction` is both.
+  **Migration:** drop the arguments and pass `actor_context`; replace `approve`
+  with `accept`. **Unaffected:** stored history still reads `approve` and `flag`
+  rows, the derived `source` / `proposed_by` / `resolved_by` / `opened_by` READ
+  projections still compute from the actor context, and edges already carrying
+  `assertion.group_override` still read and still suppress a re-proposal — the
+  flag is now write-once history that nothing can set again.
+  The `DEPRECATIONS.md` and 0.3.0 changelog rows stay as the historical record.
+- **`group_override` is retired outright, with no public replacement.** An
+  earlier draft of the entry above named `force_review` as the migration; that
+  was wrong, and the correction is recorded here rather than quietly dropped.
+  **What is gone:** every way for a caller to SET `assertion.group_override` —
+  the `--group-override` CLI flags, the HTTP and MCP inputs, the client kwargs,
+  and the service write path behind them. There is no replacement input, on any
+  transport. **What still works:** edges that 0.2.x/0.3 instances already
+  stamped. `group/governance.py` still reads the stored flag, so such an edge
+  still lifts a proposal's review priority and still blocks auto-resolution, and
+  reads still report it. The flag became write-once history, not dead weight.
+  **What `force_review` actually is:** a per-call boolean argument to
+  `service_propose_group` (also raised by a workflow's `require_review` policy)
+  that forces ONE proposal to be reviewed. It is Python-level and lives inside
+  the service layer — it is on no HTTP route, no MCP tool, no CLI command, and
+  no client method. It sets nothing on an edge and persists nothing, so it is
+  not an equivalent of a durable edge-level override and cannot migrate one.
+  **Future work:** exposing a per-proposal review forcer on the public
+  transports is a separate, demand-gated work item, not part of this release.
+- **The legacy outcome deprecations were rescheduled to 0.5.0.** The legacy
+  outcome record and outcome profile functions (`outcome record`,
+  `outcome profile`, `service_outcome`, `service_get_outcome_profile`, and their
+  MCP/HTTP/client equivalents) were stamped `removal_version: 0.4.0` and were
+  NOT removed; the maintainer has ruled the window moves to **0.5.0**, and their
+  warnings now say so on every transport. The rationale is that the stated
+  replacement does not exist yet: resolution contracts carry no equivalent of an
+  outcome profile's coded vocabulary, its `required_scope_keys`, or the
+  profile-drift analysis that `analyze outcomes` reports; four shipped kits
+  configure `outcome_profiles`, and the blueprint `outcome_metric` hook names an
+  outcome profile as its available target. Removing the only writer first would
+  leave that config, the `outcomes` table, `list outcomes`, and
+  `analyze outcomes` alive with nothing able to feed them, and porting the
+  missing machinery onto the resolution-contract rail is post-Playbill-branch
+  work. Both entries now state `removal_version="0.5.0"` explicitly instead of
+  inheriting the registry default, so the new commitment does not move when the
+  default does. `DEFAULT_REMOVAL_VERSION` itself moves to `0.5.0` for the same
+  reason a schedule exists: 0.4 is the release under development, so a notice
+  registered today and left on the old default would have been born past due.
+- **Procedure definitions can be graphs.** A definition is a typed DAG rather
+  than a flat list: guard nodes carry a closed predicate grammar and two
+  labelled successors, flow wrappers declare an unconditional successor, and a
+  projection node assembles one output object from named aliases. The format is
+  declared by one field, `graph_format: 2`, which is the ONLY signal — content
+  is never sniffed, because a valid existing definition whose provider input
+  happens to contain `next` and `parameters` would be mis-detected and routed
+  through the wrong digest rules. A definition using a graph construct without
+  declaring the format is refused; declaring it without using one warns.
+  Definitions carry two digests per node — a local digest that excludes
+  successors and control targets, and a subtree digest that folds them in — so
+  retargeting an edge no longer changes the identity of the decision point it
+  leaves. The definition digest becomes a virtual root committing every
+  definition field, closing the gap where a budget, tier or contract could
+  change without the identity changing. Acceptance now records one pin per node
+  dependency, each a payload plus its digest, verified as integrity (every kind,
+  always) and currency (only what is executable); the run receipt carries the
+  pin material in its root node's detail, so a run id recovers the exact
+  accepted world. Format v1 is untouched: its digests, execution order and
+  stored bytes are unchanged, pinned by a frozen golden corpus that includes
+  real third-party definitions, and its verifier is retained permanently as
+  archival infrastructure. A 0.3 core refuses a v2 definition loudly at every
+  parse path rather than mis-executing it; snapshots read format 1 and 2 and
+  always write 2. Storage migration `0009_procedure_graph` is additive and
+  auto-applies. See `docs/migrations/graph-definition-format.md`.
+- **Procedure blueprints have a document format.** A blueprint is a portable,
+  digest-addressed document that packages a procedure library: its own fully
+  qualified contracts, its reference-state/ontology dependencies, its query
+  slots (read sockets that install a default named query), its compute slots
+  (swappable stages declared by contract, with billing-mode compatibility
+  constraints and an opt-in outcome-metric hook), and its procedures. The new
+  `cruxible_core.blueprint` module parses and validates a document, computes a
+  content digest over a canonical form plus an ordered attachment manifest, and
+  lowers it into the artifacts an installer submits: a config-overlay fragment
+  and concrete `ProcedureDefinition`s with slot references resolved from a
+  caller-supplied binding map, checked against a caller-supplied provider
+  catalog. Binding is fail-closed: a provider missing from the catalog is
+  refused rather than assumed compatible, and a bound provider must match the
+  slot's contract names, intersect its billing modes, and claim every
+  capability tag it requires. Refusals are typed and field-pathed — one issue
+  per violated constraint — and an unbindable slot lists the near-matching
+  providers and why each failed. This
+  release ships the artifact only — there is no installer, no trigger runtime,
+  and no binding registry. `triggers:` and `pipelines:` parse and validate but
+  refuse to lower; `invocation: manual` procedure libraries are the executable
+  slice. Format reference: `docs/blueprints.md`.
+
+- **Installed config objects now have an authoritative owner.** A new install
+  ledger in `state.db` records which installed artifact (kind, id, version,
+  digest) owns which contract, named query, procedure, or enum, together with
+  the content digest it installed and the phase the install reached
+  (`preparing` → `pending_acceptance` → `active`, plus `failed` →
+  `rolling_back` → `rolled_back`). Every write is receipted, phase history is
+  append-only, illegal transitions are refused with a typed error naming the
+  phase the install is actually in, and one live owner per object name is a
+  database guarantee. An install holds its names until it reaches
+  `rolled_back`, and releases them in that same transaction: a `failed` install
+  may already have written objects and still has to roll them back, so freeing
+  its names earlier would let a fresh install claim objects the first
+  install's rollback is about to remove. An install that mutated nothing pays a
+  no-op rollback before its names are reusable.
+  Composition ownership previously tracked only the upstream/local split, which
+  could not support selective uninstall, dependency-blocked removal, or
+  customer-edit-preserving updates. Read-only HTTP routes list installs and
+  return one install with its owned objects and phase history; the uninstall
+  precondition check reports declared blockers and states, in its own payload,
+  the reference sources it cannot see. The write surface stays service-internal
+  and there is no MCP tool: the installer that drives the sequence is not built
+  yet.
+
+- **Compute slots bind to providers through a ledger in state, not config.** A
+  procedure pins a slot's INTERFACE (the contracts in and out); which provider
+  fills that slot on a given install is now a receipted deployment record in
+  `state.db`, with a monotonic revision per binding and full history retained.
+  Binding refuses a provider whose declared contracts are not exactly the slot's,
+  a billing mode outside the slot's allowed set (echoing the allowed values), and
+  a third-party provider without recorded consent — the consenting actor and
+  timestamp land on the binding, not in a config flag, and consent asserted with
+  no actor context to attribute it to is refused rather than stamped
+  anonymously. An unbindable slot reports every candidate that nearly matched,
+  ranked by contract sides matched and then by failure count, naming every reason
+  each one failed rather than only the first; the ranking rides on the error as
+  structured data as well as in its text. The whole slot interface — both
+  contracts, the billing allowlist, and the consent requirement — is pinned onto
+  the binding at bind time and never revised: rebinding mints a new revision on
+  the same binding, keeps the previous one readable, and is validated against the
+  STORED interface, so a rebind that supplies a different one is refused naming
+  what the ledger holds instead of redefining the constraints it is being checked
+  against. One active binding per slot per install is a database guarantee
+  (partial unique index), so two concurrent binds cannot both leave an active row
+  behind. Readable over HTTP at `GET /slot-bindings` and
+  `GET /slot-bindings/{binding_id}/history`; the bind, rebind, and retire verbs
+  are service-level in this release with no CLI or MCP surface yet. Procedure
+  runs do not resolve or record bindings yet — wiring slot resolution into run
+  start is separate work, so nothing about run behaviour changes in this release.
+  Storage migration `0008_binding_ledger`.
 
 ## [0.3.2] - 2026-08-06
 
@@ -165,7 +1791,6 @@ the project's own state instance.
   post-push job pulls that digest and runs the runtime image suite against
   the published artifact via the new `CRUXIBLE_RUNTIME_IMAGE_REF` test
   override. Deployments pin the digest, not the tag.
-
 ## [0.3.1] - 2026-08-05
 
 - **Entity types can declare deterministic identity keys at write time.**

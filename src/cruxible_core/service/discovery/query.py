@@ -1,0 +1,1097 @@
+"""Accepted-state query execution over governed QueryDefinitions.
+
+This module supplies the one adapter the F2/F3 evaluator was missing: accepted
+ledger state projected into the exact ``ClaimQueryFactsV1`` the engine reads.
+The evidence assembly mirrors ``service_evaluate_playbill_claim_verdict`` so a
+queried Claim and an explained Claim can never disagree about their verdict.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from contextlib import nullcontext
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
+from cruxible_client.contracts.claim_attestations import ClaimAttestation
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_path,
+    effective_canonical_form,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claims import (
+    AcceptedClaim,
+    ClaimArtifact,
+    ClaimLawEvidence,
+    claim_artifact_digest,
+    claim_statement_digest,
+    parse_claim,
+)
+from cruxible_client.contracts.errors import (
+    ClaimNotFoundError,
+    ProjectionIntegrityError,
+    ProposalIntegrityError,
+)
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
+from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
+from cruxible_client.contracts.query.grammar import QueryArtifactsEntry, QueryBudgets
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResult,
+    QueryArtifactDefinition,
+    QueryExecutionReceipt,
+)
+from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
+from cruxible_core.errors import DataValidationError
+from cruxible_core.evidence.claim_reobservations import (
+    ReobservationReader,
+    reobservations_at,
+)
+from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
+from cruxible_core.exhaust.records import (
+    QUERY_RECEIPT_EVENT_KIND,
+    QUERY_RECEIPT_JOURNAL_FAMILY,
+    JournalStreamIdentityV1,
+    StoredProcedureJournalRecordV1,
+)
+from cruxible_core.exhaust.writer import ProcedureExhaustWriter
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.sql_batch import select_in
+from cruxible_core.indexes.subject_aliases import projection_connection, reference_resolver
+from cruxible_core.indexes.subject_identity import key_normalizer_of, tree_subject_kind_reader
+from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
+from cruxible_core.query.engine import (
+    OperandProbe,
+    _RefusalSignal,
+    bind_reference_forms,
+    evaluate_artifact_query,
+    evaluate_claim_query,
+    procedure_read_budgets,
+    query_execution_receipt,
+    resolve_query_parameters,
+)
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
+from cruxible_core.service.discovery.query_definitions import accepted_query_definition
+from cruxible_core.service.discovery.query_pushdown import select_query_facts
+from cruxible_core.service.evidence.evidence import (
+    ClaimReadHistoryIndex,
+    ClaimReadSourceProtocol,
+    ClaimVerdictReadContext,
+    _claim_read_history_index,
+    _current_replay_available,
+    _IndexedClaimLawEvidence,
+    _referent_digests,
+    _reproduced_claim_adjudication_rule,
+    accepted_claim_attestations,
+    accepted_claim_providers,
+)
+from cruxible_core.storage.read_positions import positioned_read
+
+CLAIM_PATH_PREFIX = "claims/"
+SUBJECT_PATH_PREFIX = "subjects/"
+DEFAULT_RECEIPT_STREAM_ID = "query-receipts"
+DEFAULT_RECEIPT_PARTITION_ID = "default"
+
+
+class _StrictQueryRunModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PlaybillQueryRunV1(_StrictQueryRunModel):
+    """One executed query: its replayable result and its execution receipt."""
+
+    tag: Literal["playbill-query-run-v1"] = "playbill-query-run-v1"
+    coordinate: AcceptedCoordinate
+    name: str
+    definition_path: str
+    definition_digest: str
+    result: ClaimQueryResult
+    receipt: QueryExecutionReceipt
+    journal_record_digest: str | None = None
+
+
+def _accepted_subjects(
+    tree: Mapping[str, bytes], *, paths: tuple[str, ...] | None = None
+) -> tuple[AcceptedSubject, ...]:
+    return tuple(
+        AcceptedSubject(
+            path=path,
+            shell=shell,
+            artifact_digest=subject_digest(shell).tagged,
+        )
+        for path in sorted(tree if paths is None else paths, key=lambda item: item.encode("utf-8"))
+        if path.startswith(SUBJECT_PATH_PREFIX)
+        for shell in (parse_subject(tree[path], path=path),)
+    )
+
+
+def _key_normalizer(
+    tree: Mapping[str, bytes],
+    claim_type: ClaimType,
+    cache: dict[str, KeyNormalizer | None] | None,
+) -> KeyNormalizer | None:
+    """The identity normalizer a key predicate's operands take (one read per predicate)."""
+
+    if cache is not None and claim_type.predicate in cache:
+        return cache[claim_type.predicate]
+    found = key_normalizer_of(claim_type, tree_subject_kind_reader(tree))
+    if cache is not None:
+        cache[claim_type.predicate] = found
+    return found
+
+
+def _fact_row(
+    instance: ClaimReadSourceProtocol,
+    *,
+    path: str,
+    tree: Mapping[str, bytes],
+    coordinate: AcceptedProjectionCoordinate,
+    readers: Mapping[str, ExternalSourceReaderProtocol],
+    evidence: ClaimLawEvidence,
+    history: ClaimReadHistoryIndex,
+    claim: ClaimArtifact,
+    claim_types: dict[str, ClaimType],
+    attestation_envelopes: tuple[ClaimAttestation, ...],
+    store: Any = None,
+    reobserved: bool = False,
+    bodies: dict[str, Any] | None = None,
+    key_normalizers: dict[str, KeyNormalizer | None] | None = None,
+) -> ClaimFactRowV1:
+    """Assemble one Claim's verdict inputs exactly as the verdict service does.
+
+    ``bodies`` receives the identity of every body-store object an availability
+    answer consulted (see ``_current_replay_available``).
+    """
+
+    accepted = AcceptedClaim(
+        path=path,
+        claim=claim,
+        statement_digest=claim_statement_digest(claim.statement).tagged,
+        artifact_digest=claim_artifact_digest(claim).tagged,
+    )
+    # The caller supplies the accepted-history evidence from one shared index;
+    # rebuilding it per row would make current-state folds quadratic in Claims.
+    type_path = claim_type_path(claim.statement.predicate)
+    type_content = tree.get(type_path)
+    if type_content is None:
+        raise ClaimNotFoundError(type_path)
+    claim_type = claim_types.get(type_path)
+    if claim_type is None:
+        claim_type = parse_claim_type(type_content, path=type_path)
+        claim_types[type_path] = claim_type
+    rule = _reproduced_claim_adjudication_rule(
+        claim_type=claim_type,
+        evidence_digest=evidence.adjudication_rule_digest,
+        history=history,
+        law_digest=evidence.law_digest,
+    )
+    captures = tuple(
+        item.model_copy(
+            update={
+                "current_replay_available": _current_replay_available(
+                    instance,
+                    item.capture_digest,
+                    readers=readers,
+                    store=store,
+                    bodies=bodies,
+                )
+            }
+        )
+        for item in evidence.verdict_captures
+    )
+    subject_content_digest, object_content_digest = _referent_digests(tree, claim)
+    referent_current = (
+        claim.backing.referent_context.subject_content_digest == subject_content_digest
+        and claim.backing.referent_context.object_content_digest == object_content_digest
+    )
+    attestations = accepted_claim_attestations(
+        instance,
+        coordinate=coordinate,
+        tree=tree,
+        claim=claim,
+        envelopes=attestation_envelopes,
+    )
+    row = ClaimFactRowV1(
+        accepted=accepted,
+        rule=rule,
+        captures=captures,
+        attestations=attestations,
+        referent_current=referent_current,
+        # Authority is resolved from live mandate/resolution state by PC-E1's
+        # resolver; acceptance-time verdict output is never carried forward.
+        resolved_authority_basis=(),
+        cardinality=claim_type.cardinality,
+        canonical_form=effective_canonical_form(claim_type),
+        key_normalizer=_key_normalizer(tree, claim_type, key_normalizers),
+    )
+    if reobserved and isinstance(instance, PlaybillInstance):
+        # A re-observed lineage reads its freshness at each evaluation instant,
+        # one indexed probe per cited (contract, content).
+        live = instance
+        claim_id = claim.identity.name
+        row.attach_reobservations(
+            lambda at: (
+                reobservations_at(
+                    live, coordinate=coordinate, claim_id=claim_id, captures=captures, at=at
+                ).evidence
+            )
+        )
+    return row
+
+
+def verify_retired_claim_adjudication(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> None:
+    """Refuse exactly where a retired facts build would refuse on adjudication.
+
+    ``build(include_retired=True)`` assembles a row for every retired Claim,
+    and assembling one demands its law evidence, its current ClaimType and a
+    reproducible adjudication rule. A fold that can skip that build must not
+    skip that refusal. This reads only those inputs: retired rows come from the
+    accepted index, and each (ClaimType, recorded rule) pair is reproduced once.
+    """
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        retired = tuple(
+            (str(path), str(predicate))
+            for path, predicate in projection.typed.connection.execute(
+                "SELECT path, predicate FROM claims WHERE lifecycle='retired'"
+            )
+        )
+    if not retired:
+        return
+    history = _claim_read_history_index(instance, coordinate=coordinate)
+    law_evidence = history.law_evidence
+    if isinstance(law_evidence, _IndexedClaimLawEvidence):
+        law_evidence.prefetch(tuple(path for path, _ in retired))
+    claim_types: dict[str, ClaimType] = {}
+    reproduced: set[tuple[str, str, str]] = set()
+    for path, predicate in sorted(retired, key=lambda item: item[0].encode("utf-8")):
+        evidence = law_evidence.get(path)
+        if evidence is None:
+            raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+        type_path = claim_type_path(predicate)
+        claim_type = claim_types.get(type_path)
+        if claim_type is None:
+            content = instance.blob_at(coordinate.git_oid, type_path)
+            if content is None:
+                raise ClaimNotFoundError(type_path)
+            claim_type = parse_claim_type(content, path=type_path)
+            claim_types[type_path] = claim_type
+        key = (type_path, evidence.adjudication_rule_digest, evidence.law_digest)
+        if key not in reproduced:
+            _reproduced_claim_adjudication_rule(
+                claim_type=claim_type,
+                evidence_digest=evidence.adjudication_rule_digest,
+                history=history,
+                law_digest=evidence.law_digest,
+            )
+            reproduced.add(key)
+
+
+class _AcceptedQueryFactsRead:
+    """Private facts shared by folds within one request at one coordinate.
+
+    The tree and reader mapping are fixed for this read. Capture availability
+    is sampled when a row is first assembled; no row survives into a later
+    request. Consumers must not mutate the shared facts.
+    """
+
+    def __init__(
+        self,
+        instance: ClaimReadSourceProtocol,
+        *,
+        coordinate: AcceptedProjectionCoordinate,
+        external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+        source_tree: Mapping[str, bytes] | None = None,
+        predicates: tuple[str, ...] | None = None,
+        subject_kinds: tuple[str, ...] | None = None,
+        consulted_bodies: dict[str, Any] | None = None,
+        entry_subject_paths: tuple[str, ...] | None = None,
+        claim_paths: tuple[str, ...] | None = None,
+    ) -> None:
+        self._instance = instance
+        self._entry_subject_paths = entry_subject_paths
+        # A served query's reach (``query_pushdown.query_reach``): exactly the
+        # live Claims its evaluation can read, instead of its predicates' all.
+        self._reached_claim_paths = claim_paths
+        self._narrowed = entry_subject_paths is not None or claim_paths is not None
+        self._consulted_bodies = consulted_bodies
+        # A served query names every predicate and entry Subject kind it can
+        # read; with both, only the Subjects it can reach are read and parsed.
+        self._scoped_subject_kinds = subject_kinds if predicates is not None else None
+        self._context: ClaimVerdictReadContext | None = None
+        self._coordinate = coordinate
+        self._readers = dict(external_readers or {})
+        self._tree: Mapping[str, bytes] | None = None
+        self._source_tree = source_tree
+        self._predicates = predicates
+        self._claim_paths: tuple[str, ...] = ()
+        # Whether ``_claim_paths`` holds live Claims only: a retired build reads
+        # the retired ones when it is first asked for.
+        self._claim_paths_live_only = False
+        self._subject_paths: tuple[str, ...] = ()
+        # Whether ``_subject_paths`` holds only the admitted kinds' Subjects.
+        self._subject_paths_by_kind = False
+        self._history: ClaimReadHistoryIndex | None = None
+        self._attestations: dict[tuple[str, str], list[ClaimAttestation]] = {}
+        self._claims: dict[str, ClaimArtifact] = {}
+        self._claim_types: dict[str, ClaimType] = {}
+        self._key_normalizers: dict[str, KeyNormalizer | None] = {}
+        self._rows: dict[str, ClaimFactRowV1] = {}
+        self._results: dict[bool, ClaimQueryFactsV1] = {}
+
+    def _reachable_subject_paths(self, rows: list[ClaimFactRowV1]) -> tuple[str, ...]:
+        """The Subjects this evaluation can read: all of them, or a served query's reach.
+
+        A served query reads Subjects only by entry kind, as the subject or
+        object of a Claim it selected, or through a binding to one of those.
+        Every such Subject that exists is included, so presence and absence
+        answer exactly as over the whole set.
+        """
+        kinds = self._scoped_subject_kinds
+        if kinds is None:
+            return self._subject_paths
+        admitted = set(kinds)
+        named = {row.subject_path for row in rows} | {
+            row.object_subject_path for row in rows if row.object_subject_path is not None
+        }
+        if self._subject_paths_by_kind:
+            # ``_subject_paths`` holds the admitted entries (an indexed selection,
+            # or every Subject of the entry kinds); Claim referents are included
+            # separately, and never become extra entries in a selected evaluation.
+            tree = self._tree
+            assert tree is not None
+            reachable = tuple(
+                sorted(
+                    set(self._subject_paths)
+                    | {
+                        path
+                        for path in named
+                        if path.startswith(SUBJECT_PATH_PREFIX) and path in tree
+                    },
+                    key=lambda item: item.encode("utf-8"),
+                )
+            )
+        else:
+            reachable = tuple(
+                path
+                for path in self._subject_paths
+                if path in named
+                or (
+                    path.startswith(SUBJECT_PATH_PREFIX) and _subject_kind_of_path(path) in admitted
+                )
+            )
+        if self._source_tree is None and self._context is not None:
+            self._context.prefetch(reachable)
+        return reachable
+
+    @property
+    def verdict_context(self) -> ClaimVerdictReadContext | None:
+        """This request's verdict read context, once ``build`` has read through one."""
+        return self._context
+
+    def live_claims(self) -> tuple[ClaimArtifact, ...]:
+        """Return the source Claims already read by this request's live fact fold."""
+        self.build()
+        return tuple(
+            self._claims[path]
+            for path in sorted(self._claims)
+            if self._claims[path].lifecycle.state == "live"
+        )
+
+    def build(self, *, include_retired: bool = False) -> ClaimQueryFactsV1:
+        previous = self._results.get(include_retired)
+        if previous is not None:
+            return previous
+        if self._tree is None:
+            if isinstance(self._instance, PlaybillInstance):
+                context = ClaimVerdictReadContext(self._instance, self._coordinate)
+                self._context = context
+                self._tree = self._source_tree if self._source_tree is not None else context.tree
+                with self._instance.bind_accepted_projection(self._coordinate) as projection:
+                    if self._reached_claim_paths is not None:
+                        assert not include_retired, "a reached read holds live Claims only"
+                        self._claim_paths = self._reached_claim_paths
+                    else:
+                        self._claim_paths = _claim_paths(
+                            projection.typed.connection,
+                            predicates=self._predicates,
+                            live_only=not include_retired,
+                            subject_paths=self._entry_subject_paths,
+                        )
+                    self._claim_paths_live_only = not include_retired
+                    # A scoped query over accepted bytes reaches Subjects by its
+                    # entry kinds (plus those its Claims name): select those
+                    # kinds, not every Subject's envelope.
+                    self._subject_paths_by_kind = (
+                        self._scoped_subject_kinds is not None and self._source_tree is None
+                    )
+                    self._subject_paths = (
+                        self._entry_subject_paths
+                        if self._entry_subject_paths is not None
+                        else _subject_paths_of_kinds(
+                            projection.typed.connection, self._scoped_subject_kinds or ()
+                        )
+                        if self._subject_paths_by_kind
+                        else tuple(row.path for row in projection.typed.envelopes(kind="subject"))
+                    )
+                    for value in projection.typed.claim_attestations(
+                        current_claims_only=not self._narrowed,
+                        claim_predicates=self._predicates if not self._narrowed else None,
+                        claim_versions=(
+                            tuple(
+                                (str(row[0]), str(row[1]))
+                                for row in select_in(
+                                    projection.typed.connection,
+                                    "SELECT identity,artifact_digest FROM claims "
+                                    "WHERE path IN ({})",
+                                    self._claim_paths,
+                                )
+                            )
+                            if self._narrowed
+                            else None
+                        ),
+                    ):
+                        self._attestations.setdefault(
+                            (
+                                value.statement.claim_identity.qualified,
+                                value.statement.claim_artifact_digest,
+                            ),
+                            [],
+                        ).append(value)
+                    if self._narrowed:
+                        type_paths = tuple(
+                            claim_type_path(predicate) for predicate in self._predicates or ()
+                        )
+                    else:
+                        type_sql = (
+                            "SELECT DISTINCT t.path FROM claims c "
+                            + (
+                                "INDEXED BY claims_by_predicate "
+                                if self._predicates is not None
+                                else ""
+                            )
+                            + "JOIN claim_types t ON t.identity=c.claim_type_identity WHERE 1"
+                        )
+                        type_values: tuple[str, ...] = ()
+                        if self._predicates is not None:
+                            type_sql += (
+                                " AND c.predicate IN ("
+                                + ",".join("?" for _ in self._predicates)
+                                + ")"
+                            )
+                            type_values = self._predicates
+                        if not include_retired:
+                            type_sql += " AND c.lifecycle='live'"
+                        type_paths = tuple(
+                            row[0]
+                            for row in projection.typed.connection.execute(type_sql, type_values)
+                        )
+                if self._source_tree is None:
+                    context.prefetch(
+                        self._claim_paths
+                        + (() if self._scoped_subject_kinds is not None else self._subject_paths)
+                        + type_paths
+                    )
+            else:
+                # Cold candidate compilation has source bytes, without a served index.
+                self._tree = self._instance.tree_at(self._coordinate.git_oid)
+                self._claim_paths = tuple(p for p in self._tree if p.startswith(CLAIM_PATH_PREFIX))
+                self._subject_paths = tuple(
+                    p for p in self._tree if p.startswith(SUBJECT_PATH_PREFIX)
+                )
+                for path, content in self._tree.items():
+                    if path.startswith("attestations/"):
+                        value = parse_accepted_attestation(content, path=path)
+                        self._attestations.setdefault(
+                            (
+                                value.statement.claim_identity.qualified,
+                                value.statement.claim_artifact_digest,
+                            ),
+                            [],
+                        ).append(value)
+        elif include_retired and self._claim_paths_live_only:
+            # The first build read live Claims only; this one needs the retired.
+            assert isinstance(self._instance, PlaybillInstance)
+            assert self._reached_claim_paths is None, "a reached read holds live Claims only"
+            with self._instance.bind_accepted_projection(self._coordinate) as projection:
+                self._claim_paths = _claim_paths(
+                    projection.typed.connection,
+                    predicates=self._predicates,
+                    live_only=False,
+                    subject_paths=self._entry_subject_paths,
+                )
+            self._claim_paths_live_only = False
+        tree = self._tree
+        if self._history is None:
+            self._history = _claim_read_history_index(self._instance, coordinate=self._coordinate)
+        history = self._history
+
+        def evidence_for(path: str) -> ClaimLawEvidence:
+            evidence = history.law_evidence.get(path)
+            if evidence is None:
+                raise ProposalIntegrityError(
+                    "accepted Claim has no reproducible Claim law evidence"
+                )
+            return evidence
+
+        # Read the law evidence of every row this build will emit under one
+        # history snapshot, instead of opening a history reader per Claim.
+        law_evidence = history.law_evidence
+        if isinstance(law_evidence, _IndexedClaimLawEvidence):
+            wanted: list[str] = []
+            for path in self._claim_paths:
+                claim = self._claims.get(path)
+                if claim is None:
+                    claim = parse_claim(tree[path], path=path)
+                    self._claims[path] = claim
+                if self._predicates is not None and (
+                    claim.statement.predicate not in self._predicates
+                ):
+                    continue
+                if include_retired or claim.lifecycle.state == "live":
+                    wanted.append(path)
+            law_evidence.prefetch(tuple(wanted))
+        # One store per build: obtaining it checks the storage binding.
+        store = self._instance.body_store()
+        rows: list[ClaimFactRowV1] = []
+        # A lineage someone re-observed reads its freshness at evaluation time;
+        # whether it was is one indexed probe per assembled Claim.
+        reader = (
+            ReobservationReader.of(self._instance)
+            if isinstance(self._instance, PlaybillInstance)
+            else None
+        )
+        for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
+            # The full-history path historically looked up evidence before
+            # parsing the Claim; live-only reads parsed lifecycle first and
+            # never demanded evidence for retired heads. Keep both orders.
+            evidence = evidence_for(path) if include_retired else None
+            claim = self._claims.get(path)
+            if claim is None:
+                claim = parse_claim(tree[path], path=path)
+                self._claims[path] = claim
+            if self._predicates is not None and claim.statement.predicate not in self._predicates:
+                continue
+            if not include_retired and claim.lifecycle.state != "live":
+                continue
+            row = self._rows.get(path)
+            if row is None:
+                row = _fact_row(
+                    self._instance,
+                    path=path,
+                    tree=tree,
+                    coordinate=self._coordinate,
+                    readers=self._readers,
+                    evidence=evidence if evidence is not None else evidence_for(path),
+                    history=history,
+                    claim=claim,
+                    claim_types=self._claim_types,
+                    store=store,
+                    attestation_envelopes=tuple(
+                        self._attestations.get(
+                            (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
+                        )
+                    ),
+                    reobserved=reader is not None and bool(reader.sequence(claim.identity.name)),
+                    bodies=self._consulted_bodies,
+                    key_normalizers=self._key_normalizers,
+                )
+                self._rows[path] = row
+            rows.append(row)
+        assembled = next(iter(self._results.values()), None)
+        if assembled is None:
+            providers = accepted_claim_providers(self._instance, coordinate=self._coordinate)
+            subjects = _accepted_subjects(tree, paths=self._reachable_subject_paths(rows))
+            ordered_providers = tuple(
+                providers[key] for key in sorted(providers, key=lambda item: item.encode("utf-8"))
+            )
+        else:
+            subjects = assembled.subjects
+            ordered_providers = assembled.providers
+        result = ClaimQueryFactsV1(
+            coordinate=self._coordinate,
+            subjects=subjects,
+            claims=tuple(rows),
+            providers=ordered_providers,
+        )
+        self._results[include_retired] = result
+        return result
+
+
+def _claim_paths(
+    connection: Any,
+    *,
+    predicates: tuple[str, ...] | None,
+    live_only: bool,
+    subject_paths: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """Accepted Claim paths of the predicates (all when None), live ones when ``live_only``."""
+
+    where = ["1"]
+    values: list[str] = []
+    if predicates is not None:
+        where.append("predicate IN (" + ",".join("?" for _ in predicates) + ")")
+        values.extend(predicates)
+    if live_only:
+        where.append("lifecycle='live'")
+    if subject_paths is not None:
+        return tuple(
+            sorted(
+                str(row[0])
+                for row in select_in(
+                    connection,
+                    "SELECT path FROM claims INDEXED BY claims_by_subject_predicate WHERE "
+                    + " AND ".join(where)
+                    + " AND subject_path IN ({})",
+                    subject_paths,
+                    prefix=values,
+                )
+            )
+        )
+    return tuple(
+        str(row[0])
+        for row in connection.execute(
+            "SELECT path FROM claims "
+            + ("INDEXED BY claims_by_predicate " if predicates is not None else "")
+            + "WHERE "
+            + " AND ".join(where)
+            + " ORDER BY path",
+            values,
+        )
+    )
+
+
+def _subject_paths_of_kinds(connection: Any, kinds: tuple[str, ...]) -> tuple[str, ...]:
+    """Accepted Subject paths of the given kinds: one path-index range per kind."""
+
+    paths: list[str] = []
+    for kind in sorted(set(kinds)):
+        prefix = f"{SUBJECT_PATH_PREFIX}{kind}/"
+        paths.extend(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT path FROM subjects WHERE path>=? AND path<? ORDER BY path",
+                (prefix, prefix[:-1] + chr(ord("/") + 1)),
+            )
+        )
+    return tuple(paths)
+
+
+def _subject_kind_of_path(path: str) -> str:
+    # subjects/<kind>/<id>: a kind never contains "/", and every accepted
+    # Subject's path was validated against its shell.
+    return path.split("/", 2)[1]
+
+
+@positioned_read
+def build_accepted_query_facts(
+    instance: ClaimReadSourceProtocol,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    include_retired: bool = False,
+    predicates: tuple[str, ...] | None = None,
+    subject_kinds: tuple[str, ...] | None = None,
+    consulted_bodies: dict[str, Any] | None = None,
+    entry_subject_paths: tuple[str, ...] | None = None,
+    claim_paths: tuple[str, ...] | None = None,
+) -> ClaimQueryFactsV1:
+    """Project accepted ledger state into the facts one evaluation may read.
+
+    Normal query evaluation admits only live Claims. Read-side lineage folds may
+    opt into retired heads explicitly; the shared visibility path still judges
+    verdicts rather than lifecycle, and callers remain responsible for limiting
+    dependents to live rows. A served QueryDefinition supplies its complete
+    referenced-predicate inventory so unrelated Claim and attestation bodies
+    never enter the snapshot. General discovery callers leave it unrestricted.
+    ``consulted_bodies`` receives the body-store objects the rows' availability
+    answers consulted, with the file identity each had. ``entry_subject_paths``
+    narrows both entry shells and Claim subjects to a proven indexed selection;
+    the selected Claims' Subject referents remain available to the evaluator.
+    ``claim_paths`` (a served query's reach) is exactly the live Claims to read.
+    """
+
+    return _AcceptedQueryFactsRead(
+        instance,
+        coordinate=coordinate,
+        external_readers=external_readers,
+        predicates=predicates,
+        subject_kinds=subject_kinds,
+        consulted_bodies=consulted_bodies,
+        entry_subject_paths=entry_subject_paths,
+        claim_paths=claim_paths,
+    ).build(include_retired=include_retired)
+
+
+class PlaybillQueryReceiptJournal:
+    """Append query execution receipts to the registered query-receipt family.
+
+    The journal backend is caller-owned exactly as it is for Procedure exhaust;
+    a Cruxible instance never opens one implicitly.
+    """
+
+    def __init__(
+        self,
+        *,
+        writer: ProcedureExhaustWriter,
+        instance_id: str,
+        actor_context: GovernedActorContext,
+        stream_id: str = DEFAULT_RECEIPT_STREAM_ID,
+        partition_id: str = DEFAULT_RECEIPT_PARTITION_ID,
+    ) -> None:
+        self.writer = writer
+        self.actor_context = actor_context
+        self.partition_id = partition_id
+        self.stream = JournalStreamIdentityV1(
+            instance_id=instance_id,
+            journal_family=QUERY_RECEIPT_JOURNAL_FAMILY,
+            stream_id=stream_id,
+        )
+
+    def record(
+        self,
+        receipt: QueryExecutionReceipt,
+        *,
+        accepted_coordinate: AcceptedCoordinate,
+        recorded_at: datetime,
+    ) -> StoredProcedureJournalRecordV1:
+        return self.writer.append(
+            stream=self.stream,
+            partition_id=self.partition_id,
+            event_kind=QUERY_RECEIPT_EVENT_KIND,
+            accepted_coordinate=accepted_coordinate,
+            definition_digest=receipt.definition_digest,
+            actor_context=self.actor_context,
+            recorded_at=recorded_at,
+            payload=receipt.model_dump(mode="json"),
+        )
+
+
+def parameters_through_aliases(
+    instance: PlaybillInstance,
+    definition: AcceptedQueryDefinition,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    parameters: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Caller parameters with every Subject reference resolved through its aliases.
+
+    The entry's Subject-id parameter, and every parameter the query declares as a
+    ``subject_reference``, is a Subject reference: one that names no Subject
+    resolves through the aliases of its kind (``semantic.alias``), and an alias
+    naming several refuses ``cruxible.query.alias_ambiguous`` with each.
+    """
+
+    from cruxible_core.indexes.subject_aliases import resolve_reference_text, resolve_subject_ref
+    from cruxible_core.service.discovery.query_vocabulary import query_refusal
+
+    query = definition.query
+    # Aliases resolve on the spelling each position compares (bare id at the
+    # entry, Subject:kind/id elsewhere), whichever form the caller wrote.
+    parameters = bind_reference_forms(query, parameters)
+    entry = query.entry
+    entry_parameter = (
+        entry.subject_id.parameter
+        if not isinstance(entry, QueryArtifactsEntry) and entry.subject_id is not None
+        else None
+    )
+    references = {item.name for item in query.parameters if item.value_type == "subject_reference"}
+    wanted = [
+        name
+        for name, value in parameters.items()
+        if isinstance(value, str) and (name == entry_parameter or name in references)
+    ]
+    if not wanted:
+        return parameters
+
+    def ambiguous(name: str, kind: str, candidates: tuple[str, ...]) -> Exception:
+        return query_refusal(
+            "cruxible.query.alias_ambiguous",
+            f"parameter {name!r} names no Subject, and an alias of {kind} names "
+            f"{len(candidates)} of them",
+            nearest=candidates,
+            repair="pass one of the listed Subjects",
+            field_path=f"params.{name}",
+        )
+
+    from cruxible_core.indexes.subject_identity import tree_key_reader
+
+    key_reader = tree_key_reader(instance.immutable_tree_at(coordinate.git_oid))
+    resolved = dict(parameters)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        for name in wanted:
+            value = str(parameters[name])
+            if name == entry_parameter and not isinstance(entry, QueryArtifactsEntry):
+                matches: set[str] = set()
+                for kind in entry.subject_kinds:
+                    resolution = resolve_subject_ref(connection, kind, value, key_reader=key_reader)
+                    if resolution.ambiguous:
+                        raise ambiguous(name, kind, resolution.candidates)
+                    if resolution.via == "identity":
+                        matches = {value}
+                        break
+                    if resolution.ref is not None:
+                        matches.add(resolution.ref.partition("/")[2])
+                if len(matches) > 1:
+                    raise ambiguous(name, "/".join(entry.subject_kinds), tuple(sorted(matches)))
+                if matches:
+                    resolved[name] = next(iter(matches))
+                continue
+            found = resolve_reference_text(connection, value)
+            if found is None:
+                continue
+            spelled, resolution = found
+            if resolution.ambiguous:
+                raise ambiguous(name, resolution.kind, resolution.candidates)
+            resolved[name] = spelled
+    return resolved
+
+
+def _operand_probe(
+    definition: AcceptedQueryDefinition,
+    *,
+    parameters: Mapping[str, object] | None,
+    evaluation_time: datetime,
+    canonical_forms: Mapping[str, tuple[str, ...]],
+    key_normalizers: Mapping[str, KeyNormalizer],
+    connection: Any,
+) -> OperandProbe | None:
+    """The evaluator's operand coercion for planning, over the bound projection."""
+
+    try:
+        bindings = resolve_query_parameters(definition.query, parameters)
+    except _RefusalSignal:
+        return None
+    return OperandProbe(
+        definition.query,
+        parameters={item.name: item.value for item in bindings if item.value is not None},
+        evaluation_time=evaluation_time,
+        canonical_forms=canonical_forms,
+        key_normalizers=key_normalizers,
+        resolve_reference=reference_resolver(lambda: nullcontext(connection)),
+    )
+
+
+@positioned_read
+def evaluate_accepted_query(
+    instance: PlaybillInstance,
+    definition: AcceptedQueryDefinition,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    parameters: Mapping[str, object] | None = None,
+    budgets: QueryBudgets | None = None,
+    facts: Callable[[], ClaimQueryFactsV1] | None = None,
+    live_subjects_only: bool = False,
+    external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
+) -> ClaimQueryResult:
+    """One dispatch for public reads and projection currency, with lazy Claim facts.
+
+    ``procedure_read`` evaluates for a Procedure ``read`` node: its ceiling
+    replaces the definition's interactive budgets for this call only.
+    """
+    if procedure_read is not None:
+        budgets = procedure_read_budgets(definition.query, procedure_read)
+    if parameters:
+        parameters = parameters_through_aliases(
+            instance, definition, coordinate=coordinate, parameters=parameters
+        )
+    if isinstance(definition.query.entry, QueryArtifactsEntry):
+
+        def read(
+            entry: QueryArtifactsEntry, limit: int
+        ) -> tuple[int, tuple[QueryArtifactDefinition, ...]]:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                count, rows = projection.typed.query_artifact_definitions(
+                    kind=entry.artifact_kind,
+                    namespaces=entry.namespaces,
+                    name_prefixes=entry.name_prefixes,
+                    limit=limit,
+                )
+                definitions = []
+                for row in rows:
+                    source = projection.typed.source(row.identity)
+                    if source is None:
+                        raise ProjectionIntegrityError("selected definition source is absent")
+                    definitions.append(
+                        QueryArtifactDefinition(
+                            identity=row.identity,
+                            path=row.path,
+                            artifact_digest=row.artifact_digest,
+                            definition=source,
+                        )
+                    )
+                return count, tuple(definitions)
+
+        return evaluate_artifact_query(
+            definition,
+            read=read,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            parameters=parameters,
+            budgets=budgets,
+            procedure_read=procedure_read,
+        )
+    selection = None
+    canonical_forms = None
+    key_normalizers: dict[str, KeyNormalizer] | None = None
+    if facts is None:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            connection = projection.typed.connection
+            tree = instance.immutable_tree_at(coordinate.git_oid)
+            # Operand normalization historically comes from every live
+            # predicate row, even if this entry has no Claim of that type.
+            # Preserve that metadata with one indexed existence seek per
+            # declared predicate, without loading those rows' facts.
+            forms: dict[str, tuple[str, ...]] = {}
+            normalizers: dict[str, KeyNormalizer] = {}
+            kinds = tree_subject_kind_reader(tree)
+            for predicate in definition.query.referenced_predicates:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM claims WHERE predicate=? AND lifecycle='live' LIMIT 1",
+                        (predicate,),
+                    ).fetchone()
+                    is not None
+                ):
+                    path = claim_type_path(predicate)
+                    claim_type = parse_claim_type(tree[path], path=path)
+                    form = effective_canonical_form(claim_type)
+                    if form:
+                        forms[predicate] = form
+                    rule = key_normalizer_of(claim_type, kinds)
+                    if rule is not None:
+                        normalizers[predicate] = rule
+            selection = select_query_facts(
+                connection,
+                definition.query,
+                parameters=parameters,
+                budgets=budgets,
+                source=tree,
+                live_subjects_only=live_subjects_only,
+                operands=_operand_probe(
+                    definition,
+                    parameters=parameters,
+                    evaluation_time=evaluation_time,
+                    canonical_forms=forms,
+                    key_normalizers=normalizers,
+                    connection=connection,
+                ),
+            )
+            if selection is not None:
+                canonical_forms = forms
+                key_normalizers = normalizers
+    accepted_facts = (
+        facts()
+        if facts
+        else build_accepted_query_facts(
+            instance,
+            coordinate=coordinate,
+            external_readers=external_readers,
+            predicates=definition.query.referenced_predicates,
+            subject_kinds=definition.query.entry.subject_kinds,
+            entry_subject_paths=None if selection is None else selection.paths,
+            claim_paths=None if selection is None else selection.claim_paths,
+        )
+    )
+    if live_subjects_only:
+        accepted_facts = accepted_facts.model_copy(
+            update={
+                "subjects": tuple(
+                    subject
+                    for subject in accepted_facts.subjects
+                    if subject.shell.lifecycle.state != "retired"
+                )
+            }
+        )
+    return evaluate_claim_query(
+        definition,
+        resolve_reference=reference_resolver(
+            projection_connection(lambda: instance.bind_accepted_projection(coordinate))
+        ),
+        facts=accepted_facts,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        parameters=parameters,
+        budgets=budgets,
+        entry_paths=None if selection is None else selection.paths,
+        entry_candidate_count=None if selection is None else selection.candidate_count,
+        canonical_forms=canonical_forms,
+        procedure_read=procedure_read,
+        key_normalizers=key_normalizers,
+    )
+
+
+@positioned_read
+def service_run_playbill_query(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    evaluation_time: datetime,
+    parameters: Mapping[str, object] | None = None,
+    at: AcceptedCoordinate | None = None,
+    budgets: QueryBudgets | None = None,
+    external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    receipt_journal: PlaybillQueryReceiptJournal | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
+) -> PlaybillQueryRunV1:
+    """Execute one accepted QueryDefinition at one accepted coordinate.
+
+    The result and its receipt are a pure function of the definition digest, the
+    resolved parameters, the accepted coordinate, and the explicit evaluation
+    time. Supplying ``receipt_journal`` also records the receipt in the
+    registered query-receipt journal family.
+    """
+
+    if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+        raise DataValidationError("query evaluation_time must be timezone-aware")
+    coordinate = accepted_coordinate_at(instance, at)
+    definition = accepted_query_definition(instance, name=name, coordinate=coordinate)
+    result = evaluate_accepted_query(
+        instance,
+        definition,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        parameters=parameters,
+        budgets=budgets,
+        external_readers=external_readers,
+        procedure_read=procedure_read,
+    )
+    receipt = query_execution_receipt(result)
+    accepted = AcceptedCoordinate.from_internal(coordinate)
+    journal_record_digest: str | None = None
+    if receipt_journal is not None:
+        stored = receipt_journal.record(
+            receipt,
+            accepted_coordinate=accepted,
+            recorded_at=evaluation_time,
+        )
+        journal_record_digest = stored.record_digest
+    return PlaybillQueryRunV1(
+        coordinate=accepted,
+        name=name,
+        definition_path=definition.path,
+        definition_digest=definition.artifact_digest,
+        result=result,
+        receipt=receipt,
+        journal_record_digest=journal_record_digest,
+    )
+
+
+__all__ = [
+    "PlaybillQueryReceiptJournal",
+    "PlaybillQueryRunV1",
+    "build_accepted_query_facts",
+    "service_run_playbill_query",
+]

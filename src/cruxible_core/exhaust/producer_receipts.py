@@ -1,0 +1,961 @@
+"""Resolve Capture producer receipts and production records from the daemon journal.
+
+Only the daemon appends to the Procedure journal, under its fencing token, and
+it checked every link below when it appended. A write that cites a Capture
+therefore reads only the records its citation names -- the receipt or Capture
+record, the Source occurrence records it rests on and the run's admission,
+located through the journal index's proof locators -- and re-runs the link
+checks over those. However large the cited run, a citation reads the same
+records. A miss catches the index up to the records appended since its last
+sync and looks once more; one pass over the whole journal is what recovery
+and audit use (``full_journal``).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal, TypeAlias
+
+from pydantic import ValidationError
+
+from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
+from cruxible_client.contracts.captures import (
+    CaptureFormatError,
+    CaptureProductionRecord,
+    ProcedureProducerReceiptProtocol,
+    ProviderProducerReceiptResolution,
+    VerifiedCaptureMemo,
+    provider_capture_receipt_matches_occurrence,
+)
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.provider_execution import (
+    ProcedureDerivedSourceRequest,
+    ProviderInvocationCompleted,
+)
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceipt,
+    is_workspace_file_signature,
+    parse_executed_workspace_request,
+    source_read_receipt_digest,
+)
+from cruxible_core.exhaust import LocalJournalBackend
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.records import StoredProcedureJournalRecordV1
+from cruxible_core.procedures.egress import (
+    ProcedureProducerReceiptV1,
+    TerminalEgressReceiptV2,
+    procedure_producer_receipt_digest,
+)
+from cruxible_core.procedures.execution import (
+    ProcedureAdmissionBoundPayload,
+    parse_admission_payload,
+    procedure_line_journal_stream,
+)
+from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+if TYPE_CHECKING:
+    from cruxible_core.evidence.capture_erasures import CaptureErasureStore
+
+#: The records a receipt or production proof is built from; no other payload is read.
+_PROOF_EVENT_KINDS = frozenset(
+    {
+        "admission_bound",
+        "source_request_derived",
+        "source_read",
+        "provider_invocation_completed",
+        "terminal_egress",
+        "produced_capture",
+    }
+)
+
+
+class _VerifiedCaptures:
+    """The Capture verifications one context finished, keyed by Capture digest."""
+
+    def __init__(self) -> None:
+        self._memos: dict[str, VerifiedCaptureMemo] = {}
+
+    def recall(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        return self._memos.get(capture_digest)
+
+    def remember(self, memo: VerifiedCaptureMemo) -> None:
+        held = self._memos.get(memo.capture_digest)
+        # A strict verification is the stronger fact: a lenient one never replaces it.
+        if held is None or memo.production_proven or not held.production_proven:
+            self._memos[memo.capture_digest] = memo
+
+
+class LocalProducerReceiptResolver:
+    """One verification context over the daemon's own journal, opened on first use."""
+
+    def __init__(
+        self,
+        *,
+        exhaust_root: Path,
+        instance_id: str,
+        bodies: ContentAddressedBodyStore,
+        full_journal: bool,
+    ) -> None:
+        self._journal_root = exhaust_root / "procedure-runs"
+        self._exhaust_root = exhaust_root
+        self._erasures: CaptureErasureStore | None = None
+        self._instance_id = instance_id
+        self._bodies = bodies
+        self._full_journal = full_journal
+        self._resolver: JournalProducerReceiptResolver | None = None
+        self._verified = _VerifiedCaptures()
+        self._request_bound = False
+        self._request_identity = object()
+
+    def _capture_proof_epoch(self) -> object | None:
+        if not self._request_bound:
+            return None
+        try:
+            return self._request_identity, self._bodies.landings.head()
+        except (OSError, CruxibleError, ValueError):
+            return None
+
+    def _opened(self) -> JournalProducerReceiptResolver | None:
+        if self._resolver is None:
+            if not self._journal_root.exists():
+                return None
+            self._resolver = JournalProducerReceiptResolver(
+                journal=LocalJournalBackend(self._journal_root),
+                instance_id=self._instance_id,
+                bodies=self._bodies,
+                full_journal=self._full_journal,
+                request_bound=self._request_bound,
+            )
+        return self._resolver
+
+    def producer_receipt(
+        self, digest: str, *, run_id: str
+    ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None:
+        resolver = self._opened()
+        return None if resolver is None else resolver.producer_receipt(digest, run_id=run_id)
+
+    def produced_capture(
+        self, capture_digest: str, *, run_id: str
+    ) -> tuple[CaptureProductionRecord, ...]:
+        resolver = self._opened()
+        return () if resolver is None else resolver.produced_capture(capture_digest, run_id=run_id)
+
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        return self._verified.recall(capture_digest)
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        self._verified.remember(memo)
+
+    def body_erasures(self, body_digests: tuple[str, ...]) -> dict[str, RecordedCaptureErasure]:
+        """The latest erasure record naming each of these bodies, from this instance's journal.
+
+        An instance that never erased anything answers without opening a file.
+        """
+
+        from cruxible_core.evidence.capture_erasures import CaptureErasureStore
+
+        if self._erasures is None:
+            self._erasures = CaptureErasureStore.reader(
+                exhaust_root=self._exhaust_root,
+                instance_id=self._instance_id,
+                bodies=self._bodies,
+            )
+        return self._erasures.for_bodies(body_digests)
+
+
+#: The verification context the current request owns, with the instance it serves.
+_REQUEST_CONTEXT: ContextVar[tuple[tuple[str, str], LocalProducerReceiptResolver] | None] = (
+    ContextVar("cruxible_capture_verification_request", default=None)
+)
+
+
+def requested_verification_context(
+    instance_key: tuple[str, str],
+) -> LocalProducerReceiptResolver | None:
+    """The context a request already owns for this instance, if one is open."""
+
+    active = _REQUEST_CONTEXT.get()
+    return active[1] if active is not None and active[0] == instance_key else None
+
+
+@contextmanager
+def verification_request(
+    instance_key: tuple[str, str],
+    open_context: Callable[[], LocalProducerReceiptResolver],
+) -> Iterator[LocalProducerReceiptResolver]:
+    """Own one verification context for a whole request; a nested request shares it."""
+
+    active = requested_verification_context(instance_key)
+    if active is not None:
+        yield active
+        return
+    context = open_context()
+    context._request_bound = True
+    token = _REQUEST_CONTEXT.set((instance_key, context))
+    try:
+        yield context
+    finally:
+        context._request_bound = False
+        if context._resolver is not None:
+            context._resolver._request_bound = False
+            context._resolver._proof_heads.clear()
+        _REQUEST_CONTEXT.reset(token)
+
+
+def local_producer_receipt_resolver(
+    *,
+    exhaust_root: Path,
+    instance_id: str,
+    bodies: ContentAddressedBodyStore,
+    full_journal: bool = False,
+) -> LocalProducerReceiptResolver:
+    """One verification context over the daemon's own journal.
+
+    Build one per request and pass it to every verification the request makes:
+    each run's records are read once and each answer is kept for the context's
+    life. ``full_journal`` indexes the whole journal on first use (recovery)
+    instead of reading run by run.
+    """
+
+    return LocalProducerReceiptResolver(
+        exhaust_root=exhaust_root,
+        instance_id=instance_id,
+        bodies=bodies,
+        full_journal=full_journal,
+    )
+
+
+@dataclass(frozen=True)
+class ProducerReceiptJournalNote:
+    """Typed account of one skipped or digest-addressable malformed record."""
+
+    code: Literal[
+        "producer_receipt_unrelated_record_skipped",
+        "producer_receipt_malformed_candidate",
+    ]
+    record_digest: str
+    event_kind: str
+    producer_receipt_digest: str | None
+    message: str
+
+
+ProducerReceiptResolution: TypeAlias = (
+    ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol
+)
+
+
+class JournalProducerReceiptResolver:
+    """Receipts and production records from a verified Procedure exhaust journal.
+
+    One instance is one verification context: what it read and resolved is kept
+    for its life, keyed by receipt digest and by Capture digest, so N citations
+    of one Capture read its records once. A lookup reads only the records its
+    citation names; ``index_all`` makes one pass over every partition.
+    """
+
+    def __init__(
+        self,
+        *,
+        journal: LocalJournalBackend,
+        instance_id: str,
+        bodies: ContentAddressedBodyStore,
+        note_sink: Callable[[ProducerReceiptJournalNote], None] | None = None,
+        full_journal: bool = False,
+        request_bound: bool = False,
+    ) -> None:
+        self._journal = journal
+        self._stream = procedure_line_journal_stream(instance_id)
+        self._bodies = bodies
+        self._note_sink = note_sink
+        self._full_journal = full_journal
+        self._request_bound = request_bound
+        self._proof_heads: dict[str, object] = {}
+        self._full = False
+        #: How many runs this context located through the journal index.
+        self.lookups = 0
+        #: How many times a miss brought the journal index up to date.
+        self.catch_ups = 0
+        self._resolutions: dict[str, ProducerReceiptResolution] = {}
+        self._errors: dict[str, CaptureFormatError] = {}
+        self._productions: dict[str, set[CaptureProductionRecord]] = {}
+        #: The journal payload bodies each run's answers were derived from: an
+        #: answer stands only while every one of them is still held and intact.
+        self._run_bodies: dict[str, set[str]] = {}
+        #: The receipt and Capture digests each run's records answered.
+        self._run_digests: dict[str, set[str]] = {}
+        self._run_captures: dict[str, set[str]] = {}
+        #: Runs whose last derivation left proof records the index could not
+        #: project yet: their answers are never served from what is kept.
+        self._held_runs: set[str] = set()
+        self._current_run = ""
+        self._verified = _VerifiedCaptures()
+        self._notes: list[ProducerReceiptJournalNote] = []
+        self._access = BodyAccessContext(
+            principal_id="capture-verifier",
+            can_read_body=True,
+        )
+
+    @property
+    def notes(self) -> tuple[ProducerReceiptJournalNote, ...]:
+        return tuple(self._notes)
+
+    def _note(
+        self,
+        *,
+        record_digest: str,
+        event_kind: str,
+        candidate_digest: str | None,
+        message: str,
+    ) -> None:
+        note = ProducerReceiptJournalNote(
+            code=(
+                "producer_receipt_unrelated_record_skipped"
+                if candidate_digest is None
+                else "producer_receipt_malformed_candidate"
+            ),
+            record_digest=record_digest,
+            event_kind=event_kind,
+            producer_receipt_digest=candidate_digest,
+            message=message,
+        )
+        self._notes.append(note)
+        if self._note_sink is not None:
+            self._note_sink(note)
+
+    def _malformed(
+        self,
+        *,
+        record_digest: str,
+        event_kind: str,
+        candidate_digest: str | None,
+        exc: Exception,
+    ) -> None:
+        message = f"malformed {event_kind} record: {type(exc).__name__}: {exc}"
+        self._note(
+            record_digest=record_digest,
+            event_kind=event_kind,
+            candidate_digest=candidate_digest,
+            message=message,
+        )
+        if candidate_digest is not None:
+            self._run_digests.setdefault(self._current_run, set()).add(candidate_digest)
+            self._errors.setdefault(
+                candidate_digest,
+                CaptureFormatError(
+                    "Capture producer receipt journal is invalid for " + candidate_digest
+                ),
+            )
+
+    @staticmethod
+    def _candidate_digest(event_kind: str, payload: object) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        if event_kind == "provider_invocation_completed":
+            candidate = payload.get("receipt_digest")
+            return candidate if isinstance(candidate, str) else None
+        if event_kind == "terminal_egress":
+            receipt = payload.get("receipt")
+            if isinstance(receipt, dict):
+                candidate = receipt.get("producer_receipt_digest")
+                return candidate if isinstance(candidate, str) else None
+        return None
+
+    def _produced(self, stored: StoredProcedureJournalRecordV1, payload: object) -> None:
+        """Keep one ``produced_capture`` record's exact digests, or note it malformed."""
+
+        record = stored.record
+        try:
+            if (
+                not isinstance(payload, dict)
+                or payload.get("tag") != "playbill-procedure-produced-capture-v1"
+                or record.run_id is None
+                or record.admission_binding_digest is None
+            ):
+                raise ValueError("produced-Capture record is not typed to its run")
+            capture = payload.get("capture_digest")
+            contract = payload.get("capture_contract_digest")
+            receipt = payload.get(
+                "producer_receipt_digest", payload.get("invocation_receipt_digest")
+            )
+            if (
+                not isinstance(capture, str)
+                or not isinstance(contract, str)
+                or not (receipt is None or isinstance(receipt, str))
+            ):
+                raise ValueError("produced-Capture record digests are malformed")
+        except ValueError as exc:
+            self._malformed(
+                record_digest=stored.record_digest,
+                event_kind=record.event_kind,
+                candidate_digest=None,
+                exc=exc,
+            )
+            return
+        self._run_captures.setdefault(record.run_id, set()).add(capture)
+        self._productions.setdefault(capture, set()).add(
+            CaptureProductionRecord(
+                capture_digest=capture,
+                capture_contract_digest=contract,
+                run_id=record.run_id,
+                receipt_digest=receipt,
+            )
+        )
+
+    def _store(self, digest: str, resolution: ProducerReceiptResolution) -> None:
+        self._run_digests.setdefault(self._current_run, set()).add(digest)
+        existing = self._resolutions.get(digest)
+        if existing is not None and existing != resolution:
+            self._resolutions.pop(digest, None)
+            self._errors[digest] = CaptureFormatError(
+                f"Capture producer receipt journal is ambiguous for {digest}"
+            )
+            return
+        if digest not in self._errors:
+            self._resolutions[digest] = resolution
+
+    def index_all(self) -> None:
+        """Index every partition once: recovery and audit (``full_journal``)."""
+
+        if self._full:
+            return
+        try:
+            partition_ids = self._journal.partition_ids(self._stream)
+        except (OSError, CruxibleError, ValueError) as exc:
+            raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
+        for partition_id in partition_ids:
+            try:
+                records = self._journal.all_records(self._stream, partition_id)
+            except (OSError, CruxibleError, ValueError) as exc:
+                raise CaptureFormatError(
+                    "Capture producer receipt journal partition is unavailable"
+                ) from exc
+            self._index_records(records)
+        self._full = True
+
+    def _index_cited(self, run_id: str, locators: tuple[str, ...], *, retry: bool = False) -> bool:
+        """Index only the records of one run a citation of these locators reads.
+
+        Returns whether the run holds proof records the index could not yet
+        project (``retry`` tries every one of them again).
+        """
+
+        self.lookups += 1
+        try:
+            records, held = self._journal.located_records(
+                self._stream,
+                run_id=run_id,
+                locators=locators,
+                bodies=self._bodies,
+                access=self._access,
+                retry=retry,
+            )
+        except (OSError, CruxibleError, ValueError) as exc:
+            raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
+        partitions: dict[str, list[StoredProcedureJournalRecordV1]] = {}
+        for stored in records:
+            partitions.setdefault(stored.record.partition_id, []).append(stored)
+        for partition in partitions.values():
+            self._index_records(partition)
+        return held
+
+    def _index_records(self, records: Iterable[StoredProcedureJournalRecordV1]) -> None:
+        """Re-check the receipt links within one partition's records, in order."""
+
+        admissions: dict[tuple[str, str], ProcedureAdmissionBoundPayload] = {}
+        # One occurrence may derive and read several Source requests (a glob read,
+        # D-R41, reads one file each): a derived request is named by its run and
+        # request digest, and a read by its run, occurrence and the provider
+        # input it handed the invocation.
+        derived_requests: dict[tuple[str, str], ProcedureDerivedSourceRequest | None] = {}
+        source_reads: dict[tuple[str, str, str], SourceReadReceipt | None] = {}
+        for stored in records:
+            record = stored.record
+            if record.event_kind not in _PROOF_EVENT_KINDS:
+                continue
+            self._current_run = record.run_id or ""
+            try:
+                payload = read_payload(self._bodies, record.payload_digest, access=self._access)
+                if isinstance(payload, UnavailablePayload):
+                    self._note(
+                        record_digest=stored.record_digest,
+                        event_kind=record.event_kind,
+                        candidate_digest=None,
+                        message="exhaust payload unavailable",
+                    )
+                    continue
+            except (KeyError, OSError, TypeError, CruxibleError, ValueError) as exc:
+                self._malformed(
+                    record_digest=stored.record_digest,
+                    event_kind=record.event_kind,
+                    candidate_digest=None,
+                    exc=exc,
+                )
+                continue
+            # What this run's answers rest on: re-checked before any is reused.
+            self._run_bodies.setdefault(self._current_run, set()).add(record.payload_digest)
+            candidate_digest = self._candidate_digest(record.event_kind, payload)
+            if record.event_kind == "produced_capture":
+                self._produced(stored, payload)
+                continue
+            if record.event_kind == "admission_bound" and isinstance(payload, dict):
+                try:
+                    bound_payload = parse_admission_payload(payload)
+                    admission = bound_payload.admission
+                    if (
+                        record.run_id != admission.run_id
+                        or record.admission_binding_digest != admission.admission_binding_digest
+                        or record.accepted_coordinate != admission.accepted_coordinate
+                        or record.procedure_artifact_digest != admission.procedure_artifact_digest
+                    ):
+                        raise ValueError(
+                            "Capture producer admission journal coordinates do not correspond"
+                        )
+                except (KeyError, TypeError, ValidationError, ValueError, CruxibleError) as exc:
+                    self._malformed(
+                        record_digest=stored.record_digest,
+                        event_kind=record.event_kind,
+                        candidate_digest=None,
+                        exc=exc,
+                    )
+                    continue
+                # Only a run that planned Provider occurrences produces Captures.
+                if bound_payload.acquisition_plan is not None:
+                    admissions[(admission.run_id, admission.admission_binding_digest)] = (
+                        bound_payload
+                    )
+                continue
+            if record.event_kind == "source_request_derived":
+                try:
+                    derived = ProcedureDerivedSourceRequest.model_validate(payload)
+                    if (
+                        record.run_id != derived.run_id
+                        or record.admission_binding_digest != derived.admission_binding_digest
+                    ):
+                        raise ValueError(
+                            "Derived Source request journal coordinates do not correspond"
+                        )
+                    key = (derived.run_id, derived.request_digest)
+                    derived_requests[key] = None if key in derived_requests else derived
+                except (KeyError, TypeError, ValidationError, ValueError) as exc:
+                    self._malformed(
+                        record_digest=stored.record_digest,
+                        event_kind=record.event_kind,
+                        candidate_digest=None,
+                        exc=exc,
+                    )
+                continue
+            if record.event_kind == "source_read":
+                try:
+                    if not isinstance(payload, dict):
+                        raise ValueError("Source-read payload is not an object")
+                    receipt = SourceReadReceipt.model_validate(payload.get("receipt"))
+                    digest = payload.get("receipt_digest")
+                    if digest != source_read_receipt_digest(receipt):
+                        raise ValueError("Source-read receipt digest does not reproduce")
+                    if (
+                        record.run_id != receipt.run_id
+                        or record.admission_binding_digest != receipt.admission_binding_digest
+                    ):
+                        raise ValueError("Source-read journal coordinates do not correspond")
+                    resolved_derived = derived_requests.get(
+                        (receipt.run_id, receipt.derived_request_digest)
+                    )
+                    if (
+                        resolved_derived is None
+                        or resolved_derived.occurrence_path != receipt.occurrence_path
+                    ):
+                        raise ValueError("Source-read receipt has no exact derived Source request")
+                    # v1 history carries the authored request; v2 the daemon's
+                    # executed request. Both name the binding digest the read used.
+                    request = parse_executed_workspace_request(resolved_derived.request)
+                    if (
+                        receipt.derived_request_digest != resolved_derived.request_digest
+                        or receipt.logical_source != request.logical_source
+                        or receipt.workspace_binding_digest != request.workspace_binding_digest
+                        # The receipt's relative_path carries the REAL on-disk
+                        # names; requested_path is what the derived request
+                        # asked for. Receipts written before the real-name law
+                        # carry only the requested spelling in relative_path.
+                        or (receipt.requested_path or receipt.relative_path)
+                        != request.relative_path
+                    ):
+                        raise ValueError(
+                            "Source-read receipt differs from its derived Source request"
+                        )
+                    read_key = (
+                        receipt.run_id,
+                        receipt.occurrence_path,
+                        receipt.provider_input_digest,
+                    )
+                    source_reads[read_key] = None if read_key in source_reads else receipt
+                except (KeyError, TypeError, ValidationError, ValueError) as exc:
+                    self._malformed(
+                        record_digest=stored.record_digest,
+                        event_kind=record.event_kind,
+                        candidate_digest=None,
+                        exc=exc,
+                    )
+                continue
+            if record.event_kind == "provider_invocation_completed":
+                try:
+                    if candidate_digest is None:
+                        raise ValueError("Provider completion omits receipt_digest")
+                    completed = ProviderInvocationCompleted.model_validate(payload)
+                    provider_receipt = completed.receipt
+                    binding_digest = record.admission_binding_digest
+                    admitted = (
+                        None
+                        if binding_digest is None or record.run_id is None
+                        else admissions.get((record.run_id, binding_digest))
+                    )
+                    if admitted is None or binding_digest is None:
+                        raise ValueError("Provider completion has no exact admission")
+                    admission = admitted.admission
+                    plan = admitted.acquisition_plan
+                    if plan is None:
+                        raise ValueError("Provider completion has no admitted acquisition plan")
+                    occurrences = tuple(
+                        occurrence
+                        for occurrence in plan.external_occurrences
+                        if occurrence.occurrence_path == provider_receipt.occurrence_path
+                    )
+                    if (
+                        completed.receipt_digest != candidate_digest
+                        or len(occurrences) != 1
+                        or provider_receipt.run_id != admission.run_id
+                        or provider_receipt.admission_binding_digest != binding_digest
+                        or not provider_capture_receipt_matches_occurrence(
+                            provider_receipt, occurrences[0]
+                        )
+                    ):
+                        raise ValueError(
+                            "Provider completion differs from its exact admitted occurrence"
+                        )
+                    source_read = source_reads.get(
+                        (
+                            provider_receipt.run_id,
+                            provider_receipt.occurrence_path,
+                            provider_receipt.input_digest,
+                        )
+                    )
+                    if is_workspace_file_signature(provider_receipt.operation_signature_digest) != (
+                        source_read is not None
+                    ):
+                        raise ValueError(
+                            "Provider completion source-read receipt does not correspond"
+                        )
+                    if source_read is not None and (
+                        source_read.run_id != provider_receipt.run_id
+                        or source_read.provider_input_digest != provider_receipt.input_digest
+                        or source_read.policy_coordinate != admission.accepted_coordinate
+                    ):
+                        raise ValueError(
+                            "Provider completion source-read receipt differs from invocation"
+                        )
+                except (KeyError, TypeError, ValidationError, ValueError) as exc:
+                    self._malformed(
+                        record_digest=stored.record_digest,
+                        event_kind=record.event_kind,
+                        candidate_digest=candidate_digest,
+                        exc=exc,
+                    )
+                    continue
+                self._store(
+                    candidate_digest,
+                    ProviderProducerReceiptResolution(
+                        receipt=provider_receipt,
+                        occurrence=occurrences[0],
+                        source_read_receipt=source_read,
+                    ),
+                )
+                continue
+            if (
+                record.event_kind == "terminal_egress"
+                and isinstance(payload, dict)
+                and payload.get("verdict") == "delivered"
+                and payload.get("kind") == "emit_capture"
+            ):
+                try:
+                    if candidate_digest is None:
+                        raise ValueError("Capture terminal omits producer receipt digest")
+                    binding_digest = record.admission_binding_digest
+                    admitted = (
+                        None
+                        if binding_digest is None or record.run_id is None
+                        else admissions.get((record.run_id, binding_digest))
+                    )
+                    if admitted is None or binding_digest is None:
+                        raise ValueError("Capture terminal has no exact admission")
+                    admission = admitted.admission
+                    terminal = TerminalEgressReceiptV2.model_validate(payload.get("receipt"))
+                    children = payload.get("children")
+                    if not isinstance(children, list):
+                        raise ValueError("Capture producer terminal children are malformed")
+                    manifests: list[str] = []
+                    for child in children:
+                        manifest_digest = (
+                            child.get("manifest_digest") if isinstance(child, dict) else None
+                        )
+                        if not isinstance(manifest_digest, str):
+                            raise ValueError("Capture producer terminal child is malformed")
+                        manifests.append(manifest_digest)
+                    if terminal.bound_artifact_digest is None:
+                        raise ValueError("Capture producer terminal omits its contract")
+                    procedure_receipt = ProcedureProducerReceiptV1(
+                        admission_binding_digest=binding_digest,
+                        run_id=admission.run_id,
+                        accepted_coordinate=admission.accepted_coordinate,
+                        procedure_identity=admission.procedure_identity,
+                        procedure_artifact_digest=admission.procedure_artifact_digest,
+                        terminal_node_id=str(payload.get("node_id")),
+                        item_manifest_digests=tuple(manifests),
+                        capture_contract_digest=terminal.bound_artifact_digest,
+                    )
+                    if (
+                        terminal.producer_receipt_digest != candidate_digest
+                        or procedure_producer_receipt_digest(procedure_receipt) != candidate_digest
+                    ):
+                        raise ValueError("Capture terminal producer receipt does not reproduce")
+                except (KeyError, TypeError, ValidationError, ValueError) as exc:
+                    self._malformed(
+                        record_digest=stored.record_digest,
+                        event_kind=record.event_kind,
+                        candidate_digest=candidate_digest,
+                        exc=exc,
+                    )
+                    continue
+                self._store(candidate_digest, procedure_receipt)
+                assert record.run_id is not None  # checked with its admission above
+                for produced in terminal.children:
+                    self._run_captures.setdefault(record.run_id, set()).add(produced.egress_digest)
+                    self._productions.setdefault(produced.egress_digest, set()).add(
+                        CaptureProductionRecord(
+                            capture_digest=produced.egress_digest,
+                            capture_contract_digest=procedure_receipt.capture_contract_digest,
+                            run_id=record.run_id,
+                            receipt_digest=candidate_digest,
+                        )
+                    )
+
+    def _lookup(
+        self,
+        found: Callable[[], object],
+        *,
+        run_id: str,
+        locators: tuple[str, ...],
+    ) -> None:
+        """Answer from a kept positive result, or derive the answer as a fresh context would.
+
+        Only positive answers are kept, each only while the journal payloads it
+        was derived from are held (``_still_proven``). A refusal is re-derived;
+        a miss reads the cited records without evicting other runs' proven
+        answers. On a miss it brings the journal index up to the records
+        appended since its last sync -- never the whole journal -- and reads
+        the cited records once more, so a record appended since is seen; still
+        missing, the caller refuses. A miss, or a refusal, while the run holds
+        proof records the index could not project yet (an unreadable payload
+        since restored) tries those again, after forgetting what was derived
+        without them. The full-journal pass stays for recovery and audit
+        (``full_journal``).
+        """
+
+        if run_id in self._held_runs:
+            # What is kept of this run was derived without records the index
+            # could not project: never served. Re-derive it, trying them again.
+            held = self._derive(run_id, locators, retry=True)
+        else:
+            try:
+                if found() is not None:
+                    return
+            except CaptureFormatError:
+                self._forget()
+            held = self._derive(run_id, locators)
+            if held:
+                # Records deferred under this landing head were skipped; one may
+                # be readable now (a transient failure) and change the answer.
+                held = self._derive(run_id, locators, retry=True)
+        try:
+            if found() is not None:
+                return
+        except CaptureFormatError:
+            if not held:
+                raise
+        self._catch_up()
+        self._derive(run_id, locators, retry=True, forget=held)
+
+    def _derive(
+        self,
+        run_id: str,
+        locators: tuple[str, ...],
+        *,
+        retry: bool = False,
+        forget: bool | None = None,
+    ) -> bool:
+        """Index the cited records of one run; whether it still holds unprojected records.
+
+        A retry first forgets this run's derived answers (``forget``, by
+        default whenever retrying), so none survives from records read before.
+        """
+
+        if retry if forget is None else forget:
+            self._forget_run(run_id)
+        held = self._index_cited(run_id, locators, retry=retry)
+        if held:
+            self._held_runs.add(run_id)
+        else:
+            self._held_runs.discard(run_id)
+        return held
+
+    def _forget_run(self, run_id: str) -> None:
+        """Drop what one run's records derived; other runs' answers stay."""
+
+        for digest in self._run_digests.pop(run_id, ()):
+            self._resolutions.pop(digest, None)
+            self._errors.pop(digest, None)
+        for capture in self._run_captures.pop(run_id, ()):
+            kept = {
+                record for record in self._productions.get(capture, ()) if record.run_id != run_id
+            }
+            if kept:
+                self._productions[capture] = kept
+            else:
+                self._productions.pop(capture, None)
+        self._run_bodies.pop(run_id, None)
+        self._proof_heads.pop(run_id, None)
+
+    def _catch_up(self) -> None:
+        """Index every journal record appended since the index's last sync."""
+
+        self.catch_ups += 1
+        try:
+            self._journal.catch_up_index(self._stream)
+        except (OSError, CruxibleError, ValueError) as exc:
+            raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
+
+    def _still_proven(self, run_ids: Iterable[str]) -> bool:
+        """Whether every journal payload these runs' answers were derived from is held."""
+
+        # A request's journal records are immutable. Only a recorded body
+        # landing, erase or damage can change their availability during it.
+        # Check one bounded log head, rather than re-checking the run's entire
+        # proof closure for each sibling Claim. Standalone verification keeps
+        # its cold check (including unrecorded on-disk damage).
+        try:
+            head = self._bodies.landings.head() if self._request_bound else None
+        except (OSError, CruxibleError, ValueError):
+            head = None
+        for run_id in dict.fromkeys(run_ids):
+            bodies = self._run_bodies.get(run_id, ())
+            if head is not None and self._proof_heads.get(run_id) == head:
+                continue
+            for body in sorted(bodies):
+                try:
+                    if not self._bodies.verify(body):
+                        return False
+                except (OSError, CruxibleError, ValueError):
+                    # Unreadable as cold resolution would find it: re-derive.
+                    return False
+            if head is not None and bodies:
+                self._proof_heads[run_id] = head
+        return True
+
+    def _forget(self) -> None:
+        """Drop every derived answer: the context is cold again and re-derives."""
+
+        self._resolutions.clear()
+        self._errors.clear()
+        self._productions.clear()
+        self._run_bodies.clear()
+        self._run_digests.clear()
+        self._run_captures.clear()
+        self._held_runs.clear()
+        self._proof_heads.clear()
+        self._full = False
+
+    def _receipt_runs(self, digest: str) -> tuple[str, ...]:
+        resolution = self._resolutions.get(digest)
+        if resolution is None:
+            return ()
+        if isinstance(resolution, ProviderProducerReceiptResolution):
+            return (resolution.receipt.run_id,)
+        return (resolution.run_id,)
+
+    def _resolution(self, digest: str) -> ProducerReceiptResolution | None:
+        error = self._errors.get(digest)
+        if error is not None:
+            raise error
+        return self._resolutions.get(digest)
+
+    def producer_receipt(
+        self,
+        digest: str,
+        *,
+        run_id: str,
+    ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None:
+        if not self._still_proven(self._receipt_runs(digest)):
+            self._forget()
+        if self._full_journal:
+            self.index_all()
+        self._lookup(
+            lambda: self._resolution(digest), run_id=run_id, locators=("receipt:" + digest,)
+        )
+        return self._resolution(digest)
+
+    def produced_capture(
+        self,
+        capture_digest: str,
+        *,
+        run_id: str,
+    ) -> tuple[CaptureProductionRecord, ...]:
+        if not self._still_proven(
+            record.run_id for record in self._productions.get(capture_digest, ())
+        ):
+            self._forget()
+        if self._full_journal:
+            self.index_all()
+        self._lookup(
+            lambda: self._productions.get(capture_digest),
+            run_id=run_id,
+            locators=("capture:" + capture_digest,),
+        )
+        return tuple(self._productions.get(capture_digest, ()))
+
+    def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
+        return self._verified.recall(capture_digest)
+
+    def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
+        self._verified.remember(memo)
+
+
+def journal_producer_receipt_resolver(
+    *,
+    journal: LocalJournalBackend,
+    instance_id: str,
+    bodies: ContentAddressedBodyStore,
+    note_sink: Callable[[ProducerReceiptJournalNote], None] | None = None,
+    full_journal: bool = False,
+) -> JournalProducerReceiptResolver:
+    """Bind receipt resolution to an already-open verified journal backend."""
+    return JournalProducerReceiptResolver(
+        journal=journal,
+        instance_id=instance_id,
+        bodies=bodies,
+        note_sink=note_sink,
+        full_journal=full_journal,
+    )
+
+
+__all__ = [
+    "JournalProducerReceiptResolver",
+    "requested_verification_context",
+    "verification_request",
+    "LocalProducerReceiptResolver",
+    "ProducerReceiptJournalNote",
+    "journal_producer_receipt_resolver",
+    "local_producer_receipt_resolver",
+]

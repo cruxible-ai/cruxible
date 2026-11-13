@@ -1,0 +1,659 @@
+"""Author/run/accept/read a workspace Line over HTTP on a fresh instance.
+
+workspace.file is a core built-in: genesis seeds its operation and the
+``cruxible-builtin`` Provider serving it, and the daemon runs the adapter
+in-process. Only workspace attachment is an operator setup action; nothing is
+installed. All governed definitions, proposal approval and Claim reads use
+public surfaces; no provider invoker or classifier is substituted.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from collections.abc import Iterator
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from cruxible_client import Cruxible
+from cruxible_client.authoring.inputs import ProcedureInput
+from cruxible_client.contracts import ClaimViewRecord
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+from cruxible_client.contracts.authoring.models import SubjectKindAuthoringPayload
+from cruxible_client.contracts.capture_reads import CaptureReadRequest
+from cruxible_client.contracts.captures import capture_contract_digest
+from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.get_reads import GetRequest
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
+)
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
+from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    CaptureEgressNode,
+    ClaimsNode,
+    ProcedureDefinition,
+    ProjectNode,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import subject_path
+from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_OPERATION,
+    WorkspaceFileSourceRequestV2,
+)
+from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.governance.keys import generate_client_principal_key
+from cruxible_core.governance.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+    WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+)
+from cruxible_core.runtime.permissions import reset_permissions
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.server.app import create_app
+from cruxible_core.server.credentials import reset_runtime_credential_store
+from cruxible_core.server.registry import get_registry, reset_registry
+from tests.core_support._light_capture_support import procedure_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
+from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.procedures import (
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+)
+from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
+
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
+SUBJECT_KIND = "security.advisory"
+SUBJECT_ID = "osv-2026-0001"
+PREDICATE = "security.advisory.severity"
+PROCEDURE_NAME = "osv-advisory-severity"
+
+
+def _contracts() -> tuple[Any, Any]:
+    """The Procedure's generated boundaries (<procedure>.input|output@1)."""
+
+    from tests.support.procedures import boundary_contract
+
+    return (
+        boundary_contract(f"{PROCEDURE_NAME}.input"),
+        boundary_contract(f"{PROCEDURE_NAME}.output", {"severity": "string"}),
+    )
+
+
+POLICY_NAME = "osv-advisory-reads"
+LINE_NAME = "osv-advisory-hourly"
+MANDATE_NAME = "osv-advisory-mandate"
+RELATIVE_PATH = "data/osv-severity.txt"
+ADVISORY = b"high"
+
+
+@pytest.fixture
+def installed_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[TestClient, str, Path, Path]]:
+    """A fresh instance (workspace.file built in) and an operator-attached workspace."""
+
+    state = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    reset_permissions()
+    reset_registry()
+    reset_runtime_credential_store()
+    get_playbill_manager().clear()
+    registered = get_registry().create_governed_instance_with_id("inst_rung2_public")
+    instance_id = registered.record.instance_id
+    managed = Path(registered.record.location)
+    workspace = tmp_path / "workspace"
+    (workspace / "data").mkdir(parents=True)
+    (workspace / RELATIVE_PATH).write_bytes(ADVISORY)
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    # The operator's `cruxible workspace attach`, recorded before init.
+    get_registry().attach_governed_workspace(instance_id, workspace)
+    owner = generate_client_principal_key(
+        tmp_path / "owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(managed,),
+    )
+    reviewer = generate_client_principal_key(
+        tmp_path / "reviewer-custody",
+        principal_id="reviewer",
+        kind="ordinary",
+        forbidden_roots=(managed,),
+    )
+    with TestClient(create_app()) as client:
+        initialized = client.post(
+            f"/api/v1/{instance_id}/init",
+            json={
+                "principals": [
+                    owner.principal.model_dump(mode="json"),
+                    reviewer.principal.model_dump(mode="json"),
+                ],
+            },
+        )
+        assert initialized.status_code == 200, initialized.text
+        yield client, instance_id, reviewer.private_key_path, workspace
+    get_playbill_manager().clear()
+    reset_runtime_credential_store()
+    reset_registry()
+    reset_permissions()
+
+
+def _claim_type(contract: str) -> ClaimType:
+    return build_claim_type(
+        predicate=PREDICATE,
+        allowed_subject_kinds=(SUBJECT_KIND,),
+        permitted_roles=("observation",),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
+            rules=(
+                ClaimEvidenceAdmissionRule(
+                    rule_id="workspace-record",
+                    claim_roles=("observation",),
+                    capture_contracts=(contract,),
+                    admission="direct",
+                    subject_binding="exact_claim_subject",
+                ),
+            )
+        ),
+    )
+
+
+def _policy() -> LineAcquisitionRule:
+    """The ``advisory`` Source alias's acquisition rule (replaces SourceAcquisitionPolicy)."""
+
+    return LineAcquisitionRule.model_validate({"max_age": "PT1H"})
+
+
+def _item() -> dict[str, object]:
+    return {
+        "tag": "playbill-procedure-claim-proposal-item-v1",
+        "statement": {
+            "tag": "playbill-authoring-claim-statement-v1",
+            "subject": SemanticAddress.whole_artifact(
+                subject_path(SUBJECT_KIND, SUBJECT_ID)
+            ).model_dump(mode="json"),
+            "predicate": PREDICATE,
+            "qualifier": None,
+            "object": {"kind": "literal", "value": "$steps.result.severity"},
+            "role": "observation",
+            "effective_from": None,
+            "effective_until": None,
+        },
+        "rationale": "Severity as read from the accepted advisory document.",
+        "revises": None,
+    }
+
+
+def _procedure_definition(
+    *,
+    contract_pin: ArtifactPin,
+    output_contract_pin: ArtifactPin,
+    workspace: Path,
+    terminal_kind: str = "claims",
+) -> ProcedureDefinition:
+    from tests.support.procedures import contract_pin as boundary_pin
+
+    input_contract, output_contract = _contracts()
+    contract_in = boundary_pin("contract-in", input_contract)
+    contract_out = boundary_pin("contract-out", output_contract)
+    request = WorkspaceFileSourceRequestV2(
+        logical_source="commerce.production.orders",
+        relative_path=RELATIVE_PATH,
+        coordinate_type="database-snapshot-v1",
+        coordinate={"lsn": "workspace"},
+        selector_type="relation-primary-key-v1",
+        selector={"id": 7, "relation": "orders"},
+        replayability="exact",
+    )
+    return procedure_definition(
+        name=PROCEDURE_NAME,
+        description="Read the advisory document and propose its severity as a Claim.",
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
+        # Authoring pins it to the version the instance holds.
+        slots={"read": {"capability": {"name": "workspace.file", "version": 1}}},
+        nodes=(
+            CallNode(
+                node_id="read",
+                captures={"capture": named(contract_pin)},
+                slot="read",
+                input=request.model_dump(mode="json"),
+                as_="advisory",
+                next="shape",
+            ),
+            ProjectNode(
+                node_id="shape",
+                fields={
+                    "severity": "$steps.advisory.content.text",
+                    **(
+                        {
+                            "rows": [
+                                {
+                                    "record": "/",
+                                    "key": {},
+                                    "fields": {"observed": "$steps.advisory.content.text"},
+                                }
+                            ]
+                        }
+                        if terminal_kind != "emit_capture"
+                        else {}
+                    ),
+                },
+                as_="result",
+                next="summary" if terminal_kind != "emit_capture" else "propose",
+            ),
+            *(
+                (
+                    ProjectNode(
+                        node_id="summary",
+                        fields={"severity": "$steps.result.severity"},
+                        as_="summary",
+                        next="propose",
+                    ),
+                )
+                if terminal_kind != "emit_capture"
+                else ()
+            ),
+            (
+                CaptureEgressNode(
+                    node_id="propose",
+                    capture_contract=named(output_contract_pin),
+                    input="$steps.result",
+                    result="$steps.result",
+                )
+                if terminal_kind == "emit_capture"
+                else ClaimsNode(
+                    node_id="propose",
+                    for_each="$steps.result.rows",
+                    subject={"kind": SUBJECT_KIND, "key": {"slug": SUBJECT_ID}},
+                    claims=[
+                        {
+                            "type": {"target": {"kind": "ClaimType", "name": PREDICATE}},
+                            "value": "high",
+                            "role": "observation",
+                            "rationale": "Severity as read from the accepted advisory document.",
+                        }
+                    ],
+                )
+            ),
+        ),
+        returns="summary" if terminal_kind != "emit_capture" else "result",
+        hard_caps=procedure_hard_caps(preset="source"),
+    )
+
+
+def _authored(
+    definition: ProcedureDefinition, *, contracts: tuple[Any, ...] | None = None
+) -> ProcedureInput:
+    """The graph as an author writes it: the one typed spec it decompiles to.
+
+    The spec names its dependencies; lowering resolves each at the intent base
+    (or in the change set that stages it), and carries no caller digest.
+    """
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity as Identity
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from tests.support.procedures import contract_resolver
+
+    artifact = ProcedureArtifact(
+        identity=Identity(kind="Procedure", name=definition.name),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        activation_policy="drain",
+    )
+    # Its generated <procedure>.input|output Contracts render inline; lowering
+    # co-proposes them again.
+    spec = decompile_procedure(artifact, contracts=contract_resolver(*(contracts or _contracts())))
+    return ProcedureInput(kind="procedure", spec=spec)
+
+
+def _binding_digest(workspace: Path) -> str:
+    from cruxible_core.documents.workspace_file import workspace_binding_digest
+
+    return workspace_binding_digest(
+        instance_id="inst_rung2_public",
+        canonical_root=workspace.resolve(),
+    )
+
+
+def _workspace_file_members(instance_id: str) -> list[dict[str, Any]]:
+    """The ``workspace.file@1`` authoring member, or none when the instance holds it."""
+
+    from tests.support.capabilities import WORKSPACE_FILE, head_tree, held_capability
+
+    instance = get_playbill_manager().get(instance_id)
+    if held_capability(head_tree(instance), WORKSPACE_FILE) is not None:
+        return []
+    return [
+        {
+            "tag": "cruxible-capability-authoring-payload-v1",
+            "name": WORKSPACE_FILE,
+            "version": 1,
+            "description": "Read one workspace file; core's builtin serves it.",
+            "effect": "pure",
+            "in": {"name": "workspace.file.request", "version": 1},
+            "out": {"name": "workspace.file.result", "version": 1},
+        }
+    ]
+
+
+def _provider_receipts(instance_id: str) -> list[dict[str, Any]]:
+    """Every Provider invocation receipt the instance's run journal holds."""
+
+    import cruxible_core.service.procedures.procedure_runs as service
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = get_playbill_manager().get(instance_id)
+    journal, _root = service._journal(instance)  # noqa: SLF001
+    stream = service._stream(instance)  # noqa: SLF001
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    receipts = []
+    for partition_id in journal.partition_ids(stream):
+        for stored in journal.all_records(stream, partition_id):
+            if stored.record.event_kind == "provider_invocation_completed":
+                payload = parse_journal_payload(
+                    instance.body_store().read(stored.record.payload_digest, access=access)
+                )
+                assert isinstance(payload, dict)
+                receipts.append(dict(payload["receipt"]))
+    return receipts
+
+
+def _proposal_proof(transport: CruxibleClient, instance_id: str, proposal_id: str) -> Any:
+    """get is the one proposal read: its proof carries the evaluation and candidate."""
+
+    return transport.get(instance_id, request=GetRequest(ref=proposal_id, detail="proof")).proof
+
+
+def _claim_proof(
+    transport: CruxibleClient,
+    instance_id: str,
+    claim_id: str,
+    *,
+    evaluation_time: datetime | None = None,
+) -> ClaimViewRecord:
+    proof = transport.get(
+        instance_id,
+        request=GetRequest(ref=claim_id, detail="proof", evaluation_time=evaluation_time),
+    ).proof
+    return ClaimViewRecord.model_validate(proof)
+
+
+@pytest.mark.parametrize("terminal_kind", ["claims", "emit_capture"])
+def test_the_rung2_loop_runs_over_public_surfaces_only(
+    installed_host: tuple[TestClient, str, Path, Path],
+    terminal_kind: str,
+) -> None:
+    http, instance_id, reviewer_key, workspace = installed_host
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+
+    # 1. Discover the built-in Provider and the seeded operation it serves.
+    provider_proof = transport.get(
+        instance_id,
+        request=GetRequest(ref=f"Provider:{WORKSPACE_FILE_BUILTIN_PROVIDER_ID}", detail="proof"),
+    ).proof
+    assert provider_proof is not None
+    assert provider_proof["envelope"]["identity"]["name"] == WORKSPACE_FILE_BUILTIN_PROVIDER_ID
+    operations = provider_proof["envelope"]["operations"]
+    assert any(item["name"] == WORKSPACE_FILE_OPERATION for item in operations)
+
+    # 2. Author definitions through public surfaces, including the typed SDK for capture.
+    contract = capture_contract()
+    contract_pin = ArtifactPin(
+        role="capture-contract",
+        target=contract.identity,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    emission_contract = procedure_contract()
+    output_contract_pin = ArtifactPin(
+        role="capture-contract",
+        target=emission_contract.identity,
+        artifact_digest=capture_contract_digest(emission_contract).tagged,
+    )
+    definition = _procedure_definition(
+        contract_pin=contract_pin,
+        output_contract_pin=output_contract_pin,
+        workspace=workspace,
+        terminal_kind=terminal_kind,
+    )
+    input_contract, output_contract = _contracts()
+    members: list[dict[str, Any]] = [
+        {
+            "tag": "playbill-capture-contract-authoring-payload-v1",
+            "capture_contract": contract.model_dump(mode="json"),
+        },
+        {
+            "tag": "playbill-claim-type-authoring-payload-v1",
+            "claim_type": _claim_type(
+                output_contract_pin.target.name
+                if terminal_kind == "emit_capture"
+                else contract_pin.target.name
+            ).model_dump(mode="json"),
+        },
+        # Advisories are named by their slug; core creates this one by it.
+        {
+            "tag": "playbill-claim-type-authoring-payload-v1",
+            "claim_type": bare_slug_claim_type(SUBJECT_KIND).model_dump(mode="json"),  # type: ignore[attr-defined]
+        },
+        SubjectKindAuthoringPayload(
+            name=SUBJECT_KIND, keys=(f"{SUBJECT_KIND}.slug",), uniqueness="unique"
+        ).model_dump(mode="json"),
+        create_by_key(SUBJECT_KIND, SUBJECT_ID).model_dump(mode="json"),  # type: ignore[attr-defined]
+        # The capability the read slot names, unless the instance holds it (base kit).
+        *_workspace_file_members(instance_id),
+        lower_authoring_input(_authored(definition)).model_dump(mode="json", by_alias=True),
+        {
+            "tag": "cruxible-line-authoring-payload-v2",
+            "name": LINE_NAME,
+            "procedure_name": PROCEDURE_NAME,
+            # Acquisition rules are the Line's (the Procedure declares none).
+            "acquisition": {"advisory.capture": _policy().model_dump(mode="json")},
+            # A Procedure can do what its terminals do: emitting a Capture observes.
+            "max_authority": "observe" if terminal_kind == "emit_capture" else "propose",
+        },
+        {
+            "tag": "cruxible-procedure-mandate-authoring-payload-v3",
+            "name": MANDATE_NAME,
+            "line_name": LINE_NAME,
+            "grants": "propose",
+            "namespace": ["claims"],
+            "valid_from": "2026-01-01T00:00:00Z",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    ]
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringChangeSetMember,
+        authoring_member_identity,
+    )
+
+    if terminal_kind == "emit_capture":
+        members.append(
+            {
+                "tag": "playbill-capture-contract-authoring-payload-v1",
+                "capture_contract": emission_contract.model_dump(mode="json"),
+            }
+        )
+
+    adapter = TypeAdapter(AuthoringChangeSetMember)
+    members.sort(
+        key=lambda item: authoring_member_identity(adapter.validate_python(item)).encode("utf-8")
+    )
+
+    def accept_members(selected: list[dict[str, Any]]) -> None:
+        compiled = transport.compile_authoring(
+            instance_id,
+            payload={
+                "tag": "playbill-change-set-authoring-payload-v1",
+                "members": selected,
+                "rationale": "Stand up the advisory severity Line.",
+            },
+        )
+        assert compiled.verdict == "passed", compiled.frontier
+        intent_id = str(compiled.certificate.intent_id)
+        submitted = transport.submit_authoring_intent(instance_id, intent_id, accept="never")
+        assert submitted.status.proposal_id is not None, submitted
+        _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)
+
+    # A Mandate names an *accepted or same-set* Line (packages/cruxible-client/
+    # .../authoring/models.py ProcedureMandateAuthoringPayload.line_name
+    # docstring: "accepted, or defined in the same set"); `MEMBER_STAGING_ORDER`
+    # in cruxible_core.authoring.lowering stages `line` before
+    # `procedure_mandate`, so the Mandate below is accepted together with its
+    # Line in one change set.
+    mandate_tag = "cruxible-procedure-mandate-authoring-payload-v3"
+    line_tag = "cruxible-line-authoring-payload-v2"
+
+    if terminal_kind == "emit_capture":
+        # Accept dependencies first, then exercise the SDK authoring door itself
+        # instead of bypassing its supported-node checks through raw payloads.
+        accept_members(
+            [
+                member
+                for member in members
+                if member["tag"]
+                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v5"}
+            ]
+        )
+        pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+        prepared = pb.procedure(definition=_authored(definition)).prepare()
+        assert not prepared.refused, prepared.diagnostics
+        submitted_procedure = prepared.submit(accept="never").status()
+        assert submitted_procedure.proposal_id is not None
+        _approve_and_activate(http, instance_id, reviewer_key, submitted_procedure.proposal_id)
+        accept_members([member for member in members if member["tag"] in {line_tag, mandate_tag}])
+    else:
+        accept_members(members)
+
+    # 3. Trigger the Line through its public route.
+    identity_digest = line_identity_digest(ArtifactIdentity(kind="Line", name=LINE_NAME))
+    state = transport.run_line(instance_id, identity_digest, occurrence_id=None)
+    assert state.status == "succeeded", state.model_dump_json(indent=2)
+    assert state.run_id is not None
+    # The built-in ran in-process, and its durable receipt says so.
+    (invocation,) = _provider_receipts(instance_id)
+    assert invocation["operation"] == WORKSPACE_FILE_OPERATION
+    assert invocation["fence_scope"] == "in_process"
+    assert invocation["egress"]["observer_backend"] == "core.in-process"
+    assert invocation["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+    assert invocation["outcome"]["status"] == "ok"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered"
+    if terminal_kind == "emit_capture":
+        assert egress.proposal_id is None
+        (emitted_event,) = tuple(
+            item
+            for item in state.outcomes
+            if item["event_kind"] == "produced_capture" and item["node_id"] == "propose"
+        )
+        assert emitted_event["capture_event"] is not None
+        assert emitted_event["capture_event"]["run_id"] == state.run_id
+        assert len(egress.children) == 1
+        capture_digest = egress.children[0].egress_digest
+        pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
+        captured = pb.capture(capture_digest)
+        assert captured.result.status == "verified", captured.result
+        assert captured.json() == {"severity": "high"}
+        assert captured.result.envelope.run_coordinate.run_id == state.run_id
+        assert captured.result.envelope.producer.kind == "Procedure"
+        limited = pb.capture(capture_digest, max_bytes=1)
+        assert limited.result.material.status == "unavailable"
+        assert "resource_budget_exceeded" in limited.result.material.coverage.reason_codes
+        with pytest.raises(ValueError, match="content is unavailable"):
+            _ = limited.content
+        # The read's retained evidence is independently readable; neither read refetches it.
+        # It commits the workspace file's exact bytes.
+        source = pb.capture(state.source_observations[0].capture_digest)
+        assert source.result.envelope.producer.kind == "Provider"
+        assert source.content == b"high"
+        claim = pb.claim(
+            subject=f"{SUBJECT_KIND}/{SUBJECT_ID}",
+            predicate=PREDICATE,
+            value="high",
+            role="observation",
+            rationale="Read from the Procedure's retained output.",
+            supported_by=captured.ref,
+        ).prepare()
+        assert not claim.refused, claim.diagnostics
+        submitted_claim = claim.submit(accept="never")
+        status = submitted_claim.status()
+        assert status.proposal_id is not None, status
+        _approve_and_activate(http, instance_id, reviewer_key, status.proposal_id)
+        proof = _proposal_proof(transport, instance_id, status.proposal_id)
+        member = next(
+            item for item in proof["candidate"]["members"] if item["path"].startswith("claims/")
+        )
+        claim_id = member["path"].rsplit("/", 1)[1].removesuffix(".json")
+        view = _claim_proof(transport, instance_id, claim_id)
+        assert view.admission_accounts[0].capture_digest == capture_digest
+        assert view.admission_accounts[0].status == "admitted"
+        missing = transport.read_capture(
+            instance_id, CaptureReadRequest(capture_digest="sha256:" + "f" * 64)
+        )
+        assert missing.status == "unavailable"
+        get_playbill_manager().clear()
+        assert pb.capture(capture_digest).json() == {"severity": "high"}
+        again = transport.get_procedure_run(instance_id, state.run_id)
+        assert again.outcomes == state.outcomes
+        assert again.terminal_egress == state.terminal_egress
+        return
+    assert egress.proposal_id is not None and egress.candidate_digest is not None
+    (child,) = egress.children
+    assert child.path is not None and child.path.startswith("claims/")
+    (observation,) = state.source_observations
+    assert observation.capture_digest is not None
+    assert observation.source_read_receipt is not None
+    assert observation.source_read_receipt.relative_path == RELATIVE_PATH
+    # Authored without a binding digest; the daemon recorded the attached root's.
+    assert observation.source_read_receipt.workspace_binding_digest == _binding_digest(workspace)
+
+    # 4. The manager retrieves the exact candidate, reviews it, and activates it.
+    proof = _proposal_proof(transport, instance_id, egress.proposal_id)
+    candidate = proof["candidate"]
+    assert candidate is not None, proof["evaluation"]["diagnostics"]
+    assert candidate["candidate_digest"] == egress.candidate_digest
+    member = next(item for item in candidate["members"] if item["path"] == child.path)
+    assert member["candidate_artifact_digest"] == child.egress_digest
+    evidence = next(item for item in candidate["law_evidence"] if item["path"] == child.path)
+    (verdict_capture,) = evidence["result"]["claim_evidence"]["verdict_captures"]
+    assert verdict_capture["capture_digest"] == observation.capture_digest
+    assert verdict_capture["provenance_grade"] == "daemon-fetched"
+    assert verdict_capture["epistemic_grade"] == "observed"
+    _approve_and_activate(http, instance_id, reviewer_key, egress.proposal_id)
+
+    # 5. The accepted Claim reads back through the Claim route to its Capture.
+    claim_id = child.path.rsplit("/", 1)[1].removesuffix(".json")
+    view = _claim_proof(
+        transport,
+        instance_id,
+        claim_id,
+        evaluation_time=observation.source_read_receipt.read_at,
+    )
+    assert view.statement.predicate == PREDICATE
+    assert view.statement.object.model_dump(mode="json")["value"] == "high"
+    # The served admission account binds the accepted Claim to the run's Capture.
+    (account,) = view.admission_accounts
+    assert account.capture_digest == observation.capture_digest
+    assert account.citation_role == "evidence"
+    assert account.citation_origin == "independent"
+    assert account.status == "admitted"
+    # And the run reads back the same receipt after acceptance.
+    again = transport.get_procedure_run(instance_id, state.run_id)
+    assert again.terminal_egress == state.terminal_egress

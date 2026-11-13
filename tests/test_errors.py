@@ -4,12 +4,7 @@ from __future__ import annotations
 
 from cruxible_core.errors import (
     ConfigError,
-    ConstraintViolationError,
-    CoreError,
     DataValidationError,
-    IngestionError,
-    MutationError,
-    ReceiptNotFoundError,
 )
 
 
@@ -43,19 +38,6 @@ class TestDataValidationError:
         assert str(exc) == "Generic failure"
 
 
-class TestConstraintViolationError:
-    def test_str_with_violations(self):
-        exc = ConstraintViolationError("2 violations", violations=["rule1", "rule2"])
-        text = str(exc)
-        assert "2 violations" in text
-        assert "rule1" in text
-        assert "rule2" in text
-
-    def test_str_without_violations(self):
-        exc = ConstraintViolationError("No details")
-        assert str(exc) == "No details"
-
-
 class TestErrorMessageCapping:
     """Verify __str__ caps output at 10 errors for large lists."""
 
@@ -82,15 +64,6 @@ class TestErrorMessageCapping:
         assert "config error 10" not in msg
         assert "and 15 more error(s)" in msg
 
-    def test_constraint_violation_error_caps_display(self):
-        violations = [f"violation {i}" for i in range(25)]
-        exc = ConstraintViolationError("Constraints failed", violations=violations)
-        msg = str(exc)
-        assert "violation 0" in msg
-        assert "violation 9" in msg
-        assert "violation 10" not in msg
-        assert "and 15 more error(s)" in msg
-
     def test_small_error_list_no_cap(self):
         errors = [f"error {i}" for i in range(5)]
         exc = DataValidationError("Validation failed", errors=errors)
@@ -106,50 +79,3 @@ class TestErrorMessageCapping:
         for i in range(10):
             assert f"e{i}" in msg
         assert "more error(s)" not in msg
-
-
-class TestMutationReceiptId:
-    def test_core_error_with_receipt_id(self):
-        exc = CoreError("msg", mutation_receipt_id="RCP-xxx")
-        assert exc.mutation_receipt_id == "RCP-xxx"
-        assert "(receipt: RCP-xxx)" in str(exc)
-
-    def test_core_error_without_receipt_id(self):
-        exc = CoreError("msg")
-        assert exc.mutation_receipt_id is None
-        assert "(receipt:" not in str(exc)
-
-    def test_config_error_with_receipt_id(self):
-        exc = ConfigError("msg", ["err1"], mutation_receipt_id="RCP-xxx")
-        assert "(receipt: RCP-xxx)" in str(exc)
-
-    def test_config_error_no_errors_with_receipt_id(self):
-        exc = ConfigError("msg", mutation_receipt_id="RCP-xxx")
-        assert str(exc) == "msg (receipt: RCP-xxx)"
-
-    def test_data_validation_error_with_receipt_id(self):
-        exc = DataValidationError("msg", ["err1"], mutation_receipt_id="RCP-xxx")
-        assert "(receipt: RCP-xxx)" in str(exc)
-
-    def test_constraint_violation_with_receipt_id(self):
-        exc = ConstraintViolationError("msg", ["v1"], mutation_receipt_id="RCP-xxx")
-        assert "(receipt: RCP-xxx)" in str(exc)
-
-    def test_ingestion_error_inherits_receipt_id(self):
-        exc = IngestionError("fail", mutation_receipt_id="RCP-yyy")
-        assert exc.mutation_receipt_id == "RCP-yyy"
-        assert "(receipt: RCP-yyy)" in str(exc)
-
-    def test_mutation_error_inherits_receipt_id(self):
-        exc = MutationError("fail", mutation_receipt_id="RCP-zzz")
-        assert exc.mutation_receipt_id == "RCP-zzz"
-
-    def test_receipt_not_found_no_collision(self):
-        exc = ReceiptNotFoundError("RCP-old")
-        assert exc.receipt_id == "RCP-old"
-        assert exc.mutation_receipt_id is None
-
-    def test_post_construction_mutation(self):
-        exc = CoreError("msg")
-        exc.mutation_receipt_id = "RCP-zzz"
-        assert "(receipt: RCP-zzz)" in str(exc)

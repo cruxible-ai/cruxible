@@ -1,0 +1,936 @@
+"""Inert content-addressed body storage with explicit read authorization."""
+
+from __future__ import annotations
+
+import ctypes
+import errno
+import hashlib
+import heapq
+import os
+import re
+import stat
+import sys
+import threading
+import weakref
+from collections import OrderedDict
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+from uuid import uuid4
+
+from cruxible_client.contracts.canonical import CasDigest
+from cruxible_client.contracts.cas_contracts import (
+    BodyAccessContext,
+    BodyProjectionProtocol,
+    CasObjectMetadata,
+    digest_bytes,
+)
+from cruxible_client.contracts.errors import CasError
+from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, CaptureEnvelopeIndex
+from cruxible_core.storage.landing_log import (
+    CREATE_RETRIES,
+    BodyState,
+    LandingLog,
+    damage_seen,
+    parent_linked,
+)
+
+# Objects already hashed against their address, with the file identity observed
+# when they were: (device, inode, size, mtime, ctime). Bytes are reused without
+# re-hashing only when one open descriptor shows that same identity before and
+# after the read, so the file read is the file hashed and was not written since.
+_VERIFIED_CAPACITY = 65536
+_VERIFIED: OrderedDict[tuple[str, str], tuple[int, int, int, int, int]] = OrderedDict()
+_VERIFIED_LOCK = threading.Lock()
+
+
+def _after_fork_in_child() -> None:
+    # A lock held by another thread at fork time is never released in the child.
+    global _VERIFIED_LOCK
+    _VERIFIED_LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _read_descriptor(
+    name: str, *, dir_fd: int
+) -> tuple[os.stat_result, bytes, os.stat_result] | None:
+    """Read one regular file through a single descriptor, with its identity around the read."""
+
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError:
+        return None
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            return None
+        chunks = []
+        while chunk := os.read(descriptor, 1 << 20):
+            chunks.append(chunk)
+        after = os.fstat(descriptor)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    return before, b"".join(chunks), after
+
+
+_HEX_PREFIX = re.compile(r"[0-9a-f]{0,64}")
+_SHARD_NAME = re.compile(r"[0-9a-f]{2}")
+_OBJECT_NAME = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class CasScan:
+    """One bounded scan of stored digests: what matched, and whether it finished."""
+
+    digests: tuple[str, ...]
+    complete: bool
+    examined: int
+    nearest: tuple[str, ...] = ()
+
+
+def _shared_length(name: str, prefix: str) -> int:
+    length = 0
+    while length < min(len(name), len(prefix)) and name[length] == prefix[length]:
+        length += 1
+    return length
+
+
+def _ranked(closest: list[tuple[int, str]]) -> tuple[str, ...]:
+    return tuple(
+        digest for _shared, digest in sorted(closest, key=lambda item: (-item[0], item[1]))
+    )
+
+
+def _sync_filesystem(descriptor: int) -> bool:
+    """Flush one filesystem on Linux; False only when syncfs is unsupported."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    syncfs = getattr(libc, "syncfs", None)
+    if syncfs is None:
+        return False
+    syncfs.argtypes = [ctypes.c_int]
+    syncfs.restype = ctypes.c_int
+    if syncfs(descriptor) != 0:
+        error = ctypes.get_errno()
+        if error in {errno.ENOSYS, errno.ENOTSUP}:
+            return False
+        raise OSError(error, os.strerror(error))
+    return True
+
+
+class ContentAddressedBodyStore:
+    """Managed SHA-256 body store; storing bytes grants no canonical authority.
+
+    The algorithm directory is validated once and then held open. Every shard
+    and object is reached relative to that descriptor, never refusing to follow
+    a symlink, so no later change to the directory's ancestors -- a directory
+    moved away and replaced by a symlink -- can redirect a read or a write: the
+    store keeps addressing exactly the directory it validated.
+    """
+
+    def __init__(self, root: Path, *, reservation_root: Path | None = None) -> None:
+        if root.is_symlink() or not root.is_dir():
+            raise CasError("CAS root must be an existing regular directory")
+        self.root = root.resolve(strict=True)
+        self.reservation_root = (
+            root.parent / "leases" / "procedure-material"
+            if reservation_root is None
+            else reservation_root
+        )
+        algorithm = self.root / "sha256"
+        algorithm.mkdir(mode=0o700, exist_ok=True)
+        named = algorithm.lstat()
+        if not stat.S_ISDIR(named.st_mode):
+            raise CasError("CAS algorithm directory is not trustworthy")
+        # chmod changes ctime even when the mode is already correct. Inspect
+        # before opening so restrictive modes (including 000) still repair.
+        if stat.S_IMODE(named.st_mode) != 0o700:
+            os.chmod(algorithm, 0o700)
+        self._algorithm_root = algorithm.resolve(strict=True)
+        descriptor = os.open(self._algorithm_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            opened, named = os.fstat(descriptor), self._algorithm_root.lstat()
+            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+                raise CasError("CAS algorithm directory changed while it was opened")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self._root_fd = descriptor
+        self._durable: set[str] = set()
+        self._durability_lock = threading.RLock()
+        weakref.finalize(self, os.close, descriptor)
+        # Retain namespace parents too: flushing may never resolve a moved or
+        # replaced ancestor by path, just as body reads and publication may not.
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        cas_directory = os.open("..", flags, dir_fd=descriptor)
+        weakref.finalize(self, os.close, cas_directory)
+        instance_directory = os.open("..", flags, dir_fd=cas_directory)
+        weakref.finalize(self, os.close, instance_directory)
+        self._namespace_fds = (cas_directory, instance_directory)
+        # Opening the store mints the log over objects it does not yet name, and
+        # settles any landing a writer left unfinished.
+        self.landings.ensure()
+        self.landings.reconcile()
+
+    @property
+    def capture_envelopes(self) -> CaptureEnvelopeIndex:
+        """Every stored Capture envelope by the contract it names (an index, not a walk)."""
+
+        return CaptureEnvelopeIndex(self)
+
+    @property
+    def landings(self) -> LandingLog:
+        """The sequenced log of every evidence body that lands and every erase."""
+
+        return LandingLog(self)
+
+    @staticmethod
+    def digest_bytes(content: bytes) -> CasDigest:
+        return digest_bytes(content)
+
+    @staticmethod
+    def _names(digest: str) -> tuple[str, str]:
+        value = CasDigest.from_tagged(digest).value
+        return value[:2], value
+
+    def _path(self, digest: str) -> Path:
+        """Where an object is named on disk, for diagnostics; access never uses it."""
+
+        shard, name = self._names(digest)
+        return self._algorithm_root / shard / name
+
+    def _shard(self, shard: str, *, create: bool = False) -> int | None:
+        """Open one shard directory relative to the held algorithm directory."""
+
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        if not create:
+            try:
+                return os.open(shard, flags, dir_fd=self._root_fd)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise CasError("CAS shard directory is not trustworthy") from exc
+        # Create first to avoid a failed open for a new shard. An ENOENT from
+        # either operation while its held parent is linked is the existing
+        # bounded macOS concurrent-create retry, shared by every publication.
+        for attempt in range(CREATE_RETRIES + 1):
+            try:
+                os.mkdir(shard, 0o700, dir_fd=self._root_fd)
+            except FileExistsError:
+                pass
+            except FileNotFoundError as exc:
+                if attempt < CREATE_RETRIES and parent_linked(self._root_fd):
+                    continue
+                raise CasError("CAS shard directory could not be created") from exc
+            except OSError as exc:
+                raise CasError("CAS shard directory could not be created") from exc
+            try:
+                return os.open(shard, flags, dir_fd=self._root_fd)
+            except FileNotFoundError as exc:
+                if attempt < CREATE_RETRIES and parent_linked(self._root_fd):
+                    continue
+                raise CasError("CAS shard directory is not trustworthy") from exc
+            except OSError as exc:
+                raise CasError("CAS shard directory is not trustworthy") from exc
+        raise AssertionError("bounded shard creation did not return")  # pragma: no cover
+
+    def _object_status(self, digest: str) -> os.stat_result | None:
+        shard, name = self._names(digest)
+        descriptor = self._shard(shard)
+        if descriptor is None:
+            return None
+        try:
+            status = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            status = None
+        finally:
+            os.close(descriptor)
+        return status
+
+    def peek(self, digest: str, length: int) -> bytes:
+        """The first ``length`` bytes of one object, UNVERIFIED: for classifying only.
+
+        Nothing read here is trusted; a caller that keeps an object reads it
+        again through ``read``, which verifies every byte against the address.
+        """
+
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            return b""
+        try:
+            try:
+                descriptor = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+                )
+            except FileNotFoundError:
+                return b""
+            except OSError:
+                return b""
+        finally:
+            os.close(directory)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                return b""
+            head = os.read(descriptor, length)
+            return head
+        except OSError:
+            return b""
+        finally:
+            os.close(descriptor)
+
+    def scan(self, hex_prefix: str = "", *, budget: int, nearest: int = 0) -> CasScan:
+        """Stored digests starting with ``hex_prefix``, examining at most ``budget`` names.
+
+        Objects are sharded by their first two hex digits, so a prefix of two or
+        more names one shard and a shorter one the shards it opens. Entries are
+        streamed, never listed whole: the scan stops after ``budget`` entries and
+        says so (``complete`` is False), so a caller never mistakes a partial
+        scan for the whole store. ``nearest`` keeps that many of the examined
+        digests sharing the longest prefix with ``hex_prefix``, in the same pass.
+        """
+
+        if not _HEX_PREFIX.fullmatch(hex_prefix):
+            raise CasError("a digest prefix is lowercase hex")
+        found: list[str] = []
+        closest: list[tuple[int, str]] = []
+        examined = 0
+        shards = (
+            [hex_prefix[:2]]
+            if len(hex_prefix) >= 2
+            else sorted(
+                name
+                for name in os.listdir(self._root_fd)
+                if _SHARD_NAME.fullmatch(name) and name.startswith(hex_prefix)
+            )
+        )
+        for shard in shards:
+            descriptor = self._shard(shard)
+            if descriptor is None:
+                continue
+            try:
+                with os.scandir(descriptor) as entries:
+                    for entry in entries:
+                        if examined >= budget:
+                            return CasScan(
+                                digests=tuple(sorted(found)),
+                                complete=False,
+                                examined=examined,
+                                nearest=_ranked(closest),
+                            )
+                        examined += 1
+                        name = entry.name
+                        if not _OBJECT_NAME.fullmatch(name) or not name.startswith(shard):
+                            continue
+                        if name.startswith(hex_prefix):
+                            found.append("sha256:" + name)
+                        elif nearest:
+                            shared = _shared_length(name, hex_prefix)
+                            item = (shared, "sha256:" + name)
+                            if len(closest) < nearest:
+                                heapq.heappush(closest, item)
+                            elif item > closest[0]:
+                                heapq.heapreplace(closest, item)
+            finally:
+                os.close(descriptor)
+        return CasScan(
+            digests=tuple(sorted(found)),
+            complete=True,
+            examined=examined,
+            nearest=_ranked(closest),
+        )
+
+    def file_identity(self, digest: str) -> tuple[int, int, int, int, int] | None:
+        """The stored object's file identity, or None when it is absent."""
+
+        status = self._object_status(digest)
+        return None if status is None else _file_identity(status)
+
+    def verified_identity(self, digest: str) -> tuple[int, int, int, int, int] | None:
+        """Last verified identity, for the sweep's baseline; never inspect the file.
+
+        This is an observation, not a presence or integrity check. A cold process
+        may have none; the sweep then verifies that body on its next pass.
+        """
+
+        with _VERIFIED_LOCK:
+            return _VERIFIED.get(self._memo_key(digest))
+
+    def store(
+        self, content: bytes, *, journal_payload: bool = False, best_effort: bool = False
+    ) -> CasObjectMetadata:
+        """Durably store inert bytes, idempotently, under their exact digest.
+
+        A new body is logged as a landing (``landings``), before the object is
+        written and again after, unless it is a journal record's payload: such a
+        body is reachable only through the record that names it, appended after
+        it lands, so its arrival alone changes no verdict input.
+        """
+
+        digest = self.digest_bytes(content)
+        # Before the object exists: a stored envelope is never missing from the index.
+        if content.startswith(ENVELOPE_HEAD):
+            self.capture_envelopes.note(digest.tagged, content)
+        shard, name = self._names(digest.tagged)
+        durable = not (journal_payload or best_effort)
+        directory = self._shard(shard, create=True)
+        assert directory is not None
+        try:
+            os.fchmod(directory, 0o700)
+            try:
+                existing = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                self._verified_bytes(digest.tagged)
+                if durable:
+                    self.flush_cited((digest.tagged,), filesystem=False)
+                if not journal_payload:
+                    # A retry after an interrupted landing: publish its completion;
+                    # a body that arrived as a journal payload: log it now.
+                    self.landings.reconcile(digest.tagged)
+                    self.landings.ensure_landed(digest.tagged, sync=durable)
+            elif journal_payload:
+                self._publish(directory, name, content, digest.tagged)
+            else:
+                with self.landings.operation(digest.tagged, "store", sync=durable):
+                    self._publish(directory, name, content, digest.tagged)
+                    if durable:
+                        self.flush_cited((digest.tagged,), filesystem=False)
+        finally:
+            os.close(directory)
+        return CasObjectMetadata(
+            digest=digest.tagged,
+            present=True,
+            byte_length=len(content),
+            redacted=False,
+        )
+
+    def flush_cited(self, digests: Sequence[str], *, filesystem: bool = True) -> None:
+        """One acceptance barrier over its cited bodies, never the stored population.
+
+        Linux syncfs covers the instance filesystem (including Git objects and
+        CAS ancestor entries). Other platforms flush each new body and touched
+        namespace once; Git already flushes its objects before main publication.
+        A failed barrier never marks a body durable and must leave main unmoved.
+        """
+        with self._durability_lock:
+            pending = tuple(dict.fromkeys(d for d in digests if d not in self._durable))
+            if filesystem and sys.platform == "linux":
+                # Do not bless missing/corrupt citations even when syncfs succeeds.
+                for digest in pending:
+                    if not self.verify(digest):
+                        raise CasError("accepted citation is unavailable")
+                descriptor = self._namespace_fds[1]
+                # A mounted CAS on another filesystem uses the file fallback;
+                # a syncfs of the instance filesystem would not cover its bytes.
+                synced = os.fstat(descriptor).st_dev == os.fstat(
+                    self._root_fd
+                ).st_dev and _sync_filesystem(descriptor)
+                if synced:
+                    self._durable.update(pending)
+                    return
+            shards: dict[str, list[str]] = {}
+            for digest in pending:
+                shard, name = self._names(digest)
+                shards.setdefault(shard, []).append(name)
+            for shard, names in shards.items():
+                directory = self._shard(shard)
+                if directory is None:
+                    raise CasError("accepted citation is unavailable")
+                try:
+                    for name in names:
+                        digest = "sha256:" + name
+                        if not self.verify(digest):
+                            raise CasError("accepted citation is unavailable")
+                        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                        try:
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            if pending:
+                # shard -> algorithm -> cas -> instance; best-effort writes may
+                # have created any of these entries since the last barrier.
+                os.fsync(self._root_fd)
+                for descriptor in self._namespace_fds:
+                    os.fsync(descriptor)
+            self._durable.update(pending)
+
+    def store_many(
+        self,
+        contents: Sequence[bytes],
+        *,
+        journal_payload: bool = False,
+    ) -> tuple[CasObjectMetadata, ...]:
+        """Publish a group's exhaust bodies with one shard open per touched shard.
+
+        Ordinary evidence retains its durable store path. Exhaust uses no
+        per-file flush: a crash can lose bodies, and availability detects damage.
+        The loops grow with this group, never with stored bodies.
+        """
+        if not journal_payload:
+            return tuple(self.store(content) for content in contents)
+        shards: dict[str, list[tuple[int, bytes, str, str]]] = {}
+        for index, content in enumerate(contents):
+            digest = self.digest_bytes(content).tagged
+            shard, name = self._names(digest)
+            shards.setdefault(shard, []).append((index, content, digest, name))
+        result: dict[int, CasObjectMetadata] = {}
+        # Visit only this batch's shards, holding one descriptor at a time so a
+        # large group cannot exhaust the process's open-file limit.
+        for shard, members in shards.items():
+            directory = self._shard(shard, create=True)
+            assert directory is not None
+            try:
+                for index, content, digest, name in members:
+                    if content.startswith(ENVELOPE_HEAD):
+                        self.capture_envelopes.note(digest, content)
+                    try:
+                        os.stat(name, dir_fd=directory, follow_symlinks=False)
+                    except FileNotFoundError:
+                        self._publish(directory, name, content, digest)
+                    else:
+                        self._verified_bytes(digest)
+                    result[index] = CasObjectMetadata(
+                        digest=digest,
+                        present=True,
+                        byte_length=len(content),
+                        redacted=False,
+                    )
+            finally:
+                os.close(directory)
+        return tuple(result[index] for index in range(len(contents)))
+
+    def _publish(
+        self,
+        directory: int,
+        name: str,
+        content: bytes,
+        digest: str,
+    ) -> bool:
+        """Make ``content`` addressable under ``name`` only once it is complete.
+
+        The bytes are written under a private temporary name in the shard,
+        read back and checked against the address, and only then linked
+        to the object name. A reader, or a concurrent writer of the same body,
+        therefore never meets a partially written object: before the link the
+        name does not exist, after it the bytes are whole. ``link`` never
+        replaces an object, so a writer that loses the race verifies the
+        winner's object and reports that it published nothing. A published
+        body is best effort here; the caller flushes ordinary evidence or the
+        acceptance citation batch through ``flush_cited``.
+        """
+
+        temporary = f".{name}.{uuid4().hex}.tmp"
+        descriptor: int | None = None
+        landed: tuple[os.stat_result, bytes, os.stat_result] | None = None
+        try:
+            try:
+                descriptor = os.open(
+                    temporary,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=directory,
+                )
+                view = memoryview(content)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:  # pragma: no cover - defensive OS contract
+                        raise CasError("CAS write made no progress")
+                    view = view[written:]
+                os.fchmod(descriptor, 0o600)
+                # Verify through the writer's descriptor before publication.
+                before = os.fstat(descriptor)
+                checked = os.pread(descriptor, len(content) + 1, 0)
+                after = os.fstat(descriptor)
+                if checked != content or _file_identity(before) != _file_identity(after):
+                    raise CasError("CAS body did not land as written")
+                landed = (before, checked, after)
+            except OSError as exc:
+                raise CasError("CAS body could not be stored durably") from exc
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+            if landed is None or self.digest_bytes(landed[1]).tagged != digest:
+                raise CasError("CAS body did not land as written")
+            # Publication and the barrier share a lock: durability belongs to
+            # this inode, not to an earlier publication of the same digest.
+            with self._durability_lock:
+                try:
+                    os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+                except FileExistsError:
+                    self._verified_bytes(digest)
+                    return False
+                except OSError as exc:
+                    raise CasError("CAS body could not be stored durably") from exc
+                self._durable.discard(digest)
+                self._remember_landed(directory, name, digest, landed[2])
+            return True
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except OSError:
+                pass
+
+    def _remember_landed(
+        self, directory: int, name: str, digest: str, landed: os.stat_result
+    ) -> None:
+        """Remember a just-published object as verified: its bytes were read back and hashed.
+
+        The link changes only the file's change time, so the object is the file
+        that was hashed exactly when its device, inode, size and modification
+        time are the read-back's; its identity after the link is then what a
+        later read compares (``_verified_bytes``), and it is not hashed again.
+        """
+
+        try:
+            status = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        except OSError:
+            return
+        if (
+            not stat.S_ISREG(status.st_mode)
+            or _file_identity(status)[:4] != _file_identity(landed)[:4]
+        ):
+            return
+        key = self._memo_key(digest)
+        with _VERIFIED_LOCK:
+            _VERIFIED[key] = _file_identity(status)
+            _VERIFIED.move_to_end(key)
+            while len(_VERIFIED) > _VERIFIED_CAPACITY:
+                _VERIFIED.popitem(last=False)
+
+    def _memo_key(self, digest: str) -> tuple[str, str]:
+        return (str(self._path(digest)), digest)
+
+    def _known(self, digest: str) -> bool:
+        """Whether this exact file was already verified and has not changed since."""
+
+        status = self._object_status(digest)
+        if status is None or not stat.S_ISREG(status.st_mode):
+            return False
+        with _VERIFIED_LOCK:
+            known = _VERIFIED.get(self._memo_key(digest))
+        return known == _file_identity(status)
+
+    def _verified_bytes(self, digest: str) -> bytes:
+        # Bytes are only ever returned from one open descriptor whose identity
+        # is checked before and after the read, so what is returned is exactly
+        # the file that was hashed (or is hashed here), unwritten in between.
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            self._damaged(digest, "missing")
+            raise CasError("CAS object is missing")
+        try:
+            key = self._memo_key(digest)
+            with _VERIFIED_LOCK:
+                known = _VERIFIED.get(key)
+            read = _read_descriptor(name, dir_fd=directory)
+            if read is None:
+                try:
+                    status = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError as exc:
+                    self._damaged(digest, "missing")
+                    raise CasError("CAS object is missing") from exc
+                self._damaged(digest, "corrupt")
+                if not stat.S_ISREG(status.st_mode):
+                    raise CasError("CAS object must be a regular file")
+                raise CasError("CAS object cannot be read")
+            before, content, after = read
+        finally:
+            os.close(directory)
+        if known is not None and _file_identity(before) == known == _file_identity(after):
+            self._whole(digest)
+            return content
+        if self.digest_bytes(content).tagged != digest:
+            self._damaged(digest, "corrupt")
+            raise CasError("CAS object bytes do not match their content address")
+        if _file_identity(before) == _file_identity(after):
+            with _VERIFIED_LOCK:
+                _VERIFIED[key] = _file_identity(after)
+                _VERIFIED.move_to_end(key)
+                while len(_VERIFIED) > _VERIFIED_CAPACITY:
+                    _VERIFIED.popitem(last=False)
+        self._whole(digest)
+        return content
+
+    def verify(self, digest: str) -> bool:
+        """Verify exact bytes without disclosing them or their length."""
+
+        if self._known(digest):
+            self._whole(digest)
+            return True
+        if self._object_status(digest) is None:
+            self._damaged(digest, "missing")
+            return False
+        self._verified_bytes(digest)
+        return True
+
+    def _damaged(self, digest: str, state: BodyState) -> None:
+        """Record what a verification found when the landing log says otherwise
+        (``LandingLog.note``): damage, or a repair. Never fails the verification.
+
+        A record that cannot be written now is the evidence sweep's to write.
+        """
+
+        self._durable.discard(digest)
+        try:
+            self.landings.note(digest, state, recheck=lambda: self._hashed_state(digest))
+        except (CasError, OSError):
+            pass
+
+    def _whole(self, digest: str) -> None:
+        """Record the repair of a body a verification just found whole, if it was
+        recorded damaged: one in-memory lookup otherwise (``damage_seen``)."""
+
+        if damage_seen(str(self._algorithm_root), digest):
+            self._damaged(digest, "present")
+
+    def availability(self, digest: str) -> BodyState:
+        """Re-hash one stored object from disk, streaming, trusting no earlier check.
+
+        `verify` reuses an earlier hash while the file's identity is unchanged;
+        bytes that rot in place keep that identity, so a sweep looking for rot
+        must hash again. Nothing is held beyond one read buffer.
+
+        What it finds is recorded in the landing log when the log says otherwise
+        (``LandingLog.note``): a landed body found missing or corrupt gets a damage
+        record, so reads at a later position answer it absent, and a damaged one
+        found whole again a ``stored`` record that clears it.
+        """
+
+        state = self._hashed_state(digest)
+        self.landings.note(digest, state, recheck=lambda: self._hashed_state(digest))
+        return state
+
+    def _hashed_state(self, digest: str) -> BodyState:
+        """What one stored object is now, re-hashed from disk."""
+
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            return "missing"
+        try:
+            try:
+                # Non-blocking, so a FIFO planted in the store is refused below
+                # instead of waiting forever for a writer.
+                descriptor = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+                )
+            except FileNotFoundError:
+                return "missing"
+            except OSError:
+                return "corrupt"
+        finally:
+            os.close(directory)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                return "corrupt"
+            hasher = hashlib.sha256()
+            while chunk := os.read(descriptor, 1 << 20):
+                hasher.update(chunk)
+        except OSError:
+            return "corrupt"
+        finally:
+            os.close(descriptor)
+        return "present" if CasDigest(hasher.hexdigest()).tagged == digest else "corrupt"
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+        if not access.can_read_body:
+            raise CasError("body access is denied")
+        if self._object_status(digest) is None:
+            self._damaged(digest, "missing")
+            raise CasError("CAS object is missing")
+        return self._verified_bytes(digest)
+
+    def metadata(self, digest: str, *, access: BodyAccessContext) -> CasObjectMetadata:
+        if self._object_status(digest) is None:
+            return CasObjectMetadata(
+                digest=digest,
+                present=False,
+                byte_length=None,
+                redacted=not access.can_read_body,
+            )
+        content = self._verified_bytes(digest)
+        return CasObjectMetadata(
+            digest=digest,
+            present=True,
+            byte_length=len(content) if access.can_read_body else None,
+            redacted=not access.can_read_body,
+        )
+
+    def erase(self, digest: str) -> bool:
+        """Delete one exact verified body; semantic envelopes must be preserved elsewhere."""
+
+        if self._object_status(digest) is None:
+            # A retry after an interrupted erase: publish its completion.
+            self.landings.reconcile(digest)
+            return False
+        self._verified_bytes(digest)
+        self._durable.discard(digest)
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            return False
+        try:
+            with self.landings.operation(digest, "erase"):
+                try:
+                    os.unlink(name, dir_fd=directory)
+                    os.fsync(directory)
+                except OSError as exc:
+                    raise CasError("CAS body could not be erased") from exc
+        finally:
+            os.close(directory)
+        return True
+
+
+# -- dry runs ---------------------------------------------------------------------
+
+_DRY_RUN_BODIES: ContextVar[dict[str, bytes] | None] = ContextVar(
+    "cruxible_cas_dry_run_bodies", default=None
+)
+
+
+@contextmanager
+def dry_run_bodies() -> Iterator[dict[str, bytes]]:
+    """Hold every body stored in this context in memory, so a dry run writes nothing.
+
+    A dry run takes the same path as the write it previews up to the commit, and
+    that path stores bodies as it lowers (for example, a self-source Capture).
+    Inside this context the instance's body store is a ``DryRunBodyStore``: the
+    bodies it stores are held here and read back from here, and nothing reaches
+    the store on disk. The context is per call (a context variable), so a
+    concurrent write in another request is unaffected.
+    """
+
+    held: dict[str, bytes] = {}
+    token = _DRY_RUN_BODIES.set(held)
+    try:
+        yield held
+    finally:
+        _DRY_RUN_BODIES.reset(token)
+
+
+def dry_run_held_bodies() -> dict[str, bytes] | None:
+    """The bodies the current dry run holds, or None outside a dry run."""
+
+    return _DRY_RUN_BODIES.get()
+
+
+class DryRunBodyStore:
+    """A body store that reads through to ``base`` and holds new bodies in memory."""
+
+    def __init__(self, base: ContentAddressedBodyStore, held: dict[str, bytes]) -> None:
+        self._base = base
+        self._held = held
+
+    digest_bytes = staticmethod(ContentAddressedBodyStore.digest_bytes)
+
+    def store(
+        self, content: bytes, *, journal_payload: bool = False, best_effort: bool = False
+    ) -> CasObjectMetadata:
+        digest = self.digest_bytes(content).tagged
+        # A preview owns its proposed bytes; it never probes the on-disk body
+        # just to decide whether these identical bytes already landed.
+        self._held[digest] = bytes(content)
+        return CasObjectMetadata(
+            digest=digest, present=True, byte_length=len(content), redacted=False
+        )
+
+    def store_many(
+        self,
+        contents: Sequence[bytes],
+        *,
+        journal_payload: bool = False,
+    ) -> tuple[CasObjectMetadata, ...]:
+        return tuple(self.store(content, journal_payload=journal_payload) for content in contents)
+
+    def holds(self, digest: str) -> bool:
+        """Whether this preview supplies the body independently of disk presence."""
+
+        return digest in self._held
+
+    def verify(self, digest: str) -> bool:
+        from cruxible_core.storage.read_positions import PositionedBodies
+
+        return self.holds(digest) or PositionedBodies(self._base).verify(digest)
+
+    def availability(self, digest: str) -> Literal["present", "missing", "corrupt"]:
+        return "present" if digest in self._held else self._base.availability(digest)
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+        held = self._held.get(digest)
+        if held is None:
+            return self._base.read(digest, access=access)
+        if not access.can_read_body:
+            raise CasError("body access is denied")
+        return held
+
+    def metadata(self, digest: str, *, access: BodyAccessContext) -> CasObjectMetadata:
+        held = self._held.get(digest)
+        if held is None:
+            from cruxible_core.storage.read_positions import PositionedBodies
+
+            return PositionedBodies(self._base).metadata(digest, access=access)
+        return CasObjectMetadata(
+            digest=digest,
+            present=True,
+            byte_length=len(held) if access.can_read_body else None,
+            redacted=not access.can_read_body,
+        )
+
+    def peek(self, digest: str, length: int) -> bytes:
+        held = self._held.get(digest)
+        return self._base.peek(digest, length) if held is None else held[:length]
+
+    def scan(self, hex_prefix: str = "", *, budget: int, nearest: int = 0) -> CasScan:
+        base = self._base.scan(hex_prefix, budget=budget, nearest=nearest)
+        held = [
+            digest for digest in self._held if digest.removeprefix("sha256:").startswith(hex_prefix)
+        ]
+        return CasScan(
+            digests=tuple(sorted({*base.digests, *held})),
+            complete=base.complete,
+            examined=base.examined,
+            nearest=base.nearest,
+        )
+
+    def erase(self, digest: str) -> bool:
+        raise CasError("a dry run erases nothing")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base, name)
+
+
+__all__ = [
+    "BodyAccessContext",
+    "CasScan",
+    "BodyProjectionProtocol",
+    "CasObjectMetadata",
+    "ContentAddressedBodyStore",
+    "DryRunBodyStore",
+    "dry_run_bodies",
+    "dry_run_held_bodies",
+]

@@ -1,0 +1,34 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "Detail of a provider_declined refusal: a digest or size guard.",
+  "fields": {
+    "byte_length": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "min": 0
+      }
+    },
+    "computed": {
+      "optional": true,
+      "type": {
+        "kind": "string"
+      }
+    },
+    "declared": {
+      "optional": true,
+      "type": {
+        "kind": "string"
+      }
+    },
+    "max_bytes": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "min": 0
+      }
+    }
+  },
+  "name": "workspace.file.refusal.provider_declined",
+  "version": 1
+}

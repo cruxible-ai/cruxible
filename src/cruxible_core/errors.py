@@ -1,79 +1,36 @@
 """Error hierarchy for Cruxible Core.
 
-All exceptions inherit from CoreError. Two intermediate base classes
-separate config-level errors (schema definitions) from graph-level
-errors (runtime data), making it easy to catch by category.
+Every exception inherits from CoreError. Cruxible refusals carry their own
+typed errors in ``cruxible_client.contracts.errors``; these are the runtime and
+credential errors shared by the daemon, CLI and MCP boundaries.
 
     CoreError
-    ├── SchemaError (config definition problems)
-    │   ├── ConfigError
-    │   ├── EntityTypeNotFoundError
-    │   ├── RelationshipNotFoundError
-    │   └── QueryNotFoundError
-    ├── GraphError (runtime data problems)
-    │   ├── EntityNotFoundError
-    │   ├── DataValidationError
-    │   ├── RelationshipAmbiguityError
-    │   └── ConstraintViolationError
-    ├── ExecutionError (operation failures)
-    │   ├── IngestionError
-    │   ├── MutationError
-    │   ├── QueryExecutionError
-    │   ├── CustomerCodeExecutionUnsupportedError
-    │   └── TransportError
-    ├── OwnershipError (overlay type-level ownership)
-    ├── ReceiptNotFoundError (receipt store lookup)
-    ├── TraceNotFoundError (trace store lookup)
-    ├── OutcomeNotFoundError (feedback store lookup)
+    ├── FloorAdmissionMisuse (internal floor admission programming error)
+    ├── ConfigError (invalid configuration or request shape)
+    ├── DataValidationError (payload does not match its declared contract)
+    │   └── RequestRefusedError (a coded refusal of caller input, with its repair)
+    │       └── ChangeRefusedError (a commit refused by its preview pin, R12)
+    ├── CustomerCodeExecutionUnsupportedError (hosted profile refuses customer code)
+    ├── HostedProfileUnknownError (unknown hosted server profile)
+    ├── IsolatedExecutorDiscoveryError (advertised isolated executor failed to load)
     ├── InstanceNotFoundError (instance registry lookup)
-    ├── GroupNotFoundError (group store lookup)
-    ├── ProcedureNotFoundError (procedure store lookup)
-    ├── SourceArtifactNotFoundError (source artifact store lookup)
+    ├── InstanceLocationRefusedError (registry row outside the daemon's state root)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
+    │   └── BootstrapClaimRefusedError (one refused runtime bootstrap claim)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
-    ├── PermissionDeniedError (MCP permission mode)
-    ├── DirectWriteRefusedError (governed proposal_only direct-write refusal)
-    │   ├── GroupApprovedContentWriteRefusedError (content change to an approved edge)
-    │   └── GovernedSourceSpoofRefusedError (direct write naming a governed verb)
-    ├── TerminalLifecycleWriteRefusedError (terminal lifecycle via a free write)
-    ├── PendingEdgeWriteRefusedError (non-pending write onto a pending proposal)
-    └── ConcurrentStateDriftError (live state moved under a `current` diff coordinate)
+    │   └── DaemonOperationScopeError (instance-scoped credential on a daemon operation)
+    └── PermissionDeniedError (permission mode)
 """
 
 from __future__ import annotations
 
-from cruxible_client._error_base import (
-    ConcurrentStateDriftError as _ConcurrentStateDriftError,
-)
-from cruxible_client._error_base import (
-    CoreError as CoreError,
-)
-from cruxible_client._error_base import (
-    InvalidContinuationError as _InvalidContinuationError,
-)
-from cruxible_client._error_base import (
-    StaleContinuationError as _StaleContinuationError,
-)
+from typing import Literal
 
-# The base is an identity alias, not a parallel subclass. Every reconstructed
-# client exception and every locally raised core exception therefore shares the
-# exact same catch surface in-process.
-ConcurrentStateDriftError = _ConcurrentStateDriftError
-InvalidContinuationError = _InvalidContinuationError
-StaleContinuationError = _StaleContinuationError
-
-
-# ---------------------------------------------------------------------------
-# Schema errors — config definition is wrong or missing
-# ---------------------------------------------------------------------------
-
-
-class SchemaError(CoreError):
-    """Base for errors in the config schema definition."""
-
-    pass
-
+from cruxible_client._error_base import CoreError as CoreError
+from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
+from cruxible_client.errors import permission_denied_message
 
 _MAX_DISPLAY_ERRORS = 10
 
@@ -86,7 +43,16 @@ def _format_capped_errors(errors: list[str]) -> str:
     return detail
 
 
-class ConfigError(SchemaError):
+class FloorAdmissionMisuse(CoreError):
+    """An internal admission misuse, surfaced through the typed error boundaries."""
+
+    error_code = "internal.floor_admission_misuse"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.error_code}: {message}")
+
+
+class ConfigError(CoreError):
     """Invalid configuration YAML.
 
     Raised when config fails schema validation or cross-reference checks.
@@ -96,69 +62,19 @@ class ConfigError(SchemaError):
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         detail = _format_capped_errors(self.errors)
-        return f"{self.summary}: {detail}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}"
 
 
-class EntityTypeNotFoundError(SchemaError):
-    """Entity type not defined in config schema."""
-
-    def __init__(self, entity_type: str, *, known_entity_types: list[str] | None = None):
-        self.entity_type = entity_type
-        self.known_entity_types = sorted(known_entity_types or [])
-        message = f"Entity type '{entity_type}' not found in schema"
-        if self.known_entity_types:
-            message += f". Known entity types: {', '.join(self.known_entity_types)}"
-        super().__init__(message)
-
-
-class RelationshipNotFoundError(SchemaError):
-    """Relationship type not defined in config schema."""
-
-    def __init__(self, relationship_name: str):
-        self.relationship_name = relationship_name
-        super().__init__(f"Relationship '{relationship_name}' not found in schema")
-
-
-class QueryNotFoundError(SchemaError):
-    """Named query not defined in config schema."""
-
-    def __init__(self, query_name: str):
-        self.query_name = query_name
-        super().__init__(f"Named query '{query_name}' not found in schema")
-
-
-# ---------------------------------------------------------------------------
-# Graph errors — runtime data is wrong or missing
-# ---------------------------------------------------------------------------
-
-
-class GraphError(CoreError):
-    """Base for errors in graph data at runtime."""
-
-    pass
-
-
-class EntityNotFoundError(GraphError):
-    """Entity with given ID not found in the graph."""
-
-    def __init__(self, entity_type: str, entity_id: str):
-        self.entity_type = entity_type
-        self.entity_id = entity_id
-        super().__init__(f"{entity_type} '{entity_id}' not found in graph")
-
-
-class DataValidationError(GraphError):
+class DataValidationError(CoreError):
     """Ingested data doesn't match config schema.
 
     Raised when CSV/JSON data doesn't conform to the entity/relationship
@@ -169,216 +85,151 @@ class DataValidationError(GraphError):
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         detail = _format_capped_errors(self.errors)
-        return f"{self.summary}: {detail}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}"
 
 
-class RelationshipAmbiguityError(GraphError):
-    """A relationship target is ambiguous and needs a stable edge key."""
+class RequestRefusedError(DataValidationError):
+    """A coded refusal of caller input that names the repair.
+
+    ``repair`` is a served repair (a runnable operation or a hand edit); the
+    HTTP boundary renders it as the envelope's repair and answers 400.
+    """
+
+    def __init__(self, error_code: str, message: str, *, repair: object) -> None:
+        self.error_code = error_code
+        self.repair = repair
+        super().__init__(f"{error_code}: {message}")
+
+
+class ChangeRefusedError(RequestRefusedError):
+    """A change refused by its preview pin (rule R12), with the preview as repair.
+
+    ``cruxible.preview.state_moved`` (409): the commit carried the coordinate of
+    a preview and that state has moved since. ``cruxible.preview.
+    confirmation_required`` (400): a change that cannot be undone commits only
+    with the coordinate of its preview. ``cruxible.preview.recovery_pending``
+    (409): previewing would first have to open the instance and repair derived
+    files on disk, which a preview may not write; an ordinary read repairs them,
+    and the preview then runs.
+    """
 
     def __init__(
         self,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-        relationship_type: str,
-    ):
-        self.from_type = from_type
-        self.from_id = from_id
-        self.to_type = to_type
-        self.to_id = to_id
-        self.relationship_type = relationship_type
+        error_code: Literal[
+            "cruxible.preview.state_moved",
+            "cruxible.preview.confirmation_required",
+            "cruxible.preview.recovery_pending",
+        ],
+        message: str,
+        *,
+        operation: str,
+        repair: RepairOperation | None = None,
+    ) -> None:
+        self.http_status = 400 if error_code == "cruxible.preview.confirmation_required" else 409
         super().__init__(
-            "Ambiguous relationship target for "
-            f"{from_type}:{from_id}:{relationship_type}:{to_type}:{to_id}; "
-            "specify edge_key to target a single edge"
+            error_code,
+            message,
+            repair=repair or RepairOperation(operation=operation, arguments={"dry_run": True}),
         )
 
 
-class ConstraintViolationError(GraphError):
-    """Constraint rule was violated."""
-
-    def __init__(
-        self,
-        message: str,
-        violations: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
-    ):
-        self.summary = message
-        self.violations = violations or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
-
-    def __str__(self) -> str:
-        if not self.violations:
-            return self.summary + self._receipt_suffix()
-        detail = _format_capped_errors(self.violations)
-        return f"{self.summary}: {detail}" + self._receipt_suffix()
-
-
-# ---------------------------------------------------------------------------
-# Execution errors — operation failures
-# ---------------------------------------------------------------------------
-
-
-class ExecutionError(CoreError):
-    """Base for errors during operation execution."""
-
-    pass
-
-
-class IngestionError(ExecutionError):
-    """Error during data ingestion.
-
-    Raised when CSV parsing, column mapping, or data normalization fails.
-    """
-
-    pass
-
-
-class MutationError(ExecutionError):
-    """Unexpected failure during a graph mutation.
-
-    Raised when durable writes (save_graph, store writes) fail for reasons
-    other than data validation (OSError, sqlite3 errors, etc.).
-    """
-
-    pass
-
-
-class QueryExecutionError(ExecutionError):
-    """Error during query execution.
-
-    Raised when query setup fails (missing parameters, no primary key,
-    entry entity type not in config, etc.). The query exists in config
-    but cannot be executed with the given inputs.
-    """
-
-    def __init__(self, message: str):
-        super().__init__(message)
-
-
-class CustomerCodeExecutionUnsupportedError(ExecutionError):
+class CustomerCodeExecutionUnsupportedError(CoreError):
     """Customer code execution is unavailable in the current hosted runtime."""
 
     error_code = "customer_code_execution_unsupported"
 
-    def __init__(self) -> None:
-        super().__init__("Customer code execution is not supported in this hosted runtime profile.")
+    def __init__(self, detail: str | None = None) -> None:
+        self.detail = detail
+        message = "Customer code execution is not supported in this hosted runtime profile."
+        super().__init__(message if detail is None else f"{message} ({detail})")
 
 
-class TransportError(ExecutionError):
-    """Error during state release transport operations."""
+class HostedProfileUnknownError(CoreError):
+    """The configured hosted server profile is not one this build understands."""
 
-    pass
+    error_code = "hosted_profile_unknown"
 
-
-class ProcedureBudgetExceededError(QueryExecutionError):
-    """A procedure exhausted one of its declared execution budgets."""
-
-    def __init__(self, message: str):
-        self.budget_exceeded = True
-        super().__init__(message)
-
-
-class ProcedureRepeatExhaustedError(QueryExecutionError):
-    """A bounded procedure repeat ended without satisfying its condition."""
-
-    def __init__(self, step_id: str, max_attempts: int):
-        self.repeat_exhausted = True
-        self.step_id = step_id
-        self.max_attempts = max_attempts
+    def __init__(self, profile: str) -> None:
+        self.profile = profile
         super().__init__(
-            f"Procedure repeat step '{step_id}' exhausted {max_attempts} attempt(s) "
-            "without satisfying its until condition"
+            f"Hosted server profile {profile!r} is unknown to this build, so its execution "
+            "policy cannot be established; repair: unset CRUXIBLE_HOSTED_SERVER_PROFILE, or "
+            "set it to a profile this build declares."
         )
 
 
-class ProcedureWithdrawalRefusedError(CoreError):
-    """Withdraw refused: the actor is neither the proposal's author nor a reviewer.
+class ProviderLaneRefusedError(CoreError):
+    """A Provider-backed operation refused because the daemon's Provider lane is down.
 
-    Withdrawal is the AUTHOR's retraction of their own pending proposal, so it
-    sits at the proposing tier rather than the review tier: an agent that
-    changed its mind about a definition it just proposed does not need a
-    reviewer to unblock it. Anyone else reaching for the same verb is
-    adjudicating someone else's proposal, which is the review act, so it
-    carries the reviewer tier that ``accept``/``reject`` require.
-
-    Distinct from :class:`PermissionDeniedError` on purpose: the refusal is not
-    "this verb needs a higher tier" (the author is admitted at their own), it is
-    "this verb needs the author OR the reviewer tier, and you are neither". The
-    message names both halves of that rule and the identity it compared.
+    An operator-environment refusal, not a request fault and not an internal
+    one: the HTTP boundary answers 503. ``error_code`` is the lane refusal's own
+    code (``provider_runtime_directory_unavailable`` for the lane precondition,
+    else ``provider_unavailable``), the message carries the lane's cause, and
+    ``repair`` is the served repair the catalog declares for that code.
     """
 
-    error_code = "procedure_withdrawal_refused"
+    http_status = 503
+
+    def __init__(self, code: str, message: str, *, repair: HandEditRepair | RepairOperation):
+        self.error_code = code
+        self.repair = repair
+        super().__init__(f"{code}: {message}")
+
+
+class IsolatedExecutorDiscoveryError(CoreError):
+    """An advertised isolated executor could not be loaded or registered.
+
+    Fails CLOSED at daemon start rather than at the first Provider run: an
+    operator who installed an executor package that this build cannot load has
+    a daemon whose execution policy it cannot establish, and starting anyway
+    would leave the shared profile refusing for a reason nobody can see. The
+    broken backend stays unregistered either way.
+    """
+
+    error_code = "isolated_executor_discovery_failed"
 
     def __init__(
         self,
-        procedure_id: str,
         *,
-        current_mode: str,
-        required_mode: str,
-        message: str | None = None,
-    ):
-        self.procedure_id = procedure_id
-        self.current_mode = current_mode
-        self.required_mode = required_mode
-        super().__init__(
-            message
-            or (
-                f"procedure '{procedure_id}' may be withdrawn only by its proposing author "
-                f"at their own tier, or by a reviewer holding {required_mode}; "
-                f"the current actor is neither (current mode {current_mode})"
-            )
+        name: str,
+        entry_point: str,
+        distribution: str | None,
+        group: str,
+        detail: str,
+    ) -> None:
+        self.name = name
+        self.entry_point = entry_point
+        self.distribution = distribution
+        self.group = group
+        self.detail = detail
+        # The repair is "remove or repair the distribution", so the message has
+        # to name the distribution. A module name is not a package name, and
+        # `importlib.metadata` hands the package over on the same object, so an
+        # operator reading this knows what to uninstall without going looking.
+        advertised = (
+            f"distribution {distribution!r}"
+            if distribution is not None
+            else "an unknown distribution"
         )
-
-
-class OwnershipError(CoreError):
-    """Write rejected because the target type is upstream-owned in a overlay instance."""
-
-    def __init__(self, message: str, *, blocked_types: list[str] | None = None):
-        self.blocked_types = blocked_types or []
-        super().__init__(message)
-
-
-# ---------------------------------------------------------------------------
-# Store errors — persistence lookups
-# ---------------------------------------------------------------------------
-
-
-class ReceiptNotFoundError(CoreError):
-    """Receipt ID not found in store."""
-
-    def __init__(self, receipt_id: str):
-        self.receipt_id = receipt_id
-        super().__init__(f"Receipt '{receipt_id}' not found")
-
-
-class TraceNotFoundError(CoreError):
-    """Execution trace ID not found in store."""
-
-    def __init__(self, trace_id: str):
-        self.trace_id = trace_id
-        super().__init__(f"Trace '{trace_id}' not found")
-
-
-class OutcomeNotFoundError(CoreError):
-    """Outcome for a receipt was not found in the feedback store."""
-
-    def __init__(self, receipt_id: str):
-        self.receipt_id = receipt_id
-        super().__init__(f"No outcome found for receipt '{receipt_id}'")
+        repair = (
+            f"remove or repair {distribution!r}"
+            if distribution is not None
+            else "remove or repair the distribution that advertises it"
+        )
+        super().__init__(
+            f"Isolated executor entry point {name!r} = {entry_point!r} in group {group!r}, "
+            f"advertised by {advertised}, could not be registered: {detail}; "
+            f"repair: {repair}, then start the daemon again."
+        )
 
 
 class InstanceNotFoundError(CoreError):
@@ -389,47 +240,27 @@ class InstanceNotFoundError(CoreError):
         super().__init__(f"Instance '{instance_id}' not found")
 
 
-class GroupNotFoundError(CoreError):
-    """Group ID not found in store."""
+class InstanceLocationRefusedError(CoreError):
+    """A registry row places an instance outside the daemon's own state root.
 
-    def __init__(self, group_id: str):
-        self.group_id = group_id
-        super().__init__(f"Group '{group_id}' not found")
+    A state root copied for a dry run still carries the original's registry. A
+    daemon serving such a row would write the original instance, so it refuses
+    the instance instead: only an instance under this state root is served.
+    """
 
+    error_code = "cruxible.host.location_outside_state_root"
 
-class ProcedureNotFoundError(CoreError):
-    """Procedure ID not found in store."""
-
-    def __init__(self, procedure_id: str):
-        self.procedure_id = procedure_id
-        super().__init__(f"Procedure '{procedure_id}' not found")
-
-
-class SourceArtifactNotFoundError(CoreError):
-    """Source artifact ID not found in store."""
-
-    def __init__(self, source_artifact_id: str):
-        self.source_artifact_id = source_artifact_id
-        super().__init__(f"Source artifact '{source_artifact_id}' not found")
-
-
-class CitationHandleResolutionError(CoreError):
-    """A source-evidence citation handle could not be resolved safely."""
-
-    error_code = "citation_handle_resolution_failed"
-
-    def __init__(
-        self,
-        handle: str,
-        failure_kind: str,
-        *,
-        detail: str,
-    ) -> None:
-        self.handle = handle
-        self.failure_kind = failure_kind
-        self.detail = detail
+    def __init__(self, *, instance_id: str, location: str, state_root: str) -> None:
+        self.instance_id = instance_id
+        self.location = location
+        self.state_root = state_root
         super().__init__(
-            f"Citation handle resolution failed ({failure_kind}) for '{handle}': {detail}"
+            f"{self.error_code}: instance {instance_id!r} is registered at {location}, "
+            f"outside this daemon's state root {state_root}; a daemon serves only "
+            "instances under its own state root, so it will not write there. Repair: if "
+            "this state root is a copy, copy the instance into "
+            f"{state_root}/instances/{instance_id} and register it from that state root's "
+            "own daemon; otherwise start the daemon on the state root that holds it"
         )
 
 
@@ -447,6 +278,105 @@ class AuthenticationError(CoreError):
     pass
 
 
+BootstrapClaimRefusalCode = Literal[
+    "runtime_bootstrap.secret_invalid",
+    "runtime_bootstrap.secret_already_claimed",
+    "runtime_bootstrap.admin_exists",
+    "runtime_bootstrap.claim_conflict",
+]
+
+# One line each: what was refused, then the repair. None of them names or
+# hints at the expected secret.
+_BOOTSTRAP_CLAIM_REFUSALS: dict[str, tuple[str, str]] = {
+    "runtime_bootstrap.secret_invalid": (
+        "The bootstrap secret does not match this daemon's runtime bootstrap secret.",
+        "pass the exact CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET the daemon was started with "
+        "(--secret-file or the env var).",
+    ),
+    "runtime_bootstrap.secret_already_claimed": (
+        "This bootstrap secret has already been claimed for instance {instance_id}; it "
+        "mints one ADMIN credential once per host.",
+        "use the ADMIN token that claim printed, or run `cruxible credential recover-admin` "
+        "with the daemon stopped.",
+    ),
+    "runtime_bootstrap.admin_exists": (
+        "Instance {instance_id} already has an ADMIN credential.",
+        "this instance is already bootstrapped; use an existing ADMIN credential or run "
+        "`cruxible credential recover-admin` with the daemon stopped.",
+    ),
+    "runtime_bootstrap.claim_conflict": (
+        "The bootstrap claim collided with a concurrent claim or failed an integrity check.",
+        "retry `cruxible credential claim-bootstrap`.",
+    ),
+}
+
+
+class BootstrapClaimRefusedError(AuthenticationError):
+    """The one-time runtime bootstrap claim was refused, with its specific reason."""
+
+    def __init__(self, error_code: BootstrapClaimRefusalCode, *, instance_id: str) -> None:
+        summary, repair = _BOOTSTRAP_CLAIM_REFUSALS[error_code]
+        self.error_code = error_code
+        self.instance_id = instance_id
+        super().__init__(
+            f"{error_code}: {summary.format(instance_id=instance_id)} Repair: {repair}"
+        )
+
+
+PrincipalRefusalCode = Literal[
+    "cruxible.identity.principal_claim_invalid",
+    "cruxible.identity.principal_claim_mismatch",
+    "cruxible.identity.principal_absent",
+    "cruxible.identity.principal_revoked",
+    "cruxible.identity.principal_unconfigured",
+    "cruxible.identity.init_owner_mismatch",
+    "cruxible.identity.credential_unbound",
+    "cruxible.identity.permission_insufficient",
+    "runtime_credential.auth_off",
+    "runtime_bootstrap.operator_mac_invalid",
+    "runtime_bootstrap.operator_mac_stale",
+    "runtime_bootstrap.operator_mac_replayed",
+    "runtime_credential.principal_not_ordinary",
+    "runtime_credential.principal_authority_required",
+    "runtime_credential.principal_proof_invalid",
+    "runtime_credential.principal_proof_replayed",
+]
+
+#: HTTP status per identity refusal: a malformed claim is a bad request, a claim
+#: contradicting its credential is unauthenticated, and a well-formed identity
+#: that may not act here is forbidden.
+_PRINCIPAL_REFUSAL_STATUS: dict[str, int] = {
+    "cruxible.identity.principal_claim_invalid": 400,
+    "cruxible.identity.principal_claim_mismatch": 401,
+    "runtime_credential.principal_proof_replayed": 409,
+    "runtime_credential.auth_off": 409,
+    "runtime_bootstrap.operator_mac_invalid": 401,
+    "runtime_bootstrap.operator_mac_stale": 401,
+    "runtime_bootstrap.operator_mac_replayed": 401,
+    "runtime_bootstrap.operator_mac_boot_changed": 401,
+}
+
+
+class PrincipalRefusedError(CoreError):
+    """The principal a request acts as cannot act here; names the code and repair.
+
+    The message already carries the runnable CLI command; ``repair`` carries the
+    same next step as a served operation so every surface renders it typed.
+    """
+
+    def __init__(
+        self,
+        error_code: PrincipalRefusalCode,
+        message: str,
+        *,
+        repair: RepairOperation | HandEditRepair | None = None,
+    ) -> None:
+        self.error_code = error_code
+        self.repair = repair
+        self.http_status = _PRINCIPAL_REFUSAL_STATUS.get(normalize_code(error_code), 403)
+        super().__init__(f"{error_code}: {message}")
+
+
 class InstanceScopeError(CoreError):
     """Runtime credential scope does not match the requested instance."""
 
@@ -459,9 +389,17 @@ class InstanceScopeError(CoreError):
         )
 
 
-# ---------------------------------------------------------------------------
-# Permission errors
-# ---------------------------------------------------------------------------
+class DaemonOperationScopeError(InstanceScopeError):
+    """An instance-scoped credential attempted one daemon-wide operation."""
+
+    def __init__(self, operation: str, credential_scope: str):
+        self.operation = operation
+        self.credential_scope = credential_scope
+        CoreError.__init__(
+            self,
+            f"Credential scoped to instance {credential_scope!r} cannot perform daemon-wide "
+            f"operation {operation!r}; use an unscoped operator credential",
+        )
 
 
 class PermissionDeniedError(CoreError):
@@ -479,256 +417,6 @@ class PermissionDeniedError(CoreError):
         self.current_mode = current_mode
         self.required_mode = required_mode
         self.ceiling_mode = ceiling_mode
-        if ceiling_mode is not None:
-            super().__init__(
-                f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
-                f"capability ceiling is {ceiling_mode} mode "
-                f"(effective request mode: {current_mode})"
-            )
-            return
         super().__init__(
-            f"Tool '{tool_name}' requires {required_mode} mode, "
-            f"but server is running in {current_mode} mode"
-        )
-
-
-class DirectWriteRefusedError(CoreError):
-    """Direct graph write refused because the target policy disallows the source.
-
-    A HARD governance constraint, independent of permission tier (even
-    ``CRUXIBLE_MODE=admin`` is refused). State for a ``proposal_only`` type may
-    only enter through the governed proposal/workflow path; relationship writes
-    may also be staged with ``pending=true``. State for a ``mint_only`` type may
-    only enter through runtime credential minting.
-
-    ``kind="feedback"`` is the feedback-channel arm of the same
-    ``CRUXIBLE_REFUSE_DIRECT_WRITES`` kill-switch: an ``approve``/``correct``
-    feedback action transitions an edge INTO accepted state, which is the same
-    governance event as a direct live write, so the daemon-wide kill-switch
-    refuses it too. ``source`` carries the feedback action.
-    """
-
-    error_code = "direct_write_refused"
-
-    def __init__(
-        self,
-        kind: str,
-        type_name: str,
-        source: str,
-        *,
-        policy: str = "proposal_only",
-    ):
-        self.kind = kind
-        self.type_name = type_name
-        self.source = source
-        self.policy = policy
-        if kind == "feedback":
-            super().__init__(
-                f"Feedback action '{source}' on relationship '{type_name}' is refused: "
-                "it transitions the edge into accepted state while "
-                "CRUXIBLE_REFUSE_DIRECT_WRITES is set daemon-wide. Clear the "
-                "kill-switch to adjudicate, or leave the edge staged for review."
-            )
-            return
-        if policy == "mint_only":
-            super().__init__(
-                f"Direct write to {kind} '{type_name}' is refused "
-                f"(write_policy=mint_only). This auth-managed type is writable "
-                f"only via credential mint (`cruxible credential mint`)."
-            )
-            return
-        if kind == "relationship":
-            forward = (
-                "Use 'group propose' to stage a governed proposal, or pass "
-                "pending=true to stage the edge for review."
-            )
-        else:
-            forward = (
-                "Add it through a governed canonical workflow (apply_entities) "
-                "instead of a direct write."
-            )
-        super().__init__(
-            f"Direct write to {kind} '{type_name}' is refused "
-            f"(write_policy=proposal_only). {forward}"
-        )
-
-
-class TerminalLifecycleWriteRefusedError(CoreError):
-    """A terminal lifecycle status was refused on a free-form add/update.
-
-    Retracting, superseding, or retiring is a governed judgement about a claim's
-    standing, not a property edit. Reachable from a plain add/update it was a
-    one-call way to make live state vanish from every live-gated read with no
-    reviewer, no required reason, and nothing recording who decided it.
-
-    The dedicated receipted lifecycle verbs own these transitions. Non-terminal
-    statuses (relationship ``active``/``inactive``, entity ``live``) stay freely
-    writable because they are reversible participation flips, not settled acts.
-
-    The teaching message is KIND-AWARE: a refused entity write names the entity
-    verbs and a refused relationship write names the relationship verbs. Naming
-    all four sent the caller to read half a message that could not apply to the
-    write they made.
-    """
-
-    error_code = "terminal_lifecycle_write_refused"
-
-    _VERBS: dict[str, str] = {
-        "entity": "'cruxible entity supersede' or 'cruxible entity retire'",
-        "relationship": ("'cruxible relationship supersede' or 'cruxible relationship retract'"),
-    }
-
-    def __init__(self, kind: str, status: str, writable: str):
-        self.kind = kind
-        self.status = status
-        self.writable = writable
-        verbs = self._VERBS.get(
-            kind,
-            "the dedicated receipted lifecycle verbs",
-        )
-        super().__init__(
-            f"Refusing to write terminal {kind} lifecycle status '{status}' through a "
-            f"plain add/update: terminal lifecycle transitions require {verbs}, which "
-            "carry a required reason, actor attribution, and a mutation receipt. "
-            f"Writable here: {writable}."
-        )
-
-
-class GroupApprovedContentWriteRefusedError(DirectWriteRefusedError):
-    """A direct write would change the CONTENT of a group-approved edge.
-
-    Acceptance binds content: when a group approval accepted an edge it accepted
-    that edge's properties, not merely its existence. For a ``proposal_only``
-    relationship type the only legitimate way to change those properties is to
-    re-propose them, so a content-changing direct write is refused here.
-
-    This is a strictly NARROWER refusal than the plain
-    :class:`DirectWriteRefusedError` at ``graph/operations.py``, and it exists
-    because that one has a hole: it exempts the governed sources
-    (``workflow_apply`` / ``group_resolve``), and ``source`` is caller-supplied
-    at the public direct-write API (``add_relationships_with_provenance``). An
-    actor could therefore name a governed source and rewrite a group-approved
-    ``proposal_only`` edge with no proposal at all. Subclassing keeps the HTTP
-    status (403) and the "refused direct write" taxonomy while carrying the
-    group identity the plain refusal cannot name.
-
-    Only raised where the plain chokepoint refusal would NOT fire; it never
-    shadows it.
-    """
-
-    error_code = "group_approved_content_write_refused"
-
-    def __init__(
-        self,
-        relationship_type: str,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-        *,
-        group_id: str,
-        changed_properties: list[str],
-    ):
-        self.kind = "relationship"
-        self.type_name = relationship_type
-        self.source = "direct_write"
-        self.policy = "proposal_only"
-        self.relationship_type = relationship_type
-        self.from_type = from_type
-        self.from_id = from_id
-        self.to_type = to_type
-        self.to_id = to_id
-        self.group_id = group_id
-        self.changed_properties = list(changed_properties)
-        changed = ", ".join(self.changed_properties) or "(none)"
-        # Bypass DirectWriteRefusedError.__init__: it composes the generic
-        # policy message, and this refusal must TEACH — name the edge, name the
-        # approving group, and say what to do instead.
-        CoreError.__init__(
-            self,
-            f"Direct write to relationship '{relationship_type}' "
-            f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: group "
-            f"'{group_id}' approved this edge, and approval binds its CONTENT, "
-            f"not just its existence. This write changes {changed}, and "
-            f"'{relationship_type}' is a proposal_only type — the change must be "
-            "re-proposed and re-approved (group propose -> group resolve), not "
-            "written directly.",
-        )
-
-
-class GovernedSourceSpoofRefusedError(DirectWriteRefusedError):
-    """A public direct-write entry named a GOVERNED write verb as its source.
-
-    ``source`` is caller-supplied at the public direct-write API
-    (``add_relationships_with_provenance`` / ``batch_direct_write``), and the
-    chokepoint in ``graph/operations.py`` EXEMPTS the governed verbs
-    (``workflow_apply`` / ``group_resolve``) from the ``proposal_only`` refusal.
-    Naming one of them therefore let a bare direct write create brand-new
-    ``proposal_only`` relationships and write ``proposal_only`` entities with no
-    proposal, no workflow, and no reviewer anywhere in the act.
-
-    Closed at the SEAM rather than at the chokepoint: the genuine governed paths
-    (``service/group_transitions.py`` and ``workflow/apply.py``) call
-    ``apply_entity`` / ``apply_relationship`` directly and never route through
-    these public entries, so refusing the names here costs them nothing while
-    removing the only way to borrow their authority.
-    """
-
-    error_code = "governed_source_spoof_refused"
-
-    def __init__(self, source: str, *, entry_point: str):
-        self.kind = "relationship"
-        self.type_name = source
-        self.source = source
-        self.policy = "proposal_only"
-        self.entry_point = entry_point
-        CoreError.__init__(
-            self,
-            f"Direct write through '{entry_point}' is refused: "
-            f"provenance source '{source}' names a GOVERNED write verb. Those "
-            "names carry the authority of the proposal and workflow machinery "
-            "and are reserved for it. Use 'group propose' -> 'group resolve' to "
-            "stage governed state, run the canonical workflow, or pick a "
-            "provenance source that honestly describes this direct write.",
-        )
-
-
-class PendingEdgeWriteRefusedError(CoreError):
-    """A non-pending write was refused because the target edge is still PENDING.
-
-    ``graph.get_relationship`` is state-blind, so before this refusal a plain
-    direct write onto a tuple whose edge was awaiting review resolved to
-    ``is_update=True`` and silently replaced the proposal's properties in place
-    (wi-pending-edge-clobber). The proposal a reviewer was asked to adjudicate
-    is then not the proposal they approve.
-
-    The refusal is a STATE conflict, not a tier or policy problem: the same
-    actor may write the tuple freely once the proposal is resolved. It is raised
-    at the single relationship chokepoint, so every write path inherits it.
-    """
-
-    error_code = "pending_edge_write_refused"
-
-    def __init__(
-        self,
-        relationship_type: str,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-    ):
-        self.relationship_type = relationship_type
-        self.from_type = from_type
-        self.from_id = from_id
-        self.to_type = to_type
-        self.to_id = to_id
-        super().__init__(
-            f"Write to relationship '{relationship_type}' "
-            f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: the edge is a "
-            "PENDING proposal awaiting review, and a non-pending write would replace "
-            "the proposal's content while a reviewer is adjudicating it. "
-            "If you proposed it: withdraw the proposal, or re-propose the corrected "
-            "edge through the pending path (pass pending=true). "
-            "If you are reviewing it: resolve it through the review machinery "
-            "(feedback approve/reject, or group resolve) and write afterwards."
+            permission_denied_message(tool_name, current_mode, required_mode, ceiling_mode)
         )

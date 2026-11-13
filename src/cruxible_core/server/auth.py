@@ -7,37 +7,62 @@ import hmac
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal, cast
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from cruxible_client.contracts.errors import BootstrapError
+from cruxible_client.contracts.operator_mac import (
+    OPERATOR_BOOT_HEADER,
+    OPERATOR_MAC_HEADER,
+    OPERATOR_NONCE_HEADER,
+    OPERATOR_TIMESTAMP_HEADER,
+)
+from cruxible_client.contracts.principals import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_ID_HEADER,
+    is_canonical_principal_id,
+)
+from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_core.errors import PrincipalRefusalCode, PrincipalRefusedError
 from cruxible_core.runtime.permissions import (
     PermissionMode,
     clamp_to_capability_ceiling,
     request_instance_scope,
     request_permission_scope,
 )
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.server import restart as restart_state
+from cruxible_core.server.bootstrap_secret import OperatorRequestRefused, verify_operator_request
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
     is_origin_allowed,
     is_server_auth_enabled,
 )
-from cruxible_core.server.credentials import get_runtime_credential_store
-from cruxible_core.server.errors import ErrorResponse
-from cruxible_core.server.request_logging import log_runtime_request
+from cruxible_core.server.credentials import (
+    RuntimeCredentialRecord,
+    get_runtime_credential_store,
+)
+from cruxible_core.server.errors import ErrorResponse, error_to_response
+from cruxible_core.server.request_logging import log_runtime_request, mark_request_received
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
-    HOSTED_INSTANCE_INIT_PATH,
-    INSTANCE_RESTORE_PATH,
+    PLAYBILL_FLOOR_DELIVERY_PATH,
+    PLAYBILL_HOST_CREATE_PATH,
+    PLAYBILL_HOST_SHOW_PATH,
+    PLAYBILL_WORKSPACE_ATTACH_PATH,
+    PLAYBILL_WORKSPACE_DETACH_PATH,
     RUNTIME_BOOTSTRAP_CLAIM_PATH,
     SERVER_INFO_PATH,
     SERVER_RESTART_PATH,
+    SERVER_STOP_PATH,
     VERSION_PATH,
     api_v1_path,
-    is_ui_static_path,
     route_template_matches,
 )
+from cruxible_core.server.upload_part_limit import UPLOAD_PART_ROUTE
+from cruxible_core.service.identity import principal_refusal
 
 _AUTH_CONTEXT: contextvars.ContextVar["ResolvedAuthContext | None"] = contextvars.ContextVar(
     "cruxible_auth_context",
@@ -66,6 +91,17 @@ _STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # state-changing request that carries a *body* and lacks an allowed Origin must
 # carry exactly this type.
 _JSON_MEDIA_TYPE = "application/json"
+# A Capture upload part is raw octets. ``application/octet-stream`` is not a
+# CORS-simple type either, so a browser must preflight it; it is admitted on the
+# part route alone, and every other bodied route stays JSON-only.
+_OCTET_MEDIA_TYPE = "application/octet-stream"
+
+MISSING_BEARER_CREDENTIAL_MESSAGE = (
+    "Daemon reachable; credential missing. Supply a bearer token in "
+    "`CRUXIBLE_SERVER_BEARER_TOKEN`. Operators may use the bootstrap-secret file "
+    "the daemon writes to <state-root>/daemon/bootstrap-secret (or the copy from "
+    "`cruxible server start --auth --bootstrap-secret-file PATH`)."
+)
 
 
 def _request_media_type(request: Request) -> str:
@@ -101,30 +137,38 @@ def _request_has_body(request: Request) -> bool:
         return True
 
 
+CredentialType = Literal["runtime_bootstrap", "runtime_credential", "principal_claim"]
+
+
 @dataclass(frozen=True)
 class ResolvedAuthContext:
-    principal_id: str
-    principal_label: str
-    credential_type: str
+    """Who a request is: its credential (if any) and the principal it acts as.
+
+    ``credential_id``/``credential_label`` describe the bearer credential; a
+    principal claim on an auth-off daemon carries none. ``principal_id`` is the
+    governed principal the request acts as, or None when the request names
+    none (the runtime bootstrap operator).
+    """
+
+    credential_id: str | None
+    credential_label: str | None
+    credential_type: CredentialType
     instance_scope: str | None
     role: str | None
     effective_permission_mode: PermissionMode | None
     created_by: str | None = None
+    principal_id: str | None = None
+
+    @property
+    def authenticated(self) -> bool:
+        """Whether a bearer credential backs this identity, not only a claim."""
+
+        return self.credential_type != "principal_claim"
 
 
 def get_current_auth_context() -> ResolvedAuthContext | None:
     """Return the current request-scoped auth context, if any."""
     return _AUTH_CONTEXT.get()
-
-
-def is_http_request_in_flight() -> bool:
-    """Return whether the calling code is serving a daemon HTTP request.
-
-    False for embedded/CLI/in-process callers, which reach the runtime facade
-    directly. Callers use this to distinguish "identity asserted by a remote
-    request body" from "identity asserted by the local process".
-    """
-    return _REQUEST_CONTEXT.get() is not None
 
 
 def set_current_operation_id(operation_id: str) -> None:
@@ -142,6 +186,107 @@ def _unauthorized_response(message: str = "Unauthorized") -> JSONResponse:
             error_type="AuthenticationError",
             message=message,
         ).model_dump(mode="json"),
+    )
+
+
+def _identity_refusal_response(request: Request, refusal: PrincipalRefusedError) -> JSONResponse:
+    status, body = error_to_response(refusal)
+    response = JSONResponse(status_code=status, content=body.model_dump(mode="json"))
+    log_runtime_request(
+        request,
+        status=response.status_code,
+        auth_context=None,
+        error_type=refusal.__class__.__name__,
+    )
+    return response
+
+
+#: The lifecycle requests a local command may sign instead of sending a secret.
+_OPERATOR_MAC_ROUTES: tuple[tuple[str, str], ...] = (
+    ("GET", api_v1_path(SERVER_INFO_PATH)),
+    ("POST", api_v1_path(SERVER_RESTART_PATH)),
+    ("POST", api_v1_path(SERVER_STOP_PATH)),
+)
+
+
+def _operator_mac_refusal(
+    request: Request, *, bootstrap_secret: str | None, has_bearer: bool
+) -> PrincipalRefusedError | None:
+    """Verify one MAC-signed lifecycle request, or say why it is refused."""
+
+    def refused(code: str, detail: str) -> PrincipalRefusedError:
+        return PrincipalRefusedError(
+            cast(PrincipalRefusalCode, code),
+            f"{detail}; repair: run the command on the daemon's own host with its state "
+            "root, or set CRUXIBLE_SERVER_BEARER_TOKEN",
+            repair=RepairOperation(operation="server.status"),
+        )
+
+    if bootstrap_secret is None or has_bearer or _request_has_body(request):
+        return refused(
+            "runtime_bootstrap.operator_mac_invalid",
+            "a signed operator request needs an auth-on daemon with a bootstrap secret, "
+            "no bearer token, and no body",
+        )
+    if not any(
+        request.method == method and route_template_matches(request.url.path, route)
+        for method, route in _OPERATOR_MAC_ROUTES
+    ):
+        return refused(
+            "runtime_bootstrap.operator_mac_invalid",
+            "a signed operator request authorizes only server status, restart and stop",
+        )
+    try:
+        verify_operator_request(
+            bootstrap_secret,
+            method=request.method,
+            path=request.url.path,
+            query=request.url.query,
+            nonce=request.headers.get(OPERATOR_NONCE_HEADER),
+            timestamp=request.headers.get(OPERATOR_TIMESTAMP_HEADER),
+            mac=request.headers.get(OPERATOR_MAC_HEADER),
+            boot_id=request.headers.get(OPERATOR_BOOT_HEADER),
+            current_boot_id=restart_state.PROCESS_BOOT_ID,
+        )
+    except OperatorRequestRefused as exc:
+        return refused(exc.code, str(exc))
+    return None
+
+
+def _bound_principal_refusal(credential: RuntimeCredentialRecord) -> PrincipalRefusedError | None:
+    """Refuse, and revoke, a credential whose principal is no longer active.
+
+    Revoking a principal revokes every credential that acts as it. The accepted
+    registry is the authority, so this is checked on use rather than trusted to
+    a sweep: the first request after the revocation lands revokes the rows.
+    """
+
+    if credential.principal_id is None:
+        return None
+    try:
+        instance = get_playbill_manager().get(credential.instance_id)
+    except BootstrapError:
+        return None
+    refusal = principal_refusal(instance, credential.principal_id, configured=True)
+    if refusal is not None:
+        get_runtime_credential_store().revoke_credentials_of_principal(
+            instance_id=credential.instance_id, principal_id=credential.principal_id
+        )
+    return refusal
+
+
+def _principal_claim_refusal(request: Request) -> PrincipalRefusedError | None:
+    """Refuse a principal claim no registry could hold, before it names anyone."""
+
+    raw = request.headers.get(PRINCIPAL_ID_HEADER)
+    if raw is None or is_canonical_principal_id(raw.strip()):
+        return None
+    return PrincipalRefusedError(
+        "cruxible.identity.principal_claim_invalid",
+        f"the configured principal ID {raw.strip()!r} is not a canonical lowercase "
+        "identifier (a letter, then up to 127 of a-z 0-9 . _ -); repair: set "
+        f"{PRINCIPAL_ID_ENV} or --principal-id to a registered principal ID",
+        repair=RepairOperation(operation="cruxible.orient", arguments={"section": "principals"}),
     )
 
 
@@ -181,13 +326,18 @@ def _forbidden_origin_response(request: Request) -> JSONResponse:
 
 
 _RUNTIME_BOOTSTRAP_CLAIM_ROUTE = api_v1_path(RUNTIME_BOOTSTRAP_CLAIM_PATH)
-_HOSTED_INSTANCE_INIT_ROUTE = api_v1_path(HOSTED_INSTANCE_INIT_PATH)
+_PLAYBILL_HOST_CREATE_ROUTE = api_v1_path(PLAYBILL_HOST_CREATE_PATH)
+_PLAYBILL_HOST_SHOW_ROUTE = api_v1_path(PLAYBILL_HOST_SHOW_PATH)
 # (method, route) pairs for the daemon-wide server-operation endpoints that the
 # unscoped runtime bootstrap operator may drive directly with the bootstrap secret.
 _SERVER_OPERATION_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", api_v1_path(SERVER_INFO_PATH)),
     ("POST", api_v1_path(SERVER_RESTART_PATH)),
-    ("POST", api_v1_path(INSTANCE_RESTORE_PATH)),
+    ("POST", api_v1_path(SERVER_STOP_PATH)),
+    ("GET", _PLAYBILL_HOST_SHOW_ROUTE),
+    ("POST", api_v1_path(PLAYBILL_WORKSPACE_DETACH_PATH)),
+    ("POST", api_v1_path(PLAYBILL_WORKSPACE_ATTACH_PATH)),
+    ("POST", api_v1_path(PLAYBILL_FLOOR_DELIVERY_PATH)),
 )
 
 
@@ -198,10 +348,10 @@ def _is_bootstrap_claim_request(request: Request) -> bool:
     )
 
 
-def _is_hosted_instance_init_request(request: Request) -> bool:
+def _is_playbill_host_create_request(request: Request) -> bool:
     return request.method == "POST" and route_template_matches(
         request.url.path,
-        _HOSTED_INSTANCE_INIT_ROUTE,
+        _PLAYBILL_HOST_CREATE_ROUTE,
     )
 
 
@@ -216,8 +366,8 @@ def _is_server_operation_request(request: Request) -> bool:
 def _runtime_bootstrap_operator_context() -> ResolvedAuthContext:
     """Build the unscoped (``instance_scope=None``) runtime bootstrap operator context."""
     return ResolvedAuthContext(
-        principal_id="runtime_bootstrap",
-        principal_label="runtime_bootstrap",
+        credential_id="runtime_bootstrap",
+        credential_label="runtime_bootstrap",
         credential_type="runtime_bootstrap",
         instance_scope=None,
         role="admin",
@@ -247,6 +397,7 @@ async def token_auth_middleware(
     call_next: Callable[[Request], Awaitable[Any]],
 ) -> Any:
     """Resolve auth context and request-scoped permission mode for incoming requests."""
+    mark_request_received(request)
     # Reject browser-originated cross-origin API requests before any handler runs.
     # Programmatic clients send no Origin; this closes DNS-rebinding / malicious
     # webpage attacks against the loopback daemon without breaking CLI/SDK clients.
@@ -275,13 +426,17 @@ async def token_auth_middleware(
         and origin is None
         and _request_has_body(request)
         and _request_media_type(request) != _JSON_MEDIA_TYPE
+        and not (
+            _request_media_type(request) == _OCTET_MEDIA_TYPE
+            and UPLOAD_PART_ROUTE.fullmatch(request.url.path) is not None
+        )
     ):
         return _forbidden_origin_response(request)
-    # Credential-free surfaces: liveness, version, and the bundled UI assets.
+    # Credential-free surfaces: liveness and version.
     # They skip auth resolution but NOT the Origin allowlist above — a hostile
     # page must not be able to fingerprint the loopback daemon by probing
     # /health or /version from the browser.
-    if request.url.path in {HEALTH_PATH, VERSION_PATH} or is_ui_static_path(request.url.path):
+    if request.url.path in {HEALTH_PATH, VERSION_PATH}:
         return await call_next(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)
@@ -300,46 +455,115 @@ async def token_auth_middleware(
     bootstrap_secret = get_runtime_bootstrap_secret()
     auth_enabled = is_server_auth_enabled()
 
+    if request.headers.get(OPERATOR_MAC_HEADER) is not None:
+        # A local lifecycle command signed this request with the bootstrap
+        # secret instead of sending it. Only the daemon-wide lifecycle reads and
+        # levers accept it, never alongside a bearer token, never with a body.
+        mac_refusal = _operator_mac_refusal(
+            request,
+            bootstrap_secret=bootstrap_secret if auth_enabled else None,
+            has_bearer=bearer_token is not None,
+        )
+        if mac_refusal is not None:
+            return _identity_refusal_response(request, mac_refusal)
+        if request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER) is not None:
+            return _unauthorized_request_response(request)
+        operator_mode = clamp_to_capability_ceiling(PermissionMode.ADMIN)
+        resolved_context = replace(
+            _runtime_bootstrap_operator_context(), effective_permission_mode=operator_mode
+        )
+        with _auth_context_scope(resolved_context, request):
+            with (
+                request_permission_scope(operator_mode),
+                request_instance_scope(None),
+            ):
+                return await _call_next_with_request_log(
+                    request, call_next, auth_context=resolved_context
+                )
+
     if bearer_token is not None:
         if (
+            # Daemon-wide operator actions -- global metadata, in-place re-exec,
+            # graceful stop, host inspection, and allocating a host -- are
+            # authorized for the unscoped runtime bootstrap operator and never
+            # for an instance-scoped runtime credential, which resolves below
+            # and is rejected by the runtime's require_unscoped_operator gate.
+            #
+            # Host creation used to be gated on the bootstrap secret being
+            # UNCLAIMED, which made a daemon a one-shot: `credential
+            # claim-bootstrap` consumes the claim, every other credential on the
+            # daemon is instance-scoped, and so no credential could allocate a
+            # second host. The only repair was restarting the daemon, which
+            # mints a fresh secret at the same path -- silently invalidating the
+            # operator's saved copy and taking every hosted instance offline. A
+            # control plane cannot restart the daemon to add a tenant. Creating
+            # a host is a repeatable operator action like the rest of this list,
+            # and it is strictly weaker than the restart and stop already here.
             auth_enabled
-            and _is_hosted_instance_init_request(request)
             and bootstrap_secret
             and hmac.compare_digest(bearer_token, bootstrap_secret)
-            and not get_runtime_credential_store().bootstrap_secret_claimed(bootstrap_secret)
-        ):
-            resolved_context = _runtime_bootstrap_operator_context()
-        elif (
-            # Daemon-wide server operations (global metadata, in-place re-exec,
-            # restore) are authorized for the unscoped runtime bootstrap operator,
-            # never for an instance-scoped runtime credential. Unlike hosted init,
-            # these are repeatable operator actions, so they are NOT gated on the
-            # one-time bootstrap claim. An instance-scoped credential that presents
-            # its own token still resolves below and is rejected by the runtime's
-            # require_unscoped_operator gate.
-            auth_enabled
-            and _is_server_operation_request(request)
-            and bootstrap_secret
-            and hmac.compare_digest(bearer_token, bootstrap_secret)
+            and (_is_server_operation_request(request) or _is_playbill_host_create_request(request))
         ):
             resolved_context = _runtime_bootstrap_operator_context()
         elif auth_enabled:
             runtime_credential = get_runtime_credential_store().authenticate(bearer_token)
             if runtime_credential is not None:
+                standing_refusal = _bound_principal_refusal(runtime_credential)
+                if standing_refusal is not None:
+                    return _identity_refusal_response(request, standing_refusal)
                 resolved_context = ResolvedAuthContext(
-                    principal_id=runtime_credential.credential_id,
-                    principal_label=runtime_credential.label,
+                    credential_id=runtime_credential.credential_id,
+                    credential_label=runtime_credential.label,
                     credential_type="runtime_credential",
                     instance_scope=runtime_credential.instance_id,
                     role=runtime_credential.permission_mode.name.lower(),
                     effective_permission_mode=runtime_credential.permission_mode,
                     created_by=runtime_credential.created_by,
+                    principal_id=runtime_credential.principal_id,
                 )
             else:
                 return _unauthorized_request_response(request)
 
     if bearer_token is None and auth_enabled:
-        return _unauthorized_request_response(request)
+        return _unauthorized_request_response(request, MISSING_BEARER_CREDENTIAL_MESSAGE)
+    claim_refusal = _principal_claim_refusal(request)
+    if claim_refusal is not None:
+        return _identity_refusal_response(request, claim_refusal)
+    claimed = request.headers.get(PRINCIPAL_ID_HEADER)
+    if claimed is not None:
+        claimed = claimed.strip()
+        if not auth_enabled:
+            # Auth off: the claim IS the identity. Every process of this OS user
+            # is equally trusted, so this names who acts; it proves nothing.
+            resolved_context = ResolvedAuthContext(
+                credential_id=None,
+                credential_label=None,
+                credential_type="principal_claim",
+                instance_scope=None,
+                role=None,
+                effective_permission_mode=None,
+                principal_id=claimed,
+            )
+        elif (
+            resolved_context is not None
+            and resolved_context.credential_type == "runtime_credential"
+            and resolved_context.principal_id != claimed
+        ):
+            # Auth on: the credential decides who acts. A claim may only repeat it.
+            return _identity_refusal_response(
+                request,
+                PrincipalRefusedError(
+                    "cruxible.identity.principal_claim_mismatch",
+                    f"the configured principal ID {claimed!r} is not the principal this "
+                    "bearer credential acts as "
+                    f"({resolved_context.principal_id or 'none'}); repair: unset "
+                    f"{PRINCIPAL_ID_ENV} (or --principal-id), or use the credential "
+                    "minted for that principal",
+                    repair=RepairOperation(operation="cruxible.whoami"),
+                ),
+            )
+        # The runtime bootstrap operator acts as no principal; a claim sent
+        # alongside its daemon-wide operations is ignored, not honored.
     if request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER) is not None and (
         resolved_context is None or resolved_context.credential_type != "runtime_credential"
     ):

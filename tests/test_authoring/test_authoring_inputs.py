@@ -1,0 +1,710 @@
+"""PC-G3b decision-only input lowering and ClaimType lint laws."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
+from cruxible_client.authoring.inputs import (
+    AuthoringInputError,
+    ChangeSetInput,
+    ClaimInput,
+    ExistingCaptureInput,
+    LiteralObjectInput,
+    SelfSourceInput,
+    WorkingSelectionInput,
+    lower_authoring_input,
+)
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    capture_contract_digest,
+)
+from cruxible_client.contracts.claim_types import (
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
+)
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.authoring.lowering import lower_authoring
+from cruxible_core.authoring.store import AuthoringIntentStore
+from cruxible_core.claims.claim_type_inputs import (
+    ClaimTypeInputRecord,
+    ClaimTypeInputValidationError,
+    claim_type_input_template,
+    lint_claim_type_input,
+    lower_claim_type_input,
+)
+from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+from cruxible_core.service.claims.claim_types import service_propose_playbill_claim_type_input
+from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
+from tests.core_support._candidate_support import submit_subject_candidate
+from tests.core_support._claim_type_support import claim_type_input_example
+from tests.core_support._knowledge_loop_support import accept_proposal
+from tests.core_support._retirement_support import retire_claim
+from tests.core_support._support import initialize_local
+from tests.test_authoring.test_authoring_preflight import (
+    TIMESTAMP,
+    _seed_claim_surface,
+)
+from tests.test_authoring.test_authoring_procedures import _triage_definition
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
+
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
+
+def _coordinator(instance) -> AuthoringIntentCoordinator:  # type: ignore[no-untyped-def]
+    return AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(
+            instance.root / instance.descriptor.storage.exhaust,
+            token_factory=lambda: "9" * 32,
+        ),
+        claim_id_factory=lambda: "CLM-" + "8" * 32,
+    )
+
+
+def _claim_input(*, working: bool = False) -> ClaimInput:
+    return ClaimInput(
+        kind="claim",
+        subject="project.work_item/wi-42",
+        predicate="project.work_item.status",
+        object=LiteralObjectInput(kind="literal", value="ready"),
+        role="observation",
+        rationale="The accepted work source reports ready.",
+        source=(
+            WorkingSelectionInput(kind="working_selection", source_id="repo.work-items")
+            if working
+            else SelfSourceInput(kind="self_source", body="status: ready\n")
+        ),
+        citation_role="evidence" if working else None,
+    )
+
+
+def test_input_create_binds_friendly_subject_to_the_stored_intent_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    monkeypatch.setattr(
+        instance, "tree_at", lambda _oid: pytest.fail("lowering must not read the world")
+    )
+
+    view = coordinator.create_input(
+        actor=actor,
+        input=_claim_input(),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert view.intent.base_coordinate.git_oid == instance.accepted_coordinate().git_oid
+    assert view.intent.payload.statement.subject.artifact_path == (
+        "subjects/project.work_item/wi-42.json"
+    )
+    assert view.intent.payload.tag == "cruxible-claim-authoring-payload-v4"
+    assert "digest" not in _claim_input().model_dump_json()
+
+
+def test_existing_capture_input_lowers_to_the_v3_payload_without_digest_relay() -> None:
+    capture_digest = "sha256:" + "7" * 64
+    input_value = _claim_input().model_copy(
+        update={
+            "source": ExistingCaptureInput(
+                kind="existing_capture",
+                capture_digest=capture_digest,
+            ),
+            "citation_role": "evidence",
+        }
+    )
+
+    payload = lower_authoring_input(input_value)
+
+    assert payload.tag == "cruxible-claim-authoring-payload-v4"
+    assert payload.source.capture_digest == capture_digest  # type: ignore[union-attr]
+
+
+def test_existing_capture_input_requires_an_explicit_admitted_citation_role() -> None:
+    input_value = _claim_input().model_copy(
+        update={
+            "source": ExistingCaptureInput(
+                kind="existing_capture",
+                capture_digest="sha256:" + "7" * 64,
+            ),
+            "citation_role": None,
+        }
+    )
+
+    with pytest.raises(AuthoringInputError) as raised:
+        lower_authoring_input(input_value)
+
+    assert raised.value.code == "cruxible.authoring.existing_capture_not_admitted"
+    assert raised.value.field_path == "input.citation_role"
+
+
+def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity() -> None:
+    procedure = procedure_example()
+    query = query_claims_by_type_example()
+
+    lowered = lower_authoring_input(
+        ChangeSetInput(kind="change_set", members=(query, procedure)),
+    )
+
+    assert [member.tag for member in lowered.members] == [
+        "cruxible-procedure-authoring-payload-v5",
+        "playbill-query-definition-authoring-payload-v1",
+    ]
+    with pytest.raises(AuthoringInputError) as raised:
+        lower_authoring_input(
+            ChangeSetInput(kind="change_set", members=(query, query)),
+        )
+    assert raised.value.code == "cruxible.authoring.change_set_duplicate_identity"
+    assert raised.value.field_path == "input.members"
+
+
+def test_a_bare_query_definition_spec_without_its_input_wrapper_fails_typed_and_actionable() -> (
+    None
+):
+    """A spec passed directly (forgetting the *Input wrapper) is a named, repairable mistake.
+
+    It is not a change set (no ``.members``) and matches none of the
+    single-member *Input types, so it must not fall through to a bare
+    AttributeError on ``.members``.
+    """
+
+    bare_spec = query_claims_by_type_example().query_definition
+
+    with pytest.raises(AuthoringInputError) as raised:
+        lower_authoring_input(bare_spec)  # type: ignore[arg-type]
+
+    assert raised.value.code == "cruxible.authoring.input_not_recognized"
+    assert "QueryDefinitionSpec" in raised.value.message
+    assert "QueryDefinitionInput" in raised.value.repair
+
+
+def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    retire_claim(instance, owner, claim_id)
+
+    result = _coordinator(instance).compile_input(
+        actor=actor,
+        input=_claim_input().model_copy(update={"revises": claim_id}),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "refused"
+    assert [item.code for item in result.frontier.diagnostics] == [
+        "cruxible.authoring.claim_terminal"
+    ]
+
+
+def test_create_and_compile_refuse_working_selection_with_bind_repair(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+
+    with pytest.raises(AuthoringInputError) as raised:
+        coordinator.create_input(
+            actor=AuthenticatedActor(actor_id="owner"),
+            input=_claim_input(working=True),
+            canonical_timestamp=TIMESTAMP,
+        )
+
+    assert raised.value.field_path == "input.source"
+    assert "authoring bind" in raised.value.repair
+
+
+def test_a_spec_lowers_with_the_contracts_its_graph_names_and_no_digests(
+    tmp_path: Path,
+) -> None:
+    from tests.support.procedures import spec_input
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinator = _coordinator(instance)
+    result = coordinator.compile_input(
+        actor=AuthenticatedActor(actor_id="owner"),
+        input=spec_input(_triage_definition()),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "passed", result.frontier.model_dump_json(indent=2)
+    payload = (
+        coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0].payload
+    )
+    assert payload.tag == "cruxible-procedure-authoring-payload-v5"
+    encoded = payload.model_dump_json(by_alias=True)
+    assert '"procedure_spec"' in encoded
+    assert "artifact_digest" not in encoded
+
+
+def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    example = claim_type_input_example()
+
+    lint = lint_claim_type_input(
+        instance,
+        example,
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    encoded = example.model_dump_json()
+    assert '"tag"' not in encoded
+    assert "identity" not in json.loads(encoded)
+    assert "evidence_freshness" not in json.loads(encoded)
+    assert "cruxible.claim_type.evidence_policy_admits_no_accepted_contract" in {
+        warning.code for warning in lint.warnings
+    }
+
+    source_intent = ClaimTypeInputRecord.model_validate(
+        {
+            **example.model_dump(mode="json"),
+            "anticipated_source_ids": ["repo.work-items"],
+        }
+    )
+    lowered = lower_claim_type_input(
+        source_intent,
+        tree=instance.tree_at(instance.accepted_coordinate().git_oid),
+    )
+    assert "anticipated_source_ids" not in lowered.model_dump(mode="json")
+
+    with pytest.raises(ValidationError, match="byte-sorted and unique"):
+        ClaimTypeInputRecord.model_validate(
+            {
+                **example.model_dump(mode="json"),
+                "anticipated_source_ids": ["repo.z", "repo.a"],
+            }
+        )
+
+
+def test_claim_type_template_proposes_without_policy_lint_in_a_fresh_world(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    result = service_propose_playbill_claim_type_input(
+        instance,
+        input=claim_type_input_template(),
+        actor_id="owner",
+        proposal_name="template-first-claim-type",
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.proposal.proposal.candidate is not None
+    assert {warning.code for warning in result.lint.warnings} == {
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.subject_kind_undeclared",
+    }
+    # The minimal template takes the default own-words rule, named publicly.
+    expanded = claim_type_input_template(expanded=True)
+    assert expanded.evidence_admission_policy is not None
+    assert expanded.evidence_admission_policy["rules"][0]["capture_contracts"] == [
+        "cruxible.coordinator-self-source-v1"
+    ]
+
+
+def test_dead_direct_self_asserted_profile_remains_an_unresolved_contract(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    example = claim_type_input_example().model_copy(
+        update={
+            "evidence_admission_policy": {
+                "rules": [
+                    {
+                        "rule_id": "dead-direct-self-asserted",
+                        "claim_roles": ["normative", "observation"],
+                        "capture_contract_digests": [
+                            capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+                        ],
+                        "evidence_kinds": ["self_asserted"],
+                        "admission": "direct",
+                        "subject_binding": "exact_claim_subject",
+                    }
+                ]
+            }
+        }
+    )
+
+    lint = lint_claim_type_input(
+        instance,
+        example,
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    assert {item.code for item in lint.warnings} == {
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.description_missing",
+    }
+
+
+def test_fresh_template_claim_reaches_supported_through_flow_a(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    # A named source adds its default rule beside the own-words one.
+    template = claim_type_input_template().model_copy(
+        update={
+            "anticipated_source_ids": ("repo.replace-me",),
+            "permitted_roles": ("normative", "observation"),
+        }
+    )
+    claim_type_proposal = service_propose_playbill_claim_type_input(
+        instance,
+        input=template,
+        actor_id="owner",
+        proposal_name="template-claim-type",
+        timestamp=TIMESTAMP,
+    )
+    assert {warning.code for warning in claim_type_proposal.lint.warnings} == {
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.subject_kind_undeclared",
+    }
+    accept_proposal(instance, owner, claim_type_proposal.proposal)
+
+    shell = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="project.work_item/replace-me"),
+        subject_kind="project.work_item",
+        subject_id="replace-me",
+    )
+    accept_proposal(
+        instance,
+        owner,
+        submit_subject_candidate(
+            instance,
+            shell=shell,
+            actor_id="owner",
+            proposal_name="template-subject",
+            timestamp="2026-08-21T12:00:01.000000Z",
+        ),
+    )
+
+    payload = bind_working_selection_input(
+        ClaimInput(
+            kind="claim",
+            subject="project.work_item/replace-me",
+            predicate=template.predicate,
+            object=LiteralObjectInput(kind="literal", value="ready"),
+            role="observation",
+            rationale="The accepted work source reports ready.",
+            source=WorkingSelectionInput(
+                kind="working_selection",
+                source_id=template.anticipated_source_ids[0],
+            ),
+            citation_role="evidence",
+        ),
+        content=b"status: ready\n",
+        anchor="status: ready",
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+        ),
+    )
+
+    verdict = service_evaluate_playbill_claim_verdict(
+        instance,
+        claim_identity=intent.semantic_identity.removeprefix("Claim:"),
+        evaluation_time=datetime(2026, 8, 21, 12, 1, tzinfo=UTC),
+    )
+    assert verdict.verdict.verdict == "supported"
+
+
+def test_claim_type_input_preserves_optional_freshness_in_v8() -> None:
+    original = claim_type_input_example()
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
+    )
+    fresh = ClaimTypeInputRecord.model_validate(
+        {
+            **original.model_dump(mode="json"),
+            "evidence_freshness": freshness.model_dump(mode="json"),
+        }
+    )
+
+    plain = lower_claim_type_input(original, tree={})
+    governed = lower_claim_type_input(fresh, tree={})
+
+    assert plain.artifact_format == "cruxible-claim-type-v11"
+    assert plain.evidence_freshness is None
+    assert "evidence_freshness" not in original.model_dump(mode="json")
+    assert governed.artifact_format == "cruxible-claim-type-v11"
+    assert governed.evidence_freshness == freshness
+
+
+def test_claim_type_input_preserves_attestation_consequences() -> None:
+    original = claim_type_input_example()
+    policy = ClaimAttestationConsequencePolicy(
+        rules=(
+            ClaimAttestationConsequenceRule(
+                rule_id="two-independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=2,
+            ),
+        )
+    )
+    governed = lower_claim_type_input(
+        ClaimTypeInputRecord.model_validate(
+            {
+                **original.model_dump(mode="json"),
+                "attestation_consequence_policy": policy.model_dump(mode="json"),
+            }
+        ),
+        tree={},
+    )
+
+    assert governed.artifact_format == "cruxible-claim-type-v11"
+    assert governed.evidence_freshness is None
+    assert governed.attestation_consequence_policy == policy
+
+
+def test_claim_type_input_refuses_producer_authorization() -> None:
+    original = claim_type_input_example()
+    producer_bound = original.model_copy(
+        update={
+            "evidence_admission_policy": {
+                "rules": [
+                    {
+                        "rule_id": "derivation",
+                        "claim_roles": ["derivation"],
+                        "capture_contracts": ["repo.replace-me"],
+                        "evidence_kinds": ["self_asserted"],
+                        "admission": "derivational",
+                        "subject_binding": "exact_claim_subject",
+                        "allowed_reducer_digests": ["sha256:" + "cd" * 32],
+                    }
+                ]
+            }
+        }
+    )
+    with pytest.raises(ClaimTypeInputValidationError, match="allowed_reducer_digests"):
+        lower_claim_type_input(producer_bound, tree={})
+
+
+def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+
+    lint = lint_claim_type_input(
+        instance,
+        claim_type_input_example(),
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    assert {warning.code for warning in lint.warnings} == {
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+    }
+    warning = next(
+        w
+        for w in lint.warnings
+        if w.code == "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
+    )
+    assert warning.field_path == "$.evidence_admission_policy.rules"
+    assert warning.replacement_rule_fragment["capture_contract_digests"] == [
+        warning.contract_digest
+    ]
+
+
+def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    input_value = ClaimTypeInputRecord.model_validate(
+        {
+            **claim_type_input_example().model_dump(mode="json"),
+            "anticipated_source_ids": ["corpus.runbook"],
+        }
+    )
+
+    lint = lint_claim_type_input(
+        instance,
+        input_value,
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    source_warning = next(
+        item
+        for item in lint.warnings
+        if item.code == "cruxible.claim_type.anticipated_source_contract_omitted"
+    )
+    assert source_warning.source_id == "corpus.runbook"
+    assert source_warning.contract_identity.endswith("corpus.runbook")
+    assert source_warning.replacement_rule_fragment["capture_contract_digests"] == [
+        source_warning.contract_digest
+    ]
+
+
+def test_a_procedure_input_refuses_acquisition_rules_naming_the_line() -> None:
+    """Acquisition rules live on the Line only; a Procedure declaring them is refused."""
+
+    from pydantic import ValidationError
+
+    from tests.support.procedures import spec_input
+
+    with pytest.raises(ValidationError, match="procedure_acquisition_defaults_retired") as caught:
+        spec_input(
+            {
+                **_triage_definition(),
+                "acquisition_defaults": {
+                    "advisory.capture": {"max_age": "PT10M", "on_unavailable": "refuse"}
+                },
+            }
+        )
+    assert "the Line's acquisition per capture output" in str(caught.value)
+    payload = lower_authoring_input(spec_input(_triage_definition()))
+    assert payload.tag == "cruxible-procedure-authoring-payload-v5"
+    assert "acquisition_defaults" not in type(payload).model_fields
+
+
+def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    template = claim_type_input_template()
+    policy = ClaimAttestationConsequencePolicy(
+        rules=(
+            ClaimAttestationConsequenceRule(
+                rule_id="never-escalates",
+                stance="unsure",
+                minimum_independent_control_components=0,
+            ),
+        )
+    )
+    value = ClaimTypeInputRecord.model_validate(
+        {
+            **template.model_dump(mode="json"),
+            "attestation_consequence_policy": policy.model_dump(mode="json"),
+        }
+    )
+
+    result = service_propose_playbill_claim_type_input(
+        instance,
+        input=value,
+        actor_id="owner",
+        proposal_name="zero-threshold",
+        timestamp=TIMESTAMP,
+    )
+
+    warning = next(
+        item
+        for item in result.lint.warnings
+        if item.code == "cruxible.claim_type.attestation_threshold_disabled"
+    )
+    assert warning.code == "cruxible.claim_type.attestation_threshold_disabled"
+    assert warning.field_path == (
+        "$.attestation_consequence_policy.rules[0].minimum_independent_control_components"
+    )
+    assert warning.replacement_rule_fragment == {"minimum_independent_control_components": 1}
+    assert warning.contract_identity is None and warning.contract_digest is None
+
+
+def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> None:
+    from cruxible_client.authoring.inputs import ClaimTypeInput, SubjectKindInput
+    from cruxible_client.contracts.subject_kinds import SubjectKindKeys, parse_subject_kind
+    from tests.core_support._subject_kind_support import plain_key_rules
+
+    instance, _owner = initialize_local(tmp_path)
+    key = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
+        tree={},
+    )
+    payload = lower_authoring_input(
+        ChangeSetInput(
+            kind="change_set",
+            members=(
+                ClaimTypeInput(kind="claim_type", claim_type=key),
+                SubjectKindInput(kind="subject_kind", name="catalog.part", keys=(key.predicate,)),
+            ),
+        )
+    )
+    coordinator = _coordinator(instance)
+    intent = coordinator.create(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    )
+    lowered = lower_authoring(instance, intent=intent.intent, actor_id="owner")
+    path, content = next(
+        (path, content)
+        for path, content in lowered.changed_members
+        if path.startswith("subject-kinds/")
+    )
+    assert parse_subject_kind(content, path=path).identity_rule == SubjectKindKeys(
+        parts=plain_key_rules(key.predicate), uniqueness="unique"
+    )
+
+
+def test_subject_kind_and_claim_type_description_lints_reach_preflight(tmp_path: Path) -> None:
+    from cruxible_client.authoring.inputs import ClaimTypeInput, SubjectKindInput
+    from cruxible_core.runtime.playbill_api import _authoring_preflight_result
+
+    instance, _owner = initialize_local(tmp_path)
+    key = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
+        tree={},
+    )
+    for described in (False, True):
+        definition = key.model_copy(update={"description": "A part's name."}) if described else key
+        payload = lower_authoring_input(
+            ChangeSetInput(
+                kind="change_set",
+                members=(
+                    ClaimTypeInput(kind="claim_type", claim_type=definition),
+                    SubjectKindInput(
+                        kind="subject_kind",
+                        name="catalog.part",
+                        keys=(key.predicate,),
+                        description="A catalog part." if described else None,
+                    ),
+                ),
+            )
+        )
+        coordinator = AuthoringIntentCoordinator.for_instance(instance)
+        actor = AuthenticatedActor(actor_id="owner")
+        result = coordinator.compile(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP)
+        assert result.verdict == "passed", result
+        served = _authoring_preflight_result(
+            coordinator, actor=actor, result=result, payload=payload
+        )
+        if described:
+            assert served.lint is None
+        else:
+            assert served.lint is not None
+            assert [warning.code for warning in served.lint.warnings] == [
+                "cruxible.claim_type.description_missing"
+            ]
+            assert served.lint.warnings[0].field_path == "$.description"

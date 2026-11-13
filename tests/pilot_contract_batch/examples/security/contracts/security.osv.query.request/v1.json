@@ -1,0 +1,24 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "The components to ask OSV about, as purl@version, and the logical source the responses are stated under. Distro packages (purl types deb, rpm, apk) are never asked and never in queried: OSV keys distro ecosystems by source package name, which an SBOM's binary packages do not give; they read not checked.",
+  "fields": {
+    "components": {
+      "type": {
+        "item": {
+          "kind": "string",
+          "max_len": 256
+        },
+        "kind": "list",
+        "max_items": 20000
+      }
+    },
+    "logical_source": {
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    }
+  },
+  "name": "security.osv.query.request",
+  "version": 1
+}

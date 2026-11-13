@@ -1,0 +1,608 @@
+"""An agent authors and runs a Source through the SDK, then reads its Capture.
+
+Only the local adapter process is substituted. Provider/interface deployment is
+governed setup; authoring, admission, output checks, capture construction and
+public readback are the actual services.
+"""
+
+import base64
+import hashlib
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from cruxible_client import Cruxible
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.captures import (
+    CaptureContract,
+    ProviderResultToExternalCapture,
+    SourceEffectiveTime,
+    capture_contract_digest,
+    capture_contract_path,
+    render_capture_contract,
+)
+from cruxible_client.contracts.named_references import name_provider
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifact,
+)
+from cruxible_client.contracts.procedures.authored import CallStep
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    ProjectNode,
+)
+from cruxible_client.contracts.provider_registration import DeclaredOperation
+from cruxible_client.contracts.providers import (
+    ProviderDistributionRef,
+    ProviderImplementationManifest,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
+    ProviderRuntimeManifest,
+    provider_path,
+    render_provider,
+)
+from cruxible_client.contracts.shapes import (
+    Contract,
+    contract_digest,
+    contract_path,
+    render_contract,
+    validate_contract,
+)
+from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.core_support._light_capture_support import JSON_DECODING, http_contract
+from tests.support.capabilities import capability, capability_files, pinned_slot
+from tests.support.declared_operations import declared_operation, registration_document
+from tests.support.procedures import (
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+    procedure_limits,
+    procedure_spec_data,
+)
+from tests.support.provider_builds import as_build
+from tests.test_procedures import test_procedure_source_runs as source
+from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
+
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
+URL = "https://fixture.invalid/api/v1/measurements.json"
+
+
+def web_provider(
+    operation: DeclaredOperation,
+    contracts: tuple[Contract, ...],
+):
+    """A fresh build serving ``operation``, declaring exactly ``contracts``.
+
+    ``cruxible_core.providers.web_fetch`` (the core-side web.fetch interface
+    registration) is gone (B2, C12 -- ProviderInterface removed); a build now
+    declares its operation and Contracts itself, through the ordinary
+    operations/package-registration path, rather than pinning a shared
+    interface artifact.
+    """
+
+    manifest = ProviderRuntimeManifest(
+        provider_id="web-fetch-demo",
+        distribution=ProviderDistributionRef(name="web-fetch-demo", version="1.0.0"),
+        supported_protocol_majors=(2,),
+        implementations=(
+            ProviderImplementationManifest(
+                entrypoint="cruxible_provider_web.fetch:WebFetch",
+                backends=("local_env",),
+                declared_endpoints=("https://fixture.invalid",),
+                deterministic=False,
+            ),
+        ),
+    )
+    document = registration_document(manifest, (operation,), contracts)
+    build = document.provider_definition(
+        distribution=ProviderLocalDistributionPin(
+            name="web-fetch-demo",
+            version="1.0.0",
+            filename="web_fetch_demo-1.0.0-py3-none-any.whl",
+            sha256="sha256:" + "0" * 64,
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + "0" * 64,
+            materialization_digests={"linux-cp311": "sha256:" + "0" * 64},
+        ),
+        control_domain="web-fetch-demo",
+        operations=document.pinned_operations(),
+    )
+    return name_provider(as_build(build))
+
+
+def _pinned_nested(contract: Contract) -> dict[str, object]:
+    return {
+        "kind": "contract",
+        "contract": {
+            "name": contract.name,
+            "version": contract.version,
+            "digest": contract_digest(contract).tagged,
+        },
+    }
+
+
+# F02: every operation output is checked against its own pinned Contract, so
+# this file's fetch operation declares a Contract mirroring
+# ProviderResultToExternalCapture's own fields exactly (closed), the same way
+# a real external-read provider's operation would.
+_FETCH_HEADERS = Contract.model_validate(
+    {
+        "name": "test.sdk-fetch-headers",
+        "version": 1,
+        "fields": {
+            # cruxible-provider-web's KEPT_HEADERS (coordinate.py): the freshness
+            # headers it keeps from a response, each absent rather than null.
+            "etag": {"type": "string", "optional": True},
+            "last_modified": {"type": "string", "optional": True},
+            "content_length": {"type": "string", "optional": True},
+        },
+    }
+)
+_FETCH_COORDINATE = Contract.model_validate(
+    {
+        "name": "test.sdk-fetch-coordinate",
+        "version": 1,
+        "fields": {
+            # The HTTP coordinate cruxible-provider-web's web.fetch records: how
+            # the bytes were obtained, never inside them.
+            "url": {"type": "string"},
+            "final_url": {"type": "string"},
+            "status": {"type": "int"},
+            "content_type": {"type": "string"},
+            "request_digest": {"type": "string", "optional": True},
+            "source": {"type": "string", "optional": True},
+            # Present only when the origin sent a kept freshness header
+            # (coordinate.py's ``http_coordinate``: an absent key, never null).
+            "headers": {"type": _pinned_nested(_FETCH_HEADERS), "optional": True},
+        },
+    }
+)
+# The whole response: the closed empty record, which accepts only ``{}``.
+_FETCH_SELECTOR = Contract.model_validate(
+    {"name": "test.sdk-fetch-selector", "version": 1, "fields": {}}
+)
+_FETCH_EFFECTIVE = Contract.model_validate(
+    {
+        "name": "test.sdk-fetch-effective",
+        "version": 1,
+        "fields": {
+            "tag": {"type": "string"},
+            "effective_from": {"type": "datetime"},
+            "effective_until": {"type": "datetime"},
+        },
+    }
+)
+
+
+_FETCH_INPUT = Contract.model_validate(
+    {"name": "test.sdk-fetch-input", "version": 1, "fields": {"url": {"type": "string"}}}
+)
+_FETCH_OUTPUT = Contract.model_validate(
+    {
+        "name": "test.sdk-fetch-output",
+        "version": 1,
+        "fields": {
+            "tag": {"type": "string"},
+            "source_identity": {"type": "string"},
+            "coordinate_type": {"type": "string"},
+            "coordinate": {"type": _pinned_nested(_FETCH_COORDINATE)},
+            "selector_type": {"type": "string"},
+            "selector": {"type": _pinned_nested(_FETCH_SELECTOR)},
+            "replayability": {"type": "string"},
+            "content_encoding": {"type": "string"},
+            "content_base64": {"type": "string"},
+            "byte_length": {"type": "int"},
+            "bytes_digest": {"type": "string"},
+            "observed_at": {"type": "datetime"},
+            "source_effective_time": {
+                "type": _pinned_nested(_FETCH_EFFECTIVE),
+                "optional": True,
+            },
+        },
+    }
+)
+_FETCH_CONTRACTS = (
+    _FETCH_INPUT,
+    _FETCH_HEADERS,
+    _FETCH_COORDINATE,
+    _FETCH_SELECTOR,
+    _FETCH_EFFECTIVE,
+    _FETCH_OUTPUT,
+)
+_FETCH_OPERATION = declared_operation(
+    {
+        "name": "fetch",
+        "in": f"{_FETCH_INPUT.name}@{_FETCH_INPUT.version}",
+        "out": f"{_FETCH_OUTPUT.name}@{_FETCH_OUTPUT.version}",
+        "effect": "external_read",
+        "entrypoint": "cruxible_provider_web.fetch:WebFetch",
+    }
+)
+_ALIAS = "fetched"
+
+
+#: The capability the fetch slot names, over the fetch request and result Contracts.
+_FETCH_CAPABILITY = capability(
+    "test.sdk-fetch", in_=_FETCH_INPUT, out=_FETCH_OUTPUT, effect="external_read"
+)
+
+
+def _fetch_contract_files() -> dict[str, bytes]:
+    return {
+        **capability_files(_FETCH_CAPABILITY),
+        **{
+            contract_path(item.name, item.version): render_contract(item)
+            for item in _FETCH_CONTRACTS
+        },
+    }
+
+
+def acquisition_result():
+    # The Capture is the origin's body, verbatim; its metadata is the coordinate.
+    content = canonical_bytes({"station": "newlyn", "unit": "metres"})
+    now = datetime.now(UTC)
+    return ProviderResultToExternalCapture(
+        source_identity="web.response",
+        coordinate_type="http-response-v1",
+        coordinate={
+            "url": URL,
+            "final_url": URL,
+            "status": 200,
+            "content_type": "application/json",
+        },
+        selector_type="whole-response-v1",
+        selector={},
+        replayability="attested_only",
+        content_base64=base64.b64encode(content).decode(),
+        byte_length=len(content),
+        bytes_digest="sha256:" + hashlib.sha256(content).hexdigest(),
+        observed_at=now,
+        source_effective_time=SourceEffectiveTime(
+            effective_from=now, effective_until=now + timedelta(microseconds=1)
+        ),
+    ).model_dump(mode="json")
+
+
+def _fetch_boundaries() -> tuple[object, object]:
+    """The fetch Procedure's generated boundaries (<procedure>.input|output@1)."""
+
+    from tests.support.procedures import boundary_contract
+
+    return (
+        boundary_contract("sdk-fetch-triage.input"),
+        boundary_contract("sdk-fetch-triage.output", {"severity": "string"}),
+    )
+
+
+_FETCH_BOUNDARIES = _fetch_boundaries()
+
+
+def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -> ProcedureArtifact:
+    """One accepted Procedure whose Source slot fetches ``request`` and shapes severity."""
+
+    from tests.support.layouts import thin_node
+    from tests.support.procedures import contract_pin
+
+    run_input, run_output = _FETCH_BOUNDARIES
+    run_input_pin = contract_pin("contract-in", run_input)
+    run_output_pin = contract_pin("contract-out", run_output)
+    capture_pin = ArtifactPin(
+        role="capture-contract",
+        target=contract.identity,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    definition = procedure_definition(
+        name="sdk-fetch-triage",
+        description="Fetch one external record and shape its severity.",
+        contract_in=named(run_input_pin),
+        contract_out=named(run_output_pin),
+        slots={"fetch": pinned_slot(_FETCH_CAPABILITY)},
+        nodes=(
+            CallNode(
+                node_id="fetch",
+                captures={"capture": named(capture_pin)},
+                slot="fetch",
+                input=request,
+                as_=_ALIAS,
+                next="record",
+            ),
+            thin_node(
+                node_id="record",
+                capture=f"$steps.{_ALIAS}.capture",
+                records="record",
+                next="shape",
+                row=_RECORD_ROW_REF,
+            ),
+            ProjectNode(
+                node_id="shape",
+                fields={"severity": "$steps.record.rows.0.station"},
+                as_="result",
+            ),
+        ),
+        hard_caps=procedure_hard_caps(preset="source", max_capture_bytes=2_097_152),
+        terminal_capability=2,
+    )
+    procedure = ProcedureArtifact(
+        identity=ArtifactIdentity(kind="Procedure", name=definition.name),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        activation_policy="drain",
+    )
+    from tests.support.procedures import revalidated
+
+    return revalidated(procedure)
+
+
+#: The fetched JSON body, read as one record.
+_RECORD_ROW = validate_contract(
+    {"name": "test.web-record", "version": 1, "fields": {"station": "string"}}
+)
+_RECORD_ROW_REF = {
+    "name": _RECORD_ROW.name,
+    "version": _RECORD_ROW.version,
+    "digest": contract_digest(_RECORD_ROW).tagged,
+}
+
+
+class AcquisitionInvoker(source._WorkspaceInvoker):
+    def __init__(self, output, expected_input=None):
+        super().__init__()
+        self.output = output
+        self.expected_input = expected_input
+        self.inputs = []
+
+    def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):
+        from cruxible_client.contracts.provider_execution import ProviderEgressObservation
+        from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
+        from cruxible_core.providers.provider_runtime_contract import (
+            ProviderRuntimeResultEnvelope,
+        )
+
+        self.spawn_calls += 1
+        self.inputs.append(context.input)
+        if occurrence.occurrence_kind == "source":
+            assert context.input["url"] == URL
+            assert occurrence.operation.out.name == _FETCH_OUTPUT.name
+            assert occurrence.operation.out.version == _FETCH_OUTPUT.version
+        else:
+            assert occurrence.occurrence_kind == "call"
+            assert context.input == (self.expected_input or {"size": 1})
+        return ProviderDriverOutcomeV1(
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0", run_id=context.run_id, status="ok", output=self.output
+            ),
+            stderr="",
+            duration_seconds=0.001,
+            verified_binding=bound.binding,
+            egress=ProviderEgressObservation(
+                observer_backend="test-attribution", observer_grade="attribution"
+            ),
+        )
+
+
+def _lane(monkeypatch, manager, invoker):
+    operator = source._Operator(invoker)
+    real = manager.provider_runtime_operator()
+
+    class Lane:
+        def __getattr__(self, name):
+            return getattr(operator if hasattr(operator, name) else real, name)
+
+    monkeypatch.setattr(manager, "provider_runtime_operator", lambda: Lane())
+
+
+@pytest.mark.parametrize(
+    "over_limit",
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.skip(
+                reason=(
+                    "exercises an interface declaring an unchecked json-typed field "
+                    "alongside a list field (provider-runtime 0.2.x json_schema "
+                    "escape); B1 operation Contracts (shapes.py FieldType) have no "
+                    "'json'/unchecked field kind, only the closed set in "
+                    "shapes.FieldType, so this scenario has no equivalent to migrate to"
+                )
+            ),
+        ),
+    ],
+    ids=["ordinary", "source-over-max-items"],
+)
+@pytest.mark.parametrize("adapter", [False, True], ids=["protocol", "web-adapter"])
+def test_sdk_source_retains_and_reads_acquisition(
+    playbill_http, tmp_path, monkeypatch, adapter, over_limit
+):
+    output = acquisition_result()
+    if adapter:
+        web = pytest.importorskip(
+            "cruxible_provider_web.fetch", reason="cross-repo web provider integration"
+        )
+        from cruxible_provider_runtime.egress import EgressRecorder
+        from cruxible_provider_runtime.protocol import Budgets
+        from cruxible_provider_runtime.provider_api import ProviderRunContext
+
+        assert "web.fetch" in web.WebFetch.operations
+        result = web.WebFetch()(
+            ProviderRunContext(
+                run_id="sdk-acquisition",
+                input={"url": URL},
+                operation="web.fetch",
+                operation_signature_digest="sha256:" + "9" * 64,
+                build_digest="sha256:" + "b" * 64,
+                implementation_digest="sha256:" + "a" * 64,
+                declared_endpoints=("https://fixture.invalid",),
+                budgets=Budgets(wall_clock_seconds=30, output_bytes=1_000_000),
+                coordinates={},
+                capture_contract=None,
+                secrets={},
+                egress=EgressRecorder(),
+            )
+        )
+        assert result.status == "ok", result
+        output = result.output
+
+    http, instance_id, reviewer = playbill_http
+    manager = get_playbill_manager()
+    instance = manager.get(instance_id)
+    request = {"url": URL}
+    provider = web_provider(_FETCH_OPERATION, _FETCH_CONTRACTS)
+    from tests.support.layouts import record_set, with_layout
+
+    # The kind's layout reads the fetched JSON body as one record.
+    contract = with_layout(
+        http_contract(max_bytes=1_000_000, decoding=JSON_DECODING),
+        {"record": record_set(at="/", row=_RECORD_ROW_REF, fields={"station": {"at": "station"}})},
+    )
+    # A direct run states no acquisition rule: its capture output runs under the
+    # core default (the Procedure declares none).
+    procedure = _fetch_procedure(contract, request=request)
+
+    proposal = source.submit_member_candidate(
+        instance,
+        members={
+            provider_path(provider.identity.name): render_provider(provider),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+            **_fetch_contract_files(),
+            contract_path(_RECORD_ROW.name, _RECORD_ROW.version): render_contract(_RECORD_ROW),
+        },
+        actor_id="operator",
+        proposal_name="acquisition-deployment",
+        proposal_family="procedure",
+        timestamp=source.ACCEPT_STAMP,
+    ).proposal
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    _approve_and_activate(http, instance_id, reviewer, proposal.admission.proposal_id)
+
+    invoker = AcquisitionInvoker(output)
+    _lane(monkeypatch, manager, invoker)
+
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    intent = pb.procedure(
+        definition=source._sdk_procedure_input(procedure, _FETCH_BOUNDARIES)
+    ).prepare()
+    assert not intent.refused, intent.diagnostics
+    intent.submit(accept="never")
+    _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
+    run = pb.accepted_procedure(procedure.identity.name).run()
+    assert run.status == "succeeded", transport.get_procedure_run(instance_id, run.run_id)
+    assert run.result["severity"]
+    assert invoker.spawn_calls == 1
+    assert invoker.inputs == [request]
+    state = transport.get_procedure_run(instance_id, run.run_id)
+    assert state.receipt_digest is not None
+    assert state.source_observations[0].capture_digest
+    # The source result, its evidence identity and receipt survive public readback.
+    assert state.result == run.result.model_dump()
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    envelope = parse_capture_envelope(
+        instance.body_store().read(state.source_observations[0].capture_digest, access=access)
+    )
+    material = instance.body_store().read(envelope.commitment.digest, access=access)
+    assert material == base64.b64decode(output["content_base64"])
+
+
+@pytest.mark.parametrize(
+    "defaulted",
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.skip(
+                reason=(
+                    "exercises an operation Contract field with a declared default "
+                    "value (provider-runtime 0.2.x ContractSchema/PropertySchema "
+                    "'default'); B1 operation Contracts (shapes.ContractField) only "
+                    "carry type/optional/description, no default value, so the SDK "
+                    "fill-in-the-default behavior this test checks has no equivalent"
+                )
+            ),
+        ),
+    ],
+    ids=["ordinary", "interface-defaults"],
+)
+def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
+    playbill_http, tmp_path, monkeypatch, defaulted
+):
+    from cruxible_client.authoring.inputs import ProcedureInput
+
+    http, instance_id, reviewer = playbill_http
+    manager = get_playbill_manager()
+    instance = manager.get(instance_id)
+    call_input = Contract.model_validate(
+        {"name": "test.sdk-call-input", "version": 1, "fields": {"size": {"type": "int"}}}
+    )
+    call_output = Contract.model_validate(
+        {"name": "test.sdk-call-output", "version": 1, "fields": {"size": {"type": "int"}}}
+    )
+    operation = declared_operation(
+        {
+            "name": "invoke",
+            "in": f"{call_input.name}@{call_input.version}",
+            "out": f"{call_output.name}@{call_output.version}",
+            "effect": "external_read",
+            "entrypoint": "cruxible_provider_web.fetch:WebFetch",
+        }
+    )
+    provider = web_provider(operation, (call_input, call_output))
+    proposal = source.submit_member_candidate(
+        instance,
+        members={
+            provider_path(provider.identity.name): render_provider(provider),
+            contract_path(call_input.name, call_input.version): render_contract(call_input),
+            contract_path(call_output.name, call_output.version): render_contract(call_output),
+            **capability_files(
+                capability("test.sdk-call", in_=call_input, out=call_output, effect="external_read")
+            ),
+        },
+        actor_id="operator",
+        proposal_name="call-deployment",
+        proposal_family="procedure",
+        timestamp=source.ACCEPT_STAMP,
+    ).proposal
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    _approve_and_activate(http, instance_id, reviewer, proposal.admission.proposal_id)
+    expected_input = {"size": 1}
+    invoker = AcquisitionInvoker({"size": 1}, expected_input=expected_input)
+    _lane(monkeypatch, manager, invoker)
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    authored = ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            **procedure_spec_data(
+                procedure="replace-me",
+                input={},
+                output={"size": "int"},
+                slots={"invoke": {"capability": "test.sdk-call@1"}},
+                steps=[CallStep(call="result", id="invoke", slot="invoke", input={"size": 1})],
+                returns="result",
+                hard_caps=procedure_limits(
+                    wall_clock="PT30M", provider_calls=2, capture_bytes=131072, items=200
+                ),
+            ),
+        }
+    )
+    intent = pb.procedure(definition=authored).prepare()
+    assert not intent.refused, intent.diagnostics
+    intent.submit(accept="never")
+    _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
+    run = pb.accepted_procedure("replace-me").run()
+    state = transport.get_procedure_run(instance_id, run.run_id)
+    assert run.status == "succeeded", str(state.terminal)
+    assert run.result.size == 1
+    assert state.source_observations == []
+    assert invoker.spawn_calls == 1

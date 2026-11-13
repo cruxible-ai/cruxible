@@ -1,0 +1,1569 @@
+"""Shared typed failure contracts for served Procedure runs."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Annotated, Literal, TypeAlias
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import (
+    ProposalDigest,
+    Sha256Value,
+    normalize_canonical,
+    typed_digest,
+)
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic
+from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.mandate_scope import SettleScopeGap
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
+from cruxible_client.contracts.procedures.models import (
+    AuthorityVerb,
+    EffectiveAuthority,
+    ProcedureBudget,
+    ProcedureHardCaps,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.provider_execution import (
+    ProviderExternalOccurrencePlan,
+)
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage,
+    PriorRefusalReceipt,
+)
+from cruxible_client.contracts.repairs import (
+    HandEditInstruction,
+    HandEditRepair,
+    ServedRepair,
+    served_repair_for_refusal,
+)
+from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceipt,
+    source_read_receipt_digest,
+)
+
+ProcedureAdmissionRefusalCode: TypeAlias = Literal[
+    "unsupported_node",
+    "not_current",
+    "artifact_binding_mismatch",
+    "pin_binding_mismatch",
+    "input_material_mismatch",
+    "state_tap_refused",
+    "read_ceiling_exceeded",
+    "query_contract_violated",
+    "replay_material_mismatch",
+    "procedure_runtime_policy_absent",
+    "provider_replay_receipt_required",
+    "exhaust_binding_carrier_required",
+    "source_acquisition_refused",
+    "evaluation_instant_skewed",
+    "line_identity_mismatch",
+    "line_not_accepted",
+    "line_closure_incomplete",
+    "line_mandate_required",
+    "occurrence_id_mismatch",
+    "occurrence_not_due",
+    "occurrence_already_admitted",
+    "trigger_capture_stale",
+    "trigger_capture_unavailable",
+    "trigger_capture_over_budget",
+    "trigger_capture_forbidden",
+    "trigger_capture_invalid",
+    "trigger_capture_not_yet_observed",
+    "trigger_event_precedes_acceptance",
+    "line_binding_superseded",
+    "line_trigger_mismatch",
+    "cruxible.line.slot_unfilled",
+    "cruxible.line.slot_ambiguous",
+    "cruxible.procedure.slot_undeclared",
+]
+#: Codes retained runs were refused with before authority was served as verbs.
+#: A run's journal keeps the bytes it wrote; reading it serves today's code.
+HISTORICAL_NODE_REFUSAL_CODES: dict[str, str] = {
+    "procedure_mandate_rung_insufficient": "procedure_mandate_grant_insufficient",
+    "terminal_rung_capped_by_procedure_terminal_capability": (
+        "terminal_authority_capped_by_procedure_terminal_capability"
+    ),
+    "terminal_rung_capped_by_line_requested_rung": (
+        "terminal_authority_capped_by_line_max_authority"
+    ),
+    "terminal_rung_capped_by_propagated_sensitivity": (
+        "terminal_authority_capped_by_propagated_sensitivity"
+    ),
+    "terminal_rung_capped_by_mandate_grant": "terminal_authority_capped_by_mandate_grant",
+}
+
+
+def current_refusal_code(code: str) -> str:
+    """The code a retained refusal is served as today.
+
+    Covers the verb rename (``HISTORICAL_NODE_REFUSAL_CODES``) and the public
+    rename (``playbill.`` codes read as ``cruxible.``); the journal keeps its bytes.
+    """
+
+    code = normalize_code(code)
+    return HISTORICAL_NODE_REFUSAL_CODES.get(code, code)
+
+
+ProcedureNodeRefusalCode: TypeAlias = Literal[
+    "guard_refused",
+    "decode_invalid",
+    "decoded_limit_exceeded",
+    "extract.header_invalid@1",
+    "extract_decoding_undeclared",
+    "extract_duplicate_key",
+    "extract_format_unsupported",
+    "read_ceiling_exceeded",
+    "query_contract_violated",
+    "state_tap_refused",
+    "repeat_exhausted",
+    "budget_exhausted",
+    "runtime_reference_unresolved",
+    "contract_input_refused",
+    "contract_output_refused",
+    "result_not_canonical",
+    "line_binding_required",
+    "source_acquisition_unavailable",
+    "source_material_unavailable",
+    "terminal_not_available",
+    "terminal_egress_unverified",
+    "proposal_item_invalid",
+    "claims_absence_invalid",
+    "claims_expect_outside_only_keys",
+    "claims_enumeration_invalid",
+    "claims_expect_provider_enumeration_unsupported",
+    "claims_inverse_unit_unresolved",
+    "claims_absence_binding_invalid",
+    "proposal_item_evidence_missing",
+    "proposal_item_evidence_ambiguous",
+    "inbox_item_invalid",
+    "inbox_item_evidence_ambiguous",
+    "inbox_item_over_budget",
+    "proposal_lowering_refused",
+    "proposal_candidate_refused",
+    "settle_mandate_missing",
+    "settle_mandate_ambiguous",
+    "settle_condition_refused",
+    "settle_publication_refused",
+    "proposal_target_paths_mismatch",
+    "proposal_receipt_incomplete",
+    "effectful_operation_payload_mismatch",
+    "procedure_mandate_required",
+    "procedure_mandate_superseded",
+    "procedure_mandate_expired",
+    "procedure_mandate_procedure_mismatch",
+    "procedure_mandate_grant_insufficient",
+    "procedure_mandate_namespace_mismatch",
+    "procedure_mandate_not_applicable",
+    "procedure_authority_admission_invalid",
+    "procedure_authority_admission_mismatch",
+    "provider_unavailable",
+    "cruxible.acquisition.unavailable",
+    "cruxible.acquisition.stale",
+    "cruxible.acquisition.oversized",
+    "cruxible.acquisition.refused",
+    "cruxible.acquisition.replayability_ineligible",
+    "cruxible.acquisition.origin_ineligible",
+    "effect_grant_unrecognized",
+    "effect_dispatch_requires_actor",
+    "effect_dispatch_requires_authenticated_actor",
+    "terminal_authority_capped_by_procedure_terminal_capability",
+    "terminal_authority_capped_by_line_max_authority",
+    "terminal_authority_capped_by_propagated_sensitivity",
+    "terminal_authority_capped_by_mandate_grant",
+    "provider_acquisition_plan_required",
+    "provider_acquisition_plan_mismatch",
+    "workspace_file_read_refused",
+    "provider_effect_declaration_mismatch",
+    "unknown_extra",
+    "budget_wall_clock",
+    "budget_output_size",
+    "budget_cost",
+    "secret_bundle_too_large",
+    "operation_refused",
+    "provider_protocol_violation",
+]
+ProcedureOperationalFailureCode: TypeAlias = Literal[
+    "wall_clock_exhausted",
+    "cas_unavailable_at_replay",
+    "replay_material_mismatch",
+    "journal_append_failed",
+    "journal_read_failed",
+    "journal_conflict",
+    "run_recovery_required",
+    "terminal_egress_recovered",
+    "admission_material_unavailable_by_policy",
+    "replay_material_unavailable",
+    "admission_material_corrupt",
+    "unsupported_protocol",
+    "unsupported_backend",
+    "no_compatible_artifact",
+    "unresolvable_source",
+    "air_gapped_cache_miss",
+    "network_disabled",
+    "cache_permissions",
+    "unresolved_secret_ref",
+    "secret_epoch_unavailable",
+    "secret_resolver_not_installed",
+    "provider_execution_error",
+    "provider_completion_not_durable",
+    "provider_runtime_directory_unavailable",
+]
+ProcedureInternalFailureCode: TypeAlias = Literal[
+    "unexpected_exception",
+    "journal_integrity_error",
+    "run_record_invalid",
+    "compiler_invariant_broken",
+    "provider_refusal_taxonomy_unknown",
+    "unknown_manifest_field",
+    "manifest_divergence",
+    "acceptance_divergence",
+    "unaccepted_provider",
+    "undeclared_operation",
+    "undeclared_refusal",
+    "unknown_run_context_field",
+    "provider_protocol_violation",
+    "lock_mismatch",
+    "lock_bytes_mismatch",
+    "lock_missing_hash",
+    "lock_ambiguous_fork",
+    "index_not_pinned",
+    "index_redirect",
+    "artifact_hash_mismatch",
+    "cache_integrity",
+    "environment_divergence",
+    "undeclared_egress",
+    "secret_leak",
+    "non_finite_output",
+    "image_provenance_mismatch",
+    "provider_runtime_not_in_materialization",
+    "provider_process_lease_invalid",
+    "provider_process_lease_missing",
+    "provider_process_lease_echo_failed",
+    "provider_process_lease_echo_mismatch",
+    "provider_process_group_survived_recovery",
+]
+
+
+class _StrictResultModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _digest(value: str | None) -> str | None:
+    if value is None:
+        return None
+    Sha256Value.from_tagged(value)
+    return value
+
+
+def _with_default_repair(value: object) -> object:
+    if not isinstance(value, dict) or "repair" in value:
+        return value
+    code = value.get("code")
+    if not isinstance(code, str):
+        return value
+    details = value.get("details")
+    if code == "cruxible.acquisition.stale" and isinstance(details, dict):
+        alias = details.get("input_name")
+        age = details.get("age_microseconds")
+        if isinstance(alias, str) and isinstance(age, int):
+            repair = HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target=f"Source:{alias}",
+                    required_change=(
+                        f"Fetch a fresh Capture for alias {alias!r}; the refused "
+                        f"Capture age was {age} microseconds, above max_age "
+                        f"{details.get('max_age_microseconds')} microseconds."
+                    ),
+                )
+            )
+            return {**value, "repair": repair.model_dump(mode="python")}
+    if (
+        code == "workspace_file_read_refused"
+        and isinstance(details, dict)
+        and details.get("path_class") in ("missing", "binding")
+        and isinstance(details.get("relative_path"), str)
+        and isinstance(details.get("repair_commands"), list)
+        and details["repair_commands"]
+        and isinstance(details["repair_commands"][0], str)
+    ):
+        # The file the Line reads is not there: the repair names where it goes.
+        repair = HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=f"workspace file {details['relative_path']}",
+                required_change=details["repair_commands"][0],
+            )
+        )
+        return {**value, "repair": repair.model_dump(mode="python")}
+    return {**value, "repair": served_repair_for_refusal(code).model_dump(mode="python")}
+
+
+class ProcedureJournalCoordinate(_StrictResultModel):
+    tag: Literal["playbill-procedure-journal-coordinate-v1"] = (
+        "playbill-procedure-journal-coordinate-v1"
+    )
+    stream_instance_id: str
+    journal_family: str
+    stream_id: str
+    partition_id: str
+    sequence: int = Field(ge=1)
+    record_digest: str
+
+    _record_digest = field_validator("record_digest")(_digest)
+
+
+class ProcedureBudgetRefusalDetail(_StrictResultModel):
+    tag: Literal["playbill-procedure-budget-refusal-detail-v1"] = (
+        "playbill-procedure-budget-refusal-detail-v1"
+    )
+    budget_kind: Literal[
+        "max_items",
+        "result_bytes",
+        "wall_clock",
+        "max_provider_calls",
+        "max_capture_bytes",
+    ]
+    limit: int = Field(ge=0)
+    observed: int = Field(ge=1)
+
+
+class ProcedureAdmissionRefusal(_StrictResultModel):
+    tag: Literal["playbill-procedure-admission-refusal-v1"] = (
+        "playbill-procedure-admission-refusal-v1"
+    )
+    classification: Literal["admission_refusal"] = "admission_refusal"
+    code: ProcedureAdmissionRefusalCode
+    message: str
+    details: object = Field(default_factory=dict)
+    retryable: bool = False
+    repair: ServedRepair
+
+    _repair = model_validator(mode="before")(_with_default_repair)
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+#: The node refusals whose ``detail_code`` is an authored code: a Procedure's
+#: guard code, or the code the bound provider operation declares and returned.
+_AUTHORED_DETAIL_CODES: frozenset[str] = frozenset({"guard_refused", "operation_refused"})
+
+
+class ProcedureNodeRefusal(_StrictResultModel):
+    """One node's refusal.
+
+    ``detail_code`` carries an authored code: for ``guard_refused`` the guard's,
+    for ``operation_refused`` the refusal code the bound provider operation
+    declares (its own vocabulary, with ``details`` its declared detail).
+    """
+
+    tag: Literal["playbill-procedure-node-refusal-v1"] = "playbill-procedure-node-refusal-v1"
+    classification: Literal["node_refusal"] = "node_refusal"
+    code: ProcedureNodeRefusalCode
+    message: str
+    node_id: str
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+    detail_code: str | None = None
+    details: object = Field(default_factory=dict)
+    budget: ProcedureBudgetRefusalDetail | None = None
+    retryable: bool = False
+    repair: ServedRepair
+
+    _repair = model_validator(mode="before")(_with_default_repair)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _current_codes(cls, value: object) -> object:
+        # A retained run refused before the verb rename reads as today's code.
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        if isinstance(value.get("code"), str):
+            value["code"] = current_refusal_code(value["code"])
+        details = value.get("details")
+        if isinstance(details, dict) and isinstance(details.get("codes"), list):
+            value["details"] = {
+                **details,
+                "codes": [
+                    current_refusal_code(code) if isinstance(code, str) else code
+                    for code in details["codes"]
+                ],
+            }
+        return value
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _typed_detail(self) -> "ProcedureNodeRefusal":
+        if self.code == "guard_refused" and self.detail_code is None:
+            raise ValueError("guard refusal requires the Procedure-authored detail code")
+        if self.code == "operation_refused" and self.detail_code is None:
+            raise ValueError("an operation refusal requires the operation-declared code")
+        if self.code == "budget_exhausted" and self.budget is None:
+            raise ValueError("budget refusal requires typed budget detail")
+        if self.code not in _AUTHORED_DETAIL_CODES and self.detail_code is not None:
+            raise ValueError("only a guard or operation refusal carries an authored detail code")
+        if self.code != "budget_exhausted" and self.budget is not None:
+            raise ValueError("only a budget refusal carries typed budget detail")
+        return self
+
+
+#: A failure cause's message is at most this many characters once redacted.
+FAILURE_CAUSE_MESSAGE_LIMIT = 1024
+
+# ``scheme://user:secret@host`` -> ``scheme://host``. A Provider message may
+# quote the URL it failed to reach, and that URL may carry a credential.
+_URL_USERINFO = re.compile(r"(?P<scheme>\b[A-Za-z][A-Za-z0-9+.\-]*://)[^/@\s]*@")
+
+
+def strip_url_userinfo(text: str) -> str:
+    """Remove the userinfo part of every URL in ``text``."""
+
+    return _URL_USERINFO.sub(r"\g<scheme>", text)
+
+
+def failure_cause_message(text: str) -> str:
+    """The served form of a Provider's failure message: userinfo stripped, capped."""
+
+    return strip_url_userinfo(text)[:FAILURE_CAUSE_MESSAGE_LIMIT]
+
+
+class ProcedureFailureCause(_StrictResultModel):
+    """What the Provider said when its invocation failed for an operational reason.
+
+    Projected from the run's own completion, never re-derived: ``provider_code``
+    is the Provider outcome's code, ``kind`` its error kind when the runtime
+    names one (a transport error and an HTTP status differ here), and
+    ``message`` the Provider's message with URL userinfo stripped.
+    """
+
+    tag: Literal["cruxible-procedure-failure-cause-v1"] = "cruxible-procedure-failure-cause-v1"
+    node_id: str = Field(min_length=1)
+    provider_code: str = Field(min_length=1)
+    kind: str | None = None
+    message: str = Field(default="", max_length=FAILURE_CAUSE_MESSAGE_LIMIT)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def _message(cls, value: object) -> object:
+        return failure_cause_message(value) if isinstance(value, str) else value
+
+
+class ProcedureOperationalFailure(_StrictResultModel):
+    tag: Literal["playbill-procedure-operational-failure-v1"] = (
+        "playbill-procedure-operational-failure-v1"
+    )
+    classification: Literal["operational_failure"] = "operational_failure"
+    code: ProcedureOperationalFailureCode
+    message: str
+    last_node_id: str | None = None
+    #: The Provider's own account of the failure, when a Provider failed.
+    cause: ProcedureFailureCause | None = None
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+    details: object = Field(default_factory=dict)
+    retryable: bool = True
+    repair: ServedRepair
+
+    _repair = model_validator(mode="before")(_with_default_repair)
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class ProcedureInternalFailure(_StrictResultModel):
+    tag: Literal["playbill-procedure-internal-failure-v1"] = (
+        "playbill-procedure-internal-failure-v1"
+    )
+    classification: Literal["internal_failure"] = "internal_failure"
+    code: ProcedureInternalFailureCode
+    message: str
+    correlation_id: str
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+    repair: ServedRepair
+
+    _repair = model_validator(mode="before")(_with_default_repair)
+
+
+class ProcedureRunAttribution(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-attribution-v1"] = "playbill-procedure-run-attribution-v1"
+    actor_type: str
+    actor_id: str
+    org_id: str
+    operation_id: str
+    request_id: str | None = None
+    recorded_time: datetime
+
+    @field_validator("recorded_time")
+    @classmethod
+    def _recorded_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+
+class ProcedureRunAttributionWithheld(_StrictResultModel):
+    """A run's attribution with its actor withheld from this reader.
+
+    An armed run acts as its arming credential's principal. A reader who may
+    not see that credential -- not an admin, not the credential itself, and
+    not another credential bound to the same principal -- reads everything but
+    the actor, the same rule the Line and run cards apply to ``armed_by``.
+    """
+
+    tag: Literal["playbill-procedure-run-attribution-withheld-v1"] = (
+        "playbill-procedure-run-attribution-withheld-v1"
+    )
+    actor_type: str
+    org_id: str
+    operation_id: str
+    request_id: str | None = None
+    recorded_time: datetime
+    withheld: Literal["names_the_enabling_credential"] = "names_the_enabling_credential"
+
+    @field_validator("recorded_time")
+    @classmethod
+    def _recorded_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @classmethod
+    def of(cls, attribution: ProcedureRunAttribution) -> ProcedureRunAttributionWithheld:
+        return cls(
+            actor_type=attribution.actor_type,
+            org_id=attribution.org_id,
+            operation_id=attribution.operation_id,
+            request_id=attribution.request_id,
+            recorded_time=attribution.recorded_time,
+        )
+
+
+class ProcedureRunReceiptWithheld(_StrictResultModel):
+    """A run receipt withheld from this reader: it carries the arming credential's actor.
+
+    ``receipt_digest`` beside it still names the exact receipt.
+    """
+
+    tag: Literal["playbill-procedure-run-receipt-withheld-v1"] = (
+        "playbill-procedure-run-receipt-withheld-v1"
+    )
+    withheld: Literal["names_the_enabling_credential"] = "names_the_enabling_credential"
+
+
+class ProcedureChildInvocation(_StrictResultModel):
+    """A completed child occurrence, navigable by run ID without copying digests."""
+
+    node_id: str
+    run_id: str
+    procedure: ArtifactIdentity
+    status: Literal["succeeded", "refused", "failed", "halted"]
+
+
+class ProcedureBudgetExceededDetail(_StrictResultModel):
+    tag: Literal["playbill-procedure-budget-exceeded-detail-v1"] = (
+        "playbill-procedure-budget-exceeded-detail-v1"
+    )
+    dimension: Literal["max_items"] = "max_items"
+    limit: int = Field(ge=1)
+    observed: int = Field(ge=1)
+    boundary: str | None = None
+    field_path: str | None = None
+
+
+class ProcedureBudgetExhausted(_StrictResultModel):
+    tag: Literal["playbill-procedure-budget-exhausted-v1"] = (
+        "playbill-procedure-budget-exhausted-v1"
+    )
+    classification: Literal["budget_exhausted"] = "budget_exhausted"
+    code: Literal["budget_max_items_exceeded"] = "budget_max_items_exceeded"
+    message: Literal["A Procedure collection exceeded its declared item bound."] = (
+        "A Procedure collection exceeded its declared item bound."
+    )
+    node_id: str
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+    details: ProcedureBudgetExceededDetail
+    retryable: Literal[False] = False
+
+
+class ProcedureHaltTerminal(_StrictResultModel):
+    tag: Literal["playbill-procedure-halt-terminal-v1"] = "playbill-procedure-halt-terminal-v1"
+    classification: Literal["halted"] = "halted"
+    node_id: str
+    reason: str | None = None
+    message: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+
+
+ProcedureTerminal: TypeAlias = Annotated[
+    ProcedureAdmissionRefusal
+    | ProcedureNodeRefusal
+    | ProcedureOperationalFailure
+    | ProcedureInternalFailure
+    | ProcedureBudgetExhausted
+    | ProcedureHaltTerminal,
+    Field(discriminator="tag"),
+]
+
+
+class ProcedureBudgetBoundaryObservation(_StrictResultModel):
+    tag: Literal["playbill-procedure-budget-boundary-observation-v1"] = (
+        "playbill-procedure-budget-boundary-observation-v1"
+    )
+    high_water: int = Field(ge=0)
+    boundary: str | None = None
+    field_path: str | None = None
+
+    @model_validator(mode="after")
+    def _zero_location(self) -> "ProcedureBudgetBoundaryObservation":
+        if self.high_water == 0 and (self.boundary is not None or self.field_path is not None):
+            raise ValueError("a zero boundary observation has no location")
+        if self.high_water > 0 and (self.boundary is None or self.field_path is None):
+            raise ValueError("a nonzero boundary observation requires its location")
+        return self
+
+
+class ProcedureRunBudgetObserved(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-budget-observed-v1"] = (
+        "playbill-procedure-run-budget-observed-v1"
+    )
+    max_items: ProcedureBudgetBoundaryObservation
+    result_bytes: ProcedureBudgetBoundaryObservation
+    provider_calls: int = Field(ge=0)
+    capture_bytes: int = Field(ge=0)
+    wall_clock_microseconds: int = Field(ge=0)
+    #: Rows this run's reads returned (its children's included), against its
+    #: read budget; omitted when the run read nothing.
+    read_rows: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+
+
+class ProcedureRunNodePinSet(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-node-pin-set-v1"] = (
+        "playbill-procedure-run-node-pin-set-v1"
+    )
+    node_id: str
+    pins: tuple[ArtifactPin, ...]
+
+    @field_validator("pins")
+    @classmethod
+    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
+        def pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
+            return (
+                pin.role.encode("utf-8"),
+                pin.target.qualified.encode("utf-8"),
+                pin.artifact_digest.encode("ascii"),
+            )
+
+        if value != tuple(sorted(value, key=pin_key)) or len(
+            {(pin.role, pin.target.qualified) for pin in value}
+        ) != len(value):
+            raise ValueError("run node pins must be sorted and unique")
+        return value
+
+
+class ProcedureReplayInputProjection(_StrictResultModel):
+    tag: Literal["playbill-procedure-replay-input-projection-v1"] = (
+        "playbill-procedure-replay-input-projection-v1"
+    )
+    input_name: str
+    plane: Literal["accepted_state", "landed_capture", "exhaust"]
+    kind: Literal["query_result", "claim_selection", "capture", "reduced_exhaust"]
+    value_or_body_digest: str
+    provenance_digest: str
+
+    _digests = field_validator("value_or_body_digest", "provenance_digest")(_digest)
+
+    @model_validator(mode="after")
+    def _plane_kind(self) -> "ProcedureReplayInputProjection":
+        expected = {
+            "accepted_state": "query_result",
+            "landed_capture": "capture",
+            "exhaust": "reduced_exhaust",
+        }
+        if self.kind != expected[self.plane] and not (
+            self.plane == "accepted_state" and self.kind == "claim_selection"
+        ):
+            raise ValueError("replay input projection plane and kind disagree")
+        return self
+
+
+class ProcedureProviderBinding(_StrictResultModel):
+    """What one slotted node binds at admission: its slot's exact build and operation.
+
+    The binding is the Line's (or, for a direct run, the request's ephemeral
+    spec), never chosen at run time.
+    """
+
+    tag: Literal["cruxible-procedure-provider-binding-v4"] = (
+        "cruxible-procedure-provider-binding-v4"
+    )
+    node_id: str
+    slot: str
+    operation: str
+    operation_signature_digest: str
+    provider_artifact_digest: str
+    implementation_digest: str
+    effect_class: Literal["pure", "external_read", "external_mutation"]
+    secret_binding_identity_digests: tuple[str, ...]
+
+    _binding_digests = field_validator(
+        "operation_signature_digest",
+        "provider_artifact_digest",
+        "implementation_digest",
+    )(_digest)
+
+    @field_validator("secret_binding_identity_digests")
+    @classmethod
+    def _secret_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("Provider secret binding identities must be sorted and unique")
+        for item in value:
+            _digest(item)
+        return value
+
+
+def procedure_provider_bindings(
+    occurrences: Sequence[ProviderExternalOccurrencePlan],
+) -> tuple[ProcedureProviderBinding, ...]:
+    """One binding per planned occurrence, in the node-id order admission requires.
+
+    Occurrences are planned in occurrence-path order (``call/...`` before
+    ``source/...``), which is not node-id order once a Source node's id sorts
+    before a Call node's. Every binding field reads off its occurrence, so an
+    admission's bindings are exactly a function of its acquisition plan.
+    """
+
+    return tuple(
+        ProcedureProviderBinding(
+            node_id=item.node_id,
+            slot=item.slot,
+            operation=item.operation.name,
+            operation_signature_digest=item.operation_signature_digest,
+            provider_artifact_digest=item.provider_artifact_digest,
+            implementation_digest=item.implementation_digest,
+            effect_class=item.effect_class,
+            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
+        )
+        for item in sorted(occurrences, key=lambda item: item.node_id.encode("utf-8"))
+    )
+
+
+class ProcedureSelectionDecision(_StrictResultModel):
+    tag: Literal["playbill-procedure-selection-decision-v1"] = (
+        "playbill-procedure-selection-decision-v1"
+    )
+    policy_digest: str
+    verdict: Literal["selected", "refused"]
+    decisions: tuple[AcquisitionInputDecision, ...]
+    coherence_proof_digest: str | None = None
+
+    _decision_digests = field_validator("policy_digest", "coherence_proof_digest")(_digest)
+
+    @field_validator("decisions")
+    @classmethod
+    def _decisions(
+        cls,
+        value: tuple[AcquisitionInputDecision, ...],
+    ) -> tuple[AcquisitionInputDecision, ...]:
+        names = tuple(item.input_name for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("selection decisions must be sorted and input-name unique")
+        return value
+
+    @model_validator(mode="after")
+    def _verdict(self) -> "ProcedureSelectionDecision":
+        expected = (
+            "refused"
+            if any(item.disposition == "refused" for item in self.decisions)
+            else "selected"
+        )
+        if self.verdict != expected:
+            raise ValueError("selection decision verdict disagrees with its input decisions")
+        return self
+
+
+class ProcedureAdmissionMaterialMember(_StrictResultModel):
+    """One admission-material retention decision.
+
+    ``retain_until`` reads VALIDITY WINDOW.
+    """
+
+    tag: Literal["playbill-procedure-admission-material-member-v1"] = (
+        "playbill-procedure-admission-material-member-v1"
+    )
+    input_name: str
+    plane: Literal["landed_capture", "exhaust"]
+    semantic_digest: str
+    body_digest: str | None
+    retention_authority_digest: str
+    body_retention: Literal["never_materialize", "optional", "required_for_duration"]
+    retain_until: datetime | None = None
+    erasure_rule_digest: str | None = None
+
+    _material_digests = field_validator(
+        "semantic_digest",
+        "body_digest",
+        "retention_authority_digest",
+        "erasure_rule_digest",
+    )(_digest)
+
+    @field_validator("retain_until")
+    @classmethod
+    def _retain_until(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
+
+    @model_validator(mode="after")
+    def _retention_shape(self) -> "ProcedureAdmissionMaterialMember":
+        if (self.retain_until is not None) != (self.body_retention == "required_for_duration"):
+            raise ValueError("retain_until is present exactly for required_for_duration material")
+        if self.body_retention == "never_materialize" and self.body_digest is not None:
+            raise ValueError("never_materialize admission cannot name a body digest")
+        return self
+
+
+class ProcedureAdmissionMaterialManifest(_StrictResultModel):
+    tag: Literal["playbill-procedure-admission-material-v1"] = (
+        "playbill-procedure-admission-material-v1"
+    )
+    members: tuple[ProcedureAdmissionMaterialMember, ...]
+
+    @field_validator("members")
+    @classmethod
+    def _members(
+        cls,
+        value: tuple[ProcedureAdmissionMaterialMember, ...],
+    ) -> tuple[ProcedureAdmissionMaterialMember, ...]:
+        names = tuple(member.input_name for member in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("admission material members must be sorted and input-name unique")
+        return value
+
+
+PROCEDURE_ADMISSION_MATERIAL_DOMAIN = "playbill-procedure-admission-material-v1"
+PROCEDURE_SELECTION_DECISION_DOMAIN = "playbill-procedure-selection-decision-v1"
+
+
+def procedure_admission_material_digest(
+    manifest: ProcedureAdmissionMaterialManifest,
+) -> str:
+    payload = manifest.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_ADMISSION_MATERIAL_DOMAIN,
+        payload,
+    ).tagged
+
+
+def procedure_selection_decision_digest(decision: ProcedureSelectionDecision) -> str:
+    payload = decision.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SELECTION_DECISION_DOMAIN,
+        payload,
+    ).tagged
+
+
+class ProcedureAcquisitionPlan(_StrictResultModel):
+    """Digest-composed, result-free external acquisition plan for one Line run.
+
+    ``accepted_coordinate.generation`` reads SETTLEMENT ORDER.
+    ``occurrence_evaluation_time`` reads EVALUATION INSTANT.
+    """
+
+    tag: Literal["playbill-procedure-acquisition-plan-v2"] = (
+        "playbill-procedure-acquisition-plan-v2"
+    )
+    stage: Literal["complete"] = "complete"
+    accepted_coordinate: AcceptedCoordinate
+    # A direct actor run plans the same external occurrences under the same
+    # accepted policy, but is an occurrence of no Line. The three Line
+    # coordinates are therefore present together or absent together; every
+    # accepted Line plan keeps the exact fields, and bytes, it already had.
+    line_identity: ArtifactIdentity | None = None
+    line_spec_digest: str | None = None
+    occurrence_id: str | None = None
+    occurrence_evaluation_time: datetime
+    acquisition_policy_format: str
+    acquisition_policy_digest: str
+    selection_receipt_digest: str | None = None
+    selection_decision: ProcedureSelectionDecision
+    selection_decision_digest: str
+    has_exhaust_occurrences: bool = False
+    exhaust_access_binding_digest: str | None = None
+    external_occurrences: tuple[ProviderExternalOccurrencePlan, ...] = ()
+    #: A direct run's ephemeral Line spec (its Procedure, parameters, bindings
+    #: and acquisition) by digest; absent on a Line occurrence's plan.
+    ephemeral_spec_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    _digests = field_validator(
+        "line_spec_digest",
+        "ephemeral_spec_digest",
+        "acquisition_policy_digest",
+        "selection_receipt_digest",
+        "selection_decision_digest",
+        "exhaust_access_binding_digest",
+    )(_digest)
+
+    @field_validator("occurrence_evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("external_occurrences")
+    @classmethod
+    def _occurrences(
+        cls,
+        value: tuple[ProviderExternalOccurrencePlan, ...],
+    ) -> tuple[ProviderExternalOccurrencePlan, ...]:
+        paths = tuple(item.occurrence_path for item in value)
+        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("external occurrence plans must be path-sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> ProcedureAcquisitionPlan:
+        line_coordinates = (self.line_identity, self.line_spec_digest, self.occurrence_id)
+        if any(item is None for item in line_coordinates) and any(
+            item is not None for item in line_coordinates
+        ):
+            raise ValueError(
+                "acquisition plan binds its Line identity, spec digest, and occurrence together"
+            )
+        if self.line_identity is not None and self.line_identity.kind != "Line":
+            raise ValueError("acquisition plan requires a Line identity")
+        if self.line_identity is not None and self.ephemeral_spec_digest is not None:
+            raise ValueError("a Line occurrence's plan carries the Line, not an ephemeral spec")
+        if self.selection_decision.policy_digest != self.acquisition_policy_digest:
+            raise ValueError("acquisition plan selection names another policy")
+        if self.selection_decision_digest != procedure_selection_decision_digest(
+            self.selection_decision
+        ):
+            raise ValueError("acquisition plan selection digest does not reproduce")
+        if self.has_exhaust_occurrences != (self.exhaust_access_binding_digest is not None):
+            raise ValueError(
+                "exhaust_binding_carrier_required: Exhaust presence and binding digest disagree"
+            )
+        return self
+
+
+PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN = "playbill-procedure-acquisition-plan-v2"
+
+
+def procedure_acquisition_plan_digest(plan: ProcedureAcquisitionPlan) -> str:
+    payload = plan.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN, payload).tagged
+
+
+class ProcedureSourceObservation(_StrictResultModel):
+    """What one admitted Source occurrence really observed, per run.
+
+    Additive and optional: a run with no Source occurrence carries none. The
+    read receipt is the daemon's attestation of the exact bytes it read; the
+    capture digest names the Capture those bytes became. Full lineage from a
+    Claim back to this run is a later contract, not this field.
+    """
+
+    tag: Literal["playbill-procedure-source-observation-v1"] = (
+        "playbill-procedure-source-observation-v1"
+    )
+    occurrence_path: str
+    node_id: str | None = None
+    #: The capture output observed, ``<alias>.<field>`` (the call's alias when
+    #: the occurrence produced no Capture).
+    input_name: str | None = None
+    #: The capture field this observation's Capture is, when it produced one.
+    field: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_read_receipt: SourceReadReceipt | None = None
+    source_read_receipt_digest: str | None = None
+    invocation_receipt_digest: str | None = None
+    capture_digest: str | None = None
+
+    _observation_digests = field_validator(
+        "source_read_receipt_digest",
+        "invocation_receipt_digest",
+        "capture_digest",
+    )(_digest)
+
+    @model_validator(mode="after")
+    def _receipt_pairing(self) -> "ProcedureSourceObservation":
+        if (self.source_read_receipt is None) != (self.source_read_receipt_digest is None):
+            raise ValueError("a Source read receipt and its digest are present together")
+        if (
+            self.source_read_receipt is not None
+            and source_read_receipt_digest(self.source_read_receipt)
+            != self.source_read_receipt_digest
+        ):
+            raise ValueError("Source read receipt digest does not reproduce")
+        return self
+
+
+class ProcedureSourceCaptureAssociation(_StrictResultModel):
+    """One capture field of one Provider occurrence, and the Capture it produced."""
+
+    tag: Literal["playbill-procedure-source-capture-association-v1"] = (
+        "playbill-procedure-source-capture-association-v1"
+    )
+    occurrence_path: str
+    #: The capture field of the occurrence's out Contract the Capture is.
+    field: str
+    invocation_receipt_digest: str
+    capture_digest: str
+
+    _digests = field_validator("invocation_receipt_digest", "capture_digest")(_digest)
+
+    @field_validator("occurrence_path")
+    @classmethod
+    def _occurrence_path(cls, value: str) -> str:
+        if not value or value.startswith("/") or value.endswith("/") or "//" in value:
+            raise ValueError("occurrence path must be nonempty and slash-canonical")
+        return value
+
+
+#: The independent ceilings a served result can name as what capped a run.
+ServedAuthorityTerm: TypeAlias = Literal[
+    "procedure_terminal_capability",
+    "line_max_authority",
+    "propagated_sensitivity",
+    "mandate_grant",
+]
+
+
+TerminalEgressVerdict: TypeAlias = Literal[
+    "dependencies_bound_egress_pending",
+    "refused_effective_authority",
+    "prepared",
+    "delivered",
+    "refused",
+    "failed",
+]
+
+
+class ProcedureTerminalEgressChild(_StrictResultModel):
+    """One fanout child of a terminal, and the handle its sink produced for it."""
+
+    tag: Literal["playbill-procedure-terminal-egress-child-v1"] = (
+        "playbill-procedure-terminal-egress-child-v1"
+    )
+    child_index: int = Field(ge=0)
+    item_key: str
+    manifest_digest: str
+    egress_digest: str | None = None
+    path: str | None = None
+    #: The item changed nothing: it restated a live Claim on content it already
+    #: cites, or it is a Subject item whose key a live Subject holds. ``path``
+    #: and ``egress_digest`` name that Claim or Subject as it stands. Omitted
+    #: when the item changed a member.
+    unchanged: bool = Field(default=False, exclude_if=lambda value: not value)
+    # A delivered proposal item whose statement, on the same evidence, was
+    # retired or rejected before: each earlier refusal, exactly as recorded.
+    prior_refusals: tuple[PriorRefusalReceipt, ...] = ()
+    #: A claims item's change: its identity, stable across runs ({node,
+    #: ClaimType, Subject, unit}), so two runs diff by it; the change's kind; and
+    #: the digest of the canonical change. Digests only, never the change body.
+    #: Omitted on every other terminal's items and on runs recorded before them.
+    item_identity_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    change_kind: Literal["claim", "subject", "reobservation", "retirement"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    change_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    _digests = field_validator("manifest_digest")(_digest)
+
+    @field_validator("egress_digest", "item_identity_digest", "change_digest")
+    @classmethod
+    def _egress(cls, value: str | None) -> str | None:
+        return None if value is None else _digest(value)
+
+
+class InboxPostTruncation(_StrictResultModel):
+    """A ``post_inbox`` terminal selected more items than its run may post.
+
+    ``cap`` is the terminal's declared ``max_items`` (``cap_source="declared"``)
+    or the core default; a run posting from more than one terminal counts them
+    together. The first ``posted`` of the ``selected`` items were posted; the
+    rest were not posted anywhere.
+    """
+
+    tag: Literal["cruxible-inbox-post-truncation-v1"] = "cruxible-inbox-post-truncation-v1"
+    cap: int = Field(ge=1)
+    cap_source: Literal["declared", "default"]
+    selected: int = Field(ge=0)
+    posted: int = Field(ge=0)
+
+
+class LineOpenProposalOutcome(_StrictResultModel):
+    """How a Line run's proposal terminal stood to its Line's open proposal.
+
+    ``still_current``: the run's change equals the open proposal's (the same
+    statements on the same evidence content, the same retired Claims and the
+    same created Subjects), so nothing was proposed -- no change; open proposal
+    ``proposal_id`` still current. ``superseded``: the change differed, so the
+    run's own proposal was submitted and open proposal ``proposal_id`` was
+    withdrawn as superseded by it. Nothing carries over to the new proposal.
+    """
+
+    tag: Literal["cruxible-line-open-proposal-outcome-v1"] = (
+        "cruxible-line-open-proposal-outcome-v1"
+    )
+    outcome: Literal["still_current", "superseded"]
+    proposal_id: str
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+
+class ProcedureTerminalEgress(_StrictResultModel):
+    """What one terminal node of a run did, reconstructed from its journal.
+
+    Additive and optional: a run with no terminal carries none. A delivered
+    `claims` names the proposal and the exact candidate it produced,
+    so a manager can retrieve, review and activate that candidate through the
+    existing proposal doors; producing it never activates it. A refused or
+    failed egress names the code the run refused with, so the run reads as the
+    reason it stopped rather than as a bare failure.
+    """
+
+    tag: Literal["playbill-procedure-terminal-egress-v1"] = "playbill-procedure-terminal-egress-v1"
+    node_id: str
+    kind: Literal[
+        "claims",
+        "emit_capture",
+        "post_inbox",
+    ]
+    verdict: TerminalEgressVerdict
+    required_authority: AuthorityVerb
+    effective_authority: EffectiveAuthority | None = None
+    limiting_term: ServedAuthorityTerm | None = None
+    operation_key: str | None = None
+    procedure_mandate_digest: str | None = None
+    target_paths: tuple[str, ...] = ()
+    proposal_id: str | None = None
+    candidate_digest: str | None = None
+    refusal_code: str | None = None
+    children: tuple[ProcedureTerminalEgressChild, ...] = ()
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+    # A delivered settle terminal: settled into accepted_git_oid, or fell back to
+    # the ordinary proposal it names, for fallback_reason.
+    settle_outcome: Literal["settled", "proposed"] | None = None
+    accepted_git_oid: str | None = None
+    fallback_reason: str | None = None
+    # A fallback for cruxible.settle.outside_mandate_scope: why the settle
+    # grant's scope left the change out, so the whole change proposed instead.
+    outside_scope: tuple[SettleScopeGap, ...] = ()
+    # A settle terminal the run's authority capped at propose: the term that
+    # capped it. Its request asked for propose authority only.
+    capped_by: ServedAuthorityTerm | None = None
+    # Present only while the earlier-refusal index is catching up: the
+    # children's receipts reflect retirements through the generation named.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
+    # Per-node bounded reasons: total count plus the first 100 details.
+    claims_diagnostics: tuple[ClaimsDiagnostic, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    claims_same_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    claims_diagnostics_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    claims_diagnostics_truncated: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    claims_diagnostics_inbox_truncation: InboxPostTruncation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # A post_inbox terminal that selected more items than its run may post.
+    inbox_truncation: InboxPostTruncation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # A Line run's proposal terminal that kept its Line's open proposal (no
+    # change) or withdrew it as superseded by the proposal it submitted.
+    line_open_proposal: LineOpenProposalOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("operation_key", "procedure_mandate_digest", "candidate_digest")
+    @classmethod
+    def _optional_digests(cls, value: str | None) -> str | None:
+        return None if value is None else _digest(value)
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("terminal target paths must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _delivered_shape(self) -> "ProcedureTerminalEgress":
+        # A proposal or settle terminal whose every item restated what is live
+        # changed nothing: it is delivered with no proposal and no outcome.
+        changed_nothing = bool(self.children) and all(child.unchanged for child in self.children)
+        still_current = (
+            self.line_open_proposal is not None
+            and self.line_open_proposal.outcome == "still_current"
+        )
+        if self.line_open_proposal is not None and (
+            self.verdict != "delivered" or self.kind != "claims"
+        ):
+            raise ValueError("only a delivered Line proposal terminal weighs its open proposal")
+        changed_nothing = (
+            changed_nothing
+            or still_current
+            or (self.kind == "claims" and not self.children and not self.proposal_id)
+        )
+        delivered_settle = (
+            self.verdict == "delivered" and self.kind in {"claims"} and not changed_nothing
+        )
+        if self.verdict == "delivered" and self.kind in {"claims"} and not changed_nothing:
+            if self.proposal_id is None or self.candidate_digest is None:
+                raise ValueError(
+                    "a delivered proposal egress names its proposal and exact candidate"
+                )
+        elif self.proposal_id is not None or self.candidate_digest is not None:
+            raise ValueError("only a delivered proposal egress names a proposal")
+        if delivered_settle != (self.settle_outcome is not None):
+            raise ValueError("exactly a delivered settle egress reports its outcome")
+        if (self.settle_outcome == "settled") != (self.accepted_git_oid is not None):
+            raise ValueError("only a settled outcome names its accepted generation")
+        if (self.verdict in {"refused", "failed"}) != (self.refusal_code is not None):
+            raise ValueError("a refused or failed egress carries exactly its refusal code")
+        if self.capped_by is not None and (
+            self.kind not in {"claims"} or self.settle_outcome == "settled"
+        ):
+            raise ValueError("only a settle terminal that did not settle is capped")
+        if self.inbox_truncation is not None and self.kind != "post_inbox":
+            raise ValueError("only a post_inbox terminal reports an inbox truncation")
+        return self
+
+
+class ProcedureRunBudgetDeclared(_StrictResultModel):
+    """The run's declared budget: what it admitted, and the caps in force.
+
+    ``provider_output_bytes_cap`` is present exactly for a run that planned
+    Provider occurrences.
+    """
+
+    tag: Literal["playbill-procedure-run-budget-declared-v3"] = (
+        "playbill-procedure-run-budget-declared-v3"
+    )
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
+    result_bytes_cap: int = Field(ge=1)
+    provider_output_bytes_cap: int | None = Field(default=None, ge=1)
+
+
+class ProcedureRunBudget(_StrictResultModel):
+    """The one budget grammar: declared bounds and observed high-water values."""
+
+    tag: Literal["playbill-procedure-run-budget-v3"] = "playbill-procedure-run-budget-v3"
+    declared: ProcedureRunBudgetDeclared
+    observed: ProcedureRunBudgetObserved
+
+
+ProcedureRunReceiptStatus: TypeAlias = Literal[
+    "succeeded",
+    "node_refused",
+    "operational_failed",
+    "internal_failed",
+    "halted",
+]
+
+
+class ProcedureRunReceipt(_StrictResultModel):
+    """The one public run receipt, for every run lane.
+
+    A direct run (``invocation_origin="actor"``) names no Line coordinate; a
+    Line run names its LineSpec, occurrence, deployment, acquisition policy,
+    sensitivity and mandate coordinates. A run that planned Provider
+    occurrences names its acquisition plan, selection decision and Provider
+    bindings, its durable invocation receipts and its Source Capture
+    associations; a pure run names none of them.
+
+    ``bound_coordinate.generation``, ``head_at_admission.generation`` and the
+    ``first_sequence``/``last_sequence`` journal range read SETTLEMENT ORDER.
+    ``evaluation_time``, ``occurrence_evaluation_time`` and
+    ``attribution.recorded_time`` read EVALUATION INSTANT. Every
+    ``admission_material_manifest.members[].retain_until`` and Provider budget
+    or duration field reads VALIDITY WINDOW.
+    """
+
+    tag: Literal["playbill-procedure-run-receipt-v8"] = "playbill-procedure-run-receipt-v8"
+    run_id: str
+    admission_binding_digest: str
+    semantic_replay_key_digest: str
+    semantic_result_digest: str | None
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    evaluation_time: datetime
+    validated_pins: tuple[ArtifactPin, ...]
+    admitted_inputs: tuple[dict[str, object], ...]
+    #: The reads the run made mid-run (D-R38): the same run-input records as
+    #: ``admitted_inputs``, listed apart because they are not in the run's
+    #: admission identity; their digests are in its semantic result.
+    late_reads: tuple[dict[str, object], ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    attribution: ProcedureRunAttribution
+    stream_instance_id: str
+    journal_family: str
+    stream_id: str
+    partition_id: str
+    first_sequence: int = Field(ge=1)
+    last_sequence: int = Field(ge=1)
+    record_digests: tuple[str, ...]
+    chain_head_digest: str
+    status: ProcedureRunReceiptStatus
+    terminal: ProcedureTerminal | None
+    budget: ProcedureRunBudget
+    invocation_origin: Literal["actor", "line"]
+    line_identity: ArtifactIdentity | None = None
+    line_spec_digest: str | None = None
+    occurrence_id: str | None = None
+    occurrence_evaluation_time: datetime
+    node_pin_sets: tuple[ProcedureRunNodePinSet, ...]
+    pin_set_digest: str
+    replay_input_vector: tuple[ProcedureReplayInputProjection, ...]
+    deployment_snapshot_digest: str | None = None
+    acquisition_policy_digest: str | None = None
+    selection_receipt_digest: str | None = None
+    selection_decision: ProcedureSelectionDecision | None = None
+    selection_decision_digest: str | None = None
+    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...] = ()
+    sensitivity_policy_digest: str | None = None
+    mandate_coordinate_digest: str | None = None
+    taint_labels: tuple[str, ...] = ()
+    epsilon_member: bool = False
+    admission_material_manifest: ProcedureAdmissionMaterialManifest
+    admission_material_manifest_digest: str
+    acquisition_plan_digest: str | None = None
+    exhaust_access_binding_digest: str | None = None
+    invocation_receipt_digests: tuple[str, ...] = ()
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
+
+    _digests = field_validator(
+        "admission_binding_digest",
+        "semantic_replay_key_digest",
+        "semantic_result_digest",
+        "chain_head_digest",
+        "line_spec_digest",
+        "pin_set_digest",
+        "deployment_snapshot_digest",
+        "acquisition_policy_digest",
+        "selection_receipt_digest",
+        "selection_decision_digest",
+        "sensitivity_policy_digest",
+        "mandate_coordinate_digest",
+        "admission_material_manifest_digest",
+        "acquisition_plan_digest",
+        "exhaust_access_binding_digest",
+    )(_digest)
+
+    @field_validator("record_digests")
+    @classmethod
+    def _record_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for digest in value:
+            _digest(digest)
+        return value
+
+    @field_validator("evaluation_time", "occurrence_evaluation_time")
+    @classmethod
+    def _instants(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("node_pin_sets")
+    @classmethod
+    def _node_pin_sets(
+        cls,
+        value: tuple[ProcedureRunNodePinSet, ...],
+    ) -> tuple[ProcedureRunNodePinSet, ...]:
+        node_ids = tuple(item.node_id for item in value)
+        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("receipt node pin sets must be sorted and unique")
+        return value
+
+    @field_validator("replay_input_vector")
+    @classmethod
+    def _replay_inputs(
+        cls,
+        value: tuple[ProcedureReplayInputProjection, ...],
+    ) -> tuple[ProcedureReplayInputProjection, ...]:
+        names = tuple(item.input_name for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("receipt replay inputs must be sorted and unique")
+        return value
+
+    @field_validator("resolved_provider_bindings")
+    @classmethod
+    def _bindings(
+        cls,
+        value: tuple[ProcedureProviderBinding, ...],
+    ) -> tuple[ProcedureProviderBinding, ...]:
+        node_ids = tuple(item.node_id for item in value)
+        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("receipt Provider bindings must be sorted and unique")
+        return value
+
+    @field_validator("taint_labels")
+    @classmethod
+    def _taint_labels(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("receipt taint labels must be sorted and unique")
+        return value
+
+    @field_validator("invocation_receipt_digests")
+    @classmethod
+    def _invocation_receipts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("invocation receipt digests must be unique in durable order")
+        for item in value:
+            _digest(item)
+        return value
+
+    @field_validator("source_capture_associations")
+    @classmethod
+    def _source_associations(
+        cls,
+        value: tuple[ProcedureSourceCaptureAssociation, ...],
+    ) -> tuple[ProcedureSourceCaptureAssociation, ...]:
+        keys = tuple((item.occurrence_path, item.field) for item in value)
+        if keys != tuple(
+            sorted(set(keys), key=lambda key: (key[0].encode("utf-8"), key[1].encode("utf-8")))
+        ):
+            raise ValueError(
+                "Source Capture associations must be sorted and unique by occurrence path and field"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _receipt_shape(self) -> "ProcedureRunReceipt":
+        line_fields = (
+            self.line_identity,
+            self.line_spec_digest,
+            self.occurrence_id,
+            self.deployment_snapshot_digest,
+            self.acquisition_policy_digest,
+            self.sensitivity_policy_digest,
+            self.mandate_coordinate_digest,
+        )
+        if self.invocation_origin == "line":
+            if any(value is None for value in line_fields) or self.acquisition_plan_digest is None:
+                raise ValueError("a Line receipt names every Line coordinate and its plan")
+            assert self.line_identity is not None
+            if self.line_identity.kind != "Line":
+                raise ValueError("a Line receipt requires a Line identity")
+        elif (
+            self.line_identity is not None
+            or self.line_spec_digest is not None
+            or self.occurrence_id is not None
+            or self.mandate_coordinate_digest is not None
+        ):
+            raise ValueError("a direct receipt names no Line coordinate")
+        planned = self.acquisition_plan_digest is not None
+        if planned != (self.selection_decision is not None):
+            raise ValueError("a receipt names a selection decision exactly with its plan")
+        if self.selection_decision is not None:
+            if self.selection_decision.policy_digest != self.acquisition_policy_digest:
+                raise ValueError("receipt selection decision names another acquisition policy")
+            if self.selection_decision_digest != procedure_selection_decision_digest(
+                self.selection_decision
+            ):
+                raise ValueError("receipt selection decision digest does not reproduce")
+        elif (
+            self.selection_decision_digest is not None
+            or self.resolved_provider_bindings
+            or self.invocation_receipt_digests
+            or self.source_capture_associations
+        ):
+            raise ValueError("a run without an acquisition plan names no Provider evidence")
+        if self.admission_material_manifest_digest != procedure_admission_material_digest(
+            self.admission_material_manifest
+        ):
+            raise ValueError("receipt admission material digest does not reproduce")
+        admitted_names = tuple(
+            item.get("input_name") if isinstance(item, dict) else None
+            for item in self.admitted_inputs
+        )
+        replay_names = tuple(item.input_name for item in self.replay_input_vector)
+        if admitted_names != replay_names:
+            raise ValueError("receipt admitted inputs and replay projections disagree")
+        material_names = tuple(item.input_name for item in self.admission_material_manifest.members)
+        expected_material_names = tuple(
+            name
+            for item, name in zip(self.admitted_inputs, admitted_names, strict=True)
+            if isinstance(item, dict)
+            and item.get("tag")
+            in {
+                "playbill-landed-capture-run-input-v1",
+                "playbill-exhaust-run-input-v1",
+            }
+        )
+        if material_names != expected_material_names:
+            raise ValueError("receipt material manifest does not cover Capture/exhaust inputs")
+        return self
+
+
+__all__ = [
+    "ProcedureAdmissionMaterialManifest",
+    "ProcedureSourceObservation",
+    "ProcedureAdmissionMaterialMember",
+    "ProcedureAdmissionRefusalCode",
+    "ProcedureAdmissionRefusal",
+    "ProcedureAcquisitionPlan",
+    "ProcedureBudgetBoundaryObservation",
+    "ProcedureBudgetExceededDetail",
+    "ProcedureBudgetExhausted",
+    "ProcedureBudgetRefusalDetail",
+    "ProcedureHaltTerminal",
+    "ProcedureInternalFailureCode",
+    "ProcedureInternalFailure",
+    "ProcedureJournalCoordinate",
+    "HISTORICAL_NODE_REFUSAL_CODES",
+    "ProcedureNodeRefusalCode",
+    "current_refusal_code",
+    "ProcedureNodeRefusal",
+    "ProcedureOperationalFailureCode",
+    "ProcedureOperationalFailure",
+    "ProcedureFailureCause",
+    "FAILURE_CAUSE_MESSAGE_LIMIT",
+    "failure_cause_message",
+    "strip_url_userinfo",
+    "ProcedureProviderBinding",
+    "ProcedureReplayInputProjection",
+    "ProcedureRunAttribution",
+    "ProcedureRunAttributionWithheld",
+    "ProcedureRunBudgetDeclared",
+    "ProcedureRunBudgetObserved",
+    "ProcedureRunBudget",
+    "ProcedureRunNodePinSet",
+    "ProcedureRunReceipt",
+    "ProcedureRunReceiptStatus",
+    "ProcedureRunReceiptWithheld",
+    "ProcedureSourceCaptureAssociation",
+    "ProcedureSelectionDecision",
+    "ProcedureTerminalEgressChild",
+    "ProcedureTerminalEgress",
+    "InboxPostTruncation",
+    "LineOpenProposalOutcome",
+    "ProcedureTerminal",
+    "ServedAuthorityTerm",
+    "TerminalEgressVerdict",
+    "procedure_admission_material_digest",
+    "procedure_acquisition_plan_digest",
+    "procedure_provider_bindings",
+    "procedure_selection_decision_digest",
+]

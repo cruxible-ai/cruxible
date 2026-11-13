@@ -1,0 +1,812 @@
+"""A retained trigger log makes internal fires resumable across daemon and worker restarts.
+
+Which internal Triggers exist is governed: every one is a live Trigger artifact
+aimed at an internal action, read from the instance's accepted state. In v1 an
+internal action takes a time schedule (cadence or cron) or generation acceptance; the Trigger law
+refuses any other. The log records which Trigger fired and which action it
+fired, so a worker follows an action however many Triggers schedule it.
+
+No Trigger fires retroactively. A timer fires each of its instants once, all of
+them after the acceptance of its Trigger version (a cadence first at acceptance
+plus one interval, a successor schedule from its own acceptance), and none
+before the daemon began listening: instants that pass while no daemon runs are
+skipped, never fired late. A retired Trigger stops.
+
+Deadlines are not Triggers. A worker schedules its own (``next.expire``) as an
+operational refresh signal; they fire into the same log, under their action and
+with no Trigger.
+
+Firing and advancing a timer commit together. Unlike findings projections this
+store is never rebuilt or discarded: it is the operational authority for which
+fires happened. Readers seek by sequence and may retain their own resume cursor.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections import OrderedDict
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.triggers import (
+    INTERNAL_ACTIONS,
+    RUNBOOK_FIRE_PREFIX,
+    AcceptedTrigger,
+    GenerationAcceptedSchedule,
+    Trigger,
+    TriggerSchedule,
+    runbook_fire_key,
+    schedule_is_timed,
+    trigger_digest,
+    trigger_path,
+)
+from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.triggers.cadence import timer_instants
+
+_SCHEMA = """
+CREATE TABLE events (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+ action TEXT NOT NULL, trigger_id TEXT, due_at TEXT NOT NULL, fired_at TEXT NOT NULL,
+ occurrence TEXT
+) STRICT;
+CREATE INDEX events_by_action ON events(action,sequence);
+CREATE UNIQUE INDEX events_once ON events(trigger_id,occurrence) WHERE occurrence IS NOT NULL;
+CREATE TABLE timers (trigger_id TEXT PRIMARY KEY, covered_until TEXT NOT NULL) STRICT;
+CREATE TABLE deadlines (name TEXT PRIMARY KEY, due_at TEXT NOT NULL) STRICT;
+CREATE TRIGGER events_no_update BEFORE UPDATE ON events
+ BEGIN SELECT RAISE(ABORT,'trigger events are append-only'); END;
+CREATE TRIGGER events_no_delete BEFORE DELETE ON events
+ BEGIN SELECT RAISE(ABORT,'trigger events are append-only'); END;
+CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
+ listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
+"""
+_VERSION = 6
+# Each Runbook fire key's progress, retained beside its fires and never rebuilt
+# (D-R36): ``latest`` is the newest fire, kept as fires are recorded so a poll
+# reads one row per Runbook instead of the fire history; ``started`` is the fire
+# a run is serving, claimed before any step runs; ``covered`` the fire whose run
+# finished. A fire claimed and never finished is resumed as that same fire.
+_RUNBOOK_FIRES_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS runbook_fires (fire_key TEXT PRIMARY KEY, "
+    "latest INTEGER NOT NULL, started INTEGER NOT NULL DEFAULT 0, "
+    "covered INTEGER NOT NULL DEFAULT 0, plan_digest TEXT, plan BLOB, "
+    "CHECK((plan IS NULL) = (plan_digest IS NULL))) STRICT",
+    "CREATE INDEX IF NOT EXISTS runbook_fires_pending ON runbook_fires(fire_key) "
+    "WHERE latest>covered",
+    # Each Line step of a claimed fire, recorded before it runs: the exact Line
+    # occurrence it is admitted as, so a replay finds that admission whatever the
+    # Line's occurrence epoch has become since (D-R36).
+    "CREATE TABLE IF NOT EXISTS runbook_steps (fire_key TEXT NOT NULL, fire INTEGER NOT NULL, "
+    "step INTEGER NOT NULL, target TEXT NOT NULL, occurrence_id TEXT NOT NULL, "
+    "PRIMARY KEY(fire_key, fire, step)) STRICT",
+)
+# A kit add waiting on provider installs fires on the acceptance that lands the
+# last of them: one row per kit, one wait per Provider path still to activate.
+# Retained operational authority beside the fires, never rebuilt. The state
+# index lets a blocked-only read (``next``) and the startup waiting-row pass
+# select their rows directly, instead of scanning every kit-resume row.
+_KIT_RESUME_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS kit_resumes (kit_id TEXT PRIMARY KEY, version TEXT NOT NULL, "
+    "request_digest TEXT NOT NULL, actor_id TEXT NOT NULL, recorded_at TEXT NOT NULL, "
+    "recorded_head TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN "
+    "('waiting','proposed','blocked')), proposal_id TEXT, detail TEXT, source TEXT) STRICT",
+    "CREATE TABLE IF NOT EXISTS kit_resume_waits (provider_path TEXT NOT NULL, "
+    "kit_id TEXT NOT NULL, provider_id TEXT NOT NULL, "
+    "PRIMARY KEY(provider_path, kit_id)) STRICT",
+    "CREATE INDEX IF NOT EXISTS kit_resume_waits_by_kit ON kit_resume_waits(kit_id)",
+    "CREATE INDEX IF NOT EXISTS kit_resumes_by_state ON kit_resumes(state)",
+)
+
+
+@dataclass(frozen=True)
+class InternalTrigger:
+    """One live Trigger's schedule toward one internal action, from its acceptance."""
+
+    trigger: str
+    action: str
+    schedule: TriggerSchedule
+    #: When this Trigger version was accepted: it fires nothing before then.
+    accepted_at: datetime
+    accepted_generation: int | None = None
+    version: str = ""
+
+    @classmethod
+    def of(
+        cls, trigger: Trigger, *, accepted_at: datetime, accepted_generation: int | None = None
+    ) -> InternalTrigger:
+        # A Runbook-aimed Trigger fires into the same log under its Runbook's
+        # fire key; the Runbook consumer, not an action worker, follows it.
+        action = trigger.action
+        if action is None and trigger.runbook is not None:
+            action = runbook_fire_key(trigger.runbook.name)
+        if action is None:
+            raise ValueError("an internal Trigger fires an internal action or a Runbook")
+        return cls(
+            trigger.identity.qualified,
+            action,
+            trigger.schedule,
+            accepted_at,
+            accepted_generation,
+            trigger_digest(trigger).tagged,
+        )
+
+
+@dataclass(frozen=True)
+class TriggerEvent:
+    sequence: int
+    action: str
+    #: The Trigger that fired, or None for a worker's own deadline.
+    trigger: str | None
+    due_at: datetime
+    fired_at: datetime
+
+
+@dataclass(frozen=True)
+class _Fire:
+    action: str
+    trigger: str | None
+    due: datetime
+    occurrence: str | None = None
+
+
+def journal_path(instance: Any) -> Path:
+    return Path(instance.root) / str(instance.descriptor.storage.exhaust) / "triggers.sqlite3"
+
+
+# Per instance root: the accepted generation last read and its live internal Triggers.
+_TRIGGERS: OrderedDict[str, tuple[str, tuple[InternalTrigger, ...]]] = OrderedDict()
+_TRIGGERS_CAPACITY = 64
+
+
+def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
+    """Every live Trigger aimed at an internal action or a Runbook at the accepted head.
+
+    Read once per accepted generation: the Trigger set only changes when a new
+    generation is accepted, so an idle tick never opens the projection.
+    """
+
+    coordinate = instance.accepted_coordinate()
+    key = str(instance.root)
+    cached = memo_get(_TRIGGERS, key)
+    if cached is not None and cached[0] == coordinate.generation_root:
+        return cached[1]
+    from cruxible_core.service.procedures.procedure_runs import trigger_accepted_at
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        identities = projection.typed.connection.execute(
+            "SELECT identity FROM triggers WHERE target_kind IN ('action','runbook') "
+            "AND lifecycle='live' ORDER BY identity"
+        ).fetchall()
+        accepted = [projection.typed.source(identity) for (identity,) in identities]
+    triggers = tuple(
+        InternalTrigger.of(
+            trigger,
+            accepted_generation=trigger_generation(instance, trigger),
+            accepted_at=trigger_accepted_at(
+                instance,
+                AcceptedTrigger(
+                    path=trigger_path(trigger.identity.name),
+                    trigger=trigger,
+                    artifact_digest=trigger_digest(trigger).tagged,
+                ),
+            ),
+        )
+        for trigger in accepted
+    )
+    memo_put(_TRIGGERS, key, (coordinate.generation_root, triggers), capacity=_TRIGGERS_CAPACITY)
+    return triggers
+
+
+@contextmanager
+def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection | None]:
+    path = journal_path(instance)
+    if not create and not path.exists():
+        yield None
+        return
+    if create:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    connection = (
+        sqlite3.connect(path, timeout=30)
+        if create
+        else sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+    )
+    try:
+        if create:
+            connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("BEGIN IMMEDIATE" if create else "BEGIN")
+        (version,) = connection.execute("PRAGMA user_version").fetchone()
+        if (
+            version == 0
+            and not create
+            and connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is None
+        ):
+            # A journal whose creator has not committed its schema yet: none, to a reader.
+            yield None
+            return
+        if version == 0 and create:
+            if connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
+                raise ValueError("Unrecognized trigger journal; retain it for operator repair")
+            # executescript would commit the writer lock before creating the schema.
+            statement = ""
+            for line in _SCHEMA.splitlines(keepends=True):
+                statement += line
+                if sqlite3.complete_statement(statement):
+                    connection.execute(statement)
+                    statement = ""
+            for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
+                connection.execute(table)
+            connection.execute(f"PRAGMA user_version={_VERSION}")
+        elif version in (2, 3, 4, 5):
+            # A reader of an older journal sees what it holds; the next writer
+            # brings it forward one step at a time.
+            if create:
+                if version == 2:
+                    connection.execute(
+                        "CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, "
+                        "version TEXT NOT NULL, listening_since TEXT NOT NULL, "
+                        "covered INTEGER NOT NULL) STRICT"
+                    )
+                # No released journal before v6 holds a Runbook fire: Runbook
+                # progress arrives whole with v6 (a v5 journal is unreleased
+                # development data, whose runbook_fires may lack the claimed plan
+                # and every step record). One that does hold a fire is refused,
+                # never guessed at.
+                if connection.execute(
+                    "SELECT 1 FROM events WHERE action>=? AND action<? LIMIT 1",
+                    _RUNBOOK_KEY_RANGE,
+                ).fetchone():
+                    raise TriggerJournalMigrationRefused(
+                        f"A version {version} trigger journal holds Runbook fires, which no "
+                        "released journal before version 6 can: their progress is unknown. "
+                        "Retain it for operator repair; the journal is left as it is."
+                    )
+                # A v5 runbook_fires holds no row here (no Runbook fire exists), so
+                # it is replaced by the current shape rather than altered.
+                connection.execute("DROP TABLE IF EXISTS runbook_fires")
+                for table in (*_KIT_RESUME_SCHEMA, *_RUNBOOK_FIRES_SCHEMA):
+                    connection.execute(table)
+                connection.execute(f"PRAGMA user_version={_VERSION}")
+        elif version != _VERSION:
+            raise ValueError("Unsupported trigger journal; retain it for operator repair")
+        yield connection
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@contextmanager
+def retained_records(instance: Any, *, write: bool) -> Iterator[sqlite3.Connection | None]:
+    """The journal's connection, for a record retained beside the fires (kit resumes).
+
+    ``write`` opens it for writing, creating or upgrading it, in one immediate
+    transaction committed on exit; otherwise it is read only, and None when
+    there is no journal yet.
+    """
+
+    with _open(instance, create=write) as connection:
+        yield connection
+
+
+def _instant(value: str) -> datetime:
+    instant = parse_datetime(value)
+    assert instant is not None
+    return instant
+
+
+def trigger_events(
+    instance: Any, *, after: int = 0, action: str | None = None, limit: int = 1024
+) -> tuple[TriggerEvent, ...]:
+    with _open(instance) as connection:
+        if connection is None:
+            return ()
+        rows = connection.execute(
+            "SELECT sequence,action,trigger_id,due_at,fired_at FROM events WHERE sequence>? "
+            + ("" if action is None else "AND action=? ")
+            + "ORDER BY sequence LIMIT ?",
+            (after, limit) if action is None else (after, action, limit),
+        ).fetchall()
+    return tuple(
+        TriggerEvent(seq, fired_action, trigger, _instant(due), _instant(fired))
+        for seq, fired_action, trigger, due, fired in rows
+    )
+
+
+def latest_sequence(instance: Any, *, action: str) -> int:
+    with _open(instance) as connection:
+        if connection is None:
+            return 0
+        return int(
+            connection.execute(
+                "SELECT coalesce(max(sequence),0) FROM events WHERE action=?", (action,)
+            ).fetchone()[0]
+        )
+
+
+_RUNBOOK_KEY_RANGE = (
+    RUNBOOK_FIRE_PREFIX,
+    RUNBOOK_FIRE_PREFIX[:-1] + chr(ord(RUNBOOK_FIRE_PREFIX[-1]) + 1),
+)
+
+
+class TriggerJournalMigrationRefused(ValueError):
+    """An older trigger journal holds what its version cannot have recorded."""
+
+    code = "cruxible.trigger_journal.migration_refused"
+    error_code = "trigger_journal_migration_refused"
+
+
+@dataclass(frozen=True)
+class RunbookFireProgress:
+    fire_key: str
+    latest: int
+    started: int
+    covered: int
+    #: The claimed fire's exact Runbook (its canonical artifact bytes and digest),
+    #: recorded with the claim before any step runs; a replay runs this plan.
+    plan_digest: str | None = None
+    plan: bytes | None = None
+
+
+def pending_runbook_fires(instance: Any) -> tuple[RunbookFireProgress, ...]:
+    """Every Runbook fire key with a fire its runs have not finished.
+
+    One seek of the partial pending index: an idle poll reads no row, and never
+    the fire history, however many fires the journal retains.
+    """
+
+    with _open(instance) as connection:
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 6:
+            return ()
+        rows = connection.execute(
+            "SELECT fire_key,latest,started,covered FROM runbook_fires "
+            "INDEXED BY runbook_fires_pending WHERE latest>covered ORDER BY fire_key"
+        ).fetchall()
+    return tuple(RunbookFireProgress(str(a), int(b), int(c), int(d)) for a, b, c, d in rows)
+
+
+def claim_runbook_fire(
+    instance: Any, fire_key: str, *, plan: Callable[[], tuple[str, bytes]]
+) -> RunbookFireProgress | None:
+    """Claim the fire a run serves, with its exact plan, durably, before any step runs.
+
+    A fire claimed and never finished (a crash mid-run) is returned as that
+    same fire WITH the plan recorded when it was claimed, so its replay runs
+    the same ordered steps whatever the Runbook has become since. Otherwise
+    the newest fire is claimed, folding every fire since the last finished
+    run, and ``plan()`` (the current Runbook's digest and canonical bytes) is
+    recorded with it in the same transaction.
+    """
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        row = connection.execute(
+            "SELECT latest,started,covered,plan_digest,plan FROM runbook_fires WHERE fire_key=?",
+            (fire_key,),
+        ).fetchone()
+        if row is None or int(row[0]) <= int(row[2]):
+            return None
+        latest, started, covered = (int(item) for item in row[:3])
+        plan_digest, plan_bytes = row[3], row[4]
+        if started <= covered or plan_bytes is None:
+            started = latest if started <= covered else started
+            plan_digest, plan_bytes = plan()
+            connection.execute(
+                "UPDATE runbook_fires SET started=?,plan_digest=?,plan=? WHERE fire_key=?",
+                (started, plan_digest, plan_bytes, fire_key),
+            )
+        return RunbookFireProgress(
+            fire_key, latest, started, covered, str(plan_digest), bytes(plan_bytes)
+        )
+
+
+def runbook_step_record(
+    instance: Any, fire_key: str, fire: int, step: int
+) -> tuple[str, str] | None:
+    """The (target, Line occurrence id) a claimed fire's step was recorded as, or None."""
+
+    with _open(instance) as connection:
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 6:
+            return None
+        row = connection.execute(
+            "SELECT target,occurrence_id FROM runbook_steps WHERE fire_key=? AND fire=? AND step=?",
+            (fire_key, fire, step),
+        ).fetchone()
+    return None if row is None else (str(row[0]), str(row[1]))
+
+
+def record_runbook_step(
+    instance: Any, fire_key: str, fire: int, step: int, *, target: str, occurrence_id: str
+) -> None:
+    """Record, before it runs, the exact Line occurrence a claimed step is admitted as.
+
+    Replaced only by the caller when no admission exists under the recorded one
+    (nothing ran), so a replay always finds the occurrence that may have run.
+    """
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute(
+            "INSERT INTO runbook_steps VALUES (?,?,?,?,?) ON CONFLICT(fire_key,fire,step) "
+            "DO UPDATE SET target=excluded.target,occurrence_id=excluded.occurrence_id",
+            (fire_key, fire, step, target, occurrence_id),
+        )
+
+
+def finish_runbook_fire(instance: Any, fire_key: str, fire: int) -> None:
+    """Record that the run serving ``fire`` finished: its fire and every one before it."""
+
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute(
+            "UPDATE runbook_fires SET covered=max(covered,?) WHERE fire_key=?", (fire, fire_key)
+        )
+
+
+def fire_runbook_action(
+    instance: Any, *, action: str, trigger: str, occurrence: str, now: datetime
+) -> int:
+    """Fire one Runbook action step once per occurrence: a replay returns the first fire.
+
+    The occurrence names the fire, the step position and the action; a receipt
+    is reused only for exactly that action, never for another at the position.
+    """
+
+    if action not in INTERNAL_ACTIONS:
+        raise ValueError(f"{action!r} is not a registered internal action")
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        row = connection.execute(
+            "SELECT sequence,action FROM events WHERE trigger_id=? AND occurrence=?",
+            (trigger, occurrence),
+        ).fetchone()
+        if row is not None:
+            if str(row[1]) != action:
+                raise ValueError(
+                    f"Runbook occurrence {occurrence!r} fired {row[1]!r}, not {action!r}"
+                )
+            return int(row[0])
+        cursor = connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) VALUES (?,?,?,?,?)",
+            (action, trigger, format_datetime(now), format_datetime(now), occurrence),
+        )
+        assert cursor.lastrowid is not None
+        return int(cursor.lastrowid)
+
+
+def fire_manual(instance: Any, *, action: str, principal: str, now: datetime) -> TriggerEvent:
+    """Append one manual fire of a registered internal action, by hand.
+
+    The event carries no Trigger (``trigger_id`` is NULL, exactly as a
+    worker's own deadline fires) but its occurrence records that it was
+    manual and who asked for it, so every part's own ``due()`` -- which reads
+    this journal by action name alone, never by whether a Trigger exists --
+    picks it up exactly as it would a scheduled fire. Every manual fire is
+    its own occurrence (never coalesced), unlike a timer instant.
+    """
+
+    if action not in INTERNAL_ACTIONS:
+        raise ValueError(f"{action!r} is not a registered internal action")
+    occurrence = f"manual:{principal}:{uuid4().hex}"
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        cursor = connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) VALUES (?,?,?,?,?)",
+            (action, None, format_datetime(now), format_datetime(now), occurrence),
+        )
+        assert cursor.lastrowid is not None
+        return TriggerEvent(cursor.lastrowid, action, None, now, now)
+
+
+def _deadline_name(name: str) -> str:
+    if not name or name in INTERNAL_ACTIONS:
+        raise ValueError("Deadline needs a nonempty name distinct from Trigger actions")
+    return name
+
+
+def schedule_deadline(instance: Any, name: str, at: datetime) -> None:
+    _deadline_name(name)
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute(
+            "INSERT INTO deadlines VALUES (?,?) "
+            "ON CONFLICT(name) DO UPDATE SET due_at=excluded.due_at",
+            (name, format_datetime(at)),
+        )
+
+
+def cancel_deadline(instance: Any, name: str) -> None:
+    """Withdraw a worker's bound when the state it now holds has none."""
+
+    _deadline_name(name)
+    with _open(instance) as connection:
+        if (
+            connection is None
+            or connection.execute("SELECT 1 FROM deadlines WHERE name=?", (name,)).fetchone()
+            is None
+        ):
+            return
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute("DELETE FROM deadlines WHERE name=?", (name,))
+
+
+def _due_timers(
+    connection: sqlite3.Connection | None,
+    *,
+    now: datetime,
+    listening_since: datetime,
+    triggers: Sequence[InternalTrigger],
+) -> list[_Fire]:
+    """Every timer instant and deadline due at `now`.
+
+    A timer fires each of its instants once, none before its acceptance and none
+    before this evaluator started listening: instants that passed while no
+    daemon was running are skipped, never fired late as a catch-up.
+    """
+
+    fires: list[_Fire] = []
+    covered = (
+        {}
+        if connection is None
+        else dict(connection.execute("SELECT trigger_id,covered_until FROM timers").fetchall())
+    )
+    for item in triggers:
+        if isinstance(item.schedule, GenerationAcceptedSchedule):
+            continue
+        if not schedule_is_timed(item.schedule):
+            # Capture schedules remain outside the internal-action journal.
+            raise ValueError(f"{item.trigger} fires an internal action on a non-time schedule")
+        after = max(item.accepted_at, listening_since - timedelta(microseconds=1))
+        if item.trigger in covered:
+            after = max(after, _instant(covered[item.trigger]))
+        fires.extend(
+            _Fire(item.action, item.trigger, instant, occurrence=f"tick:{format_datetime(instant)}")
+            for instant in timer_instants(
+                item.schedule, accepted_at=item.accepted_at, after=after, through=now
+            )
+        )
+    if connection is not None:
+        fires.extend(
+            _Fire(name, None, _instant(due))
+            for name, due in connection.execute(
+                "SELECT name,due_at FROM deadlines WHERE due_at<=?", (format_datetime(now),)
+            ).fetchall()
+        )
+    return fires
+
+
+def _fired(connection: sqlite3.Connection, trigger: str, occurrence: str) -> bool:
+    return (
+        connection.execute(
+            "SELECT 1 FROM events WHERE trigger_id=? AND occurrence=?", (trigger, occurrence)
+        ).fetchone()
+        is not None
+    )
+
+
+def _record(
+    connection: sqlite3.Connection, fires: list[_Fire], *, now: datetime
+) -> list[TriggerEvent]:
+    fired: list[TriggerEvent] = []
+    for fire in sorted(
+        fires, key=lambda item: (item.due, item.action, item.trigger or "", item.occurrence or "")
+    ):
+        if fire.trigger is None:
+            connection.execute("DELETE FROM deadlines WHERE name=?", (fire.action,))
+        elif _fired(connection, fire.trigger, fire.occurrence or ""):
+            continue
+        cursor = connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) VALUES (?,?,?,?,?)",
+            (
+                fire.action,
+                fire.trigger,
+                format_datetime(fire.due),
+                format_datetime(now),
+                fire.occurrence,
+            ),
+        )
+        assert cursor.lastrowid is not None
+        if fire.action.startswith(RUNBOOK_FIRE_PREFIX):
+            connection.execute(
+                "INSERT INTO runbook_fires(fire_key,latest) VALUES (?,?) "
+                "ON CONFLICT(fire_key) DO UPDATE SET latest=excluded.latest",
+                (fire.action, cursor.lastrowid),
+            )
+        fired.append(TriggerEvent(cursor.lastrowid, fire.action, fire.trigger, fire.due, now))
+    return fired
+
+
+def trigger_generation(instance: Any, trigger: Trigger) -> int:
+    """The accepted sequence of this exact Trigger version."""
+
+    with instance.accepted_history_reader() as history:
+        occurrence = history.artifact(
+            trigger_digest(trigger).tagged, identity=trigger.identity.qualified
+        )
+        if occurrence is None:
+            raise ValueError("Trigger version has no accepted occurrence")
+        return int(occurrence.occurrence_sequence)
+
+
+class GenerationLookupUnbounded(ValueError):
+    """A bounded time lookup met out-of-order acceptance times and did not scan."""
+
+
+#: Set by a caller whose lookup must stay O(log generations) -- the automatic
+#: restart-gap check: out-of-order acceptance times then end the lookup
+#: inconclusive (``GenerationLookupUnbounded``) instead of scanning history.
+BOUNDED_GENERATION_LOOKUP: ContextVar[bool] = ContextVar("bounded_generation_lookup", default=False)
+
+
+@contextmanager
+def bounded_generation_lookups() -> Iterator[None]:
+    """Within this block, ``generation_at`` never falls back to a linear scan."""
+
+    token = BOUNDED_GENERATION_LOOKUP.set(True)
+    try:
+        yield
+    finally:
+        BOUNDED_GENERATION_LOOKUP.reset(token)
+
+
+def generation_at(instance: Any, instant: datetime) -> int:
+    """Bisect a matching range, scanning backwards when a bracket is out of order.
+
+    Candidate timestamp validation checks canonical spelling, not parent order
+    (cruxible_client.contracts.candidates.validate_candidate_timestamp). A
+    reversed bracket therefore needs the latest-sequence linear lookup, never
+    an assertion on the tick path. Daemon listeners normally supply their exact
+    starting sequence without this time lookup. Inside
+    ``bounded_generation_lookups`` the linear lookup is refused instead.
+    """
+
+    with instance.accepted_history_reader() as history:
+        lower, upper = 0, int(history.sequence)
+
+        def scan_backwards() -> int:
+            if BOUNDED_GENERATION_LOOKUP.get():
+                raise GenerationLookupUnbounded(
+                    "accepted generations are out of acceptance-time order; a bounded "
+                    "lookup does not scan them"
+                )
+            for sequence in range(int(history.sequence), -1, -1):
+                if (
+                    instance.accepted_evaluation_time(history.generation(sequence).git_oid)
+                    <= instant
+                ):
+                    return sequence
+            return 0
+
+        lower_time = instance.accepted_evaluation_time(history.generation(lower).git_oid)
+        upper_time = instance.accepted_evaluation_time(history.generation(upper).git_oid)
+        if lower_time > upper_time:
+            return scan_backwards()
+        if instant < lower_time:
+            return 0
+        if instant >= upper_time:
+            return upper
+        while lower + 1 < upper:
+            middle = (lower + upper) // 2
+            middle_time = instance.accepted_evaluation_time(history.generation(middle).git_oid)
+            if not lower_time <= middle_time <= upper_time:
+                return scan_backwards()
+            if middle_time <= instant:
+                lower, lower_time = middle, middle_time
+            else:
+                upper, upper_time = middle, middle_time
+        return lower
+
+
+def _generation_work(
+    connection: sqlite3.Connection | None,
+    instance: Any,
+    *,
+    triggers: Sequence[InternalTrigger],
+    listening_since: datetime,
+    listening_generation: int | None,
+) -> tuple[list[_Fire], list[tuple[Any, ...]]]:
+    items = [item for item in triggers if isinstance(item.schedule, GenerationAcceptedSchedule)]
+    if not items:
+        return [], []
+    with instance.accepted_history_reader() as history:
+        head = history.sequence
+        head_time = instance.accepted_evaluation_time(history.generation(head).git_oid)
+    rows = (
+        {}
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        else {
+            name: (version, listener, covered)
+            for name, version, listener, covered in connection.execute("SELECT * FROM generations")
+        }
+    )
+    fires, updates = [], []
+    listener = format_datetime(listening_since)
+    for item in items:
+        version = item.version or format_datetime(item.accepted_at)
+        previous = rows.get(item.trigger)
+        if previous is None or previous[:2] != (version, listener):
+            covered = max(
+                item.accepted_generation
+                if item.accepted_generation is not None
+                else generation_at(instance, item.accepted_at),
+                listening_generation
+                if listening_generation is not None
+                else generation_at(instance, listening_since),
+            )
+        else:
+            covered = previous[2]
+        if head > covered:
+            fires.append(
+                _Fire(item.action, item.trigger, head_time, f"generation:{version}:{head}")
+            )
+        if previous != (version, listener, head):
+            updates.append((item.trigger, version, listener, head))
+    return fires, updates
+
+
+def evaluate_triggers(
+    instance: Any,
+    *,
+    now: datetime,
+    listening_since: datetime,
+    triggers: Sequence[InternalTrigger] | None = None,
+    listening_generation: int | None = None,
+) -> tuple[TriggerEvent, ...]:
+    """Fire each timer instant and due deadline once.
+
+    ``listening_since`` is when this evaluator (the daemon's consumer runner)
+    began firing: timer instants before it passed while nothing was listening
+    and are skipped. ``triggers`` defaults to the live internal Triggers at the
+    instance's accepted head.
+    """
+
+    if triggers is None:
+        triggers = internal_triggers(instance)
+    with _open(instance) as connection:
+        generation_fires, generation_updates = _generation_work(
+            connection,
+            instance,
+            triggers=triggers,
+            listening_since=listening_since,
+            listening_generation=listening_generation,
+        )
+        if not (
+            _due_timers(connection, now=now, listening_since=listening_since, triggers=triggers)
+            or generation_fires
+            or generation_updates
+        ):
+            return ()
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        # Recheck under the writer lock: another evaluator may have fired, or
+        # a deadline may have been replaced since the read-only due check.
+        fires = _due_timers(connection, now=now, listening_since=listening_since, triggers=triggers)
+        generation_fires, generation_updates = _generation_work(
+            connection,
+            instance,
+            triggers=triggers,
+            listening_since=listening_since,
+            listening_generation=listening_generation,
+        )
+        fires.extend(generation_fires)
+        connection.executemany(
+            "INSERT INTO generations VALUES (?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET "
+            "version=excluded.version,listening_since=excluded.listening_since,covered=excluded.covered",
+            generation_updates,
+        )
+        for item in triggers:
+            if isinstance(item.schedule, GenerationAcceptedSchedule):
+                continue
+            connection.execute(
+                "INSERT INTO timers VALUES (?,?) "
+                "ON CONFLICT(trigger_id) DO UPDATE SET covered_until=excluded.covered_until",
+                (item.trigger, format_datetime(now)),
+            )
+        return tuple(_record(connection, fires, now=now))

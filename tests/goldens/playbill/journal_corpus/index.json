@@ -1,0 +1,291 @@
+{
+  "head_public_key": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "negative": [
+    {
+      "fixture_id": "export-missing-segment",
+      "law_category": "missing_segment",
+      "path": "negative/export-missing-segment.json",
+      "refusal_stage": "parse",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-reordered-segments",
+      "law_category": "reordered_segments",
+      "path": "negative/export-reordered-segments.json",
+      "refusal_stage": "parse",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-overlapping-segments",
+      "law_category": "overlapping_segments",
+      "path": "negative/export-overlapping-segments.json",
+      "refusal_stage": "parse",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-duplicated-record",
+      "law_category": "duplicated_record",
+      "path": "negative/export-duplicated-record.json",
+      "refusal_stage": "import",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-missing-record",
+      "law_category": "missing_record",
+      "path": "negative/export-missing-record.json",
+      "refusal_stage": "import",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-forked-chain",
+      "law_category": "forked_chain",
+      "path": "negative/export-forked-chain.json",
+      "refusal_stage": "import",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-unknown-boundary-rule",
+      "law_category": "bad_boundary",
+      "path": "negative/export-unknown-boundary-rule.json",
+      "refusal_stage": "parse",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-false-oversized-claim",
+      "law_category": "bad_boundary",
+      "path": "negative/export-false-oversized-claim.json",
+      "refusal_stage": "parse",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-tampered-head-signature",
+      "law_category": "tampered_manifest",
+      "path": "negative/export-tampered-head-signature.json",
+      "refusal_stage": "import",
+      "shape": "playbill-journal-export-bundle-v1"
+    },
+    {
+      "fixture_id": "export-tampered-head-vector",
+      "law_category": "tampered_manifest",
+      "path": "negative/export-tampered-head-vector.json",
+      "refusal_stage": "parse",
+      "shape": "playbill-journal-export-bundle-v1"
+    }
+  ],
+  "positive": [
+    {
+      "expectations": {
+        "identity_digest": "sha256:843a26d3c44063cd1796e00a3a63aab761a5df9d5bc8bc9435ee835aed83ed93"
+      },
+      "path": "vectors/stream-identity-alpha.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-stream-identity-v1",
+      "vector_id": "stream-identity-alpha"
+    },
+    {
+      "expectations": {
+        "identity_digest": "sha256:e367d19662b2d488b1636d7fa8c8221ea7c38f0bcf781e43973ddceac96b2841"
+      },
+      "path": "vectors/stream-identity-beta.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-stream-identity-v1",
+      "vector_id": "stream-identity-beta"
+    },
+    {
+      "expectations": {
+        "record_digest": "sha256:ac30424af3d85c34b9f646148bc81fd2063c72dfbca901f47c7bb75b74a8786d",
+        "sequence": 0
+      },
+      "path": "vectors/partition-head-genesis.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-partition-head-v1",
+      "vector_id": "partition-head-genesis"
+    },
+    {
+      "expectations": {
+        "record_digest": "sha256:20185b0a4451a61add101b10e58dcff3de8b16e65fa3b349bdcd7f78c3620026",
+        "sequence": 3
+      },
+      "path": "vectors/partition-head-alpha-a-3.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-partition-head-v1",
+      "vector_id": "partition-head-alpha-a-3"
+    },
+    {
+      "expectations": {
+        "partition_count": 2,
+        "vector_digest": "sha256:be37e69165af0bf08624b3412c478ad18a5e973a88cee02aac1c4ec3e958a08a"
+      },
+      "path": "vectors/head-vector-two-partitions.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-head-vector-v1",
+      "vector_id": "head-vector-two-partitions"
+    },
+    {
+      "expectations": {
+        "partition_heads": [
+          {
+            "instance_id": "inst-cj0-conformance",
+            "journal_family": "procedure-exhaust-v1",
+            "partition_id": "partition-a",
+            "record_digest": "sha256:20185b0a4451a61add101b10e58dcff3de8b16e65fa3b349bdcd7f78c3620026",
+            "sequence": 3,
+            "stream_id": "cloud-cj0-alpha"
+          },
+          {
+            "instance_id": "inst-cj0-conformance",
+            "journal_family": "procedure-exhaust-v1",
+            "partition_id": "partition-b",
+            "record_digest": "sha256:d9e00e4bf72bc8e4167a069c1a6c5642995e39ce4399d2d7123efe829ead8688",
+            "sequence": 2,
+            "stream_id": "cloud-cj0-alpha"
+          }
+        ],
+        "signer_id": "cloud-cj0-journal-home",
+        "signing_key_id": "cloud-cj0-journal-head-key",
+        "signing_role": "journal_head"
+      },
+      "path": "vectors/head-manifest-two-partitions.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-head-manifest-v1",
+      "vector_id": "head-manifest-two-partitions"
+    },
+    {
+      "expectations": {
+        "expected_head_digest": "sha256:20185b0a4451a61add101b10e58dcff3de8b16e65fa3b349bdcd7f78c3620026",
+        "first_sequence": 1,
+        "last_sequence": 3
+      },
+      "path": "vectors/journal-range-alpha-a-1-3.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-range-v1",
+      "vector_id": "journal-range-alpha-a-1-3"
+    },
+    {
+      "expectations": {
+        "record_digest": "sha256:96730568a7b45083f020ef61825074ed0c3228ac7a0f4e8e559f7f47e3a1ba93",
+        "sequence": 1
+      },
+      "path": "vectors/stored-record-alpha-a-1.json",
+      "prerequisites": [],
+      "shape": "playbill-stored-procedure-journal-record-v1",
+      "vector_id": "stored-record-alpha-a-1"
+    },
+    {
+      "expectations": {
+        "boundary_rule": "sequence-bucket-64-max-1048576-v1",
+        "partition_heads": [
+          {
+            "instance_id": "inst-cj0-conformance",
+            "journal_family": "procedure-exhaust-v1",
+            "partition_id": "partition-a",
+            "record_digest": "sha256:20185b0a4451a61add101b10e58dcff3de8b16e65fa3b349bdcd7f78c3620026",
+            "sequence": 3,
+            "stream_id": "cloud-cj0-alpha"
+          }
+        ],
+        "record_count": 3,
+        "segment_count": 1
+      },
+      "path": "vectors/export-alpha-a-1-3.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-export-bundle-v1",
+      "vector_id": "export-alpha-a-1-3"
+    },
+    {
+      "expectations": {
+        "boundary_rule": "sequence-bucket-64-max-1048576-v1",
+        "partition_heads": [
+          {
+            "instance_id": "inst-cj0-conformance",
+            "journal_family": "procedure-exhaust-v1",
+            "partition_id": "partition-a",
+            "record_digest": "sha256:73492c764f428792f9eefe84410f49ea971ad64c8e0fbe274665a407c5e8acb6",
+            "sequence": 6,
+            "stream_id": "cloud-cj0-alpha"
+          }
+        ],
+        "record_count": 3,
+        "segment_count": 1
+      },
+      "path": "vectors/export-alpha-a-4-6.json",
+      "prerequisites": [
+        "export-alpha-a-1-3"
+      ],
+      "shape": "playbill-journal-export-bundle-v1",
+      "vector_id": "export-alpha-a-4-6"
+    },
+    {
+      "expectations": {
+        "boundary_rule": "sequence-bucket-64-max-1048576-v1",
+        "partition_heads": [
+          {
+            "instance_id": "inst-cj0-conformance",
+            "journal_family": "procedure-exhaust-v1",
+            "partition_id": "partition-a",
+            "record_digest": "sha256:20185b0a4451a61add101b10e58dcff3de8b16e65fa3b349bdcd7f78c3620026",
+            "sequence": 3,
+            "stream_id": "cloud-cj0-alpha"
+          },
+          {
+            "instance_id": "inst-cj0-conformance",
+            "journal_family": "procedure-exhaust-v1",
+            "partition_id": "partition-b",
+            "record_digest": "sha256:d9e00e4bf72bc8e4167a069c1a6c5642995e39ce4399d2d7123efe829ead8688",
+            "sequence": 2,
+            "stream_id": "cloud-cj0-alpha"
+          }
+        ],
+        "record_count": 5,
+        "segment_count": 2
+      },
+      "path": "vectors/export-two-partitions.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-export-bundle-v1",
+      "vector_id": "export-two-partitions"
+    },
+    {
+      "expectations": {
+        "boundary_rule": "sequence-bucket-64-max-1048576-v1",
+        "partition_heads": [
+          {
+            "instance_id": "inst-cj0-conformance",
+            "journal_family": "procedure-exhaust-v1",
+            "partition_id": "partition-c",
+            "record_digest": "sha256:0e7c6f7ef8742bc966632b6679907e29e7d47c222c6ab749282b7b5bb87e6aa8",
+            "sequence": 65,
+            "stream_id": "cloud-cj0-beta"
+          }
+        ],
+        "record_count": 65,
+        "segment_count": 2
+      },
+      "path": "vectors/export-segment-boundary.json",
+      "prerequisites": [],
+      "shape": "playbill-journal-export-bundle-v1",
+      "vector_id": "export-segment-boundary"
+    }
+  ],
+  "scenarios": [
+    {
+      "kind": "import_into_empty_backend",
+      "law_category": "expected_head",
+      "scenario_id": "expected-head-gap",
+      "vector_id": "export-alpha-a-4-6"
+    },
+    {
+      "kind": "append_under_superseded_token",
+      "law_category": "fencing",
+      "scenario_id": "superseded-fencing-token",
+      "vector_id": "export-alpha-a-1-3"
+    },
+    {
+      "kind": "append_under_unknown_token",
+      "law_category": "fencing",
+      "scenario_id": "unknown-fencing-token",
+      "vector_id": "export-alpha-a-1-3"
+    }
+  ],
+  "tag": "cloud-journal-conformance-corpus-v1",
+  "witness_public_key": "29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7"
+}

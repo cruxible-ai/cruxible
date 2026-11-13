@@ -1,0 +1,246 @@
+"""Read a provider package a kit bundles: its identity and the operations it declares.
+
+Metadata only: the registration through core's own reader (``package_metadata``),
+the wheel pin and lock through the first-party toolchain. No provider code
+runs. ``kit build`` uses it to record the package, with its operation names,
+in the kit manifest, and (the automation template check, D-R48 review fix
+round 2, R2) to seed a throwaway instance with exactly this bundled build and
+its operations, never a publisher-local one.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from cruxible_client.contracts.kits import KitProvider, KitProviderDelivery, KitProviderFile
+from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_core.errors import ConfigError, RequestRefusedError
+from cruxible_core.providers.package_index import embedded_lock
+from cruxible_core.providers.package_materialization import (
+    package_preparation_errors,
+    resolve_provider_package,
+    toolchain,
+)
+from cruxible_core.providers.package_metadata import read_wheel_registration
+from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+
+_REPAIR = RepairOperation(operation="cruxible.kit.build")
+
+
+@dataclass(frozen=True)
+class InspectedProviderPackage:
+    """One bundled package: its manifest entry and the operations it declares."""
+
+    provider: KitProvider
+    #: This host's environment pin key and the materialization digest installing
+    #: these exact bytes records there: the whole dependency closure, path
+    #: dependency wheels included, which the lock pins only by name and version.
+    #: None for an index default built without its path dependencies' wheels:
+    #: the consumer's closure is whatever the provider index serves.
+    pin_key: str | None
+    materialization: str | None
+    #: The package's registration, metadata-only (no code runs to read it): its
+    #: full typed operations and the shapes it carries, which
+    #: ``provider`` only names. The kit-build template check (D-R48 fix round
+    #: 2, R2) uses it to seed the throwaway instance with exactly the Provider
+    #: build and operations a bundled package registers -- never a publisher-
+    #: local definition.
+    document: PackageRegistrationDocumentV1
+
+    def build_artifact(self, *, control_domain: str) -> tuple[str, bytes] | None:
+        """This bundled package's Provider artifact (path, bytes), or None.
+
+        None for an index default without a resolved dependency closure
+        (``pin_key``/``materialization``): there is no one build to seed, as a
+        real adopter without a serving build installs from the index instead.
+        Operations are pinned to the package's own carried Contract copies,
+        exactly as a real install pins them.
+        """
+
+        if self.pin_key is None or self.materialization is None:
+            return None
+        from cruxible_client.contracts.providers import (
+            ProviderLocalDistributionPin,
+            ProviderLocalEnvBackendPin,
+            provider_path,
+            render_provider,
+        )
+
+        distribution = ProviderLocalDistributionPin(
+            name=self.provider.package,
+            version=self.provider.version,
+            filename=self.provider.wheel.filename,
+            sha256=self.provider.wheel.sha256,
+        )
+        local_env = ProviderLocalEnvBackendPin(
+            lock_sha256=self.provider.lock.sha256,
+            materialization_digests={self.pin_key: self.materialization},
+        )
+        build = self.document.provider_definition(
+            distribution=distribution,
+            local_env=local_env,
+            control_domain=control_domain,
+            operations=self.document.pinned_operations(),
+        )
+        return provider_path(build.identity.name), render_provider(build)
+
+
+def _refuse(code: str, message: str) -> RequestRefusedError:
+    return RequestRefusedError(code, message, repair=_REPAIR)
+
+
+def _write(root: Path, filename: str, content: bytes) -> Path:
+    path = root / filename
+    path.write_bytes(content)
+    return path
+
+
+def inspect_provider_package(
+    *,
+    wheel: tuple[str, bytes],
+    lock: bytes,
+    dependencies: tuple[tuple[str, bytes], ...] = (),
+    delivery: KitProviderDelivery = "bundled",
+) -> InspectedProviderPackage:
+    """The manifest entry for one wheel, its lock and its path-sourced dependency wheels.
+
+    The lock's root must be this wheel's distribution at its version. For a
+    bundled package every other package the lock names by path (a first-party
+    sibling such as the provider runtime, until it resolves from an index) must
+    come as a wheel; registry packages resolve by name at install time and are
+    never bundled. An ``index`` default ships none of its files, so its path
+    dependencies are never required; it materializes from the lock its wheel
+    embeds, so the lock given must be exactly that one.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="cruxible-kit-provider-") as temporary:
+        root = Path(temporary)
+        wheel_path = _write(root, wheel[0], wheel[1])
+        lock_path = _write(root, "uv.lock", lock)
+        dependency_root = root / "dependencies"
+        dependency_root.mkdir()
+        dependency_paths = tuple(
+            _write(dependency_root, name, content) for name, content in dependencies
+        )
+        with package_preparation_errors():
+            wheels = toolchain("wheels")
+            pin = wheels.wheel_pin(wheel_path)
+            # Core's own reader: the runtime's validates the inert bucket data.
+            document = read_wheel_registration(wheel_path)
+            locked = toolchain("resolution").load_uv_lock(lock_path)
+            dependency_pins = tuple(wheels.wheel_pin(path) for path in dependency_paths)
+        if delivery == "index":
+            try:
+                embedded = embedded_lock(wheel_path)
+            except ConfigError as exc:
+                raise _refuse("cruxible.kit.provider_lock_not_embedded", str(exc)) from exc
+            if embedded != lock:
+                raise _refuse(
+                    "cruxible.kit.provider_lock_not_embedded",
+                    f"the lock given for {pin.filename} is not the one the wheel embeds; an "
+                    "index default installs by name from that embedded lock, so name the "
+                    "package directory whose uv.lock the published wheel was built with",
+                )
+    rows: tuple[dict[str, Any], ...] = locked.packages
+    roots = [row for row in rows if row["name"] == pin.name]
+    if len(roots) != 1 or str(roots[0]["version"]) != pin.version:
+        raise _refuse(
+            "cruxible.kit.provider_lock_mismatch",
+            f"the lock bundled with {pin.filename} does not lock {pin.name} {pin.version}; "
+            "bundle the lock the wheel was built with",
+        )
+    by_path = {
+        row["name"]: str(row["version"])
+        for row in rows
+        if row["name"] != pin.name and "registry" not in row.get("source", {})
+    }
+    supplied = {item.name: item.version for item in dependency_pins}
+    check_path_dependencies(pin.name, by_path, supplied, delivery=delivery)
+    if set(by_path) - set(supplied):
+        # An index default given no wheel for a path dependency: the consumer's
+        # closure is the index's, so there is no exact closure to record here.
+        return InspectedProviderPackage(
+            provider=_kit_provider(document, pin, locked, dependency_pins),
+            pin_key=None,
+            materialization=None,
+            document=document,
+        )
+    with tempfile.TemporaryDirectory(prefix="cruxible-kit-provider-") as temporary:
+        root = Path(temporary)
+        dependency_root = root / "dependencies"
+        dependency_root.mkdir()
+        with package_preparation_errors():
+            resolved = resolve_provider_package(
+                wheel=_write(root, wheel[0], wheel[1]),
+                lock_path=_write(root, "uv.lock", lock),
+                dependency_wheels=tuple(
+                    _write(dependency_root, name, content) for name, content in dependencies
+                ),
+            )
+    return InspectedProviderPackage(
+        provider=_kit_provider(document, pin, locked, dependency_pins),
+        pin_key=resolved.pin_key,
+        materialization=resolved.materialization,
+        document=document,
+    )
+
+
+def check_path_dependencies(
+    package: str,
+    by_path: dict[str, str],
+    supplied: dict[str, str],
+    *,
+    delivery: KitProviderDelivery,
+) -> None:
+    """Refuse dependency wheels that are not exactly the path packages the lock names.
+
+    ``by_path`` and ``supplied`` map distribution names to versions. A bundled
+    package must bring a wheel for every path package; an index default ships
+    none of its files, so a missing one is never required of it.
+    """
+
+    missing = sorted(set(by_path) - set(supplied))
+    if missing and delivery == "bundled":
+        raise _refuse(
+            "cruxible.kit.provider_dependency_missing",
+            f"the lock of {package} names {', '.join(missing)} by path; bundle each one's "
+            "built wheel beside the provider's (in its dist/ directory)",
+        )
+    extra = sorted(name for name in supplied if name not in by_path)
+    mismatched = sorted(
+        name for name, version in supplied.items() if name in by_path and version != by_path[name]
+    )
+    if extra or mismatched:
+        raise _refuse(
+            "cruxible.kit.provider_dependency_mismatch",
+            f"the dependency wheels bundled with {package} are not the path packages its "
+            f"lock names (unexpected: {extra or 'none'}; other version: {mismatched or 'none'})",
+        )
+
+
+def _kit_provider(
+    document: PackageRegistrationDocumentV1,
+    pin: Any,
+    locked: Any,
+    dependency_pins: tuple[Any, ...],
+) -> KitProvider:
+    return KitProvider(
+        provider_id=document.manifest.provider_id,
+        package=pin.name,
+        version=pin.version,
+        wheel=KitProviderFile(filename=pin.filename, sha256=pin.artifact_id),
+        lock=KitProviderFile(
+            filename=f"{pin.name}-{pin.version}.uv.lock", sha256=locked.lock_sha256
+        ),
+        dependencies=tuple(
+            KitProviderFile(filename=item.filename, sha256=item.artifact_id)
+            for item in sorted(dependency_pins, key=lambda item: item.filename)
+        ),
+        operations=tuple(sorted(item.name for item in document.operations)),
+    )
+
+
+__all__ = ["InspectedProviderPackage", "check_path_dependencies", "inspect_provider_package"]

@@ -1,0 +1,195 @@
+"""Pure coordinate contracts for accepted Cruxible state."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.canonical import (
+    GenerationRoot,
+    SemanticRoot,
+    Sha256Value,
+)
+from cruxible_client.contracts.content_memo import ValueMemo
+from cruxible_client.contracts.types import CompilerCoordinate, GitObjectFormat
+
+_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+class _StrictProjectionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _tagged_sha256(value: str, *, label: str) -> str:
+    try:
+        Sha256Value.from_tagged(value)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an algorithm-tagged SHA-256 value") from exc
+    return value
+
+
+def _absolute_path(value: str, *, label: str) -> str:
+    path = Path(value)
+    if not path.is_absolute() or ".." in path.parts or str(path) != value:
+        raise ValueError(f"{label} must be a canonical absolute path")
+    return value
+
+
+class AcceptedProjectionCoordinate(_StrictProjectionModel):
+    """A ledger coordinate supplied only after signature/root-chain verification."""
+
+    instance_id: str = Field(min_length=1, max_length=256)
+    repository_path: str
+    git_object_format: GitObjectFormat
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler: CompilerCoordinate
+
+    @field_validator("repository_path")
+    @classmethod
+    def _repository_path(cls, value: str) -> str:
+        return _absolute_path(value, label="repository_path")
+
+    @field_validator("git_oid")
+    @classmethod
+    def _git_oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("git_oid must be lowercase SHA-1 or SHA-256 hex")
+        return value
+
+    @field_validator("semantic_root")
+    @classmethod
+    def _semantic_root(cls, value: str) -> str:
+        SemanticRoot.from_tagged(value)
+        return value
+
+    @field_validator("generation_root")
+    @classmethod
+    def _generation_root(cls, value: str) -> str:
+        GenerationRoot.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _oid_matches_format(self) -> "AcceptedProjectionCoordinate":
+        expected = 40 if self.git_object_format == "sha1" else 64
+        if len(self.git_oid) != expected:
+            raise ValueError("git_oid length does not match git_object_format")
+        return self
+
+
+class AcceptedCoordinate(_StrictProjectionModel):
+    """Path-free public handle for one fully verified accepted generation."""
+
+    tag: Literal["playbill-accepted-coordinate-v1"] = "playbill-accepted-coordinate-v1"
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler_digest: str
+
+    @field_validator("git_oid")
+    @classmethod
+    def _git_oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("accepted-coordinate Git OID is malformed")
+        return value
+
+    @field_validator("semantic_root")
+    @classmethod
+    def _semantic_root(cls, value: str) -> str:
+        SemanticRoot.from_tagged(value)
+        return value
+
+    @field_validator("generation_root")
+    @classmethod
+    def _generation_root(cls, value: str) -> str:
+        GenerationRoot.from_tagged(value)
+        return value
+
+    @field_validator("compiler_digest")
+    @classmethod
+    def _compiler_digest(cls, value: str) -> str:
+        return _tagged_sha256(value, label="compiler_digest")
+
+    @classmethod
+    def from_internal(cls, coordinate: AcceptedProjectionCoordinate) -> AcceptedCoordinate:
+        values = (
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler.rule_digest,
+        )
+
+        def build() -> AcceptedCoordinate:
+            return cls(
+                git_oid=values[0],
+                semantic_root=values[1],
+                generation_root=values[2],
+                compiler_digest=values[3],
+            )
+
+        # Only scalar frozen contracts are shared; subclasses retain their own
+        # construction semantics and copies never key an identity-based memo.
+        return _PUBLIC_COORDINATES.derive(values, build) if cls is AcceptedCoordinate else build()
+
+
+_PUBLIC_COORDINATES: ValueMemo[AcceptedCoordinate] = ValueMemo(capacity=4096)
+
+
+class CandidateGenerationProjectionCoordinate(_StrictProjectionModel):
+    """A verified, unaccepted generation eligible only for durable prebuild."""
+
+    tag: Literal["playbill-candidate-generation-coordinate-v1"] = (
+        "playbill-candidate-generation-coordinate-v1"
+    )
+    instance_id: str = Field(min_length=1, max_length=256)
+    repository_path: str
+    git_object_format: GitObjectFormat
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler: CompilerCoordinate
+    base_git_oid: str
+
+    @field_validator("repository_path")
+    @classmethod
+    def _repository_path(cls, value: str) -> str:
+        return _absolute_path(value, label="repository_path")
+
+    @field_validator("git_oid", "base_git_oid")
+    @classmethod
+    def _git_oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("candidate generation Git OID is malformed")
+        return value
+
+    @field_validator("semantic_root")
+    @classmethod
+    def _semantic_root(cls, value: str) -> str:
+        SemanticRoot.from_tagged(value)
+        return value
+
+    @field_validator("generation_root")
+    @classmethod
+    def _generation_root(cls, value: str) -> str:
+        GenerationRoot.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _oid_matches_format(self) -> "CandidateGenerationProjectionCoordinate":
+        expected = 40 if self.git_object_format == "sha1" else 64
+        if len(self.git_oid) != expected or len(self.base_git_oid) != expected:
+            raise ValueError("candidate generation OID length does not match object format")
+        if self.git_oid == self.base_git_oid:
+            raise ValueError("candidate generation must differ from its settlement base")
+        return self
+
+
+__all__ = [
+    "AcceptedCoordinate",
+    "AcceptedProjectionCoordinate",
+    "CandidateGenerationProjectionCoordinate",
+]

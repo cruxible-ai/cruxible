@@ -1,63 +1,148 @@
-"""Shared dispatch, parsing, and formatting helpers for CLI commands."""
+"""Shared dispatch and formatting helpers for the CLI."""
 
 from __future__ import annotations
 
-import json as _json
+import functools
+import json
 import os
+import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import click
 
-from cruxible_client import CruxibleClient, contracts
+import cruxible_client.compatibility as client_compatibility
+from cruxible_client import CruxibleClient
+from cruxible_client.transport.lifecycle import DaemonLifecycleClient
 from cruxible_core.cli.context import (
     CliContextState,
     clear_cli_context,
     load_cli_context,
+    normalized_transport,
+    principal_binding,
     save_cli_context,
 )
-from cruxible_core.errors import ConfigError, InstanceNotFoundError
 from cruxible_core.server.config import get_runtime_bearer_token
 
 if TYPE_CHECKING:
-    from rich.console import Console
+    from cruxible_core.server.bootstrap_secret import LocalOperatorKey
 
-    from cruxible_core.cli.instance import CruxibleInstance
-    from cruxible_core.config.schema import CoreConfig
-    from cruxible_core.feedback.types import FeedbackRecord, OutcomeRecord
-    from cruxible_core.graph.types import EntityInstance
-    from cruxible_core.group.types import CandidateGroup, CandidateMember
-    from cruxible_core.query.continuation import ContinuationSurface, ContinuationToken
-    from cruxible_core.service import OperationContext
-
-
-class _LazyConsole:
-    """Delay Rich's rendering stack until a command emits a table."""
-
-    def __init__(self) -> None:
-        self._console: Console | None = None
-
-    def __getattr__(self, name: str) -> Any:
-        console = self._console
-        if console is None:
-            from rich.console import Console
-
-            console = Console()
-            self._console = console
-        return getattr(console, name)
-
-
-console = _LazyConsole()
 LocalResultT = TypeVar("LocalResultT")
 RemoteResultT = TypeVar("RemoteResultT")
 
-# Single source of truth for the "server mode required" message so every command
-# that refuses a local fallback surfaces identical wording and remediation.
 SERVER_MODE_REQUIRED_MESSAGE = (
     "Server mode is required. Set CRUXIBLE_SERVER_SOCKET or CRUXIBLE_SERVER_URL."
 )
+
+
+#: Set to 1/true/yes/on to stop the CLI from starting a local daemon (also
+#: ``--no-autostart``); tests and CI set it globally.
+NO_AUTOSTART_ENV = "CRUXIBLE_NO_AUTOSTART"
+
+
+def no_daemon_message(command_name: str) -> str:
+    """Why a command that needs a daemon found none, and how to give it one."""
+
+    from cruxible_core.errors import CoreError
+    from cruxible_core.mcp.daemon import default_socket_path
+    from cruxible_core.server.config import get_server_state_root
+
+    try:
+        socket = str(default_socket_path(get_server_state_root()))
+    except CoreError:
+        socket = "<CRUXIBLE_STATE_ROOT>/run/daemon.sock"
+    return (
+        f"{command_name} needs server mode: the CLI sends the command to a running "
+        "Cruxible daemon, which holds the state; nothing runs in this process. No daemon "
+        "was found: no --server-socket/--server-url, no CRUXIBLE_SERVER_SOCKET/"
+        f"CRUXIBLE_SERVER_URL, no remembered context, and none answering at {socket}. "
+        f"Start one with `cruxible server start --socket {socket}` (the CLI and an MCP "
+        f"adapter start one there by themselves unless --no-autostart or {NO_AUTOSTART_ENV} "
+        "turns that off), or pass --server-socket PATH."
+    )
+
+
+def autostart_disabled() -> bool:
+    """Whether this invocation may not start a local daemon (``--no-autostart`` or env)."""
+
+    if _root_ctx_obj().get("no_autostart"):
+        return True
+    return os.environ.get(NO_AUTOSTART_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _same_socket(left: str, right: Path) -> bool:
+    try:
+        return Path(left).expanduser().resolve(strict=False) == right.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
+
+def ensure_cli_daemon() -> bool:
+    """Give this invocation a daemon: start the local one when it targets nothing answering.
+
+    Only the default local socket (``<state root>/run/daemon.sock``) is ever
+    started, and only when nothing names another transport: a ``--server-url``
+    or TCP target, or a socket that is not the default, keeps today's refusal.
+    The start is the MCP adapter's (`cruxible_core.mcp.daemon.ensure_local_daemon`:
+    reuse a live daemon holding the state root, else the installed user
+    service, else ``cruxible server start`` detached), and one line on standard
+    error says so; ``cruxible server stop`` stops it. Returns whether a
+    transport is selected afterwards. Commands that need a daemon call this
+    (``_get_client`` does); ``cruxible console`` can too.
+    """
+
+    obj = _root_ctx_obj()
+    if obj.get("server_url"):
+        return True
+    socket = obj.get("server_socket")
+    if click.get_current_context(silent=True) is None:
+        return bool(socket)
+    if obj.get("_daemon_ensured"):
+        return bool(socket)
+    obj["_daemon_ensured"] = True
+    from cruxible_core.errors import CoreError
+    from cruxible_core.mcp import daemon
+    from cruxible_core.server.config import get_server_state_root
+
+    try:
+        state_root = get_server_state_root()
+    except CoreError:
+        return bool(socket)
+    default = daemon.default_socket_path(state_root)
+    if socket and not _same_socket(str(socket), default):
+        return True
+    if autostart_disabled():
+        return bool(socket)
+    if socket and (
+        obj.get("target_transport_source") == "state_root"
+        or daemon._answers(server_socket=str(socket))
+    ):
+        return True
+    try:
+        target = daemon.ensure_local_daemon(state_root, environ=os.environ)
+    except daemon.DaemonUnavailableError as exc:
+        raise click.UsageError(str(exc)) from exc
+    obj["server_url"] = target.server_url
+    obj["server_socket"] = target.server_socket
+    if target.source == "started":
+        obj["target_transport_source"] = "autostart"
+        click.echo(
+            f"Started a Cruxible daemon on {target.label} (state root {state_root}); "
+            "`cruxible server stop` stops it.",
+            err=True,
+        )
+    elif target.source == "service":
+        obj["target_transport_source"] = "autostart"
+        click.echo(
+            f"Started the installed Cruxible service on {target.label} (state root {state_root}).",
+            err=True,
+        )
+    else:
+        obj["target_transport_source"] = "state_root"
+    return True
+
 
 json_option = click.option(
     "--json",
@@ -67,170 +152,189 @@ json_option = click.option(
     help="Output as JSON.",
 )
 
-decision_record_option = click.option(
-    "--decision-record",
-    "decision_record_id",
-    default=None,
-    help="Decision record ID for audit logging.",
-)
 
-# Opt-in agent-local working-set capture for JSON read commands. Capture is a
-# pure side effect after the payload is printed (stdout is never changed); it
-# can also be enabled with CRUXIBLE_WORKING_SET=1 or the persisted preference
-# managed by ``cruxible ws enable|disable``. See
-# ``cruxible_core.cli.working_set`` and the ``cruxible ws`` group.
-ws_option = click.option(
-    "--ws",
-    "ws_capture",
+#: ``ctx.meta`` keys: whether this invocation offers to commit its preview, and
+#: the coordinate a preview answered with when it does.
+_COMMIT_OFFER_KEY = "cruxible.change_control.offer_commit"
+_COMMIT_PIN_KEY = "cruxible.change_control.preview_pin"
+
+
+def _interactive_terminal() -> bool:
+    """Whether a person is at this invocation: standard input and output are both a TTY."""
+
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _can_confirm() -> bool:
+    """Whether a prompt on standard error can be answered: stdin and stderr are a TTY.
+
+    A command whose prompt goes to stderr keeps stdout for its output (``--json``
+    piped elsewhere), so only the prompt's own streams need a person.
+    """
+
+    return sys.stdin.isatty() and sys.stderr.isatty()
+
+
+def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """``--dry-run/--commit``, ``--at`` and ``--yes``: the R12 change control on every change.
+
+    Neither flag: the operation's default (a change derived across several
+    artifacts, or one that cannot be undone, previews). ``--commit --at OID``
+    commits exactly the preview that answered at OID.
+
+    At an interactive terminal (no ``--json``), a change that previews by
+    default renders the preview and asks ``Commit this change? [y/N]``; yes
+    commits against the exact coordinate the preview answered with, and so
+    refuses the same way ``--commit --at OID`` would if that state moved.
+    ``--yes`` commits the preview without asking. Anywhere else the preview
+    prints the ``--commit --at`` hint, unchanged.
+    """
+
+    @functools.wraps(fn)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        yes = bool(kwargs.pop("yes", False))
+        output_json = bool(kwargs.get("output_json", False))
+        if yes and output_json:
+            raise click.UsageError(
+                "--yes renders the preview and then commits it; with --json, commit the "
+                "preview with --commit --at OID"
+            )
+        if yes and kwargs.get("dry_run") is not None:
+            raise click.UsageError(
+                "--yes commits a change that previews by default; drop --dry-run/--commit"
+            )
+        ctx = click.get_current_context()
+        offer = kwargs.get("dry_run") is None and not output_json
+        offer = offer and (yes or _interactive_terminal())
+        ctx.meta[_COMMIT_OFFER_KEY] = offer
+        ctx.meta.pop(_COMMIT_PIN_KEY, None)
+        result = fn(*args, **kwargs)
+        ctx.meta[_COMMIT_OFFER_KEY] = False
+        pin = ctx.meta.pop(_COMMIT_PIN_KEY, None)
+        if not offer or pin is None:
+            return result
+        if not yes and not click.confirm("Commit this change?", default=False):
+            click.echo(f"Not committed. Commit it later: rerun with --commit --at {pin}")
+            return result
+        return fn(*args, **{**kwargs, "dry_run": False, "at": pin})
+
+    command = click.option(
+        "--yes",
+        "yes",
+        is_flag=True,
+        default=False,
+        help=(
+            "Commit the preview without asking (a change that previews by default); "
+            "at an interactive terminal it otherwise asks."
+        ),
+    )(run)
+    command = click.option(
+        "--at",
+        "at",
+        default=None,
+        metavar="OID",
+        help=(
+            "The coordinate a preview answered with (a git oid, or for operational state "
+            "its digest); the commit refuses if that state moved since. Required to commit "
+            "a change that cannot be undone."
+        ),
+    )(command)
+    return click.option(
+        "--dry-run/--commit",
+        "dry_run",
+        default=None,
+        help=(
+            "--dry-run: run every check and write nothing. --commit: make the change. "
+            "Default: preview a change derived across several artifacts or one that "
+            "cannot be undone; commit anything else."
+        ),
+    )(command)
+
+
+def echo_preview_next(status: str, coordinate: Any) -> None:
+    """After a preview, say nothing was written and how to commit exactly it.
+
+    When the invocation offers to commit its preview (an interactive terminal,
+    or ``--yes``), the pin is handed to ``change_control_options``, which asks
+    once the command has rendered everything.
+    """
+
+    if not status.startswith("would_") or coordinate is None:
+        return
+    # An accepted coordinate pins by its git oid; operational state by its digest.
+    pin = getattr(coordinate, "git_oid", None) or getattr(coordinate, "digest", None)
+    if pin is None:
+        return
+    click.echo(f"Preview at {pin}; nothing was written.")
+    if status == "would_block" or status == "would_refuse":
+        return
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.meta.get(_COMMIT_OFFER_KEY):
+        ctx.meta[_COMMIT_PIN_KEY] = pin
+        return
+    click.echo(f"Commit it: rerun the same command with --commit --at {pin}")
+
+
+brief_option = click.option(
+    "--brief",
+    "output_brief",
     is_flag=True,
     default=False,
-    help=(
-        "Also capture this --json read into the agent-local working set "
-        "(non-authoritative cache; see 'cruxible ws')."
-    ),
-)
-
-# Output profile for entity-shaped read payloads. ``standard`` (default) is
-# today's full shape; ``compact`` trims JSON items to bounded identity cards
-# that keep governance markers (lifecycle / review status) but drop
-# actor_context and provenance blobs; ``full`` is reserved as a superset of
-# standard. The profile is applied at JSON-emit time through the shared
-# serializer (cruxible_core.query.profiles) in BOTH local and server mode, so
-# the two modes cannot drift. Table output is already bounded and unaffected.
-profile_option = click.option(
-    "--profile",
-    "profile",
-    type=click.Choice(["compact", "standard", "full"]),
-    default="standard",
-    show_default=True,
-    help=(
-        "JSON output profile: compact (bounded identity cards with governance "
-        "markers), standard (full shape), or full (reserved superset of standard)."
-    ),
-)
-
-# Transport layout for query output. ``rows`` (default) is today's per-row
-# item layout, bit-for-bit; ``graph`` normalizes the already-filtered,
-# already-profiled rows into nodes/edges serialized once each, with results
-# as ordered references and paths as step-ref (edge index + alias)
-# sequences. Applied at
-# JSON-emit time through the shared normalizer
-# (cruxible_core.query.graph_layout) in BOTH local and server mode, so the
-# two modes cannot drift. Orthogonal to --profile (detail level) and the
-# query's result_shape (semantic unit).
-layout_option = click.option(
-    "--layout",
-    "layout",
-    type=click.Choice(["rows", "graph"]),
-    default="rows",
-    show_default=True,
-    help=(
-        "Query output layout: rows (per-row items) or graph (normalized "
-        "nodes/edges with results as ordered references; each entity and "
-        "relationship serialized once)."
-    ),
-)
-
-# Unified read-visibility selector. Gates entities by lifecycle and edges by
-# review+lifecycle through the same engine filter, so a single flag controls
-# every read surface. ``live`` is the implicit default (None => server/service
-# default). ``not-live`` and ``all`` are the audit/recovery views.
-state_option = click.option(
-    "--state",
-    "state",
-    type=click.Choice(["live", "accepted", "all", "not-live", "pending", "reviewable"]),
-    default=None,
-    help=(
-        "Read-visibility state: live (default), accepted, all, not-live, pending, or reviewable."
-    ),
-)
-
-lifecycle_status_option = click.option(
-    "--lifecycle-status",
-    "lifecycle_status",
-    type=click.Choice(["active", "inactive", "superseded", "retracted", "live", "retired"]),
-    default=None,
-    help="Exact kind-correct lifecycle status to read.",
+    help="Render only the outcome, the ids, and the command to run next.",
 )
 
 
-# Continuation token option shared by resumable read commands. Tokens are
-# opaque, bound to the instance/config/read_revision/filter set; replay after
-# any mutation fails with a typed stale-continuation error (restart the read).
-continuation_option = click.option(
-    "--continue",
-    "continuation",
-    default=None,
-    metavar="TOKEN",
-    help=(
-        "Continuation token from a previous truncated page; repeat the same "
-        "filters. Stale after any state mutation - restart the read."
-    ),
-)
+def _emit_brief(
+    *,
+    outcome: str,
+    ids: Mapping[str, str | None],
+    next_command: str | None,
+    reason: str | None = None,
+) -> None:
+    """Render the three things a caller acts on: what happened, what to name, what to run.
 
-
-def _local_continuation_binding(
-    instance: CruxibleInstance, filters: dict[str, Any]
-) -> dict[str, Any]:
-    """Token binding for CLI local mode (no daemon instance id available).
-
-    Local tokens use the resolved instance root as the instance key, so they
-    are valid only for local-mode reads of the same workspace; daemon-minted
-    tokens are bound to the daemon instance id instead and are rejected here.
+    Full JSON stays the default because it is the record; this is the read.
     """
-    from cruxible_core.query.continuation import compute_filter_hash
-    from cruxible_core.workflow.compiler import compute_lock_config_digest
 
-    return {
-        "instance_key": f"local:{Path(instance.get_root_path()).resolve()}",
-        "config_digest": compute_lock_config_digest(instance.load_config()),
-        "read_revision": instance.get_read_revision(),
-        "filter_hash": compute_filter_hash(filters),
-    }
+    click.echo(f"outcome: {outcome}")
+    for label, value in ids.items():
+        if value:
+            click.echo(f"{label}: {value}")
+    if reason:
+        click.echo(f"reason: {reason}")
+    click.echo(f"next: {next_command}" if next_command else "next: nothing to run")
 
 
-def _local_accept_continuation(
-    instance: CruxibleInstance,
+def _echo_refusal(
+    where: str,
     *,
-    surface: ContinuationSurface,
-    filters: dict[str, Any],
-    continuation: str | None,
-) -> ContinuationToken | None:
-    from cruxible_core.query.continuation import (
-        decode_continuation_token,
-        validate_continuation_token,
-    )
+    code: str,
+    message: str,
+    change: int | None = None,
+    candidates: tuple[str, ...] = (),
+    repair: str | None = None,
+) -> None:
+    """Render one refusal as value writes do: where, code and message, nearest, repair."""
 
-    if continuation is None:
-        return None
-    token = decode_continuation_token(continuation)
-    binding = _local_continuation_binding(instance, filters)
-    validate_continuation_token(token, surface=surface, **binding)
-    return token
-
-
-def _local_mint_continuation(
-    instance: CruxibleInstance,
-    *,
-    surface: ContinuationSurface,
-    filters: dict[str, Any],
-    cursor: dict[str, int],
-) -> str:
-    from cruxible_core.query.continuation import mint_continuation_token
-
-    return mint_continuation_token(
-        surface=surface, cursor=cursor, **_local_continuation_binding(instance, filters)
-    )
+    click.echo(f"refused ({where})", err=True)
+    at = "" if change is None else f" (change {change})"
+    click.echo(f"{code}{at}: {message}", err=True)
+    if candidates:
+        click.echo(f"  nearest: {', '.join(candidates)}", err=True)
+    if repair:
+        click.echo(f"  repair: {repair}", err=True)
 
 
-def _echo_continuation_hint(continuation_token: str | None) -> None:
-    """Print the resume hint for truncated table output."""
-    if continuation_token:
-        click.echo(f"Truncated. Continue with: --continue {continuation_token}")
+def _root_ctx_obj() -> dict[str, Any]:
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return {}
+    root = ctx.find_root()
+    root.ensure_object(dict)
+    return cast(dict[str, Any], root.obj)
 
 
 def _json_compact_enabled() -> bool:
-    """Resolve compact JSON at emit time; an explicit root flag wins over env."""
     context_value = _root_ctx_obj().get("json_compact")
     if context_value is not None:
         return bool(context_value)
@@ -243,84 +347,16 @@ def _json_compact_enabled() -> bool:
 
 
 def _emit_json(data: Any, *, sort_keys: bool = False) -> None:
-    """Emit structured JSON to stdout, bypassing Rich."""
     if _json_compact_enabled():
-        from cruxible_core.primitives import compact_json
+        from cruxible_client.contracts.primitives import compact_json
 
         click.echo(compact_json(data, default=str, sort_keys=sort_keys))
         return
-    click.echo(_json.dumps(data, indent=2, sort_keys=sort_keys, default=str))
-
-
-def _list_envelope(
-    result: Any, *, item_count: int, limit: int | None, offset: int
-) -> dict[str, Any]:
-    """Build the standard list envelope (total/limit/offset/truncated/read_revision).
-
-    Server mode hands back a contract model that already carries the envelope;
-    local mode now gets it from the service ``ListResult`` (which owns
-    truncation/read_revision), so both branches consume rather than re-derive.
-    The synthesized fallback remains only for service results that predate the
-    envelope.
-    """
-    total = result.total
-    if all(hasattr(result, name) for name in ("limit", "offset", "truncated")):
-        return {
-            "total": total,
-            "limit": result.limit,
-            "offset": result.offset,
-            "truncated": result.truncated,
-            "read_revision": getattr(result, "read_revision", None),
-        }
-    from cruxible_core.service.types import list_truncated
-
-    return {
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "truncated": list_truncated(total=total, offset=offset, returned=item_count),
-        "read_revision": getattr(result, "read_revision", None),
-    }
-
-
-def _resolve_decision_record_id(decision_record_id: str | None) -> str | None:
-    return decision_record_id
-
-
-@dataclass(frozen=True)
-class ActiveInstanceChange:
-    """Result of updating the remembered active instance."""
-
-    previous: str | None
-    current: str
-
-
-def _operation_context(decision_record_id: str | None) -> OperationContext | None:
-    from cruxible_core.service import OperationContext
-
-    resolved = _resolve_decision_record_id(decision_record_id)
-    if resolved is None:
-        return None
-    return OperationContext(decision_record_id=resolved, surface="cli")
-
-
-def _root_ctx_obj() -> dict[str, Any]:
-    ctx = click.get_current_context(silent=True)
-    if ctx is None:
-        return {}
-    root = ctx.find_root()
-    root.ensure_object(dict)
-    return cast(dict[str, Any], root.obj)
+    click.echo(json.dumps(data, indent=2, sort_keys=sort_keys, default=str))
 
 
 def _transport_target(obj: Mapping[str, Any]) -> str | None:
-    server_url = obj.get("server_url")
-    if server_url:
-        return str(server_url)
-    server_socket = obj.get("server_socket")
-    if server_socket:
-        return f"unix://{Path(str(server_socket)).expanduser().resolve()}"
-    return None
+    return normalized_transport(obj.get("server_url"), obj.get("server_socket"))
 
 
 def _target_source_qualifier(instance_source: str, transport_source: str) -> str:
@@ -329,83 +365,45 @@ def _target_source_qualifier(instance_source: str, transport_source: str) -> str
     return f"instance={instance_source}, transport={transport_source}"
 
 
-def _echo_active_write_target() -> None:
-    """Emit the selected instance target once, without changing stdout."""
+def _echo_active_write_target(
+    *,
+    instance_id: str | None = None,
+    instance_source: str | None = None,
+) -> None:
     obj = _root_ctx_obj()
     transport = _transport_target(obj)
-    if transport is not None:
-        instance_id = obj.get("instance_id")
-        if not instance_id:
-            # The command callback will produce the established usage error.
-            # There is no actionable target to display yet.
-            return
+    selected = instance_id or obj.get("instance_id")
+    if transport is not None and selected:
         qualifier = _target_source_qualifier(
-            str(obj.get("target_instance_source") or "explicit"),
+            instance_source or str(obj.get("target_instance_source") or "explicit"),
             str(obj.get("target_transport_source") or "explicit"),
         )
-        click.echo(f"target: {instance_id} @ {transport} ({qualifier})", err=True)
-        return
-
-    from cruxible_core.cli.instance import CruxibleInstance
-
-    try:
-        instance = CruxibleInstance.load()
-    except InstanceNotFoundError:
-        # Preserve the command's own error when no local instance can resolve.
-        return
-    click.echo(
-        f"target: local @ {instance.get_root_path().resolve()} (discovered)",
-        err=True,
-    )
+        click.echo(f"target: {selected} @ {transport} ({qualifier})", err=True)
 
 
 def _echo_creation_write_target(params: Mapping[str, Any]) -> None:
-    """Emit a destination for a command whose instance ID does not exist yet."""
     obj = _root_ctx_obj()
     transport = _transport_target(obj)
-    command_name = click.get_current_context().command.name or "instance"
-    target_label = "<restored instance>" if command_name == "restore" else "<new instance>"
     if transport is not None:
+        target = params.get("instance_id") or "<new Cruxible host>"
         transport_source = str(obj.get("target_transport_source") or "explicit")
         click.echo(
-            f"target: {target_label} @ {transport} (transport={transport_source})",
+            f"target: {target} @ {transport} (transport={transport_source})",
             err=True,
         )
-        return
-
-    root_dir = params.get("root_dir")
-    root = Path(str(root_dir)).expanduser().resolve() if root_dir else Path.cwd().resolve()
-    source = "explicit" if root_dir else "discovered"
-    click.echo(f"target: {target_label} @ {root} ({source})", err=True)
 
 
 def _echo_write_target(mode: str, params: Mapping[str, Any]) -> None:
-    """Central target notice used by the authoritative mutating-command inventory."""
     if mode == "active":
         _echo_active_write_target()
         return
     if mode == "create":
         _echo_creation_write_target(params)
         return
-    if mode == "lock":
-        kit_dir = params.get("kit_dir")
-        if kit_dir is not None:
-            click.echo(
-                f"target: workflow lock @ {Path(str(kit_dir)).resolve()} (explicit)",
-                err=True,
-            )
-        else:
-            _echo_active_write_target()
-        return
-    if mode == "kit":
-        kit_dir = Path(str(params["kit_dir"])).resolve()
-        click.echo(f"target: kit metadata @ {kit_dir} (explicit)", err=True)
-        return
     raise AssertionError(f"Unknown write target mode: {mode}")
 
 
 def _echo_explicit_write_target(instance_id: str, location: str | Path) -> None:
-    """Emit a target resolved from command-specific explicit local inputs."""
     click.echo(
         f"target: {instance_id} @ {Path(location).expanduser().resolve()} (explicit)",
         err=True,
@@ -414,31 +412,152 @@ def _echo_explicit_write_target(instance_id: str, location: str | Path) -> None:
 
 def _get_client() -> CruxibleClient | None:
     obj = _root_ctx_obj()
+    if not obj.get("no_autostart_here"):
+        ensure_cli_daemon()
     server_url = obj.get("server_url")
     server_socket = obj.get("server_socket")
     if not server_url and not server_socket:
         return None
+    refused = obj.get("folder_identity_refused")
+    if refused is not None:
+        raise refused
     client = obj.get("_client")
     if isinstance(client, CruxibleClient):
-        return client
+        if obj.get("_client_principal_id") == obj.get("principal_id"):
+            return client
+        # The command now acts as another principal (init retargeted to another
+        # folder): a client never carries the previous one's identity.
+        client.close()
+        obj.pop("_client", None)
     client = CruxibleClient(
         base_url=server_url,
         socket_path=server_socket,
         token=get_runtime_bearer_token(),
+        principal_id=obj.get("principal_id"),
     )
+    try:
+        client_compatibility.check_daemon_compatibility(client)
+        _verify_folder_identity(obj, client)
+    except Exception:
+        client.close()
+        raise
     obj["_client"] = client
+    obj["_client_principal_id"] = obj.get("principal_id")
     return client
 
 
-def _server_required() -> bool:
-    """Return whether this invocation declared server mode as required.
+def _verify_folder_identity(obj: dict[str, Any], client: CruxibleClient) -> None:
+    """Check the folder record this command acts by, before its first daemon call.
 
-    Resolved once at the root group (flags/env -> ``require_server``) and stashed
-    on the click context. Reads consult it so they share the writes' transport
-    contract: when the daemon is the declared backend, reads never silently fall
-    back to a local on-disk instance.
+    The MCP server's check (`check_folder_identity`): key custody, the daemon's
+    principal registry, the key's public half. A refusal sticks for the rest of
+    the command, so no later call acts as the record's principal either.
     """
-    return bool(_root_ctx_obj().get("require_server"))
+
+    pending = obj.get("folder_identity")
+    if pending is None:
+        return
+    from cruxible_client.authoring.folder_identity import (
+        FolderIdentityRefused,
+        check_folder_identity,
+    )
+    from cruxible_client.contracts.workspace_root import containing_git_workspace_root
+
+    record, path, folder = pending
+    git_root = containing_git_workspace_root(folder)
+    roots = (folder,) if git_root is None or git_root == folder else (folder, git_root)
+    try:
+        check_folder_identity(record, path=path, client=client, forbidden_roots=roots)
+    except FolderIdentityRefused as refused:
+        obj["folder_identity_refused"] = refused
+        raise
+    obj.pop("folder_identity", None)
+
+
+def _set_aside_folder_identity() -> Exception | None:
+    """For `cruxible init`, which repairs a folder: check its record, never refuse on it.
+
+    Returns the record's refusal (to report), or None when there is no record
+    or it checks out. Later daemon calls in this command no longer check it.
+    """
+
+    obj = _root_ctx_obj()
+    refused = obj.pop("folder_identity_refused", None)
+    pending = obj.pop("folder_identity", None)
+    if refused is not None or pending is None:
+        return cast("Exception | None", refused)
+    client = _get_client()
+    if client is None:
+        return None
+    from cruxible_client.authoring.folder_identity import FolderIdentityRefused
+
+    obj["folder_identity"] = pending
+    try:
+        _verify_folder_identity(obj, client)
+    except FolderIdentityRefused as refusal:
+        obj.pop("folder_identity_refused", None)
+        obj.pop("folder_identity", None)
+        return refusal
+    return None
+
+
+def _get_lifecycle_client(state_root: Path | None = None) -> DaemonLifecycleClient | None:
+    """An unchecked client whose interface only permits lifecycle endpoints.
+
+    ``state_root`` is where the local daemon keeps its bootstrap secret, when it
+    is not the configured one (``server start --state-root``).
+    """
+    obj = _root_ctx_obj()
+    server_url = obj.get("server_url")
+    server_socket = obj.get("server_socket")
+    if not server_url and not server_socket:
+        return None
+    client = obj.get("_lifecycle_client")
+    if isinstance(client, DaemonLifecycleClient):
+        return client
+    token = get_runtime_bearer_token()
+    key = (
+        None
+        if token is not None
+        else _local_operator_key(
+            server_url=server_url, server_socket=server_socket, state_root=state_root
+        )
+    )
+    client = DaemonLifecycleClient(
+        base_url=server_url,
+        socket_path=server_socket,
+        token=token,
+        operator_secret=None if key is None else key.secret,
+        operator_boot_id=None if key is None else key.boot_id,
+    )
+    obj["_lifecycle_client"] = client
+    return client
+
+
+def _local_operator_key(
+    *, server_url: str | None, server_socket: str | None, state_root: Path | None = None
+) -> LocalOperatorKey | None:
+    """The bootstrap secret and boot id of the local daemon this command targets.
+
+    Lifecycle commands (`server status`, `restart`, `stop`) fall back to it when
+    no bearer token is configured, so a local restart needs no credential typed
+    in. It keys a per-request MAC, bound to the boot id the live daemon wrote in
+    its lock record, and never goes on the wire. It is read only while a live
+    daemon holds the state-root lock on this exact transport.
+    """
+
+    from cruxible_core.errors import CoreError
+    from cruxible_core.server.bootstrap_secret import read_local_operator_key
+    from cruxible_core.server.config import get_server_state_root
+
+    if state_root is None:
+        try:
+            state_root = get_server_state_root()
+        except CoreError:
+            return None
+    return read_local_operator_key(
+        state_root.expanduser().resolve(), server_url=server_url, server_socket=server_socket
+    )
 
 
 def _current_cli_context() -> CliContextState:
@@ -447,43 +566,40 @@ def _current_cli_context() -> CliContextState:
         server_url=obj.get("server_url"),
         server_socket=obj.get("server_socket"),
         instance_id=obj.get("instance_id"),
-        working_set=obj.get("working_set"),
+        instance_transport=obj.get("instance_transport"),
     )
 
 
+@dataclass(frozen=True)
+class ActiveInstanceChange:
+    previous: str | None
+    current: str
+
+
 def _activate_server_instance(instance_id: str) -> ActiveInstanceChange | None:
-    """Persist *instance_id* as the active server-mode CLI instance."""
+
     state = _current_cli_context()
     if not state.server_url and not state.server_socket:
         return None
     save_cli_context(
-        CliContextState(
+        replace(
+            load_cli_context(),
             server_url=state.server_url,
             server_socket=state.server_socket,
             instance_id=instance_id,
-            working_set=state.working_set,
+            instance_transport=(
+                state.server_url.rstrip("/")
+                if state.server_url
+                else (
+                    f"unix://{Path(state.server_socket).expanduser().resolve()}"
+                    if state.server_socket
+                    else None
+                )
+            ),
         )
     )
     _root_ctx_obj()["instance_id"] = instance_id
     return ActiveInstanceChange(previous=state.instance_id, current=instance_id)
-
-
-def _print_active_instance_change(change: ActiveInstanceChange | None) -> None:
-    """Print the active-instance update for a server-created instance."""
-    if change is None:
-        return
-    click.echo(f"Active instance: {change.current}")
-    if change.previous and change.previous != change.current:
-        click.echo(f"Previous active instance: {change.previous}")
-
-
-def _print_active_instance_unchanged() -> None:
-    """Print the active instance when a server-created instance is not activated."""
-    current = _current_cli_context().instance_id
-    if current:
-        click.echo(f"Active instance unchanged: {current}")
-    else:
-        click.echo("No active instance selected.")
 
 
 def _persist_cli_context(
@@ -491,14 +607,35 @@ def _persist_cli_context(
     server_url: str | None,
     server_socket: str | None,
     instance_id: str | None,
+    instance_transport: str | None = None,
 ) -> None:
-    existing = load_cli_context()
+    """Remember transport and instance; the principals the context knows are kept."""
+
     save_cli_context(
-        CliContextState(
+        replace(
+            load_cli_context(),
             server_url=server_url,
             server_socket=server_socket,
             instance_id=instance_id,
-            working_set=existing.working_set,
+            instance_transport=instance_transport,
+        )
+    )
+
+
+def _remember_principal_settings(
+    instance_id: str, principal_id: str, settings_path: Path, *, activate: bool
+) -> None:
+    """Remember a principal's settings file so the CLI can load it (and act as it)."""
+
+    transport = _transport_target(_root_ctx_obj())
+    if transport is None:  # pragma: no cover - settings are written only in server mode
+        return
+    save_cli_context(
+        load_cli_context().remember_principal(
+            principal_binding(transport, instance_id),
+            principal_id,
+            settings_path,
+            activate=activate,
         )
     )
 
@@ -522,302 +659,23 @@ def _dispatch_cli(
     if client is not None:
         return remote_call(client)
     if not allow_local:
-        raise click.UsageError(
-            f"Local mutation disabled for {command_name or 'this command'}; use server mode."
-        )
-    if _server_required():
-        # Server mode is the declared backend, but no client could be resolved.
-        # Refuse the silent on-disk fallback so reads fail the same way writes do
-        # instead of leaking a confusing InstanceNotFoundError/ConfigError.
+        raise click.UsageError(no_daemon_message(command_name or "this command"))
+    if _root_ctx_obj().get("require_server"):
         raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
     return local_call()
 
 
-def _dispatch_cli_instance(
-    remote_call: Callable[[CruxibleClient, str], RemoteResultT],
-    local_call: Callable[[CruxibleInstance], LocalResultT],
-    *,
-    allow_local: bool = True,
-    command_name: str | None = None,
-) -> RemoteResultT | LocalResultT:
-    def load_local_instance() -> CruxibleInstance:
-        from cruxible_core.cli.instance import CruxibleInstance
-
-        return CruxibleInstance.load()
-
-    return _dispatch_cli(
-        lambda client: remote_call(client, _require_instance_id()),
-        lambda: local_call(load_local_instance()),
-        allow_local=allow_local,
-        command_name=command_name,
-    )
-
-
-def _guard_local_read_fallback() -> None:
-    """Refuse a local on-disk read fallback when server mode is required.
-
-    Read commands that resolve the client directly (rather than via
-    ``_dispatch_cli``) call this before loading a local instance so every read
-    verb shares one transport contract and one error surface.
-    """
-    if _server_required():
-        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
-
-
 def _require_instance_id() -> str:
-    obj = _root_ctx_obj()
-    instance_id = obj.get("instance_id")
+    instance_id = _root_ctx_obj().get("instance_id")
     if not instance_id:
-        raise click.UsageError("--instance-id is required in server mode")
+        obj = _root_ctx_obj()
+        if mismatch := obj.get("context_instance_transport_mismatch"):
+            raise click.UsageError(str(mismatch))
+        source = _target_source_qualifier(
+            str(obj.get("target_instance_source") or "local"),
+            str(obj.get("target_transport_source") or "local"),
+        )
+        raise click.UsageError(
+            f"--instance-id is required in server mode (target source: {source})"
+        )
     return str(instance_id)
-
-
-def _raise_server_mode_unsupported(command_name: str) -> None:
-    raise click.UsageError(f"{command_name} is local-only and is not available in server mode.")
-
-
-def _require_local_instance(command_name: str) -> CruxibleInstance:
-    from cruxible_core.cli.instance import CruxibleInstance
-
-    if _get_client() is not None:
-        _raise_server_mode_unsupported(command_name)
-    return CruxibleInstance.load()
-
-
-def _read_text_or_error(path_str: str) -> str:
-    path = Path(path_str)
-    try:
-        return path.read_text()
-    except OSError as exc:
-        raise ConfigError(f"Failed to read {path}: {exc}") from exc
-
-
-def _read_validation_yaml_or_error(path_str: str) -> str:
-    """Read config YAML for remote validation, composing overlays when needed."""
-    import yaml
-
-    from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
-    from cruxible_core.config.loader import load_config
-
-    path = Path(path_str)
-    config = load_config(path)
-    composed = compose_config_sequence(
-        resolve_config_layers(config, config_path=path.resolve()),
-    )
-    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
-    return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
-
-
-def _read_config_upload_or_error(
-    path_str: str,
-) -> tuple[str, contracts.ConfigSourceManifest]:
-    """Compose an authored config and return its complete source manifest."""
-    import yaml
-
-    from cruxible_core.config.provenance import compose_file_with_source_manifest
-
-    composed, source_manifest = compose_file_with_source_manifest(path_str)
-    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
-    config_yaml = yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
-    return config_yaml, contracts.ConfigSourceManifest.model_validate(
-        source_manifest.model_dump(mode="python")
-    )
-
-
-def _read_input_payload(path_str: str) -> dict[str, Any]:
-    import yaml
-
-    path = Path(path_str)
-    try:
-        raw = path.read_text()
-    except OSError as exc:
-        raise ConfigError(f"Failed to read {path}: {exc}") from exc
-
-    try:
-        payload = yaml.safe_load(raw)
-    except yaml.YAMLError as exc:
-        raise ConfigError(f"Failed to parse input file {path}: {exc}") from exc
-
-    if not isinstance(payload, dict):
-        raise ConfigError(f"Input file {path} must contain a top-level mapping")
-    return payload
-
-
-def _parse_inline_mapping(raw: str, *, source: str) -> dict[str, Any]:
-    import yaml
-
-    try:
-        payload = yaml.safe_load(raw)
-    except yaml.YAMLError as exc:
-        raise ConfigError(f"Failed to parse {source}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ConfigError(f"{source} must contain a top-level mapping")
-    return payload
-
-
-def _resolve_workflow_input(
-    *,
-    input_text: str | None,
-    input_file: str | None,
-) -> dict[str, Any]:
-    if input_text is not None and input_file is not None:
-        raise click.UsageError("Provide either --input or --input-file, not both")
-    if input_text is not None:
-        return _parse_inline_mapping(input_text, source="--input")
-    if input_file is not None:
-        return _read_input_payload(input_file)
-    return {}
-
-
-def _print_apply_previews(apply_previews: dict[str, Any]) -> None:
-    if not apply_previews:
-        return
-    click.echo("Apply previews:")
-    for step_id, preview in apply_previews.items():
-        target = preview.get("entity_type") or preview.get("relationship_type") or step_id
-        summary = (
-            f"  {step_id}: {target} "
-            f"creates={preview.get('create_count', 0)} "
-            f"updates={preview.get('update_count', 0)} "
-            f"noops={preview.get('noop_count', 0)}"
-        )
-        duplicate_count = preview.get("duplicate_input_count", 0)
-        conflicting_count = preview.get("conflicting_duplicate_count", 0)
-        if duplicate_count or conflicting_count:
-            summary += f" duplicates={duplicate_count} conflicting={conflicting_count}"
-        click.echo(summary)
-
-
-def _print_query_param_hints(hints: contracts.QueryParamHints | None) -> None:
-    if hints is None:
-        return
-    click.echo("Param hints:")
-    click.echo(f"  entry_point={hints.entry_point}")
-    if hints.primary_key is not None:
-        click.echo(f"  primary_key={hints.primary_key}")
-    if hints.required_params:
-        click.echo(f"  required={', '.join(hints.required_params)}")
-    if hints.example_ids:
-        click.echo(f"  examples={', '.join(hints.example_ids)}")
-
-
-def _build_query_param_hints(
-    config: CoreConfig,
-    query_name: str,
-    example_entities: list[EntityInstance],
-) -> contracts.QueryParamHints | None:
-    query_schema = config.named_queries.get(query_name)
-    if query_schema is None:
-        return None
-    if query_schema.entry_point is None:
-        return contracts.QueryParamHints(
-            entry_point=None,
-            required_params=[],
-            primary_key=None,
-            example_ids=[],
-        )
-    entity_schema = config.get_entity_type(query_schema.entry_point)
-    primary_key = entity_schema.get_primary_key() if entity_schema is not None else None
-    required_params = [primary_key] if primary_key is not None else []
-    return contracts.QueryParamHints(
-        entry_point=query_schema.entry_point,
-        required_params=required_params,
-        primary_key=primary_key,
-        example_ids=sorted(entity.entity_id for entity in example_entities),
-    )
-
-
-def _lookup_query_param_hints_local(
-    instance: CruxibleInstance,
-    query_name: str,
-) -> contracts.QueryParamHints | None:
-    from cruxible_core.service import service_sample, service_schema
-
-    config = service_schema(instance)
-    query_schema = config.named_queries.get(query_name)
-    if query_schema is None:
-        return None
-    if query_schema.entry_point is None:
-        return _build_query_param_hints(config, query_name, [])
-    examples = service_sample(instance, query_schema.entry_point, limit=3).items
-    return _build_query_param_hints(config, query_name, examples)
-
-
-def _lookup_query_param_hints_server(
-    client: CruxibleClient,
-    instance_id: str,
-    query_name: str,
-) -> contracts.QueryParamHints | None:
-    payload = client.schema(instance_id)
-    query_payload = (payload.get("named_queries") or {}).get(query_name)
-    if query_payload is None:
-        return None
-    entry_point = query_payload.get("entry_point")
-    if entry_point is None:
-        return contracts.QueryParamHints(
-            entry_point=None,
-            required_params=[],
-            primary_key=None,
-            example_ids=[],
-        )
-    entity_payload = (payload.get("entity_types") or {}).get(entry_point) or {}
-    primary_key = next(
-        (
-            prop_name
-            for prop_name, prop in (entity_payload.get("properties") or {}).items()
-            if prop.get("primary_key")
-        ),
-        None,
-    )
-    sample = client.sample(instance_id, entry_point, limit=3)
-    examples = _entities_from_payload(sample.items)
-    return contracts.QueryParamHints(
-        entry_point=entry_point,
-        required_params=[primary_key] if primary_key is not None else [],
-        primary_key=primary_key,
-        example_ids=sorted(entity.entity_id for entity in examples),
-    )
-
-
-# ---- payload deserializers ----
-
-
-def _entities_from_payload(items: list[dict[str, Any]]) -> list[EntityInstance]:
-    from cruxible_core.graph.types import EntityInstance
-
-    return [EntityInstance.model_validate(item) for item in items]
-
-
-def _feedback_from_payload(items: list[dict[str, Any]]) -> list[FeedbackRecord]:
-    from cruxible_core.feedback.types import FeedbackRecord
-
-    return [FeedbackRecord.model_validate(item) for item in items]
-
-
-def _outcomes_from_payload(items: list[dict[str, Any]]) -> list[OutcomeRecord]:
-    from cruxible_core.feedback.types import OutcomeRecord
-
-    return [OutcomeRecord.model_validate(item) for item in items]
-
-
-def _groups_from_payload(items: list[dict[str, Any]]) -> list[CandidateGroup]:
-    from cruxible_core.group.types import CandidateGroup
-
-    return [CandidateGroup.model_validate(item) for item in items]
-
-
-def _members_from_payload(items: list[dict[str, Any]]) -> list[CandidateMember]:
-    from cruxible_core.group.types import CandidateMember
-
-    return [CandidateMember.model_validate(item) for item in items]
-
-
-def _parse_params(params: tuple[str, ...]) -> dict[str, str]:
-    """Parse KEY=VALUE pairs into a dict."""
-    result: dict[str, str] = {}
-    for p in params:
-        parts = p.split("=", 1)
-        if len(parts) != 2:
-            raise click.BadParameter(f"Parameter must be KEY=VALUE, got: {p}")
-        result[parts[0]] = parts[1]
-    return result

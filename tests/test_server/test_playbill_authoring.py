@@ -1,0 +1,781 @@
+"""HTTP route parity for the frozen AuthoringIntent verbs."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from cruxible_client import contracts
+from cruxible_client.authoring.examples import claim_flow_a_example
+from tests.core_support._claim_type_support import claim_type_input_example
+from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
+
+COORDINATE = contracts.AcceptedCoordinate(
+    git_oid="1" * 64,
+    semantic_root="sha256:" + "2" * 64,
+    generation_root="sha256:" + "3" * 64,
+    compiler_digest="sha256:" + "4" * 64,
+)
+INTENT_ID = "AIT-" + "5" * 32
+
+
+def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+    from cruxible_client.contracts.authoring.models import (
+        ClaimAuthoringPayload,
+        ClaimDependencyDrafts,
+        ClaimDerivationBinding,
+    )
+    from tests.test_authoring.test_authoring_preflight import _self_source_payload
+
+    client, instance_id, _private_key = playbill_http
+    original = _self_source_payload()
+    payload = ClaimAuthoringPayload(
+        statement=original.statement.model_copy(update={"role": "derivation"}),
+        rationale="A raw caller cannot supply execution provenance.",
+        source=original.source,
+        dependency_drafts=ClaimDependencyDrafts(),
+        derivation=ClaimDerivationBinding(
+            procedure=ArtifactPin(
+                role="reducer",
+                target=ArtifactIdentity(kind="Procedure", name="unexecuted"),
+                artifact_digest="sha256:" + "1" * 64,
+            ),
+            inputs=(
+                ArtifactPin(
+                    role="input-claim",
+                    target=ArtifactIdentity(kind="Claim", name="CLM-" + "2" * 32),
+                    artifact_digest="sha256:" + "3" * 64,
+                ),
+            ),
+        ),
+    )
+    response = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "cruxible-authoring-intent-compile-request-v4",
+            "payload": payload.model_dump(mode="json"),
+        },
+    )
+    assert response.status_code == 200, response.text
+    intent_id = response.json()["certificate"]["intent_id"]
+    compiled = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "cruxible-authoring-intent-compile-request-v4",
+            "payload": payload.model_dump(mode="json"),
+            "intent_id": intent_id,
+        },
+    )
+    assert compiled.status_code == 200, compiled.text
+    assert compiled.json()["verdict"] == "refused"
+    assert "cruxible.authoring.derivation_requires_execution" in {
+        item["code"] for item in compiled.json()["frontier"]["diagnostics"]
+    }
+    submitted = client.post(
+        f"/api/v1/{instance_id}/authoring/intents/{intent_id}/submit",
+        json={"tag": "playbill-authoring-intent-submit-request-v1"},
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["status"]["proposal_id"] is None
+
+
+def test_http_compile_and_submit_keep_the_frozen_request_boundary(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    seen: list[tuple[str, object]] = []
+
+    def compile_stub(
+        selected: str,
+        *,
+        payload: object,
+        intent_id: str | None = None,
+        reference_expectations: object = None,
+        program_stamp: object = None,
+    ):
+        seen.append((selected, payload))
+        # An unstamped request asserts no references: both stay absent.
+        assert intent_id is None
+        assert reference_expectations is None and program_stamp is None
+        return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("example"),))
+
+    def submit_stub(selected: str, intent_id: str, *, accept: str):
+        assert accept == "if_allowed"
+        seen.append((selected, intent_id))
+        status = contracts.CandidateStatusRecord(
+            state="draft",
+            current_accepted_coordinate=COORDINATE,
+        )
+        return contracts.AuthoringSubmitResultRecord(
+            outcome=contracts.AuthoringProposed(
+                reason="not_ready_to_activate", message="candidate is draft"
+            ),
+            intent={"intent_id": intent_id},
+            status=status,
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_compile", compile_stub
+    )
+    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_authoring_submit", submit_stub)
+    payload = {
+        "tag": "cruxible-claim-authoring-payload-v4",
+        "statement": {
+            "tag": "playbill-authoring-claim-statement-v1",
+            "subject": {
+                "tag": "playbill-semantic-address-v1",
+                "artifact_path": "subjects/work_item/wi-42.json",
+                "selector": {"scheme": "artifact-v1", "value": ""},
+            },
+            "predicate": "work.status",
+            "qualifier": None,
+            "object": {"kind": "literal", "value": "ready"},
+            "role": "observation",
+            "effective_from": None,
+            "effective_until": None,
+        },
+        "rationale": "Observed ready.",
+        "source": {
+            "tag": "playbill-self-source-body-v1",
+            "content_base64": "cmVhZHk=",
+        },
+        "citation_role": None,
+        "revises": None,
+        "existing_claim_dispositions": [],
+    }
+    compiled = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "cruxible-authoring-intent-compile-request-v4",
+            "payload": payload,
+            "intent_id": None,
+        },
+    )
+    submitted = client.post(
+        f"/api/v1/{instance_id}/authoring/intents/{INTENT_ID}/submit",
+        json={"tag": "playbill-authoring-intent-submit-request-v1"},
+    )
+
+    assert compiled.status_code == 200, compiled.text
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["tag"] == "playbill-authoring-submit-result-v1"
+    assert seen[0][0] == instance_id
+    assert seen[1] == (instance_id, INTENT_ID)
+
+
+def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Card 124: a validator refusing deep inside lowering is a refusal of the request.
+
+    It used to escape the compile route as an unhandled 500 whose only
+    diagnosis was the daemon log. Whatever lowering raises short of a memory
+    fault now comes back as a typed refusal carrying the validator's message.
+    """
+
+    client, instance_id, _private_key = playbill_http
+
+    def refusing(*_args: object, **_kwargs: object) -> object:
+        raise ValueError("source coordinates/selectors cannot carry locators at $.selector")
+
+    monkeypatch.setattr("cruxible_core.authoring.preflight.lower_authoring", refusing)
+    payload = {
+        "tag": "cruxible-claim-authoring-payload-v4",
+        "statement": {
+            "tag": "playbill-authoring-claim-statement-v1",
+            "subject": {
+                "tag": "playbill-semantic-address-v1",
+                "artifact_path": "subjects/work_item/wi-42.json",
+                "selector": {"scheme": "artifact-v1", "value": ""},
+            },
+            "predicate": "work.status",
+            "qualifier": None,
+            "object": {"kind": "literal", "value": "ready"},
+            "role": "observation",
+            "effective_from": None,
+            "effective_until": None,
+        },
+        "rationale": "Observed ready.",
+        "source": {"tag": "playbill-self-source-body-v1", "content_base64": "cmVhZHk="},
+        "citation_role": None,
+        "revises": None,
+        "existing_claim_dispositions": [],
+    }
+    response = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "cruxible-authoring-intent-compile-request-v4",
+            "payload": payload,
+            "intent_id": None,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["verdict"] == "refused"
+    (diagnostic,) = [
+        item
+        for item in body["frontier"]["diagnostics"]
+        if item["code"] == "cruxible.authoring.lowering_invalid"
+    ]
+    assert "cannot carry locators" in diagnostic["message"]
+    assert diagnostic["repairs"][0]["kind"] == "revise_payload"
+
+
+def test_http_input_variants_delegate_without_exposing_a_base(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    input_value = {
+        "kind": "claim",
+        "subject": "project.work_item/wi-42",
+        "predicate": "project.work_item.status",
+        "object": {"kind": "literal", "value": "ready"},
+        "role": "observation",
+        "rationale": "Observed ready.",
+        "source": {"kind": "self_source", "body": "status: ready\n"},
+    }
+    seen: list[object] = []
+
+    def compile_stub(selected: str, *, input: object, intent_id: str | None):
+        seen.append((selected, input))
+        return stub_preflight_result(intent_id=INTENT_ID)
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_compile_input",
+        compile_stub,
+    )
+    response = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "playbill-authoring-input-compile-request-v1",
+            "input": input_value,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen and seen[0][0] == instance_id
+
+
+def test_http_compile_flow_a_stub_surfaces_the_bind_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    response = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "playbill-authoring-input-compile-request-v1",
+            "input": claim_flow_a_example().model_dump(mode="json"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == (
+        "cruxible.authoring.working_selection_requires_bind at input.source: "
+        "compile and submit cannot observe local working-source bytes. "
+        "Repair: Run cruxible authoring bind with this input and the selected local file."
+    )
+
+
+def test_http_refuses_a_graph_definition_with_carried_contracts_naming_the_spec(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """Owned Contracts are lowered from the spec, never authored beside a graph."""
+
+    client, instance_id, _private_key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "playbill-authoring-input-compile-request-v1",
+            "input": {
+                "kind": "procedure",
+                "definition": {"name": "replace-me", "nodes": []},
+                "contracts": [{"name": "unused-contract", "fields": {}}],
+            },
+        },
+    )
+
+    assert 400 <= response.status_code < 500, response.text
+    assert "procedure_authoring_form_retired" in response.text
+    assert "ProcedureSpec" in response.text
+
+
+def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_input(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    schemas = client.app.openapi()["components"]["schemas"]
+
+    for name in ("AuthoringInputCompileRequest",):
+        mapping = schemas[name]["properties"]["input"]["discriminator"]["mapping"]
+        assert set(mapping) == {
+            "approval_policy",
+            "change_set",
+            "claim",
+            "procedure",
+            "procedure_mandate",
+            "procedure_runtime_policy",
+            "query_definition",
+            "subject",
+            "subject_kind",
+            "subject_succession",
+            "line",
+            "trigger",
+            "runbook",
+            "contract",
+            "capability",
+        }
+    assert "BriefInput" not in schemas
+    assert "ClaimSlotPolicyV1" not in schemas
+    assert schemas["ClaimType"]["properties"]["artifact_format"]["const"] == (
+        "cruxible-claim-type-v11"
+    )
+
+    response = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "playbill-authoring-input-compile-request-v1",
+            "input": {"kind": "brief"},
+        },
+    )
+
+    assert response.status_code == 422
+    for retired in ("acquisition_policy", "provider_interface", "blueprint"):
+        refused = client.post(
+            f"/api/v1/{instance_id}/authoring/compile",
+            json={"tag": "playbill-authoring-input-compile-request-v1", "input": {"kind": retired}},
+        )
+        assert refused.status_code == 422
+        error = refused.json()
+        assert error["error_code"] == "request.invalid"
+        assert error["error_type"] == "RequestValidationError"
+        assert any("input" in item and retired in item for item in error["errors"])
+
+
+def test_http_migration_route_delegates_the_typed_request(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    seen: list[object] = []
+
+    def migrate_stub(selected: str, *, request: object):
+        seen.append((selected, request))
+        return contracts.ClaimTypeMigrationResult(
+            operation_digest="sha256:" + "1" * 64,
+            semantic_delta=[],
+            dependents=[],
+            proposal=contracts.ProposalInspection(
+                proposal={},
+                accepted_coordinate=COORDINATE,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_migrate_claim_type",
+        migrate_stub,
+    )
+    response = client.post(
+        f"/api/v1/{instance_id}/claim-types/migrations",
+        json={
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "submit",
+            "successor": {
+                "predicate": "project.work_item.status",
+                "allowed_subject_kinds": ["project.work_item"],
+                "value": "string{max_len: 256}",
+                "cardinality": "one",
+                "permitted_roles": ["observation"],
+                "evidence_admission_policy": {"rules": []},
+                "admission_policy": {
+                    "corroboration_requirements": [],
+                    "freeze_requirements": [],
+                },
+                "resolution_policy": {
+                    "cardinality": "one",
+                    "eligible_verdicts": ["supported"],
+                    "selector": "only_contender",
+                },
+            },
+            "dependents": [],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen and seen[0][0] == instance_id
+
+
+@pytest.mark.parametrize("operation", ["migrate", "propose"])
+def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+    operation: str,
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    claim_type_input = claim_type_input_example().model_dump(mode="json")
+    claim_type_input["evidence_admission_policy"] = {
+        "rules": [
+            {
+                "rule_id": "obsolete-producer-allowlist",
+                "claim_roles": ["observation"],
+                "capture_contracts": ["repo.replace-me"],
+                "evidence_kinds": ["self_asserted"],
+                "admission": "derivational",
+                "subject_binding": "exact_claim_subject",
+                "allowed_reducer_digests": ["sha256:" + "b" * 64],
+            }
+        ]
+    }
+    if operation == "migrate":
+        path = f"/api/v1/{instance_id}/claim-types/migrations"
+        request = {
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "preflight",
+            "successor": claim_type_input,
+        }
+    else:
+        path = f"/api/v1/{instance_id}/claim-types/proposals"
+        request = {
+            "tag": "playbill-claim-type-input-propose-request-v1",
+            "input": claim_type_input,
+            "proposal_name": "invalid-derivational-policy",
+        }
+
+    response = client.post(path, json=request)
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["error_type"] == "ClaimTypeInputValidationError"
+    assert body["error_code"] == "cruxible.claim_type.input_invalid"
+    assert "$.rules[0].allowed_reducer_digests" in body["message"]
+    assert "Extra inputs are not permitted" in body["message"]
+
+
+def test_http_migration_domain_refusal_is_a_bad_request(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    response = client.post(
+        f"/api/v1/{instance_id}/claim-types/migrations",
+        json={
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "preflight",
+            "successor": claim_type_input_example().model_dump(mode="json"),
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_type"] == "ClaimTypeMigrationError"
+    assert "migration requires an accepted predecessor" in response.json()["message"]
+
+
+def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    claim_type_input = {
+        **claim_type_input_example().model_dump(mode="json"),
+        "anticipated_source_ids": ["corpus.runbook"],
+    }
+
+    response = client.post(
+        f"/api/v1/{instance_id}/claim-types/proposals",
+        json={
+            "tag": "playbill-claim-type-input-propose-request-v1",
+            "input": claim_type_input,
+            "proposal_name": "lint-delivery",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    warnings = response.json()["lint"]["warnings"]
+    by_code = {warning["code"]: warning for warning in warnings}
+    assert len(warnings) == len(by_code) == 2
+    assert set(by_code) == {
+        "cruxible.claim_type.anticipated_source_contract_omitted",
+        "cruxible.claim_type.description_missing",
+    }
+    assert by_code["cruxible.claim_type.anticipated_source_contract_omitted"]["source_id"] == (
+        "corpus.runbook"
+    )
+    description = by_code["cruxible.claim_type.description_missing"]
+    assert description["field_path"] == "$.description"
+    assert description["replacement_rule_fragment"] == {
+        "description": "<what one value of this field means>"
+    }
+
+
+@pytest.mark.parametrize("operation", ["builtin_propose", "migrate"])
+def test_http_claim_type_routes_preserve_optional_lint_payload(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+    operation: str,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    warning = {
+        "code": "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "field_path": "$.evidence_admission_policy.rules",
+        "source_id": None,
+        "contract_identity": "CaptureContract:available",
+        "contract_digest": "sha256:" + "7" * 64,
+        "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
+    }
+    lint = contracts.ClaimTypeProposalLint(warnings=[warning])
+    if operation == "builtin_propose":
+        monkeypatch.setattr(
+            "cruxible_core.runtime.playbill_api.playbill_propose_builtin_claim_type",
+            lambda _selected, **_values: contracts.ClaimTypeInputProposalResult(
+                proposal=contracts.ProposalInspection(
+                    proposal={"proposal_id": "sha256:" + "8" * 64},
+                    accepted_coordinate=COORDINATE,
+                ),
+                lint=lint,
+            ),
+        )
+        path = f"/api/v1/{instance_id}/claim-types/proposals"
+        request = {
+            "tag": "cruxible-builtin-claim-type-propose-request-v1",
+            "builtin": "semantic.alias",
+            "proposal_name": "warn",
+        }
+    else:
+        monkeypatch.setattr(
+            "cruxible_core.runtime.playbill_api.playbill_migrate_claim_type",
+            lambda _selected, **_values: contracts.ClaimTypeMigrationPreflight(
+                coordinate=COORDINATE,
+                successor_artifact_digest="sha256:" + "9" * 64,
+                dependents=[],
+                semantic_delta=[],
+                lint=lint,
+            ),
+        )
+        path = f"/api/v1/{instance_id}/claim-types/migrations"
+        request = {
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "preflight",
+            "successor": claim_type_input_example().model_dump(mode="json"),
+        }
+
+    response = client.post(path, json=request)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["lint"]["warnings"] == [warning]
+
+
+def test_http_refuses_digest_and_base_smuggling_in_request_models(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/authoring/compile",
+        json={
+            "tag": "cruxible-authoring-intent-compile-request-v4",
+            "payload": {
+                "tag": "cruxible-claim-authoring-payload-v4",
+                "claim_id": "CLM-" + "0" * 32,
+                "base": COORDINATE.model_dump(mode="json"),
+            },
+        },
+    )
+    assert response.status_code == 422
+    assert "claim_id" in response.text or "statement" in response.text
+
+
+def test_http_whoami_and_proposal_inventory_are_typed_reads(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    seen: list[tuple[str, str | None]] = []
+    who = contracts.WhoAmI(
+        actor_id="operator",
+        credential_label=None,
+        actor_id_source="local_operator",
+        authenticated=False,
+        credential_permission_mode="admin",
+        principal_registration_status="active",
+        active_principal_ids=["daemon", "operator"],
+        coordinate=COORDINATE,
+        can_author=True,
+        authoring_refusal=None,
+    )
+    proposals = contracts.ProposalList(
+        coordinate=COORDINATE,
+        status_filter="open",
+        entries=[],
+    )
+    selector = contracts.ProposalSelectorResult(
+        selector="refs/proposals/operator/example",
+        proposal_id="sha256:" + "5" * 64,
+    )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_whoami",
+        lambda selected: (seen.append((selected, None)), who)[1],
+    )
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_list_proposals",
+        lambda selected, *, status=None, limit, cursor: (
+            seen.append((selected, status)),
+            proposals,
+        )[1],
+    )
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_resolve_proposal_selector",
+        lambda selected, value: (seen.append((selected, value)), selector)[1],
+    )
+
+    identity = client.get(f"/api/v1/{instance_id}/whoami")
+    listing = client.get(f"/api/v1/{instance_id}/proposals?status=open")
+    resolved = client.get(
+        f"/api/v1/{instance_id}/proposal-selector",
+        params={"selector": selector.selector},
+    )
+
+    assert identity.status_code == listing.status_code == resolved.status_code == 200
+    assert identity.json()["tag"] == "playbill-whoami-v1"
+    assert listing.json()["tag"] == "playbill-proposal-list-v1"
+    assert resolved.json() == selector.model_dump(mode="json")
+    assert seen == [
+        (instance_id, None),
+        (instance_id, "open"),
+        (instance_id, selector.selector),
+    ]
+
+
+def test_http_proposal_selector_resolves_against_a_live_instance(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    from cruxible_client.contracts.documents import (
+        DocumentAuthority,
+        DocumentLifecycle,
+        DocumentShell,
+    )
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.authoring.documents import service_propose_playbill_document
+
+    client, instance_id, _private_key = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    body = instance.store_document_body(b"HTTP selector fixture\n")
+    proposed = service_propose_playbill_document(
+        instance,
+        shell=DocumentShell(
+            identity="document:http-selector",
+            document_kind="design",
+            title="HTTP selector",
+            media_type="text/markdown",
+            body_digest=body.digest,
+            authority=DocumentAuthority(required_tier="graph_write"),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        actor_id="operator",
+        proposal_name="http-selector",
+        timestamp="2026-09-02T12:00:00.000000Z",
+    )
+    admission = proposed.proposal.admission
+
+    response = client.get(
+        f"/api/v1/{instance_id}/proposal-selector",
+        params={"selector": admission.target_ref},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "tag": "playbill-proposal-selector-result-v1",
+        "selector": admission.target_ref,
+        "proposal_id": admission.proposal_id,
+    }
+
+
+def test_http_list_routes_bound_their_page_size(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    proposals = client.get(f"/api/v1/{instance_id}/proposals", params={"limit": 1})
+    policies = client.get(
+        f"/api/v1/{instance_id}/orient", params={"section": "policies", "limit": 1}
+    )
+    oversized = client.get(
+        f"/api/v1/{instance_id}/orient",
+        params={"section": "policies", "limit": contracts.ORIENT_MAX_LIMIT + 1},
+    )
+    foreign = client.get(
+        f"/api/v1/{instance_id}/proposals",
+        params={"cursor": policies.json()["next_cursor"]},
+    )
+
+    assert proposals.status_code == policies.status_code == 200
+    assert len(proposals.json()["entries"]) <= 1
+    assert len(policies.json()["policies"]) == 1
+    assert policies.json()["truncated"] is True
+    assert oversized.status_code == 422
+    assert foreign.status_code == 400
+    assert foreign.json()["error_code"] == "cruxible.list.cursor_mismatch"
+
+
+def test_raw_claim_type_envelopes_are_no_longer_an_http_variant(playbill_http) -> None:
+    from cruxible_core.claims.claim_type_inputs import lower_claim_type_input
+
+    client, instance_id, _key = playbill_http
+    raw = lower_claim_type_input(claim_type_input_example(), tree={})
+    response = client.post(
+        f"/api/v1/{instance_id}/claim-types/proposals",
+        json={"claim_type": raw.model_dump(mode="json"), "proposal_name": "removed-raw"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("entrypoint", ["input", "compiled", "staged"])
+@pytest.mark.parametrize("accept", ["if_allowed", "never"])
+def test_http_submit_forwards_accept(playbill_http, monkeypatch, entrypoint, accept):
+    from tests.test_authoring.test_authoring_program_stamp import _stamp
+    from tests.test_client.test_playbill_authoring import _claim_payload
+
+    client, instance_id, _ = playbill_http
+    seen = []
+
+    def submit(*args, **kwargs):
+        seen.append(kwargs["accept"])
+        return contracts.AuthoringSubmitResultRecord(
+            intent={"intent_id": INTENT_ID},
+            status=contracts.CandidateStatusRecord(
+                state="draft", current_accepted_coordinate=COORDINATE
+            ),
+            outcome=contracts.AuthoringProposed(reason="not_ready_to_activate", message="draft"),
+        )
+
+    path = f"/api/v1/{instance_id}/authoring/submit"
+    if entrypoint == "input":
+        function = "playbill_authoring_submit_input"
+        request = {
+            "tag": "playbill-authoring-input-submit-request-v1",
+            "input": {"kind": "subject", "subject_kind": "project.work_item", "key": "new"},
+        }
+    elif entrypoint == "compiled":
+        function = "playbill_authoring_compile_and_submit"
+        request = {
+            "tag": "cruxible-authoring-intent-compile-request-v4",
+            "payload": _claim_payload(),
+            "reference_expectations": [],
+            "program_stamp": _stamp().model_dump(mode="json"),
+        }
+    else:
+        function = "playbill_authoring_submit"
+        path = f"/api/v1/{instance_id}/authoring/intents/{INTENT_ID}/submit"
+        request = {"tag": "playbill-authoring-intent-submit-request-v1"}
+    monkeypatch.setattr(f"cruxible_core.runtime.playbill_api.{function}", submit)
+    if accept != "if_allowed":
+        request["accept"] = accept
+    response = client.post(path, json=request)
+    assert response.status_code == 200, response.text
+    assert seen == [accept]
+    assert response.json()["outcome"]["status"] == "proposed"

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cruxible"
-version = "0.3.2"
-description = "Hard state for AI agents: typed, governed, durable state with deterministic queries, governed writes, and receipts."
+version = "0.5.1"
+description = "Governed state for AI agents: deterministic proposals, signed approvals, provenance, and reproducible accepted generations."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
@@ -17,6 +17,8 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -24,45 +26,71 @@ classifiers = [
 ]
 
 dependencies = [
-    "cruxible-client==0.3.2",
-    "pydantic>=2.12",
+    "cruxible-client==0.5.1",
+    # pydantic 2.14 changes the served OpenAPI (input/output component splitting); v1 serves one ratified surface.
+    "pydantic>=2.12,<2.14",
     "packaging>=23.0",
-    "networkx>=3.0",
-    "polars>=1.0",
     "pyyaml>=6.0",
     "structlog>=24.0",
     "click>=8.0",
-    "rich>=13.0",
+    # Security floor: 48.0.1 fixes CVE-2026-34073, -39892 and the bundled-OpenSSL
+    # GHSA-537c-gmf6-5ccf. 49/50 fix only PKCS#7 and X.509-verification issues
+    # (CVE-2026-69247/-69248/-69249) that Cruxible never reaches (it uses Ed25519
+    # and key serialization), and 49 dropped x86_64 macOS wheels; the floor stays
+    # at 48.0.1 so Intel Macs install a wheel. uv.lock pins 50.0.0.
+    "cryptography>=48.0.1",
     "httpx>=0.24",
-    "pypdf>=5.0",
-    "markdown-it-py>=4.0",
-    "fastapi>=0.100",
-    "python-multipart>=0.0.9",
+    # 0.133.0 is the first FastAPI release that supports Starlette 1.x.
+    "fastapi>=0.133.0",
+    # Transitive (fastapi, mcp) floors so a PyPI install cannot resolve a
+    # vulnerable release. starlette 1.3.1 fixes CVE-2026-48710 (KEV-listed),
+    # -54282, -54283, -48817, -48818.
+    "starlette>=1.3.1",
+    # python-multipart 0.0.31 fixes CVE-2026-40347, -42561, -53537..-53540.
+    "python-multipart>=0.0.31",
+    # PyJWT (via mcp) 2.15.0 fixes CVE-2026-32597, -48522..-48526, -101917,
+    # -101918, -102267..-102275, -103001.
+    "pyjwt>=2.15.0",
+    # certifi (via httpx) 2026.10.18 removes the emSign ECC Root CA - G3 root
+    # (PYSEC-2026-4320 / GHSA-6q48-6c7w-9gw2).
+    "certifi>=2026.10.18",
     "uvicorn[standard]>=0.20",
+    # The MCP server (`cruxible mcp`, `cruxible-mcp`) ships in the base install,
+    # so `uvx cruxible mcp` works without an extra. <2: mcp 2.0.0 removed the
+    # bundled mcp.server.fastmcp the tools are built on; the SDK-2.0 migration
+    # is tracked separately (wi-mcp-sdk-2-migration).
+    # >=1.30.0: 1.27.2 fixes CVE-2026-52869 (session/principal binding) and
+    # -52870 (experimental task scoping); 1.28.1 fixes CVE-2026-59950 (WebSocket
+    # Host/Origin validation); 1.30.0 fixes CVE-2026-59951 (Streamable HTTP
+    # session reclamation), -116684 (bearer-token audience), -116685 (client
+    # transport redirects) and -116686 (client outputSchema validation).
+    "mcp>=1.30.0,<2",
+    # Provider installs materialize environments with the provider runtime toolchain
+    # (providers/package_materialization.py imports it); core never runs provider code.
+    "cruxible-provider-runtime>=0.2.0",
+    # The provider runtime materializes environments with uv (`uv pip sync`, `uv
+    # build`); the PyPI package ships the binary beside the interpreter, so a pip
+    # install and the runtime image both have it (providers/package_materialization.py
+    # uv_executable). 0.13.4 removes the emSign ECC Root CA - G3 root from uv's
+    # vendored TLS roots (PYSEC-2026-4321 / GHSA-hq85-5cpj-mr62).
+    "uv>=0.13.4",
 ]
 
 [project.optional-dependencies]
-# <2: mcp 2.0.0 removed the bundled mcp.server.fastmcp the tools are built
-# on; the SDK-2.0 migration is tracked separately (wi-mcp-sdk-2-migration).
-mcp = ["mcp>=1.0,<2"]
-# There is deliberately no `server` extra: fastapi/uvicorn are base
-# dependencies, so the daemon ships in the default install. Whether that stack
-# should move back out of base deps is a 0.4 packaging question, not something
-# an empty extra can express.
-# Layout-aware PDF parsing (the pdf_to_markdown docling backend) pulls the
-# docling ML stack (~1GB incl. torch); opt in when you need it.
-pdf = ["docling>=2.0"]
+# There are deliberately no `server` or `mcp` extras: the daemon and the MCP
+# server are base dependencies and ship in the default install.
 dev = [
-    "pytest>=8.0",
-    "pytest-cov",
+    "pytest>=9.0.3",  # CVE-2025-71176 (tmpdir handling)
+    "pytest-xdist>=3.5",
+    "pytest-timeout>=2.3",  # CI fails a hung test with its stack instead of hanging the job
     "ruff==0.15.0",
     "mypy>=1.10",
-    "docling>=2.0",
 ]
 
 [project.scripts]
-cruxible = "cruxible_core.cli.main:cli"
-cruxible-mcp = "cruxible_core.mcp.server:main"
+# Thin launchers: they refuse native Windows before the POSIX-only CLI/MCP modules import.
+cruxible = "cruxible_core.entrypoints:cli"
+cruxible-mcp = "cruxible_core.entrypoints:mcp"
 # The daemon launches only via `cruxible server start`; there is no separate
 # `cruxible-server` console-script (removed in wi-server-cli-verb-consistency).
 
@@ -73,6 +101,13 @@ Repository = "https://github.com/cruxible-ai/cruxible"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cruxible_core"]
+# The built console (scripts/build_console.py) is Git-ignored, so hatch would
+# leave it out; artifacts ship it whenever it exists at build time.
+artifacts = ["src/cruxible_core/console_dist/**"]
+
+[tool.hatch.build.targets.sdist]
+# `uv build` makes the wheel from the sdist, so the sdist must carry it too.
+artifacts = ["src/cruxible_core/console_dist/**"]
 
 [tool.uv.workspace]
 members = ["packages/cruxible-client"]
@@ -85,7 +120,10 @@ testpaths = ["tests"]
 pythonpath = ["src", "packages/cruxible-client/src"]
 markers = [
     "docker: requires a working Docker daemon and may build or run container images",
+    "state_root_fallback: tests default state resolution against an isolated temporary HOME",
     "wheel: builds and installs the distribution wheel into a throwaway venv; requires build tooling",
+    "taubench: drives the committed TauBench recipe (benchmarks/playbill_taubench) end to end; runs by default",
+    "executor_only: an executor-only fixture that authors Procedure step kinds the template closes at authoring (D-R37 h1), to cover their executor handlers until post-v1 deletion",
 ]
 
 [tool.ruff]
@@ -103,6 +141,5 @@ packages = ["cruxible_core", "cruxible_client"]
 
 [dependency-groups]
 dev = [
-    "types-networkx>=3.6.1.20260303",
     "types-pyyaml>=6.0.12.20250915",
 ]

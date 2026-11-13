@@ -1,0 +1,595 @@
+"""Claim-v2 citation identity, wire succession, and legacy interpretation."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.candidates import CandidateRecord
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    AcceptedCaptureContract,
+    DirectByteSpanSelection,
+    DirectForeignSourceSelection,
+    build_foreign_source_capture,
+    capture_contract_digest,
+    capture_contract_path,
+    foreign_source_capture_contract,
+    render_capture_contract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractV1 as CaptureContract,
+)
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimBacking,
+    ClaimLawEvidence,
+    _capture_is_explicitly_eligible,
+    _copy_capture_admitted_by_rule,
+    build_claim_citation,
+    claim_citation_references,
+    claim_path,
+    merge_claim_citations,
+    parse_claim,
+    render_claim,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
+)
+from cruxible_client.contracts.semantic import ContentSpan
+from cruxible_client.contracts.subjects import render_subject, subject_digest, subject_path
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.proposals.settlement import ChangeActorBinding
+from tests.core_support._pc_c_support import capture_contract as _capture_contract
+from tests.core_support._subject_kind_support import core_assigned
+from tests.core_support._support import client_material, initialize_local
+from tests.core_support.legacy_capture_builders import (
+    build_direct_claim_selection_capture,
+)
+from tests.test_claims.test_claims import _claim, _claim_type, _subject
+from tests.test_ledger.test_activation import _sign
+
+CLAIM_ID = "CLM-0123456789abcdef0123456789abcdef"
+CAPTURE_DIGEST = "sha256:" + "ab" * 32
+SOURCE_DIGEST = "sha256:" + "cd" * 32
+
+
+#: The contract the domain ClaimType's own rule names in the coverage-verdict tests.
+DOMAIN_CONTRACT = foreign_source_capture_contract("repo.domain-notes")
+
+
+def _legacy_claim() -> ClaimArtifact:
+    """A backing whose Capture carries no citation (refused by the Claim law)."""
+
+    claim = _claim(
+        claim_id=CLAIM_ID,
+        capture_digest=CAPTURE_DIGEST,
+        source_digest=SOURCE_DIGEST,
+        source_length=12,
+    )
+    return claim.model_copy(update={"backing": claim.backing.model_copy(update={"citations": ()})})
+
+
+def _v2_claim(*, role: str = "evidence", origin: str = "independent") -> ClaimArtifact:
+    legacy = _legacy_claim()
+    citation = build_claim_citation(
+        legacy.identity,
+        capture_digest=CAPTURE_DIGEST,
+        role=role,  # type: ignore[arg-type]
+        origin=origin,  # type: ignore[arg-type]
+    )
+    return ClaimArtifact(
+        identity=legacy.identity,
+        statement=legacy.statement,
+        backing=ClaimBacking(
+            referent_context=legacy.backing.referent_context,
+            capture_digests=legacy.backing.capture_digests,
+            citations=(citation,),
+            source_mappings=legacy.backing.source_mappings,
+        ),
+        pins=legacy.pins,
+    )
+
+
+def test_citation_id_uses_the_exact_frozen_preimage_and_retry_is_idempotent() -> None:
+    claim = _v2_claim()
+    citation = claim.backing.citations[0]
+    expected = typed_digest(
+        Sha256Value,
+        "playbill-claim-citation-v1",
+        {
+            "claim_identity": {"kind": "Claim", "name": CLAIM_ID},
+            "capture_digest": CAPTURE_DIGEST,
+            "origin": "independent",
+            "role": "evidence",
+        },
+    ).tagged
+
+    assert citation.citation_id == expected
+    assert merge_claim_citations((citation,), (citation,)) == (citation,)
+
+
+def test_claim_v2_round_trips_and_rejects_a_forged_citation_id() -> None:
+    claim = _v2_claim()
+
+    assert parse_claim(render_claim(claim), path=claim_path(CLAIM_ID)) == claim
+    with pytest.raises(ValidationError, match="citation ID does not reproduce"):
+        ClaimArtifact.model_validate(
+            claim.model_copy(
+                update={
+                    "backing": claim.backing.model_copy(
+                        update={
+                            "citations": (
+                                claim.backing.citations[0].model_copy(
+                                    update={"citation_id": "sha256:" + "00" * 32}
+                                ),
+                            )
+                        }
+                    )
+                }
+            ).model_dump(mode="json")
+        )
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        claim.backing.citations[0].__class__.model_validate(
+            {
+                **claim.backing.citations[0].model_dump(mode="json"),
+                "observation_trust": "provider_receipted",
+            }
+        )
+
+
+def test_citation_references_are_exactly_the_explicit_associations() -> None:
+    """No reference is synthesized for a Capture: an uncited one has none at all."""
+
+    assert claim_citation_references(_legacy_claim()) == ()
+    claim = _v2_claim()
+    assert claim_citation_references(claim) == claim.backing.citations
+
+
+def test_one_capture_can_have_different_roles_on_different_claims() -> None:
+    evidence = _v2_claim(role="evidence")
+    other_identity = ArtifactIdentity(kind="Claim", name="CLM-abcdefabcdefabcdefabcdefabcdefab")
+    copy = build_claim_citation(
+        other_identity,
+        capture_digest=CAPTURE_DIGEST,
+        role="copy",
+        origin="independent",
+    )
+
+    assert evidence.backing.citations[0].capture_digest == copy.capture_digest
+    assert evidence.backing.citations[0].citation_id != copy.citation_id
+    assert evidence.backing.citations[0].role == "evidence"
+    assert copy.role == "copy"
+
+
+def _submit(instance, tree, base_oid: str, name: str, timestamp: str):
+    return instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{name}",
+            proposed_base_oid=base_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=timestamp,
+    )
+
+
+def _activate(instance, owner, candidate, evaluated_oid, *, sequence: int) -> None:
+    assert evaluated_oid is not None
+    base = instance.accepted_coordinate()
+    bundle = instance.prepare_generation(
+        base=base,
+        candidate_tree=instance.proposal_tree(evaluated_oid),
+        candidate=candidate,
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=sequence,
+    )
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    instance.refresh()
+
+
+def _claim_evidence(candidate: CandidateRecord) -> ClaimLawEvidence:
+    return ClaimLawEvidence.model_validate(
+        next(
+            item.result["claim_evidence"]
+            for item in candidate.law_evidence
+            if item.path == claim_path(CLAIM_ID)
+        )
+    )
+
+
+def _accepted(contract: CaptureContract) -> AcceptedCaptureContract:
+    return AcceptedCaptureContract(
+        path=capture_contract_path(contract.identity.name),
+        contract=contract,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+
+
+def _page_source_contract() -> CaptureContract:
+    """A declared source contract, the way a governed page is captured.
+
+    Not one of the compiler's own self-assertion contracts: the bytes exist
+    whether or not this Claim is authored, which is what makes a `copy` of them
+    something a ClaimType can honestly admit.
+    """
+
+    return _capture_contract(name="docs.page-capture-v1")
+
+
+def _type_admitting(contract: CaptureContract) -> ClaimType:
+    return _claim_type().model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="page-copy",
+                        claim_roles=("normative", "observation"),
+                        capture_contracts=(contract.identity.name,),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+
+
+def test_a_copy_citation_is_never_evidence_by_its_shape_alone() -> None:
+    """Card 120: the eligibility gate admits an independent evidence role and nothing else."""
+
+    assert not _capture_is_explicitly_eligible(
+        _v2_claim(role="copy"),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+def test_a_claim_type_that_names_the_contract_admits_a_copy_citation() -> None:
+    """The ruling's own word for a page citation can cover the Claim that cites it.
+
+    `copied_from` lowers as role `copy`, and the eligibility gate skipped it one
+    citation-role before any admission policy was read -- so the honest spelling
+    of "the object bytes ARE these bytes" made the Claim permanently uncoverable
+    and the only repair was to describe a copy as evidence.
+    """
+
+    contract = _page_source_contract()
+
+    assert _copy_capture_admitted_by_rule(
+        _v2_claim(role="copy"),
+        claim_type=_type_admitting(contract),
+        capture_contract=_accepted(contract),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+def test_a_claim_type_that_does_not_name_the_contract_still_reads_uncovered() -> None:
+    """No loophole: the rule decides, and a type that never named the contract says no."""
+
+    contract = _page_source_contract()
+    silent = _claim_type().model_copy(
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy(rules=())}
+    )
+
+    assert not _copy_capture_admitted_by_rule(
+        _v2_claim(role="copy"),
+        claim_type=silent,
+        capture_contract=_accepted(contract),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+def test_a_copy_of_bytes_this_claim_authored_is_admitted_by_no_rule() -> None:
+    """Attesting your own page into concrete is what the pages-are-sources ruling refused.
+
+    It used to run over two origins. The second, `self_published`, was the
+    spelling for a Claim projected back into its own page -- the road the
+    two-block-kinds law refuses -- and no code path in the product ever wrote
+    it, so the case was unreachable and is gone with the origin. `self_source`
+    is the reachable one and the law is unchanged for it: a copy of the
+    author's own body is not independent evidence for the Claim that authored
+    it, whatever the ClaimType's rule says.
+    """
+
+    contract = _page_source_contract()
+
+    assert not _copy_capture_admitted_by_rule(
+        _v2_claim(role="copy", origin="self_source"),
+        claim_type=_type_admitting(contract),
+        capture_contract=_accepted(contract),
+        capture_digest=CAPTURE_DIGEST,
+    )
+
+
+def test_a_copy_of_the_compilers_own_self_assertion_is_admitted_by_no_rule() -> None:
+    """The Claim quoting its own authoring is not a page citing a source.
+
+    Every domain ClaimType already names the direct self-asserted contract, so
+    without this the carve-out would hand every one of them a way to cover
+    itself with a copy of the value it just authored.
+    """
+
+    for builtin in (
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    ):
+        assert not _copy_capture_admitted_by_rule(
+            _v2_claim(role="copy"),
+            claim_type=_type_admitting(builtin),
+            capture_contract=_accepted(builtin),
+            capture_digest=CAPTURE_DIGEST,
+        )
+
+
+PAGE_SOURCE_IDENTITY = "docs.governed-page"
+PAGE_BODY = b"a copy is the ruling's own word for what a page block is\n"
+
+
+def _page_capture(instance, base):
+    """Capture a governed page's bytes the way a page-as-source is captured.
+
+    A foreign logical source: bytes the proposer presents and the daemon commits
+    to exactly. Its contract is DECLARED and is not one of the compiler's two
+    self-assertion contracts, which is the whole shape item 16 exists to open.
+    """
+
+    stored = instance.body_store().store(PAGE_BODY)
+    return build_foreign_source_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=CLAIM_ID,
+        rationale="the governed page block this Claim is about",
+        observed_at=datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
+        accepted_coordinate=AcceptedCoordinate.from_internal(base),
+        selection=DirectForeignSourceSelection(
+            logical_source_identity=PAGE_SOURCE_IDENTITY,
+            span=ContentSpan(
+                content_digest=stored.digest,
+                start_byte=0,
+                end_byte=len(PAGE_BODY),
+            ),
+        ),
+    )
+
+
+def _type_naming(contract: CaptureContract) -> ClaimType:
+    """The domain ClaimType, plus one rule naming `contract` for its own roles."""
+
+    base = _claim_type(contract=DOMAIN_CONTRACT)
+    return base.model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    *base.evidence_admission_policy.rules,
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="page-copy",
+                        claim_roles=("normative", "observation"),
+                        capture_contracts=(contract.identity.name,),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+
+
+def _claim_citing(capture, *, contract: CaptureContract, claim_type: ClaimType, role: str):
+    shell = _subject()
+    assert capture.envelope.commitment.byte_length is not None
+    claim = _claim(
+        claim_id=CLAIM_ID,
+        capture_digest=capture.capture_digest,
+        source_digest=capture.source_body_digest,
+        source_length=capture.envelope.commitment.byte_length,
+    )
+    claim_type_digest_value = claim_type_digest(claim_type).tagged
+    return claim.model_copy(
+        update={
+            "statement": claim.statement.model_copy(
+                update={"claim_type_digest": claim_type_digest_value}
+            ),
+            "backing": ClaimBacking(
+                referent_context=claim.backing.referent_context,
+                capture_digests=(capture.capture_digest,),
+                citations=(
+                    build_claim_citation(
+                        claim.identity,
+                        capture_digest=capture.capture_digest,
+                        role=role,  # type: ignore[arg-type]
+                        origin="independent",
+                    ),
+                ),
+                source_mappings=claim.backing.source_mappings,
+            ),
+            "pins": tuple(
+                sorted(
+                    (
+                        ArtifactPin(
+                            role="capture-contract",
+                            target=contract.identity,
+                            artifact_digest=capture_contract_digest(contract).tagged,
+                        ),
+                        ArtifactPin(
+                            role="claim-type",
+                            target=claim_type.identity,
+                            artifact_digest=claim_type_digest_value,
+                        ),
+                        ArtifactPin(
+                            role="subject",
+                            target=shell.identity,
+                            artifact_digest=subject_digest(shell).tagged,
+                        ),
+                    ),
+                    key=lambda item: (item.role, item.target.qualified),
+                )
+            ),
+        }
+    )
+
+
+def _verdict(
+    instance,
+    base,
+    *,
+    capture,
+    contract: CaptureContract,
+    claim_type: ClaimType,
+    name: str,
+    assign=core_assigned,
+):
+    """Submit one Claim citing `capture` as a copy, and read the coverage verdict."""
+
+    shell = _subject()
+    claim = _claim_citing(capture, contract=contract, claim_type=claim_type, role="copy")
+    proposed = _submit(
+        instance,
+        assign(
+            instance,
+            {
+                **instance.tree_at(base.git_oid),
+                subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+                "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+                # The domain rule names its own contract by identity, and whoever
+                # carries a naming definition carries what it names.
+                capture_contract_path(DOMAIN_CONTRACT.identity.name): render_capture_contract(
+                    DOMAIN_CONTRACT
+                ),
+                capture_contract_path(contract.identity.name): render_capture_contract(contract),
+                claim_path(CLAIM_ID): render_claim(claim),
+            },
+        ),
+        base.git_oid,
+        name,
+        "2026-08-20T12:00:00.000000Z",
+    )
+    assert proposed.evaluation.diagnostics == (), proposed.evaluation.diagnostics
+    assert isinstance(proposed.candidate, CandidateRecord)
+    return _claim_evidence(proposed.candidate)
+
+
+def _direct_selection_capture(instance, base):
+    """A capture under the compiler's own direct self-assertion contract.
+
+    Deliberately the SELECTION builder, not the value builder. A direct
+    self-source capture is `verified_self_source`, so the citation-origin gate
+    forces `origin: self_source` on it and it can never wear `independent` at
+    all. A direct SELECTION capture is only `direct_selection_bound`: it may
+    legitimately carry `origin: independent`, and every domain ClaimType already
+    names the direct contract. So this is the exact shape where the copy
+    carve-out would hand a Claim a way to cover itself with a copy of the value
+    it just authored, and the contract-identity gate is the only thing standing
+    in the way.
+    """
+
+    substrate = b"status: ready\n"
+    substrate_digest = instance.body_store().store(substrate).digest
+    return build_direct_claim_selection_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=CLAIM_ID,
+        rationale="a copy of the value this Claim itself authored",
+        observed_at=datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
+        accepted_coordinate=AcceptedCoordinate.from_internal(base),
+        selection=DirectByteSpanSelection(
+            span=ContentSpan(
+                content_digest=substrate_digest,
+                start_byte=0,
+                end_byte=len(substrate),
+            )
+        ),
+    )
+
+
+def test_a_copy_of_a_page_covers_only_when_the_claim_type_names_its_contract(tmp_path) -> None:
+    """Card 120's ruling, read as a coverage VERDICT rather than a predicate.
+
+    The four predicate tests above prove what `_copy_capture_admitted_by_rule`
+    answers; none of them proves it is WIRED. Delete the
+    `and not _copy_capture_admitted_by_rule(...)` clause from the eligibility
+    gate in `evaluate_claim_law` and every one of them still passes, because the
+    helper is intact and nothing reads the verdict. This reads the verdict.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    contract = foreign_source_capture_contract(PAGE_SOURCE_IDENTITY)
+
+    covered = _verdict(
+        instance,
+        base,
+        capture=_page_capture(instance, base),
+        contract=contract,
+        claim_type=_type_naming(contract),
+        name="page-copy-named",
+    )
+    uncovered = _verdict(
+        instance,
+        base,
+        capture=_page_capture(instance, base),
+        contract=contract,
+        claim_type=_claim_type(contract=DOMAIN_CONTRACT),
+        name="page-copy-unnamed",
+    )
+
+    assert covered.initial_verdict == "supported"
+    assert covered.evidence_basis == ("direct",)
+    assert uncovered.initial_verdict == "uncovered"
+    assert uncovered.evidence_basis == ("origin_only",)
+
+
+def test_a_copy_the_rule_admits_reads_admitted_in_the_claims_accounts(tmp_path) -> None:
+    """The accounts ask the verdict's own eligibility gate, not the citation's role.
+
+    A page copy whose ClaimType names its contract covers the Claim; its account
+    must say admitted beside that verdict. Unnamed, it is not evidence at all.
+    """
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.claims.claims import _claim_admission_accounts
+
+    instance, _owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    contract = foreign_source_capture_contract(PAGE_SOURCE_IDENTITY)
+    capture = _page_capture(instance, base)
+    law = SimpleNamespace(verified_attestations=())
+    statuses = {}
+    for name, claim_type in (("named", _type_naming(contract)), ("unnamed", _claim_type())):
+        claim = _claim_citing(capture, contract=contract, claim_type=claim_type, role="copy")
+        tree = {
+            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+        }
+        (account,) = _claim_admission_accounts(
+            instance,
+            claim=claim,
+            tree=tree,
+            law=law,  # type: ignore[arg-type]
+        )
+        assert account.citation_role == "copy"
+        assert account.citation_origin == "independent"
+        statuses[name] = (account.status, ((account.decision.rule_id,) if account.decision else ()))
+
+    assert statuses["named"][0] == "admitted"
+    assert "page-copy" in statuses["named"][1]
+    assert statuses["unnamed"] == ("not_evidence", ())

@@ -1,0 +1,414 @@
+"""`cruxible orient` against a served daemon: the map, one kind, a refusal."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from cruxible_core.cli.main import cli
+from tests.test_cli.test_playbill_coverage_surface import _bootstrap, _govern_the_bytes
+from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
+    _Cli,
+    served_cli,
+)
+
+KIND = "project.work_item"
+
+
+def test_orient_maps_kinds_and_suggests_cli_commands(
+    served_cli: _Cli,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    cruxible = served_cli
+    _bootstrap(cruxible, tmp_path)
+    _govern_the_bytes(cruxible, tmp_path)
+
+    mapped = cruxible.json(
+        "orient",
+    )
+
+    assert mapped["tag"] == "playbill-orient-v1"
+    (kind,) = mapped["kinds"]
+    assert (kind["kind"], kind["subjects"]) == (KIND, 1)
+    assert kind["fields"] == ["slug", "status"]
+    assert "more_fields" not in kind
+    assert kind["identity"] == f"keys: {KIND}.slug (unique)"
+    # The kind's slug key and status, and the builtin semantic.alias and
+    # semantic.distinct_from.
+    assert mapped["artifacts"]["claim_types"] == 4
+    assert mapped["you"]["actor"] is not None
+    # Rendered for the CLI: commands, not tool calls.
+    assert mapped["next"][0] == f"cruxible orient --kind {KIND}"
+    assert all(line.startswith("cruxible ") for line in mapped["next"])
+
+    text = cruxible.run(
+        "orient",
+    ).stdout
+    # The map prints one line per kind; --kind prints its fields in full.
+    assert f"  {KIND}  subjects=1  fields=slug,status\n" in text
+    assert "enum[" not in text
+    assert "Next:\n  cruxible orient --kind " + KIND in text
+
+    detail = cruxible.json("orient", "--kind", KIND)
+    assert detail["kind_detail"]["sample_subject_ids"] == ["wi-42"]
+    assert detail["kind_detail"]["predicates"][0]["live_claims"] == 1
+
+    page = cruxible.json("orient", "--section", "claim_types", "--limit", "1")
+    assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.slug"]
+    assert "(no procedures)" in cruxible.run("orient", "--section", "procedures").stdout
+    # A new instance starts with the exact workspace.file operation signature.
+    assert mapped["artifacts"]["operations"] == 1
+    assert "cruxible orient --section operations" in mapped["next"]
+    (operation,) = cruxible.json("orient", "--section", "operations")["operations"]
+    assert (operation["build"], operation["operation"], operation["effect"]) == (
+        "Provider:cruxible-builtin",
+        "workspace.file",
+        "pure",
+    )
+    assert (operation["input"], operation["output"]) == (
+        "workspace.file.request@1",
+        "workspace.file.result@1",
+    )
+    assert operation["refusals"] == ["invalid_parameter", "mismatched_lengths", "provider_declined"]
+    text = cruxible.run("orient", "--section", "operations").stdout
+    assert (
+        "cruxible-builtin#workspace.file  workspace.file.request@1 -> "
+        "workspace.file.result@1  (pure)"
+    ) in text
+    assert "  refuses invalid_parameter, mismatched_lengths, provider_declined" in text
+    assert "floor" not in mapped
+
+    # With a floor exported into this workspace, orient says where it is.
+    cruxible.json("floor", "export")
+    floored = cruxible.json(
+        "orient",
+    )
+    assert floored["floor"] == {"at": mapped["coordinate"]["git_oid"], "generations_behind": 0}
+    text = cruxible.run(
+        "orient",
+    ).stdout
+    assert f"Floor: .cruxible/floor at {mapped['coordinate']['git_oid'][:12]}, current" in text
+
+
+def test_an_operations_page_prints_its_build_contracts_effect_and_refusals() -> None:
+    from cruxible_client.contracts.orient import OrientOperation
+    from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    operation = OrientOperation(
+        build="Provider:cruxible-builtin",
+        operation="workspace.file",
+        description="Reads a workspace file.",
+        serves=("workspace.file", "workspace.files"),
+        source={"path": "src/cruxible_core/providers/builtin_workspace_file.py"},
+        input="workspace.file.request@1",
+        output="workspace.file.result@1",
+        effect="pure",
+        refusals=("invalid_parameter", "mismatched_lengths", "provider_declined"),
+        signature_digest=workspace_file_signature_digest(),
+    )
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "section": "operations",
+            "operations": [operation.model_dump(mode="json")],
+            "next": [],
+        }
+    )
+    assert text.splitlines() == [
+        "Cruxible inst generation=3 at aaaaaaaaaaaa accepted 2026-09-29T00:00:00Z",
+        "cruxible-builtin#workspace.file  workspace.file.request@1 -> "
+        "workspace.file.result@1  (pure)",
+        "  refuses invalid_parameter, mismatched_lengths, provider_declined",
+    ]
+
+
+def test_orient_prints_the_ledger_mirror_a_reviewer_clones() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    header = {
+        "instance": "inst",
+        "generation": 3,
+        "coordinate": {"git_oid": "a" * 64},
+        "accepted_at": "2026-09-29T00:00:00Z",
+        "next": [],
+    }
+    bound = _render_orient({**header, "mirror_url": "https://forge.test/ledger.git"})
+    assert "Ledger mirror: https://forge.test/ledger.git" in bound
+    assert "Ledger mirror" not in _render_orient(header)
+
+
+def test_orient_prints_setup_rows_apart_from_the_queues_problems() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    header = {
+        "instance": "inst",
+        "generation": 3,
+        "coordinate": {"git_oid": "a" * 64},
+        "accepted_at": "2026-09-29T00:00:00Z",
+        "next": [],
+    }
+    attention = {"next_items": 0, "open_proposals": 0, "top": []}
+    fresh = _render_orient({**header, "attention": {**attention, "setup_items": 14}})
+    assert "Attention: next=0 setup=14 open_proposals=0" in fresh
+    # No setup rows: the line reads as it always did.
+    assert "Attention: next=0 open_proposals=0" in _render_orient(
+        {**header, "attention": attention}
+    )
+
+
+def test_orient_refuses_a_wrong_kind_with_the_nearest_names(
+    served_cli: _Cli,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    cruxible = served_cli
+    _bootstrap(cruxible, tmp_path)
+    _govern_the_bytes(cruxible, tmp_path)
+
+    refused = CliRunner().invoke(cli, ["orient", "--kind", "project.work_itm"])
+
+    assert refused.exit_code != 0
+    assert "cruxible.orient.kind_not_found" in refused.output
+    assert KIND in refused.output
+
+
+def test_both_kind_views_print_shared_evidence_once_and_empty_exceptions() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    kind = {
+        "kind": KIND,
+        "subjects": 2,
+        "evidence": ["feed-a", "feed-b"],
+        "predicates": [
+            {"name": "status", "type": "string", "cardinality": "one"},
+            {"name": "owner", "type": "string", "cardinality": "one", "evidence": []},
+            {"name": "note", "type": "string", "cardinality": "one", "evidence": ["other"]},
+        ],
+    }
+    for view in ({"kind_detail": {**kind, "sample_subject_ids": []}},):
+        text = _render_orient(
+            {
+                "instance": "inst",
+                "generation": 3,
+                "coordinate": {"git_oid": "a" * 64},
+                "accepted_at": "2026-09-29T00:00:00Z",
+                **view,
+            }
+        )
+        assert text.count("evidence=feed-a,feed-b") == 1
+        assert "owner  one  string  evidence=(none)" in text
+        assert "note  one  string  evidence=other" in text
+
+
+def test_orient_maps_stored_playbill_contract_names_to_cruxible_for_display() -> None:
+    """Stored evidence names keep their playbill spelling; orient's text does not."""
+
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    kind = {
+        "kind": KIND,
+        "subjects": 1,
+        "evidence": ["playbill.coordinator-self-source-v1"],
+        "predicates": [
+            {
+                "name": "status",
+                "type": "string",
+                "cardinality": "one",
+                "evidence": ["playbill.coordinator-self-source-v1", "feed-a"],
+            },
+        ],
+    }
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "kind_detail": {**kind, "sample_subject_ids": []},
+        }
+    )
+    assert "playbill." not in text
+    assert "evidence=cruxible.coordinator-self-source-v1" in text
+    assert "evidence=cruxible.coordinator-self-source-v1,feed-a" in text
+
+
+def test_orient_capture_sections_print_contracts_by_their_public_names() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+    from cruxible_core.service.discovery.operational import schedule_summary
+
+    header = {
+        "instance": "inst",
+        "generation": 3,
+        "coordinate": {"git_oid": "a" * 64},
+        "accepted_at": "2026-09-29T00:00:00Z",
+    }
+    text = _render_orient(
+        {
+            **header,
+            "section": "capture_contracts",
+            "capture_contracts": [
+                {
+                    "contract": "CaptureContract:playbill.foreign-source.repo.notes",
+                    "version": 1,
+                    "lifecycle": "live",
+                    "grade": "self-asserted",
+                    "admitted_by": 2,
+                }
+            ],
+        }
+    )
+    assert "CaptureContract:cruxible.foreign-source.repo.notes  1  live" in text
+    assert "playbill." not in text
+
+    from cruxible_client.contracts.captures import (
+        foreign_source_capture_contract,
+    )
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
+    from cruxible_client.contracts.triggers import CaptureLandingSchedule
+
+    contract = foreign_source_capture_contract("repo.notes")
+    schedule = CaptureLandingSchedule(
+        event=CaptureEventNameSelector(
+            capture_contract_identity=contract.identity,
+        )
+    )
+    assert schedule_summary(schedule) == (
+        "when CaptureContract:cruxible.foreign-source.repo.notes lands"
+    )
+
+
+def test_orient_sources_prints_one_line_per_logical_source() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    contract = "CaptureContract:playbill.foreign-source.cisa.kev.catalog"
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "section": "sources",
+            "sources": [
+                {
+                    "logical_source": "cisa.kev.catalog",
+                    "landings": 3,
+                    "latest": {
+                        "landed_at": "2026-10-28T09:00:00Z",
+                        "run": "RUN-1",
+                        "line": "Line:kev.daily",
+                        "capture": "CAP-0123456789ab",
+                        "ref": "Capture:sha256:" + "0123456789ab" * 5 + "0123",
+                        "status": "unavailable",
+                        "erased": {"by": "owner", "at": "2026-10-28T10:00:00Z", "because": "x"},
+                    },
+                    "contracts": [
+                        {"contract": contract, "version": 1, "landings": 2},
+                        {"contract": contract, "version": 2, "landings": 1},
+                    ],
+                }
+            ],
+            "sources_unattributed": 2,
+        }
+    )
+    assert (
+        "cisa.kev.catalog  landings=3  last landed 2026-10-28T09:00:00Z CAP-0123456789ab  "
+        "(erased)  by Line:kev.daily  "
+        "under CaptureContract:cruxible.foreign-source.cisa.kev.catalog v1 (2), "
+        "CaptureContract:cruxible.foreign-source.cisa.kev.catalog v2 (1)"
+    ) in text
+    assert "(2 landings whose record or Capture can no longer be read" in text
+
+
+def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 9,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-30T00:00:00Z",
+            "floor": {"at": "b" * 64, "generations_behind": 2},
+            "next": [],
+        }
+    )
+
+    assert (
+        f"Floor: .cruxible/floor at {'b' * 12}, 2 generation(s) behind; "
+        "refresh: cruxible floor export --force"
+    ) in text
+
+
+def test_the_default_map_prints_one_line_per_kind_and_flat_nonzero_counts() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    def kind(name: str, subjects: int, fields: int) -> dict[str, object]:
+        # The wire's OrientKindSummary: the first five field names, then a count.
+        row: dict[str, object] = {
+            "kind": name,
+            "subjects": subjects,
+            "fields": [f"f{index}" for index in range(min(fields, 5))],
+        }
+        if fields > 5:
+            row["more_fields"] = fields - 5
+        return row
+
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "kinds": [kind("a.asset", 4, 9), kind("a.empty", 0, 2), kind("a.idle", 0, 1)],
+            "artifacts": {
+                "claim_types": 12,
+                "procedures": 0,
+                "claims": {"live": 40, "retired": 0},
+            },
+            "queries": [
+                {
+                    "name": "assets_by_owner",
+                    "params": ["owner: string"],
+                    "description": "Assets an owner holds. Each row names the asset. " + "x" * 200,
+                },
+                {"name": "long", "params": [], "description": "y" * 150},
+            ],
+        }
+    )
+    lines = text.splitlines()
+    assert lines[1:4] == [
+        "Kinds (3):",
+        "  a.asset  subjects=4  fields=f0,f1,f2,f3,f4 (+4)",
+        "  no subjects yet (2): a.empty, a.idle",
+    ]
+    assert "Artifacts: claim_types=12 claims.live=40" in lines
+    assert "  assets_by_owner(owner: string)  Assets an owner holds." in lines
+    assert "  long()  " + "y" * 97 + "..." in lines
+
+
+def test_a_provider_cards_operations_print_as_terse_rows() -> None:
+    from cruxible_core.cli.commands.playbill import _provider_operation_line
+
+    row = {
+        "build": "Provider:demo/abc",
+        "operation": "demo.read",
+        "description": "Reads one record.",
+        "serves": ["demo.read"],
+        "source": {"path": "src/demo/read.py", "repository": "https://example.test/demo"},
+        "input": "demo.read.request@1",
+        "output": "demo.read.result@1",
+        "effect": "pure",
+        "refusals": ["declined", "too_big"],
+        "absorbable": ["declined"],
+        "signature_digest": "sha256:" + "0" * 64,
+    }
+    assert _provider_operation_line(row).splitlines() == [
+        "demo.read  demo.read.request@1 -> demo.read.result@1 (pure)  serves demo.read",
+        "    Reads one record.",
+        "    source src/demo/read.py (https://example.test/demo)",
+        "    refuses declined (absorbable), too_big",
+    ]

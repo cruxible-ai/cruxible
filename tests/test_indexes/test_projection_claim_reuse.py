@@ -1,0 +1,139 @@
+"""Full reconstruction parity after eliminating static Claim compilation retention."""
+
+import pytest
+
+from cruxible_client.contracts import claims
+from cruxible_client.contracts.claims import claim_path
+from cruxible_client.contracts.errors import ProjectionFormatError
+from cruxible_client.contracts.projection_extensions import ProjectionExtensionRegistry
+from cruxible_core.compiler import sealed_members
+from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
+from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+from cruxible_core.indexes.sqlite import (
+    canonical_logical_export,
+    initialize_projection_database,
+    projection_logical_digest,
+)
+from tests.core_support._retirement_support import retire_claim
+from tests.core_support._subject_kind_support import fixture_key_claims
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
+
+
+def _parse(instance, *, blobs=None):
+    assembler = instance.projection_assembler()
+    request = assembler.request(
+        output_staging_directory=assembler.publication_directory / ".stage-reuse-test"
+    )
+    parsed = parse_projection_tree(
+        instance.tree_at(instance.accepted_coordinate().git_oid) if blobs is None else blobs,
+        bodies=instance.body_store(),
+        coordinate=request,
+        accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),
+    )
+    return parsed, request
+
+
+def _assert_same_rows_and_digest(tmp_path, cold, warm):
+    assert cold[:2] == warm[:2]
+    exports, digests = [], []
+    for label, (parsed, request) in zip(("cold", "warm"), (cold, warm), strict=True):
+        path = tmp_path / f"{label}.sqlite"
+        initialize_projection_database(
+            path,
+            request=request,
+            parsed=parsed,
+            assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
+        )
+        exports.append(canonical_logical_export(path))
+        digests.append(projection_logical_digest(path))
+    assert exports[0] == exports[1]
+    assert digests[0] == digests[1]
+
+
+def test_full_reconstruction_is_repeatable_and_detached(tmp_path):
+    instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
+    cold = _parse(instance)
+    repeated = _parse(instance)
+    _assert_same_rows_and_digest(tmp_path, cold, repeated)
+    value = next(
+        f.value for f in repeated[0].semantic_facts if f.schema_id == "cruxible.claim.backing"
+    )
+    assert isinstance(value, dict)
+    value.clear()
+    assert _parse(instance)[0] == cold[0]
+
+
+def test_retirement_misses_old_bytes_and_rebuilds_lifecycle_revision_and_proofs(
+    tmp_path, monkeypatch
+):
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    old = _parse(instance)[0]
+    retire_claim(instance, owner, claim_id)
+    # Verified history is derived once per new generation (parsing its changed
+    # members); bring it current so only the projection parse is counted.
+    instance.coordinate_for_oid(instance.accepted_coordinate().git_oid)
+    calls = []
+    original = claims._parse_claim
+
+    def parse(content, *, path, **kwargs):
+        calls.append(path)
+        return original(content, path=path, **kwargs)
+
+    with monkeypatch.context() as guarded:
+        # Retirement already derived its immutable member during acceptance.
+        # Forget both caches to compare a genuine cold parse with the carried
+        # one; count actual parsing rather than calls that return a memo hit.
+        sealed_members._clear()
+        claims._CLAIM_PARSES.clear()
+        guarded.setattr(claims, "_parse_claim", parse)
+        changed = _parse(instance)
+    # The Subject's key Claim (unchanged bytes) parses beside the retired one.
+    keys = fixture_key_claims(instance.tree_at(instance.accepted_coordinate().git_oid))
+    assert [path for path in calls if path not in keys] == [claim_path(claim_id)]
+    cold = _parse(instance)
+    _assert_same_rows_and_digest(tmp_path, cold, changed)
+    assert f"Claim:{claim_id}" in changed[0].retired_identities
+    before = next(e for e in old.envelopes if e.identity == f"Claim:{claim_id}")
+    after = next(e for e in changed[0].envelopes if e.identity == f"Claim:{claim_id}")
+    assert after.revision == before.revision + 1
+    assert after.artifact_digest != before.artifact_digest
+    assert _parse(instance)[0] == changed[0]
+
+
+@pytest.mark.parametrize("target", ["claim", "changeset"])
+def test_warm_entries_do_not_hide_corrupt_claim_or_history_bytes(tmp_path, target):
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    _parse(instance)
+    blobs = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = (
+        claim_path(claim_id)
+        if target == "claim"
+        else next(path for path in blobs if path.startswith("changesets/"))
+    )
+    blobs[path] = b"{}\n"
+    errors = []
+    for _ in range(2):
+        with pytest.raises(ProjectionFormatError) as refused:
+            _parse(instance, blobs=blobs)
+        errors.append((type(refused.value), str(refused.value), str(refused.value.__cause__)))
+    assert errors[0] == errors[1]
+
+
+def test_warm_static_facts_still_require_current_registry_declarations(tmp_path, monkeypatch):
+    import cruxible_core.compiler.projection_artifacts as projection_artifacts
+
+    instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
+    _parse(instance)
+    registry = projection_artifacts.PROJECTION_REGISTRY
+    without_statement = ProjectionExtensionRegistry(
+        [
+            d
+            for kind in ("semantic", "presentation")
+            for d in registry.declarations(kind)
+            if d.schema_id != "cruxible.claim.statement"
+        ],
+    )
+    monkeypatch.setattr(projection_artifacts, "PROJECTION_REGISTRY", without_statement)
+    for _ in range(2):
+        with pytest.raises(ProjectionFormatError, match="undeclared.*cruxible.claim.statement"):
+            _parse(instance)

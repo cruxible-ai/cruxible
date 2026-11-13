@@ -1,0 +1,407 @@
+"""Every stored Capture envelope, by the contract it names: an index, never a CAS walk.
+
+A canonical Capture envelope sorts its keys, so its bytes open with the contract
+digest it names. The body store records that pair here before it writes the
+object, so a stored envelope is never missing from the index; objects stored
+before the index existed are added once, shard by shard, and that pass is never
+repeated. A row is a candidate, not evidence: the object may be any bytes that
+open the same way, or be gone, and citation verifies whatever a caller keeps.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sqlite3
+import threading
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
+
+from cruxible_client.contracts.errors import CasError
+from cruxible_core.indexes.resident import ResidentConnections
+
+if TYPE_CHECKING:
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+ENVELOPE_HEAD = b'{"capture_contract_digest":"'
+_DIGEST = re.compile(rb"sha256:[0-9a-f]{64}")
+#: The bytes that name an envelope's contract: the head, the digest, its quote.
+ENVELOPE_HEAD_LENGTH = len(ENVELOPE_HEAD) + len("sha256:") + 64 + 1
+#: A derived Capture's envelope names its input manifest by this key.
+_DERIVED_MARK = b'"input_receipt_set_manifest_digest":"sha256:'
+_SHARD_NAME = re.compile(r"[0-9a-f]{2}")
+_OBJECT_NAME = re.compile(r"[0-9a-f]{64}")
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS envelopes (
+ contract_digest TEXT NOT NULL, capture_digest TEXT NOT NULL,
+ PRIMARY KEY(contract_digest, capture_digest)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS envelopes_by_capture ON envelopes(capture_digest);
+CREATE TABLE IF NOT EXISTS derivations (capture_digest TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS derivation_inputs (
+ capture_digest TEXT NOT NULL, input_digest TEXT NOT NULL,
+ PRIMARY KEY(capture_digest, input_digest)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
+"""
+_LOCK = threading.RLock()
+#: One connection per index file per process, its schema created once, used under ``_LOCK``.
+_RESIDENT = ResidentConnections(lock=lambda: _LOCK)
+
+
+def _after_fork_in_child() -> None:
+    # A lock held by another thread at fork time is never released in the child.
+    global _LOCK
+    _LOCK = threading.RLock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
+def envelope_contract(head: bytes) -> str | None:
+    """The contract digest an object's leading bytes name, if they open an envelope."""
+
+    if not head.startswith(ENVELOPE_HEAD) or len(head) < ENVELOPE_HEAD_LENGTH:
+        return None
+    named = head[len(ENVELOPE_HEAD) : ENVELOPE_HEAD_LENGTH - 1]
+    if (
+        not _DIGEST.fullmatch(named)
+        or head[ENVELOPE_HEAD_LENGTH - 1 : ENVELOPE_HEAD_LENGTH] != b'"'
+    ):
+        return None
+    return named.decode("ascii")
+
+
+class CaptureEnvelopeIndex:
+    """The contract-to-envelope index beside one body store."""
+
+    def __init__(self, store: ContentAddressedBodyStore) -> None:
+        self._store = store
+        self.path = store.root / "capture-envelopes.sqlite3"
+
+    def _open(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
+        try:
+            connection.executescript(_SCHEMA)
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """This process's resident connection to the index, in one transaction per call."""
+
+        with _RESIDENT.transaction(
+            self.path,
+            self._open,
+            not_regular=lambda: CasError("the Capture envelope index must be a regular file"),
+        ) as (connection, _outermost):
+            yield connection
+
+    def note(self, digest: str, content: bytes) -> None:
+        """Record a stored object that opens as an envelope; called before it is written."""
+
+        contract = envelope_contract(content[:ENVELOPE_HEAD_LENGTH])
+        if contract is None:
+            return
+        inputs = self._derivation_inputs(content) if _DERIVED_MARK in content else None
+        with self._connection() as connection:
+            connection.execute("INSERT OR IGNORE INTO envelopes VALUES (?,?)", (contract, digest))
+            if inputs is not None:
+                connection.executemany(
+                    "INSERT OR IGNORE INTO derivation_inputs VALUES (?,?)",
+                    [(digest, item) for item in inputs],
+                )
+                connection.execute("INSERT OR IGNORE INTO derivations VALUES (?)", (digest,))
+
+    def _derivation_inputs(self, content: bytes) -> tuple[str, ...] | None:
+        """A derived envelope's input Captures, from its manifest (stored before it).
+
+        None when the manifest is not held or not one: the derivation is then
+        unrecorded, and a reader treats the Capture as restricted (C14).
+        """
+
+        import json
+
+        from cruxible_client.contracts.captures import (
+            CaptureFormatError,
+            read_input_receipt_set_manifest,
+        )
+
+        try:
+            named = json.loads(content).get("input_receipt_set_manifest_digest")
+            if not isinstance(named, str):
+                return None
+            return read_input_receipt_set_manifest(self._store, named).input_capture_digests
+        except (CaptureFormatError, CasError, ValueError, AttributeError):
+            return None
+
+    def derivation_inputs(self, capture_digests: Collection[str]) -> dict[str, tuple[str, ...]]:
+        """Each recorded derived Capture's input Captures, batched; unrecorded ones are absent.
+
+        Maintained metadata, recorded from the envelope and its manifest when
+        the envelope was stored: no envelope or manifest is read here. A
+        preview reads the index as it stands (what it holds is unrecorded).
+        """
+
+        from cruxible_core.indexes.sql_batch import select_in
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        wanted = sorted(set(capture_digests))
+        if not wanted:
+            return {}
+        marked = "SELECT capture_digest FROM derivations WHERE capture_digest IN ({})"
+        edges = (
+            "SELECT capture_digest,input_digest FROM derivation_inputs WHERE capture_digest IN ({})"
+        )
+
+        def read(connection: sqlite3.Connection) -> dict[str, tuple[str, ...]]:
+            found: dict[str, list[str]] = {
+                str(row[0]): [] for row in select_in(connection, marked, wanted)
+            }
+            for capture, item in select_in(connection, edges, sorted(found)):
+                found[str(capture)].append(str(item))
+            return {capture: tuple(sorted(items)) for capture, items in found.items()}
+
+        if dry_run_held_bodies() is None:
+            with self._connection() as connection:
+                return read(connection)
+        if not self.path.is_file() or self.path.is_symlink():
+            return {}
+        with _LOCK:
+            connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+            try:
+                return read(connection)
+            except sqlite3.DatabaseError:
+                return {}
+            finally:
+                connection.close()
+
+    def _shards(self) -> list[str]:
+        return sorted(
+            name for name in os.listdir(self._store._root_fd) if _SHARD_NAME.fullmatch(name)
+        )
+
+    def _shard_envelopes(self, shard: str) -> list[tuple[str, str]]:
+        """The (contract, digest) pairs of one shard's objects that open as envelopes."""
+
+        names: list[str] = []
+        descriptor = self._store._shard(shard)
+        if descriptor is not None:
+            try:
+                with os.scandir(descriptor) as entries:
+                    names = [
+                        entry.name
+                        for entry in entries
+                        if _OBJECT_NAME.fullmatch(entry.name) and entry.name.startswith(shard)
+                    ]
+            finally:
+                os.close(descriptor)
+        rows: list[tuple[str, str]] = []
+        for name in names:
+            digest = "sha256:" + name
+            contract = envelope_contract(self._store.peek(digest, ENVELOPE_HEAD_LENGTH))
+            if contract is not None:
+                rows.append((contract, digest))
+        return rows
+
+    def _backfill(self, connection: sqlite3.Connection) -> None:
+        """Add the objects stored before the index existed, once, shard by shard."""
+
+        if connection.execute("SELECT 1 FROM backfill_complete").fetchone():
+            return
+        done = {row[0] for row in connection.execute("SELECT shard FROM backfilled")}
+        for shard in self._shards():
+            if shard in done:
+                continue
+            connection.executemany(
+                "INSERT OR IGNORE INTO envelopes VALUES (?,?)", self._shard_envelopes(shard)
+            )
+            connection.execute("INSERT OR IGNORE INTO backfilled VALUES (?)", (shard,))
+            connection.commit()
+        connection.execute("INSERT OR IGNORE INTO backfill_complete VALUES (1)")
+
+    def captures(
+        self, contract_digests: Collection[str], *, limit: int
+    ) -> tuple[tuple[str, ...], bool]:
+        """Up to ``limit`` envelope digests under these contracts, and whether that is all."""
+
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        versions = tuple(dict.fromkeys(contract_digests))
+        if not versions:
+            return (), True
+        if dry_run_held_bodies() is not None:
+            return self._captures_without_writing(versions, limit=limit)
+        marks = ",".join("?" for _ in versions)
+        with self._connection() as connection:
+            self._backfill(connection)
+            rows = connection.execute(
+                f"SELECT capture_digest FROM envelopes WHERE contract_digest IN ({marks}) "
+                "ORDER BY capture_digest LIMIT ?",
+                (*versions, limit + 1),
+            ).fetchall()
+        digests = tuple(str(row[0]) for row in rows)
+        return digests[:limit], len(digests) <= limit
+
+    def contracts_of(self, capture_digests: Collection[str]) -> dict[str, str]:
+        """The contract each stored Capture envelope names, by Capture digest, batched.
+
+        The C14 authorization read: the pair was recorded from the object's
+        own leading bytes when it was stored, so no envelope is read here. A
+        digest with no row is absent or no envelope; callers treat it as
+        unresolved. A preview reads the index as it stands, plus held bodies
+        and shards it has not added yet.
+        """
+
+        from cruxible_core.indexes.sql_batch import select_in
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        wanted = sorted(set(capture_digests))
+        if not wanted:
+            return {}
+        query = "SELECT capture_digest,contract_digest FROM envelopes WHERE capture_digest IN ({})"
+        held = dry_run_held_bodies()
+        if held is None:
+            with self._connection() as connection:
+                self._backfill(connection)
+                return {str(c): str(k) for c, k in select_in(connection, query, wanted)}
+        found: dict[str, str] = {}
+        complete = False
+        if self.path.is_file() and not self.path.is_symlink():
+            with _LOCK:
+                connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+                try:
+                    found.update((str(c), str(k)) for c, k in select_in(connection, query, wanted))
+                    done = {row[0] for row in connection.execute("SELECT shard FROM backfilled")}
+                    complete = bool(
+                        connection.execute("SELECT 1 FROM backfill_complete").fetchone()
+                    )
+                except sqlite3.DatabaseError:
+                    done = set()
+                finally:
+                    connection.close()
+        else:
+            done = set()
+        for digest in wanted:
+            if digest in found:
+                continue
+            content = held.get(digest)
+            if content is not None:
+                named = envelope_contract(content[:ENVELOPE_HEAD_LENGTH])
+                if named is not None:
+                    found[digest] = named
+            elif not complete and digest.removeprefix("sha256:")[:2] not in done:
+                named = envelope_contract(self._store.peek(digest, ENVELOPE_HEAD_LENGTH))
+                if named is not None:
+                    found[digest] = named
+        return found
+
+    def prefix(self, hex_prefix: str, *, limit: int) -> tuple[tuple[str, ...], bool]:
+        """Bounded Capture candidates by digest prefix; no body directory scan.
+
+        Backfill is the existing one-time cold migration, never a warm read's
+        population walk. A preview uses the existing index read-only.
+        """
+
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        lower = "sha256:" + hex_prefix
+        query = (
+            "SELECT DISTINCT capture_digest FROM envelopes "
+            "WHERE capture_digest>=? AND capture_digest<? ORDER BY capture_digest LIMIT ?"
+        )
+        held = dry_run_held_bodies()
+        if held is None:
+            with self._connection() as connection:
+                self._backfill(connection)
+                rows = connection.execute(query, (lower, lower + "￿", limit + 1)).fetchall()
+            found = {str(row[0]) for row in rows}
+        else:
+            found = set()
+            # Preview never creates or updates a derived index. A pre-index
+            # store uses its cold migration fallback, without persisting it.
+            done: set[str] = set()
+            complete = False
+            if self.path.is_file() and not self.path.is_symlink():
+                with _LOCK:
+                    connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+                    try:
+                        found.update(
+                            str(row[0])
+                            for row in connection.execute(query, (lower, lower + "￿", limit + 1))
+                        )
+                        done = {
+                            row[0] for row in connection.execute("SELECT shard FROM backfilled")
+                        }
+                        complete = bool(
+                            connection.execute("SELECT 1 FROM backfill_complete").fetchone()
+                        )
+                    finally:
+                        connection.close()
+            if not complete:
+                for shard in self._shards():
+                    if shard not in done:
+                        found.update(
+                            digest
+                            for _contract, digest in self._shard_envelopes(shard)
+                            if digest.startswith(lower)
+                        )
+            found.update(
+                digest
+                for digest, content in held.items()
+                if digest.startswith(lower) and envelope_contract(content) is not None
+            )
+        digests = tuple(sorted(found))
+        return digests[:limit], len(digests) <= limit
+
+    def _captures_without_writing(
+        self, versions: tuple[str, ...], *, limit: int
+    ) -> tuple[tuple[str, ...], bool]:
+        """A dry run's answer: the index as it stands, plus the shards it has not added yet."""
+
+        found: set[str] = set()
+        done: set[str] = set()
+        complete = False
+        if self.path.is_file() and not self.path.is_symlink():
+            marks = ",".join("?" for _ in versions)
+            with _LOCK:
+                connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+                try:
+                    found.update(
+                        str(row[0])
+                        for row in connection.execute(
+                            f"SELECT capture_digest FROM envelopes "
+                            f"WHERE contract_digest IN ({marks}) LIMIT ?",
+                            (*versions, limit + 1),
+                        )
+                    )
+                    done = {row[0] for row in connection.execute("SELECT shard FROM backfilled")}
+                    complete = bool(
+                        connection.execute("SELECT 1 FROM backfill_complete").fetchone()
+                    )
+                except sqlite3.DatabaseError:
+                    found, done, complete = set(), set(), False
+                finally:
+                    connection.close()
+        if not complete:
+            wanted = set(versions)
+            for shard in self._shards():
+                if shard not in done:
+                    found.update(
+                        digest
+                        for contract, digest in self._shard_envelopes(shard)
+                        if contract in wanted
+                    )
+        digests = tuple(sorted(found))
+        return digests[:limit], len(digests) <= limit
+
+
+__all__ = [
+    "ENVELOPE_HEAD",
+    "ENVELOPE_HEAD_LENGTH",
+    "CaptureEnvelopeIndex",
+    "envelope_contract",
+]

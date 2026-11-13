@@ -1,0 +1,16 @@
+{
+  "citation_role": "evidence",
+  "kind": "claim",
+  "object": {
+    "kind": "literal",
+    "value": "blocked"
+  },
+  "predicate": "project.work_item.status",
+  "rationale": "The cutover runbook records the rehearsal as blocked.",
+  "role": "observation",
+  "source": {
+    "kind": "working_selection",
+    "source_id": "corpus.runbook.md"
+  },
+  "subject": "project.work_item/wi-102"
+}

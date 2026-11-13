@@ -1,0 +1,1312 @@
+"""Typed service operations for the governed Cruxible Document lifecycle."""
+
+from __future__ import annotations
+
+import base64
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from typing import Literal, cast
+
+import structlog
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from cruxible_client.contracts.actor_types import TransportCapability
+from cruxible_client.contracts.attestations import (
+    ApprovalAttestation,
+    ApprovalSubmission,
+    VerifiedApproval,
+    verify_approval,
+)
+from cruxible_client.contracts.authoring_landing import AuthoringLanding
+from cruxible_client.contracts.candidates import CandidateRecord
+from cruxible_client.contracts.canonical import ProposalDigest
+from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade, CompilerUpgradeNotice
+from cruxible_client.contracts.documents import (
+    DocumentShell,
+    document_digest,
+    document_path,
+    parse_document,
+    render_document,
+)
+from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
+    DocumentNotFoundError,
+    ProjectionIntegrityError,
+    ProposalActivationRequestInvalid,
+    ProposalIntegrityError,
+    ProposalStale,
+    SettlementIntegrityError,
+)
+from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.procedure_mandates import ProcedureMandate
+from cruxible_client.contracts.recompilation import ProposalRecompiled
+from cruxible_client.contracts.repairs import hand_edit_repair
+from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    WorkspaceAdvertisement,
+)
+from cruxible_core.documents.projection_documents import DocumentProjectionView
+from cruxible_core.errors import PermissionDeniedError, RequestRefusedError
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
+from cruxible_core.proposals.prepared_evaluation import SettlementHandoff, SubmittedProposal
+from cruxible_core.proposals.proposals import (
+    ProposalAdmissionRequest,
+    ProposalPreview,
+    ProposalResult,
+)
+from cruxible_core.proposals.settlement import ChangeActorBinding
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
+from cruxible_core.runtime.phase_timing import phase, timed_operation
+from cruxible_core.runtime.request_scope import projection_request
+from cruxible_core.service.change_preview import admit_change_set, change_scope
+from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
+from cruxible_core.storage.cas import BodyAccessContext, CasObjectMetadata
+
+
+class _StrictServiceModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PlaybillDocumentView(_StrictServiceModel):
+    tag: Literal["playbill-document-read-v1"] = "playbill-document-read-v1"
+    coordinate_kind: Literal["canonical"] = "canonical"
+    coordinate: AcceptedCoordinate
+    envelope: dict[str, object]
+    facts: tuple[dict[str, object], ...]
+
+
+class PlaybillDocumentList(_StrictServiceModel):
+    tag: Literal["playbill-document-list-v1"] = "playbill-document-list-v1"
+    coordinate: AcceptedCoordinate
+    documents: tuple[PlaybillDocumentView, ...]
+
+
+class PlaybillBodyRead(_StrictServiceModel):
+    tag: Literal["playbill-document-body-v1"] = "playbill-document-body-v1"
+    identity: str
+    coordinate: AcceptedCoordinate
+    body_digest: str
+    media_type: str
+    content_base64: str
+
+
+class PlaybillDocumentHistoryEntry(_StrictServiceModel):
+    sequence: int
+    coordinate: AcceptedCoordinate
+    envelope_digest: str
+    body_digest: str
+    predecessor_digest: str | None
+    revision: int
+    change_set_path: str
+    changeset_digest: str
+    candidate_digest: str
+
+
+class PlaybillDocumentHistory(_StrictServiceModel):
+    tag: Literal["playbill-document-history-v1"] = "playbill-document-history-v1"
+    identity: str
+    entries: tuple[PlaybillDocumentHistoryEntry, ...]
+
+
+class ProposalInspection(_StrictServiceModel):
+    tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
+    #: ``admitted``: ``proposal`` is the admitted proposal (its own verdict says
+    #: whether it passed). ``would_propose``/``would_block``: a preview, which
+    #: admitted nothing; ``proposal`` is its evaluation (R12).
+    status: Literal["admitted", "would_propose", "would_block"] = "admitted"
+    proposal: ProposalResult | ProposalPreview
+    #: The accepted coordinate after the call; a preview's is the one it was
+    #: evaluated at, which a commit passes back as ``at``.
+    accepted_coordinate: AcceptedCoordinate
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    #: A compiler upgrade's one-way notice: what activating it means.
+    compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    #: Whether the call landed the change (policy and caller allowed it) or
+    #: stopped at the proposal, and why; absent where the call never tries.
+    outcome: AuthoringLanding | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+
+class ActivationReceipt(_StrictServiceModel):
+    tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
+    proposal_id: str
+    activated_by: str
+    status: Literal["accepted", "lost_cas"]
+    accepted_coordinate: AcceptedCoordinate | None
+    workspace_advertisement: WorkspaceAdvertisement
+
+
+#: Why an approval did not activate its candidate: the signer held activation
+#: for someone else, more approvals are required, the caller's tier may not
+#: activate, or accepted state moved past the proposal (readmit it first).
+ApprovalNotActivated = Literal["held", "approvals_remaining", "activation_not_permitted", "stale"]
+
+
+class ApprovalReceipt(_StrictServiceModel):
+    tag: Literal["playbill-approval-receipt-v1"] = "playbill-approval-receipt-v1"
+    proposal_id: str
+    candidate_digest: str
+    signer_id: str
+    submitted_by: str
+    signing_semantic_root: str
+    attestation_digest: str
+    key_history_ref: str
+    #: The activation this approval completed: it was the last one required and
+    #: the caller may activate. Exactly one of this and ``not_activated``.
+    activation: ActivationReceipt | None = None
+    not_activated: ApprovalNotActivated | None = None
+    #: Signatures still required before the candidate can activate.
+    approvals_remaining: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _one_outcome(self) -> "ApprovalReceipt":
+        if (self.activation is None) == (self.not_activated is None):
+            raise ValueError("an approval receipt reports its activation or why there was none")
+        if (self.approvals_remaining > 0) != (self.not_activated == "approvals_remaining"):
+            raise ValueError("approvals_remaining is counted exactly when approvals remain")
+        return self
+
+
+def _public_document(view: DocumentProjectionView) -> PlaybillDocumentView:
+    if view.coordinate_kind != "canonical" or not isinstance(
+        view.coordinate,
+        AcceptedProjectionCoordinate,
+    ):
+        raise ProposalIntegrityError("canonical Document service received a provisional view")
+    return PlaybillDocumentView(
+        coordinate=AcceptedCoordinate.from_internal(view.coordinate),
+        envelope=view.envelope.model_dump(mode="json"),
+        facts=tuple(fact.model_dump(mode="json") for fact in view.facts),
+    )
+
+
+def service_store_playbill_body(
+    instance: PlaybillInstance,
+    *,
+    content: bytes,
+) -> CasObjectMetadata:
+    """Store inert exact bytes; this operation creates no proposal or authority."""
+
+    return instance.store_document_body(content)
+
+
+def admit_proposal(
+    instance: PlaybillInstance,
+    *,
+    dry_run: bool | None,
+    at: str | None,
+    operation: str,
+    describe: str,
+    actor_id: str,
+    proposed_base: AcceptedProjectionCoordinate,
+    request: ProposalAdmissionRequest,
+    candidate_tree: Mapping[str, bytes],
+    timestamp: str,
+    capabilities: tuple[TransportCapability, ...] = ("propose",),
+) -> ProposalInspection:
+    """Admit one directly authored change set, or preview it (R12)."""
+
+    with change_scope(
+        instance, dry_run=dry_run, at=at, kind="direct", operation=operation, describe=describe
+    ) as mode:
+        admitted = admit_change_set(
+            instance,
+            mode,
+            actor_id=actor_id,
+            request=request,
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+            capabilities=capabilities,
+        )
+        if admitted.preview is not None:
+            assert mode.head is not None
+            return ProposalInspection(
+                status="would_propose" if admitted.admitted else "would_block",
+                proposal=admitted.preview,
+                accepted_coordinate=AcceptedCoordinate.from_internal(mode.head),
+            )
+    assert admitted.result is not None
+    return ProposalInspection(
+        proposal=admitted.result,
+        workspace_advertisement=admitted.result.workspace_advertisement,
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+
+
+def service_propose_playbill_document(
+    instance: PlaybillInstance,
+    *,
+    shell: DocumentShell,
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    base: AcceptedCoordinate | None = None,
+    source_compilation_digest: str | None = None,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> ProposalInspection:
+    """Admit and deterministically evaluate one exact Document envelope change."""
+
+    proposed_base = accepted_coordinate_at(instance, base)
+    candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
+    candidate_tree[document_path(shell.document_id)] = render_document(shell)
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="document")
+    return admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        operation="cruxible.document.propose",
+        describe=f"proposing Document {shell.document_id}",
+        actor_id=actor_id,
+        proposed_base=proposed_base,
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
+            proposed_base_oid=proposed_base.git_oid,
+            source_compilation_digest=source_compilation_digest,
+        ),
+        candidate_tree=candidate_tree,
+        timestamp=timestamp,
+    )
+
+
+def service_propose_playbill_principal_change(
+    instance: PlaybillInstance,
+    *,
+    principal: PrincipalRecord,
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    base: AcceptedCoordinate | None = None,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> ProposalInspection:
+    """Use the distinct principal-lifecycle law; never the ordinary Document path."""
+
+    proposed_base = accepted_coordinate_at(instance, base)
+    candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
+    candidate_tree[f"principals/{principal.principal_id}.json"] = render_principal(principal)
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="principal")
+    return admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        operation="cruxible.principal.add",
+        describe=f"the change to principal {principal.principal_id}",
+        actor_id=actor_id,
+        proposed_base=proposed_base,
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
+            proposed_base_oid=proposed_base.git_oid,
+        ),
+        candidate_tree=candidate_tree,
+        timestamp=timestamp,
+    )
+
+
+def service_inspect_playbill_proposal(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+) -> ProposalInspection:
+    evidence = instance.proposal_evidence()
+    admission = evidence.read_admission(proposal_id)
+    evaluation = evidence.read_evaluation(admission.proposal_id)
+    candidate = (
+        evidence.read_candidate(evaluation.candidate_digest)
+        if evaluation.candidate_digest is not None
+        else None
+    )
+    return ProposalInspection(
+        proposal=ProposalResult(
+            admission=admission,
+            evaluation=evaluation,
+            candidate=candidate,
+        ),
+        workspace_advertisement=NOT_ATTACHED_ADVERTISEMENT,
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+
+
+def _candidate_for_proposal(
+    instance: PlaybillInstance,
+    proposal_id: str,
+) -> tuple[ProposalResult, CandidateRecord]:
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
+    assert isinstance(inspection.proposal, ProposalResult)
+    # The settlement doors, approval and activation, both resolve their
+    # candidate here, so this is where a withdrawal becomes terminal in fact
+    # rather than a note in the inventory.
+    instance.proposal_evidence().refuse_closed(inspection.proposal.admission.proposal_id)
+    candidate = inspection.proposal.candidate
+    if candidate is None:
+        diagnostics = inspection.proposal.evaluation.diagnostics
+        if not diagnostics:
+            raise ProposalIntegrityError(
+                "stored refused proposal has no diagnostic; proposal evidence is corrupt"
+            )
+        raise ProposalIntegrityError(
+            "refused proposal has no approvable candidate; run "
+            f"`cruxible get {proposal_id}` for refusal code "
+            f"{diagnostics[0].code}"
+        )
+    return inspection.proposal, candidate
+
+
+def service_submit_playbill_approval(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    attestation: ApprovalAttestation,
+    authenticated_submitter: str,
+    activate_when_complete: bool = False,
+    may_activate: bool = False,
+    may_activate_compiler_upgrade: bool = False,
+) -> ApprovalReceipt | ActivationReceipt | ProposalRecompiled:
+    """Verify and persist one public attestation; activate when it completes the candidate.
+
+    When this signature leaves no approval outstanding, ``activate_when_complete``
+    is set (the caller did not hold activation for someone else) and
+    ``may_activate`` (the caller's tier admits activation), the candidate is
+    activated here by the submitter, through the one activation path. Otherwise
+    the receipt says why not and how many signatures remain.
+
+    A compiler-upgrade candidate additionally requires ``cruxible_compiler_upgrade``
+    at ADMIN to activate (``may_activate_compiler_upgrade``); an eligible
+    GRAPH_WRITE approver still stores the signature but does not activate it.
+    Direct activation keeps enforcing that requirement itself, independent of
+    this up-front check: a ``PermissionDeniedError`` surfacing from the
+    activation attempt below is treated the same way.
+    """
+
+    instance.require_writable()
+    proposal, candidate = _candidate_for_proposal(instance, proposal_id)
+    if proposal.evaluation.evaluated_base_oid != instance.accepted_coordinate().git_oid:
+        from cruxible_core.service.proposals.staleness import (
+            render_stale_paths,
+            stale_paths_at_head,
+        )
+
+        # Stale only when history changed what it touches since its base: then
+        # it awaits its author's readmit, and no approval settles it. Otherwise
+        # the approval lands the same change set at the head.
+        stale_paths = stale_paths_at_head(instance, proposal)
+        if stale_paths:
+            raise ProposalStale(
+                proposal_id,
+                reason="changed_since_base",
+                detail="changed at the head since its base: " + render_stale_paths(stale_paths),
+            )
+        recompiled = _recompile_for_review(
+            instance, proposal, approver=proposal.admission.actor_id != authenticated_submitter
+        )
+        if recompiled is not None:
+            if (
+                recompiled.status == "ready_to_activate"
+                and recompiled.proposal_id is not None
+                and activate_when_complete
+                and may_activate
+            ):
+                return service_activate_playbill_proposal(
+                    instance,
+                    proposal_id=recompiled.proposal_id,
+                    activated_by=authenticated_submitter,
+                )
+            return recompiled
+    if attestation.payload_digest != candidate.candidate_digest:
+        raise ProposalIntegrityError("attestation payload differs from proposal candidate")
+    signing_generation = instance.generation_for_semantic_root(
+        candidate.candidate.parent_semantic_root
+    )
+    submission = ApprovalSubmission(
+        submitted_by=authenticated_submitter,
+        attestation=attestation,
+    )
+    principal_lifecycle = all(
+        member.artifact_kind == "principal-lifecycle" for member in candidate.members
+    )
+    if (
+        not principal_lifecycle
+        and candidate.approval_requirements
+        and attestation.signer_id == proposal.admission.actor_id
+    ):
+        raise ApprovalIntegrityError(
+            "cruxible.approval.creator_forbidden: ordinary candidate creator cannot approve; "
+            "an eligible signer's approval activates it"
+        )
+    verified = verify_approval(
+        submission,
+        candidate=candidate.candidate,
+        principals=signing_generation.principals,
+        purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
+    )
+    evidence = instance.proposal_evidence()
+    # One lock, held from the store write through the note's own read-back. The
+    # note restates the WHOLE canonical list rather than appending one signer,
+    # so rendering it is a read-modify-write over the store: two approvers who
+    # rendered concurrently could leave the store holding both signatures and
+    # Git holding one, and activation would then refuse a proposal nobody
+    # tampered with. The outer review lock also stabilizes admissions sharing
+    # this Git commit; compilation and network publication stay outside it.
+    with instance.review_projection_lock():
+        with instance.approval_note_lock(candidate.candidate_digest):
+            grouped = instance.proposal_note_index(
+                oids=(), candidate_digests=(candidate.candidate_digest,)
+            )
+            affected = grouped.oids_for_candidate(candidate.candidate_digest)
+            previous_notes = grouped.validate_and_snapshot(instance._ledger, affected)
+            evidence.write_approval(candidate.candidate_digest, submission)
+            grouped.publish(instance._ledger, affected, previous=previous_notes)
+    remaining = _approvals_remaining(
+        evidence.read_approvals(candidate.candidate_digest),
+        candidate,
+        creator=proposal.admission.actor_id,
+        principals=signing_generation.principals,
+        principal_lifecycle=principal_lifecycle,
+    )
+    # A compiler-upgrade candidate needs cruxible_compiler_upgrade at ADMIN to
+    # activate, on top of the generic cruxible_proposal_activate this caller's
+    # tier may already admit; decided up front so an eligible-but-insufficient
+    # approver gets the reason without an activation attempt.
+    needs_compiler_upgrade = any(
+        member.artifact_kind == "compiler-upgrade" for member in candidate.members
+    )
+    effective_may_activate = may_activate and (
+        may_activate_compiler_upgrade if needs_compiler_upgrade else True
+    )
+    reason: ApprovalNotActivated | None = (
+        "approvals_remaining"
+        if remaining
+        else "held"
+        if not activate_when_complete
+        else "activation_not_permitted"
+        if not effective_may_activate
+        else None
+    )
+    if reason is None:
+        # Activation advertises the workspace and requests the mirror itself.
+        try:
+            activation = service_activate_playbill_proposal(
+                instance, proposal_id=proposal_id, activated_by=authenticated_submitter
+            )
+        except ProposalStale:
+            reason = "stale"
+        except PermissionDeniedError:
+            # The up-front check above should have caught this; kept as the
+            # backstop so any candidate-specific activation authority this
+            # submitter lacks still reports a receipt instead of an error,
+            # with the signature already persisted above.
+            reason = "activation_not_permitted"
+        else:
+            if isinstance(activation, ProposalRecompiled):
+                return activation
+            return _approval_receipt(proposal_id, candidate, verified, activation=activation)
+    # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
+    # branch and its notes from the store and now takes the same candidate lock
+    # around projected approval rendering, so nesting would deadlock. Both lanes
+    # are refreshed so the next reviewer can see the new approval.
+    instance.advertise_workspace()
+    instance.request_ledger_mirror()
+    return _approval_receipt(
+        proposal_id, candidate, verified, not_activated=reason, approvals_remaining=remaining
+    )
+
+
+def _approvals_remaining(
+    submissions: tuple[ApprovalSubmission, ...],
+    candidate: CandidateRecord,
+    *,
+    creator: str,
+    principals: PrincipalRegistrySnapshot,
+    principal_lifecycle: bool,
+) -> int:
+    """Signatures settlement still needs, counted as settlement counts them.
+
+    Distinct active ordinary signers other than the creator toward the approval
+    requirement; a principal-lifecycle candidate also needs its actor's own
+    signature, and a compiler upgrade at least one signature of any kind.
+    """
+
+    verified: list[VerifiedApproval] = []
+    for submission in submissions:
+        try:
+            verified.append(
+                verify_approval(
+                    submission,
+                    candidate=candidate.candidate,
+                    principals=principals,
+                    purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
+                )
+            )
+        except ApprovalIntegrityError:
+            continue
+    signers = {approval.signer_id for approval in verified}
+    remaining = 0
+    if candidate.approval_requirements:
+        eligible = {
+            signer
+            for signer in signers
+            if signer != creator and principals.require_active(signer).kind == "ordinary"
+        }
+        minimum = candidate.approval_requirements[0].minimum_distinct_signers
+        remaining = max(0, minimum - len(eligible))
+    if principal_lifecycle and creator not in signers:
+        remaining += 1
+    if not verified and any(
+        member.artifact_kind == "compiler-upgrade" for member in candidate.members
+    ):
+        remaining = max(remaining, 1)
+    return remaining
+
+
+def _approval_receipt(
+    proposal_id: str,
+    candidate: CandidateRecord,
+    verified: VerifiedApproval,
+    *,
+    activation: ActivationReceipt | None = None,
+    not_activated: ApprovalNotActivated | None = None,
+    approvals_remaining: int = 0,
+) -> ApprovalReceipt:
+    return ApprovalReceipt(
+        proposal_id=proposal_id,
+        candidate_digest=candidate.candidate_digest,
+        signer_id=verified.signer_id,
+        submitted_by=verified.submission.submitted_by,
+        signing_semantic_root=verified.submission.attestation.signing_semantic_root,
+        attestation_digest=verified.digest.tagged,
+        key_history_ref=verified.signer_key_history_ref,
+        activation=activation,
+        not_activated=not_activated,
+        approvals_remaining=approvals_remaining,
+    )
+
+
+def _reconcile_proposal_notes(
+    instance: PlaybillInstance,
+    *,
+    proposal: ProposalResult,
+    candidate: CandidateRecord,
+) -> None:
+    """Prove Git's copy of this proposal still agrees with the evidence store.
+
+    The store is the source of record and the note refs are its projection, so
+    the two ways they can differ are not the same failure:
+
+    * a note that DISAGREES is a stale or edited projection. Settlement refuses,
+      because a reviewer who approved from the note read something the daemon
+      never wrote -- the point of projecting evidence into Git at all is that
+      the two say the same thing.
+    * a note that is ABSENT is a projection that was never written. Every
+      proposal admitted before these refs existed is in that state, so it is
+      repaired here rather than turned into a refusal that would strand them.
+
+    A candidate with no approvals is left with no approval note: an empty list
+    projects nothing, and writing one on every unapproved activation would add
+    a Git write to the settlement path to say so.
+
+    Under the same per-candidate lock the approval door holds, so this reads one
+    consistent pair. Without it a signature landing between the store read and
+    the note read would present the difference the approval door was in the
+    middle of closing, and settlement would refuse a tamper that was really a
+    second approver arriving on time.
+    """
+
+    oid = proposal.admission.candidate_commit_oid
+    with instance.review_projection_lock():
+        with instance.approval_note_lock(candidate.candidate_digest):
+            grouped = instance.proposal_note_index(
+                oids=(oid,), candidate_digests=(candidate.candidate_digest,)
+            )
+            # Human review uses the advisory alias, which may differ from the
+            # original admission commit. Both must agree with their complete
+            # evidence group before settlement; neither is trusted as authority.
+            aliases = {oid, grouped.review_oids[proposal.admission.proposal_id]}
+            projections = {oid: tuple(grouped.note_bytes(oid).items()) for oid in sorted(aliases)}
+            notes = instance.read_proposal_notes(
+                tuple((kind, oid) for oid, rows in projections.items() for kind, _ in rows)
+            )
+            for oid, rows in projections.items():
+                for kind, expected in rows:
+                    stored = notes[kind, oid]
+                    if stored == expected:
+                        continue
+                    if stored is not None:
+                        raise ProposalIntegrityError(
+                            "cruxible.proposal.note_disagrees_with_evidence: "
+                            f"the {kind} note on this review commit differs from the "
+                            "proposal evidence the daemon persisted; re-read the proposal "
+                            "with `cruxible proposal review --json` and settle from that, "
+                            "or restore the ledger from its own evidence before activating"
+                        )
+                    if kind == "approval" and expected == b"[]\n":
+                        continue
+                    # An advisory alias that has never been materialized has
+                    # no reachable review surface yet. Its absent note is built
+                    # by normal reconciliation after the alias is retained.
+                    if instance._ledger.object_exists(oid):
+                        instance.write_proposal_note(kind, oid, expected)
+
+
+@timed_operation("activate")
+@projection_request
+def service_activate_playbill_proposal(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    activated_by: str,
+    mandate_digest: str | None = None,
+    handoff: SettlementHandoff | None = None,
+) -> ActivationReceipt | ProposalRecompiled:
+    """Activate once, recompiling once if a head race invalidated the candidate."""
+    from cruxible_core.service.proposals.recompile import lowering_origin
+
+    try:
+        result = _activate_candidate(
+            instance,
+            proposal_id=proposal_id,
+            activated_by=activated_by,
+            mandate_digest=mandate_digest,
+            handoff=handoff,
+        )
+    except (ProposalStale, SettlementIntegrityError) as exc:
+        if isinstance(exc, ProposalStale) and exc.reason is not None:
+            raise
+        if (
+            instance.proposal_evidence().read_evaluation(proposal_id).evaluated_base_oid
+            == instance.accepted_coordinate().git_oid
+            or lowering_origin(instance, _candidate_for_proposal(instance, proposal_id)[0]) is None
+        ):
+            raise
+    else:
+        if (
+            not isinstance(result, ActivationReceipt)
+            or result.status != "lost_cas"
+            or result.proposal_id != proposal_id
+            # Exact-byte origins retain their terminal outcome, including the
+            # winner recovery already completed by a lost-CAS activation.
+            or lowering_origin(instance, _candidate_for_proposal(instance, proposal_id)[0]) is None
+        ):
+            return result
+    return _activate_candidate(
+        instance, proposal_id=proposal_id, activated_by=activated_by, mandate_digest=mandate_digest
+    )
+
+
+def _activate_candidate(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    activated_by: str,
+    mandate_digest: str | None = None,
+    handoff: SettlementHandoff | None = None,
+    _recompiled: bool = False,
+) -> ActivationReceipt | ProposalRecompiled:
+    """Settle, prebuild, and atomically activate one admitted candidate.
+
+    ``mandate_digest`` is passed only by the settle terminal for a candidate it
+    submitted under that mandate: delegated authority then stands in for
+    candidate approvals, and publication re-verifies it from the parent state.
+
+    ``handoff`` is passed only by the request that submitted the proposal (a
+    settle terminal, a write) and still holds its submission in memory: the
+    records and tree are then taken from it instead of read back, once the
+    stored evaluation is shown to be the one in hand. Any other activation
+    reads everything from what is stored.
+    """
+
+    proposal_id = instance.proposal_evidence().resolve_proposal_id(proposal_id)
+    try:
+        ProposalDigest.from_tagged(proposal_id)
+    except ValueError as exc:
+        raise ProposalActivationRequestInvalid(
+            f"{ProposalActivationRequestInvalid.error_code}: proposal_id must be a "
+            "canonical sha256 digest"
+        ) from exc
+    evidence = instance.proposal_evidence()
+    evaluation_at_entry = evidence.read_evaluation(proposal_id)
+    if evaluation_at_entry.evaluated_base_oid != instance.accepted_coordinate().git_oid:
+        if _recompiled:
+            raise ProposalStale(proposal_id, reason="head_moved")
+        proposal, _candidate = _candidate_for_proposal(instance, proposal_id)
+        recompiled = _recompile_for_review(instance, proposal)
+        if recompiled is None:
+            from cruxible_core.service.proposals.staleness import (
+                render_stale_paths,
+                stale_paths_at_head,
+            )
+
+            stale_paths = stale_paths_at_head(instance, proposal)
+            if stale_paths:
+                raise ProposalStale(
+                    proposal_id,
+                    reason="changed_since_base",
+                    detail="changed at the head since its base: " + render_stale_paths(stale_paths),
+                )
+            raise ProposalStale(proposal_id)
+        if recompiled.proposal_id is None:
+            return recompiled  # already live at the head: answered, nothing to activate
+        if recompiled.status == "pending_review" and mandate_digest is None:
+            return recompiled
+        # An ordinary no-approval candidate can land in this same call. The
+        # new id has no carried signatures. A settle's authority is reverified.
+        return _activate_candidate(
+            instance,
+            proposal_id=recompiled.proposal_id,
+            activated_by=activated_by,
+            mandate_digest=mandate_digest,
+            _recompiled=True,
+        )
+    submitted = None if handoff is None else handoff.take(proposal_id)
+    in_hand = None if submitted is None else _submitted_for_activation(instance, submitted)
+    if submitted is not None and in_hand is not None:
+        proposal, candidate, base = in_hand
+        evaluation = proposal.evaluation
+        assert evaluation.evaluated_tree_oid is not None  # a candidate verdict names its tree
+        candidate_tree: Mapping[str, bytes] = submitted.tree
+    else:
+        # Not this request's own submission, or not what is stored: read it back.
+        submitted = None
+        proposal, candidate = _candidate_for_proposal(instance, proposal_id)
+        evaluation = proposal.evaluation
+        if evaluation.evaluated_tree_oid is None:
+            raise ProposalIntegrityError("candidate evaluation is missing its exact tree")
+        from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+        # Settlement would refuse a moved head as an integrity failure; a proposal
+        # that is merely stale gets the repair its author can run.
+        if (
+            service_playbill_proposal_status(instance, proposal_id=proposal_id).status
+            == "awaiting_readmit"
+        ):
+            raise ProposalStale(proposal_id)
+        base = instance.coordinate_for_oid(evaluation.evaluated_base_oid)
+        candidate_tree = instance.proposal_tree(
+            evaluation.evaluated_tree_oid, base_oid=base.git_oid, proposal_id=proposal_id
+        )
+    if candidate.candidate.parent_semantic_root != base.semantic_root:
+        raise SettlementIntegrityError("candidate parent root differs from evaluated base")
+    _refuse_unmet_kit_requires(instance, candidate, candidate_tree)
+    settle = proposal.admission.settle_submission
+    if settle is not None and settle.mode == "delegated":
+        if mandate_digest is not None and mandate_digest != settle.mandate_digest:
+            raise SettlementIntegrityError("delegated settlement names another mandate")
+        mandate_digest = settle.mandate_digest
+        with instance.bind_accepted_projection(base) as projection:
+            row = projection.typed.connection.execute(
+                "SELECT identity FROM procedure_mandates WHERE artifact_digest=?", (mandate_digest,)
+            ).fetchone()
+            mandate = None if row is None else projection.typed.source(row[0])
+        now = datetime.now(timezone.utc)
+        if (
+            not isinstance(mandate, ProcedureMandate)
+            or mandate.suspended
+            or not (mandate.valid_from <= now < mandate.expires_at)
+        ):
+            raise SettlementIntegrityError(
+                "delegated settle mandate expired, was suspended, or was superseded "
+                "before publication"
+            )
+    approvals = (
+        ()
+        if mandate_digest is not None
+        else instance.proposal_evidence().read_approvals(candidate.candidate_digest)
+    )
+    _reconcile_proposal_notes(instance, proposal=proposal, candidate=candidate)
+    activation = instance.settle_and_activate(
+        base=base,
+        candidate_tree=candidate_tree,
+        candidate_tree_oid=evaluation.evaluated_tree_oid,
+        candidate=candidate,
+        approvals=approvals,
+        actor_binding=ChangeActorBinding(
+            actor_id=proposal.admission.actor_id,
+            source_compilation_digest=proposal.admission.source_compilation_digest,
+        ),
+        proposal_actor_id=proposal.admission.actor_id,
+        accepting_admission=AcceptingAdmission.of(proposal.admission),
+        mandate_digest=mandate_digest,
+        admitted=None if submitted is None else submitted.evaluation,
+    )
+    if activation.status not in {"accepted", "lost_cas"}:
+        raise SettlementIntegrityError("activation returned an unsupported terminal status")
+    if activation.status == "accepted" and activation.accepted is None:
+        raise SettlementIntegrityError("accepted activation omitted its coordinate")
+    status = cast(Literal["accepted", "lost_cas"], activation.status)
+    # Accepted state moved. Every per-process read memo keyed on a coordinate is
+    # keyed on the old one and would simply miss, but a memo that outlives the
+    # state it summarizes is the kind of thing that is only ever discovered as a
+    # stale answer, so activation forgets them outright.
+    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
+
+    # Remembered slot answers survive: each is re-validated against its own
+    # reads at the new coordinate before it is served.
+    with phase("post_accept"):
+        reset_claim_resolution_memo(slots=False)
+        if status == "accepted":
+            _finalize_completed_intents(instance)
+            _resume_waiting_kits(instance, candidate)
+        advertisement = instance.advertise_workspace()
+        # Publish accepted main and remove the closed review branch.
+        instance.request_ledger_mirror()
+    return ActivationReceipt(
+        proposal_id=proposal_id,
+        activated_by=activated_by,
+        status=status,
+        accepted_coordinate=(
+            AcceptedCoordinate.from_internal(activation.accepted)
+            if activation.status == "accepted" and activation.accepted is not None
+            else None
+        ),
+        workspace_advertisement=advertisement,
+    )
+
+
+def _recompile_for_review(
+    instance: PlaybillInstance, source: ProposalResult, *, approver: bool = False
+) -> ProposalRecompiled | None:
+    """Recompile a stale proposal an approval met; ``approver``: not its author.
+
+    A refused recompilation reaches an approver as ``readmit_refused`` with the
+    repair ``proposal reject``: only the author can make the change again, and
+    a rejection with a reason tells them why. Activation keeps ``ProposalStale``.
+    """
+    from cruxible_core.service.kits import refuse_unmet_kit_requires_at
+    from cruxible_core.service.proposals.proposals import readmit_refused
+    from cruxible_core.service.proposals.recompile import lowering_origin, recompile_proposal
+
+    if source.candidate is not None and source.evaluation.evaluated_tree_oid is not None:
+        # A kit change's requirements are rechecked against the head it would land on.
+        tree_oid = source.evaluation.evaluated_tree_oid
+        refuse_unmet_kit_requires_at(
+            instance,
+            (member.path for member in source.candidate.members),
+            lambda: instance.proposal_tree(
+                tree_oid,
+                base_oid=source.evaluation.evaluated_base_oid,
+                proposal_id=source.admission.proposal_id,
+            ),
+            instance.immutable_tree_at(instance.accepted_coordinate().git_oid),
+        )
+    try:
+        origin = lowering_origin(instance, source)
+    except ProposalStale:
+        origin = None
+    if origin is None or origin.admission.procedure_operation is None:
+        # Nothing it touches changed since its base: the same change set lands
+        # at the head by its own bytes. A Line's or Procedure's proposal
+        # re-decides at the head instead, as its recompilation always has.
+        landed = _land_exact_bytes_for_review(instance, source)
+        if landed is not None:
+            return landed
+    try:
+        recompiled = recompile_proposal(instance, source)
+    except ProposalStale as exc:
+        if not approver:
+            raise
+        raise readmit_refused(instance, source, exc, approver=True) from exc
+    if recompiled is None:
+        return None
+    if recompiled.proposal is None:
+        return ProposalRecompiled(
+            status="already_live",
+            source_proposal_id=recompiled.source_proposal_id,
+            members_identical=False,
+            changed_members=recompiled.changed_members,
+            changed_members_truncated=recompiled.changed_members_truncated,
+            accepted_coordinate=recompiled.coordinate,
+            reobservations_refused=recompiled.reobservations_refused,
+        )
+    result = recompiled.proposal
+    assert isinstance(result, ProposalResult) and result.candidate is not None
+    return ProposalRecompiled(
+        status="pending_review" if result.candidate.approval_requirements else "ready_to_activate",
+        source_proposal_id=recompiled.source_proposal_id,
+        proposal_id=result.admission.proposal_id,
+        candidate_digest=result.candidate.candidate_digest,
+        members_identical=recompiled.members_identical,
+        changed_members=recompiled.changed_members,
+        changed_members_truncated=recompiled.changed_members_truncated,
+        accepted_coordinate=recompiled.coordinate,
+        reobservations_refused=recompiled.reobservations_refused,
+    )
+
+
+def _land_exact_bytes_for_review(
+    instance: PlaybillInstance, source: ProposalResult
+) -> ProposalRecompiled | None:
+    """Land a moved proposal at the head by its own bytes, when nothing it touches
+    changed since its base; None when something did (it stays stale).
+    """
+    from cruxible_core.service.proposals.proposals import land_exact_bytes
+    from cruxible_core.service.proposals.recompile import _changed_members
+    from cruxible_core.service.proposals.staleness import (
+        candidate_accepted,
+        stale_paths_at_head,
+    )
+
+    if source.candidate is None or stale_paths_at_head(instance, source):
+        return None
+    if candidate_accepted(instance, source.candidate.candidate_digest):
+        return None  # accepted itself: nothing is left to land
+    successor = land_exact_bytes(instance, source)
+    if successor.candidate is None:
+        raise ProposalStale(
+            source.admission.proposal_id,
+            reason="evaluation_refused",
+            detail="; ".join(item.code for item in successor.evaluation.diagnostics),
+        )
+    before = {member.path: member.candidate_artifact_digest for member in source.candidate.members}
+    after = {
+        member.path: member.candidate_artifact_digest for member in successor.candidate.members
+    }
+    changed, truncated = _changed_members(before, after)
+    return ProposalRecompiled(
+        status=(
+            "pending_review" if successor.candidate.approval_requirements else "ready_to_activate"
+        ),
+        source_proposal_id=source.admission.proposal_id,
+        proposal_id=successor.admission.proposal_id,
+        candidate_digest=successor.candidate.candidate_digest,
+        members_identical=before == after,
+        changed_members=changed,
+        changed_members_truncated=truncated,
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+
+
+def _submitted_for_activation(
+    instance: PlaybillInstance, submitted: SubmittedProposal
+) -> tuple[ProposalResult, CandidateRecord, AcceptedProjectionCoordinate] | None:
+    """The activation inputs of this request's own submission, without reading them back.
+
+    What a read-back would establish is checked on the stored records it can
+    see cheaply: the proposal is not withdrawn or rejected, its stored
+    evaluation (which names the candidate digest and the evaluated tree) is
+    exactly the one in hand, and it is not stale against the current head.
+    None when the stored records are not the ones in hand: activation then
+    reads everything back and settles from that, as any other request would.
+    """
+
+    proposal = submitted.result
+    proposal_id = proposal.admission.proposal_id
+    candidate = proposal.candidate
+    evidence = instance.proposal_evidence()
+    evidence.refuse_closed(proposal_id)
+    if (
+        candidate is None
+        or proposal.evaluation.candidate_digest != candidate.candidate_digest
+        or proposal.evaluation.evaluated_base_oid != submitted.current.git_oid
+        or evidence.read_evaluation(proposal_id) != proposal.evaluation
+    ):
+        return None
+    if instance.accepted_coordinate().semantic_root != candidate.candidate.parent_semantic_root:
+        # The list would call it stale: accepted state moved past its parent.
+        raise ProposalStale(proposal_id)
+    return proposal, candidate, submitted.current
+
+
+def _refuse_unmet_kit_requires(
+    instance: PlaybillInstance, candidate: CandidateRecord, candidate_tree: Mapping[str, bytes]
+) -> None:
+    """A kit change accepted later than it was proposed still meets its requirements:
+    looked up by its own changed paths, against the receipts it lands beside."""
+    from cruxible_core.service.kits import refuse_unmet_kit_requires
+
+    refuse_unmet_kit_requires(
+        instance, (member.path for member in candidate.members), candidate_tree
+    )
+
+
+def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecord) -> None:
+    """Resume a kit add this acceptance completed, looked up by its own changed paths.
+
+    The activation is already committed; the resume is isolated from it.
+    """
+    from cruxible_core.service.kit_resume import resume_kits_after_activation
+
+    resume_kits_after_activation(instance, (member.path for member in candidate.members))
+
+
+def _finalize_completed_intents(instance: PlaybillInstance) -> None:
+    """Let the authoring intent this acceptance completed finish now.
+
+    The activation is already committed, so a failure here only delays the
+    intent's compaction: the next create runs the same pass.
+    """
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.store import AuthoringIntentStoreError
+
+    try:
+        AuthoringIntentCoordinator.for_instance(instance).finalize_completed()
+    except (AuthoringIntentStoreError, OSError) as exc:
+        structlog.get_logger(__name__).warning(
+            "authoring_intent_finalize_deferred", error=type(exc).__name__
+        )
+
+
+def service_get_playbill_document(
+    instance: PlaybillInstance,
+    *,
+    identity: str,
+    access: BodyAccessContext,
+    at: AcceptedCoordinate | None = None,
+) -> PlaybillDocumentView:
+    coordinate = accepted_coordinate_at(instance, at)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        document = projection.document(identity, access=access)
+    if document is None:
+        raise DocumentNotFoundError(identity)
+    return _public_document(document)
+
+
+def service_list_playbill_documents(
+    instance: PlaybillInstance,
+    *,
+    access: BodyAccessContext,
+    at: AcceptedCoordinate | None = None,
+) -> PlaybillDocumentList:
+    coordinate = accepted_coordinate_at(instance, at)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        documents = tuple(
+            _public_document(item) for item in projection.list_documents(access=access)
+        )
+    return PlaybillDocumentList(
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        documents=documents,
+    )
+
+
+def _fact_value(document: PlaybillDocumentView, schema_id: str, fact_key: str) -> object:
+    matches = tuple(
+        fact["value"]
+        for fact in document.facts
+        if fact["schema_id"] == schema_id and fact["fact_key"] == fact_key
+    )
+    if len(matches) != 1:
+        raise ProposalIntegrityError("Document projection is missing one required typed fact")
+    return matches[0]
+
+
+def service_dereference_playbill_document(
+    instance: PlaybillInstance,
+    *,
+    identity: str,
+    access: BodyAccessContext,
+    at: AcceptedCoordinate | None = None,
+) -> PlaybillBodyRead:
+    document = service_get_playbill_document(instance, identity=identity, access=access, at=at)
+    subject = _fact_value(document, "cruxible.document.subject", "whole_document")
+    metadata = _fact_value(document, "cruxible.document.metadata", "metadata")
+    if not isinstance(subject, dict) or not isinstance(metadata, dict):
+        raise ProposalIntegrityError("Document projection facts have invalid public shapes")
+    body_value = subject.get("body_digest")
+    if not isinstance(body_value, dict) or not isinstance(body_value.get("$digest"), str):
+        raise ProposalIntegrityError("Document subject fact is missing its body digest")
+    media_type = metadata.get("media_type")
+    if not isinstance(media_type, str):
+        raise ProposalIntegrityError("Document metadata fact is missing its media type")
+    body_digest = body_value["$digest"]
+    content = instance.body_store().read(body_digest, access=access)
+    return PlaybillBodyRead(
+        identity=identity,
+        coordinate=document.coordinate,
+        body_digest=body_digest,
+        media_type=media_type,
+        content_base64=base64.b64encode(content).decode("ascii"),
+    )
+
+
+def service_playbill_document_history(
+    instance: PlaybillInstance,
+    *,
+    identity: str,
+) -> PlaybillDocumentHistory:
+    document_id = identity.removeprefix("document:")
+    if identity != f"document:{document_id}":
+        raise DocumentNotFoundError(identity)
+    path = document_path(document_id)
+    entries: list[PlaybillDocumentHistoryEntry] = []
+    records = instance.retained_record_reader()
+    with instance.accepted_history_reader() as history:
+        for location in history.member_history(path):
+            generation = history.generation(location.sequence)
+            # The member alone, verified against its record's accepted binding.
+            member = history.read_member(location, records)
+            content = instance.blob_at(generation.git_oid, path)
+            if member.disposition == "delete" and content is None:
+                continue
+            if content is None:
+                raise ProjectionIntegrityError("Document history source is unavailable")
+            shell = parse_document(content, path=path)
+            digest = document_digest(shell).tagged
+            if digest != location.artifact_digest:
+                raise ProjectionIntegrityError("Document history source binding differs")
+            entries.append(
+                PlaybillDocumentHistoryEntry(
+                    sequence=generation.sequence,
+                    coordinate=AcceptedCoordinate(
+                        git_oid=generation.git_oid,
+                        semantic_root=generation.semantic_root,
+                        generation_root=generation.generation_root,
+                        compiler_digest=generation.compiler_digest,
+                    ),
+                    envelope_digest=digest,
+                    body_digest=shell.body_digest,
+                    predecessor_digest=shell.predecessor_digest,
+                    revision=shell.lifecycle.revision,
+                    change_set_path=f"changesets/cs-{generation.sequence:020d}.json",
+                    changeset_digest=str(generation.source_record_digest),
+                    candidate_digest=str(generation.candidate_digest),
+                )
+            )
+    if not entries:
+        raise DocumentNotFoundError(identity)
+    return PlaybillDocumentHistory(identity=identity, entries=tuple(entries))
+
+
+def _compiler_upgrade_refusal(
+    value: CompilerUpgrade,
+    current: AcceptedProjectionCoordinate,
+) -> RequestRefusedError:
+    """Name why an upgrade cannot be proposed and the forward edges that can."""
+
+    from cruxible_core.compiler.upgrades import supported_upgrade_targets, upgrade_base_matches
+
+    current_digest = current.compiler.rule_digest
+    if value.target.rule_digest == current_digest:
+        return RequestRefusedError(
+            "cruxible.compiler_upgrade.already_current",
+            f"the accepted state already runs compiler {current_digest}",
+            repair=hand_edit_repair(
+                "cruxible.compiler_upgrade.already_current",
+                required_change="Nothing to upgrade; no proposal is needed.",
+            ),
+        )
+    if not upgrade_base_matches(value, current):
+        return RequestRefusedError(
+            "cruxible.compiler_upgrade.stale_base",
+            "the upgrade names a base that is not the current accepted coordinate",
+            repair=hand_edit_repair(
+                "cruxible.compiler_upgrade.stale_base",
+                required_change="Propose against the current accepted coordinate.",
+            ),
+        )
+    targets = supported_upgrade_targets(current.compiler)
+    named = ", ".join(targets) if targets else "none"
+    return RequestRefusedError(
+        "cruxible.compiler_upgrade.unsupported_transition",
+        f"no forward edge from compiler {current_digest} to {value.target.rule_digest}; "
+        f"supported targets: {named}",
+        repair=hand_edit_repair(
+            "cruxible.compiler_upgrade.unsupported_transition",
+            required_change=f"Target one supported compiler: {named}.",
+        ),
+    )
+
+
+def service_propose_compiler_upgrade(
+    instance: PlaybillInstance,
+    *,
+    actor_id: str,
+    timestamp: str,
+    target: CompilerCoordinate | None = None,
+    proposal_name: str | None = None,
+    base: AcceptedCoordinate | None = None,
+    dry_run: bool | None = None,
+    preview_at: str | None = None,
+) -> ProposalInspection:
+    """Propose an exact forward transition using the normal evidence and review path.
+
+    With no ``target`` the upgrade targets the compiler this daemon runs; with
+    no ``proposal_name`` it is named ``upgrade-to-<revision>``; with no ``base``
+    it is bound to the current accepted coordinate. The proposal pins the
+    target's full digest either way. ``preview_at`` is the request's ``at``:
+    the coordinate of a preview this commit is pinned to (``at`` here already
+    names the resolved base).
+    """
+    instance.require_writable()
+    from cruxible_client.contracts.candidates import LawEvaluationCoordinate
+    from cruxible_client.contracts.compiler_upgrade import (
+        COMPILER_UPGRADE_PATH,
+        CompilerUpgrade,
+        render_compiler_upgrade,
+    )
+    from cruxible_core.compiler.compiler import current_compiler_coordinate
+    from cruxible_core.compiler.upgrades import (
+        default_upgrade_proposal_name,
+        upgrade_notice,
+        validate_upgrade,
+    )
+
+    if target is None:
+        target = current_compiler_coordinate()
+    if proposal_name is None:
+        proposal_name = default_upgrade_proposal_name(target)
+    at = accepted_coordinate_at(instance, base)
+    value = CompilerUpgrade(
+        instance_id=at.instance_id,
+        base=LawEvaluationCoordinate(
+            git_oid=at.git_oid,
+            semantic_root=at.semantic_root,
+            generation_root=at.generation_root,
+            compiler_digest=at.compiler.rule_digest,
+        ),
+        target=target,
+    )
+    current = instance.accepted_coordinate()
+    try:
+        validate_upgrade(value, current)
+    except ValueError as exc:
+        raise _compiler_upgrade_refusal(value, current) from exc
+    tree = instance.immutable_tree_at(at.git_oid).fork()
+    tree[COMPILER_UPGRADE_PATH] = render_compiler_upgrade(value)
+    name = canonical_playbill_proposal_name(proposal_name, family="compiler")
+    inspection = admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=preview_at,
+        operation="cruxible.compiler.upgrade",
+        describe=f"the compiler upgrade to {target.rule_digest}",
+        actor_id=actor_id,
+        proposed_base=at,
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/{name}",
+            proposed_base_oid=at.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=timestamp,
+    )
+    return inspection.model_copy(update={"compiler_upgrade": upgrade_notice(value)})
+
+
+__all__ = [
+    "AcceptedCoordinate",
+    "ActivationReceipt",
+    "ApprovalReceipt",
+    "PlaybillBodyRead",
+    "PlaybillDocumentHistory",
+    "PlaybillDocumentHistoryEntry",
+    "PlaybillDocumentList",
+    "PlaybillDocumentView",
+    "ProposalInspection",
+    "service_activate_playbill_proposal",
+    "service_dereference_playbill_document",
+    "service_get_playbill_document",
+    "service_inspect_playbill_proposal",
+    "service_list_playbill_documents",
+    "service_playbill_document_history",
+    "service_propose_compiler_upgrade",
+    "service_propose_playbill_document",
+    "service_propose_playbill_principal_change",
+    "admit_proposal",
+    "service_store_playbill_body",
+    "service_submit_playbill_approval",
+]

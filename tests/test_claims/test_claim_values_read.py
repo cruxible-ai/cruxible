@@ -1,0 +1,164 @@
+"""Claim values and verdicts are read without materializing full Claim views."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest, ClaimValuesRequest
+from cruxible_core.service.claims import claim_reads
+from cruxible_core.service.claims.claim_reads import (
+    service_read_claim_batch,
+    service_read_claim_values,
+)
+from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
+from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+from tests.core_support._knowledge_loop_support import seed_claims
+from tests.core_support._subject_kind_support import without_keys
+
+EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
+SUBJECTS = (
+    "subjects/project.work_item/wi-42.json",
+    "subjects/project.work_item/wi-43.json",
+)
+
+
+def test_values_match_full_views_and_slot_statuses(tmp_path: Path, monkeypatch) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    full = service_read_claim_batch(
+        instance,
+        request=ClaimReadBatchRequest(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
+    )
+    expected = {view.envelope["identity"].removeprefix("Claim:"): view for view in full.claims}
+
+    def unused(*args, **kwargs):
+        pytest.fail("a values read must not materialize full Claim views")
+
+    monkeypatch.setattr(claim_reads, "materialize_playbill_claim_view", unused)
+    result = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
+    )
+
+    assert result.coordinate == full.coordinate
+    assert {row.claim_id for row in result.values} == set(expected)
+    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+    statuses = claim_resolution_statuses(
+        instance,
+        claims=context.claims(),
+        at=result.coordinate,
+        evaluation_time=EVALUATION_TIME,
+    )
+    for row in result.values:
+        view = expected[row.claim_id]
+        statement = next(
+            f["value"] for f in view.facts if f["schema_id"] == "cruxible.claim.statement"
+        )
+        assert row.value == statement["object"]["value"]
+        assert row.predicate == statement["predicate"]
+        assert row.subject_path in SUBJECTS
+        assert row.status == statuses[row.claim_id]
+        # The same verdict the full view reports as its current verdict.
+        current = next(
+            f["value"] for f in view.facts if f["schema_id"] == "cruxible.claim.current_verdict"
+        )
+        assert row.verdict == current["verdict"]
+
+
+def test_values_selection_is_bounded_to_the_requested_predicates(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    result = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(
+            subject_paths=SUBJECTS,
+            predicates=("project.work_item.nonexistent",),
+            evaluation_time=EVALUATION_TIME,
+        ),
+    )
+    assert result.values == ()
+
+
+def test_value_rows_carry_every_object_variant(tmp_path: Path) -> None:
+    from cruxible_client.contracts.claims import (
+        SubjectClaimObject,
+    )
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.service.claims.claim_reads import _claim_value_row
+
+    instance, _owner = seed_claims(tmp_path)
+    literal = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()[0]
+    variants = {
+        "literal": literal,
+        "subject": literal.model_copy(
+            update={
+                "statement": literal.statement.model_copy(
+                    update={
+                        "object": SubjectClaimObject(
+                            address=SemanticAddress.whole_artifact(SUBJECTS[1])
+                        )
+                    }
+                )
+            }
+        ),
+    }
+    rows = {
+        kind: _claim_value_row(claim, verdict=None, status="accepted")
+        for kind, claim in variants.items()
+    }
+    assert {kind: row.object_kind for kind, row in rows.items()} == {
+        kind: kind for kind in variants
+    }
+    assert rows["literal"].value == literal.statement.object.value
+    assert rows["subject"].value == SUBJECTS[1]
+    for kind, claim in variants.items():
+        assert rows[kind].object == claim.statement.object
+
+
+def test_values_select_every_subject_of_one_kind(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    by_paths = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
+    )
+    by_kind = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest.for_kind("project.work_item", evaluation_time=EVALUATION_TIME),
+    )
+    other_kind = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest.for_kind("project.milestone", evaluation_time=EVALUATION_TIME),
+    )
+
+    assert by_kind.values == by_paths.values
+    assert {row.subject_id for row in by_kind.values} == {"wi-42", "wi-43"}
+    assert all(
+        row.subject_path == f"subjects/project.work_item/{row.subject_id}.json"
+        for row in by_kind.values
+    )
+    assert other_kind.values == ()
+
+
+def test_values_request_selects_paths_or_one_kind_never_both() -> None:
+    named = ClaimValuesRequest.for_kind("project.work_item", subject_ids=("wi-42",))
+    assert named.subject_paths == (SUBJECTS[0],)
+    assert named.subject_kind is None
+    with pytest.raises(ValueError, match="either explicit subject paths or one subject kind"):
+        ClaimValuesRequest(subject_paths=SUBJECTS, subject_kind="project.work_item")
+    with pytest.raises(ValueError, match="either explicit subject paths or one subject kind"):
+        ClaimValuesRequest()
+
+
+def test_claim_lists_filter_by_subject_kind(tmp_path: Path) -> None:
+    from cruxible_core.service.claims.claims import service_list_playbill_claims
+
+    instance, _owner = seed_claims(tmp_path)
+
+    claims = service_list_playbill_claims(instance, subject_kind="project.work_item")
+    all_claims = service_list_playbill_claims(instance)
+
+    assert claims.claims == all_claims.claims
+    # Two stated Claims, beside the two Subjects' key Claims.
+    assert len(without_keys(claims.claims)) == 2
+    assert service_list_playbill_claims(instance, subject_kind="project.milestone").claims == ()

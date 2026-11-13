@@ -1,0 +1,648 @@
+"""Binding and whole-truth laws for the AuthoringIntent preflight."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring.inputs import (
+    ClaimInput,
+    SelfSourceInput,
+    SubjectObjectInput,
+)
+from cruxible_client.contracts.authoring.models import (
+    AuthoringClaimStatement,
+    AuthoringExistingClaimDisposition,
+    ClaimAuthoringPayload,
+    SelfSourceBody,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
+)
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+    CaptureContractAny,
+    builtin_contract_for_write,
+    capture_contract_path,
+    render_capture_contract,
+)
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
+from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.authoring.store import AuthoringIntentStore
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
+from cruxible_core.proposals.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
+)
+from cruxible_core.proposals.settlement import ChangeActorBinding
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.claims.subjects import (
+    service_get_playbill_subject,
+)
+from cruxible_core.service.floor.floor import service_export_playbill_floor
+from cruxible_core.storage.read_positions import (
+    body_present,
+    current_positions,
+    read_positions,
+    reading_at,
+)
+from tests.core_support._subject_kind_support import declare_created_kinds
+from tests.core_support._support import client_material, initialize_local
+from tests.support.claim_types import claim_type_changes
+from tests.test_claims.test_claims import _claim_type, _subject
+from tests.test_ledger.test_activation import _sign
+
+TIMESTAMP = "2026-08-21T12:00:00.000000Z"
+
+
+def _seed_claim_surface(
+    instance: PlaybillInstance,
+    _owner: object,
+    *,
+    contract: CaptureContractAny | None = None,
+    claim_type_override: ClaimType | None = None,
+    additional_subjects: tuple[SubjectShell, ...] = (),
+) -> None:
+    from cruxible_core.compiler.compiler import CURRENT_COMPILER
+
+    if contract is None:
+        contract = (
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+            if instance.accepted_coordinate().compiler == CURRENT_COMPILER
+            else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        )
+    shell = _subject()
+    claim_type = (claim_type_override or _claim_type()).model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="coordinator-source",
+                        claim_roles=("normative", "observation"),
+                        capture_contracts=(contract.identity.name,),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
+    for additional in additional_subjects:
+        tree[subject_path(additional.subject_kind, additional.subject_id)] = render_subject(
+            additional
+        )
+    tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
+    declare_created_kinds(instance.tree_at(base.git_oid), tree, instance=instance)
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/authoring-seed",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-21T11:59:00.000000Z",
+    )
+    assert proposed.candidate is not None
+    assert proposed.evaluation.evaluated_tree_oid is not None
+    bundle = instance.prepare_generation(
+        base=base,
+        candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
+        candidate=proposed.candidate,
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                proposed.candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=1,
+        accepting_admission=AcceptingAdmission.of(proposed.admission),
+    )
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    instance.refresh()
+
+
+def _coordinator(instance: PlaybillInstance) -> AuthoringIntentCoordinator:
+    exhaust = instance.root / instance.descriptor.storage.exhaust
+    return AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(exhaust, token_factory=lambda: "1" * 32),
+        claim_id_factory=lambda: "CLM-" + "2" * 32,
+    )
+
+
+def _self_source_payload() -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
+        statement=AuthoringClaimStatement(
+            subject=SemanticAddress.whole_artifact(
+                subject_path(_subject().subject_kind, _subject().subject_id)
+            ),
+            predicate=_claim_type().predicate,
+            object=LiteralClaimObject(value="ready"),
+            role="observation",
+        ),
+        rationale="The writer observed the current work status.",
+        source=SelfSourceBody(content_base64=base64.b64encode(b"status: ready\n").decode("ascii")),
+    )
+
+
+def _working_payload(
+    *,
+    occurrence_count: int,
+    selected_occurrence: int | None = None,
+) -> ClaimAuthoringPayload:
+    selected = b"status: ready"
+    digest = "sha256:" + hashlib.sha256(selected).hexdigest()
+    return ClaimAuthoringPayload(
+        statement=_self_source_payload().statement,
+        rationale="The repository snapshot says the work is ready.",
+        source=WorkingSelectionObservation(
+            source_id="repo.work-items",
+            coordinate=WorkingDigestCoordinate(
+                source_content_digest=digest,
+                source_byte_length=len(selected),
+            ),
+            selected_content_base64=base64.b64encode(selected).decode("ascii"),
+            selected_bytes_digest=digest,
+            selector=WorkingAnchorWindow(
+                anchor="status: ready",
+                start_byte=0,
+                end_byte=len(selected),
+                observed_occurrence_count=occurrence_count,
+                selected_occurrence=selected_occurrence,
+            ),
+        ),
+        citation_role="evidence",
+    )
+
+
+def test_preflight_is_deterministic_and_binds_the_current_coordinate(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    first = coordinator.preflight(intent.intent_id, actor=actor)
+    second = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert second == first
+    assert first.certificate.accepted_coordinate.git_oid == instance.accepted_coordinate().git_oid
+    assert first.certificate.payload_digest == intent.payload_digest
+    assert first.certificate.certificate_digest.startswith("sha256:")
+
+
+def test_persisted_preflight_sees_its_new_evidence_and_restores_the_enclosing_read(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    store = instance.body_store()
+    digest = store.digest_bytes(b"status: ready\n").tagged
+    positions = read_positions(instance)
+    assert body_present(store, digest) is False
+
+    with reading_at(positions):
+        result = coordinator.preflight(intent.intent_id, actor=actor)
+        assert result.verdict == "passed", result.frontier
+        assert current_positions() == positions
+        # The write saw its own new bodies; the enclosing read still excludes them.
+        assert body_present(store, digest) is False
+
+    assert body_present(store, digest) is True
+
+
+def test_subject_claim_object_requires_matching_type_and_existing_allowed_subject(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    relationship_type = _claim_type().model_copy(
+        update=claim_type_changes(value_type=("project.work_item",))
+    )
+    _seed_claim_surface(instance, owner, claim_type_override=relationship_type)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    subject_object = SubjectClaimObject(
+        address=SemanticAddress.whole_artifact(
+            subject_path(_subject().subject_kind, _subject().subject_id)
+        )
+    )
+
+    accepted = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload().model_copy(
+            update={
+                "statement": _self_source_payload().statement.model_copy(
+                    update={"object": subject_object}
+                )
+            }
+        ),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    assert coordinator.preflight(accepted.intent_id, actor=actor).verdict == "passed"
+
+    missing = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload().model_copy(
+            update={
+                "statement": _self_source_payload().statement.model_copy(
+                    update={
+                        "object": SubjectClaimObject(
+                            address=SemanticAddress.whole_artifact(
+                                subject_path("project.work_item", "missing")
+                            )
+                        )
+                    }
+                )
+            }
+        ),
+        canonical_timestamp="2026-08-21T12:00:01.000000Z",
+    ).intent
+    missing_result = coordinator.preflight(missing.intent_id, actor=actor)
+    missing_diagnostic = next(
+        item
+        for item in missing_result.frontier.diagnostics
+        if item.code == "cruxible.authoring.object_subject_not_found"
+    )
+    assert missing_diagnostic.offending_element == "statement.object.address"
+    assert missing_diagnostic.repairs[0].kind == "create_subject"
+    assert "project.work_item/missing" in missing_diagnostic.message
+
+    literal = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    literal_result = coordinator.preflight(literal.intent_id, actor=actor)
+    literal_diagnostic = next(
+        item
+        for item in literal_result.frontier.diagnostics
+        if item.code == "cruxible.claim.object_kind_mismatch"
+    )
+    assert literal_diagnostic.repairs[0].replacement == {"required_object_kind": "subject"}
+
+
+def test_address_shaped_literal_preflights_for_a_literal_claim_type(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    literal_type = _claim_type().model_copy(
+        update=claim_type_changes(value_type={"enum": ["docs/readme"], "type": "string"})
+    )
+    _seed_claim_surface(instance, owner, claim_type_override=literal_type)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    address_shaped_literal = _self_source_payload().model_copy(
+        update={
+            "statement": _self_source_payload().statement.model_copy(
+                update={"object": LiteralClaimObject(value="docs/readme")}
+            )
+        }
+    )
+    literal_intent = coordinator.create(
+        actor=actor,
+        payload=address_shaped_literal,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    assert coordinator.preflight(literal_intent.intent_id, actor=actor).verdict == "passed"
+
+
+def test_claim_object_kind_mismatch_is_a_typed_preflight_refusal(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    payload = _self_source_payload().model_copy(
+        update={
+            "statement": _self_source_payload().statement.model_copy(
+                update={
+                    "object": SubjectClaimObject(
+                        address=SemanticAddress.whole_artifact(
+                            subject_path(_subject().subject_kind, _subject().subject_id)
+                        )
+                    )
+                }
+            )
+        }
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "cruxible.claim.object_kind_mismatch"
+    )
+    assert diagnostic.offending_element == "statement.object"
+    assert diagnostic.repairs[0].kind == "replace_object"
+    assert diagnostic.repairs[0].replacement == {"required_object_kind": "literal"}
+
+
+AFFECTS_PACKAGE = "sec.vuln.affects_package"
+
+
+def accept_cve_affects_package_relation(
+    instance: PlaybillInstance,
+    owner: object,
+) -> None:
+    """Accept one live `sec.vuln.affects_package` edge from a CVE to a package."""
+
+    vulnerability = _subject().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Subject", name="sec.vulnerability/cve-2026-0001"),
+            "subject_kind": "sec.vulnerability",
+            "subject_id": "cve-2026-0001",
+        }
+    )
+    package = _subject().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Subject", name="sec.package/demo"),
+            "subject_kind": "sec.package",
+            "subject_id": "demo",
+        }
+    )
+    predicate = AFFECTS_PACKAGE
+    relationship_type = _claim_type().model_copy(
+        update=claim_type_changes(
+            predicate=predicate,
+            value_type=("sec.package",),
+            identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+            allowed_subject_kinds=("sec.vulnerability",),
+            cardinality="many",
+            resolution_policy=_claim_type().resolution_policy.model_copy(
+                update={"cardinality": "many", "selector": "all"}
+            ),
+        )
+    )
+    _seed_claim_surface(
+        instance,
+        owner,
+        claim_type_override=relationship_type,
+        additional_subjects=(vulnerability, package),
+    )
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    view = coordinator.create_input(
+        actor=actor,
+        input=ClaimInput(
+            kind="claim",
+            subject=vulnerability.identity.name,
+            predicate=predicate,
+            object=SubjectObjectInput(kind="subject", subject=package.identity.name),
+            role="observation",
+            rationale="The accepted advisory identifies this affected package.",
+            source=SelfSourceInput(kind="self_source", body="affected package: demo\n"),
+        ),
+        canonical_timestamp="2026-08-21T12:00:03.000000Z",
+    )
+    submitted = coordinator.submit(view.intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        submitted.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+
+
+def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    accept_cve_affects_package_relation(instance, owner)
+    predicate = AFFECTS_PACKAGE
+
+    floor = service_export_playbill_floor(instance, include=("discovery",))
+    outbound = json.loads(floor["subjects/sec.vulnerability/cve-2026-0001.profile.json"])[
+        "relations"
+    ]
+    inbound = json.loads(floor["subjects/sec.package/demo.profile.json"])["relations"]
+    assert outbound == [
+        {
+            "inbound": False,
+            "predicate": predicate,
+            "tag": "playbill-interface-relation-v1",
+            "target": {
+                "tag": "playbill-semantic-address-v1",
+                "artifact_path": "subjects/sec.package/demo.json",
+                "selector": {"scheme": "artifact-v1", "value": ""},
+            },
+        }
+    ]
+    assert inbound[0]["inbound"] is True
+    assert inbound[0]["predicate"] == predicate
+
+
+def test_the_object_subjects_profile_lists_the_incoming_relation(tmp_path: Path) -> None:
+    """A relation is stored once, on the asserting Subject; the object must still see it.
+
+    Without this, `subject get sec.package/demo` shows the package's own facts
+    only and nothing answers "what touches this package".
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    accept_cve_affects_package_relation(instance, owner)
+
+    package = service_get_playbill_subject(instance, identity="Subject:sec.package/demo")
+    vulnerability = service_get_playbill_subject(
+        instance, identity="Subject:sec.vulnerability/cve-2026-0001"
+    )
+
+    assert [group.predicate for group in package.incoming] == [AFFECTS_PACKAGE]
+    edge = package.incoming[0].claims[0]
+    assert edge.subject_identity == "subjects/sec.vulnerability/cve-2026-0001.json"
+    assert edge.claim_identity.startswith("Claim:")
+    assert len(package.incoming[0].claims) == 1
+    # The asserting end still carries no incoming edge.
+    assert vulnerability.incoming == ()
+
+
+def test_a_claim_payload_has_no_insertion_target() -> None:
+    """The publication road is cut: a Claim payload carrying a target does not parse."""
+
+    with pytest.raises(ValueError, match="insertion_target"):
+        ClaimAuthoringPayload.model_validate(
+            {**_self_source_payload().model_dump(mode="json"), "insertion_target": None}
+        )
+
+
+def test_preflight_refuses_an_ambiguous_selection_in_a_complete_frontier(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    payload = _working_payload(occurrence_count=2)
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    codes = {item.code for item in result.frontier.diagnostics}
+    assert "cruxible.authoring.working_selection_ambiguous" in codes
+    assert result.verdict == "refused"
+    assert result.frontier.frontier_complete is True
+    assert all(
+        item.repairs or item.disposition in {"wait", "terminal"}
+        for item in result.frontier.diagnostics
+    )
+
+
+def test_preflight_accepts_a_client_selected_occurrence_from_multiple_matches(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_working_payload(occurrence_count=2, selected_occurrence=2),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert result.verdict == "passed"
+    assert result.frontier.diagnostics == ()
+
+
+def test_preflight_refuses_an_actor_absent_from_the_principal_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.authoring import coordinator as coordinator_module
+    from cruxible_core.errors import PrincipalRefusedError
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="unregistered-writer")
+    # Create refuses such an actor before any work...
+    with pytest.raises(PrincipalRefusedError, match="cruxible.identity.principal_absent"):
+        coordinator.create(
+            actor=actor, payload=_self_source_payload(), canonical_timestamp=TIMESTAMP
+        )
+    # ...and preflight still refuses one whose principal lapsed after its draft
+    # was opened, which is the only way such a draft exists.
+    monkeypatch.setattr(coordinator_module, "require_authoring_principal", lambda *_a: None)
+    intent = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "cruxible.proposal.creator_principal_invalid"
+    )
+    assert "active Principal" in diagnostic.message
+
+
+def _activate(
+    instance,  # type: ignore[no-untyped-def]
+    _owner: object,
+    *,
+    proposal_id: str,
+    candidate_digest: str,
+) -> None:
+    approver = client_material(instance.root.parent, instance)
+    approval = _sign(
+        approver,
+        candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter=approver.principal.principal_id,
+    )
+    activated = service_activate_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        activated_by="owner",
+    )
+    assert activated.status == "accepted"
+
+
+def _successor_payload(claim_id: str, *, value: str) -> ClaimAuthoringPayload:
+    payload = _self_source_payload()
+    return payload.model_copy(
+        update={
+            "revises": claim_id,
+            "rationale": f"Publish the {value} successor.",
+            "statement": payload.statement.model_copy(
+                update={"object": LiteralClaimObject(value=value)}
+            ),
+            "source": SelfSourceBody(
+                content_base64=base64.b64encode(value.encode()).decode("ascii")
+            ),
+            "existing_claim_dispositions": (
+                AuthoringExistingClaimDisposition(
+                    claim_id=claim_id,
+                    disposition="not_tested",
+                ),
+            ),
+        }
+    )

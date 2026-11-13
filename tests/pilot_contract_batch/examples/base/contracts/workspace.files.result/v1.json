@@ -1,0 +1,18 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "The exact bytes the daemon read, one Capture per matched file, sorted by the files' names. A glob that matches nothing returns an empty list.",
+  "fields": {
+    "captures": {
+      "type": {
+        "item": {
+          "capture_kind": "*",
+          "kind": "capture"
+        },
+        "kind": "list",
+        "max_items": 1000
+      }
+    }
+  },
+  "name": "workspace.files.result",
+  "version": 1
+}

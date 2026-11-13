@@ -1,0 +1,647 @@
+"""Stale proposal readmission reuses the governed rebase and immutable evidence."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+)
+from cruxible_client.contracts.errors import (
+    ProposalAdmissionError,
+    ProposalReadmitAlreadyAccepted,
+    ProposalReadmitNotStale,
+    ProposalReadmitRequiresResubmission,
+    ProposalStale,
+)
+from cruxible_core.claims.claim_type_migrations import (
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationRequest,
+    service_migrate_claim_type,
+)
+from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_propose_playbill_document,
+    service_store_playbill_body,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
+from tests.core_support._support import (
+    client_material,
+    every_moved_base_overlaps,
+    initialize_local,
+)
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world, _successor
+from tests.test_ledger.test_activation import _sign
+
+TIMESTAMP = "2026-08-22T12:00:00.000000Z"
+
+
+def _shell(document_id: str, body_digest: str, *, title: str) -> DocumentShell:
+    return DocumentShell(
+        identity=f"document:{document_id}",
+        document_kind="design",
+        title=title,
+        media_type="text/markdown",
+        body_digest=body_digest,
+        authority=DocumentAuthority(
+            required_tier="graph_write",
+        ),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+
+
+def _accept(instance, owner, inspection) -> None:
+    candidate = inspection.proposal.candidate
+    assert candidate is not None
+    approver = client_material(instance.root.parent, instance)
+    approval = _sign(
+        approver,
+        candidate.candidate_digest,
+        candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=inspection.proposal.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter=approver.principal.principal_id,
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=inspection.proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+
+
+def test_readmit_cleanly_rebases_and_response_loss_retry_returns_one_admission(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    alpha = service_store_playbill_body(instance, content=b"alpha").digest
+    beta = service_store_playbill_body(instance, content=b"beta").digest
+    accepted_first = service_propose_playbill_document(
+        instance,
+        shell=_shell("alpha", alpha, title="Alpha"),
+        actor_id="owner",
+        proposal_name="alpha",
+        timestamp=TIMESTAMP,
+    )
+    stale = service_propose_playbill_document(
+        instance,
+        shell=_shell("beta", beta, title="Beta"),
+        actor_id="owner",
+        proposal_name="beta",
+        timestamp=TIMESTAMP,
+    )
+    source_id = stale.proposal.admission.proposal_id
+    source_bytes = (
+        stale.proposal.admission.model_dump_json(),
+        stale.proposal.evaluation.model_dump_json(),
+    )
+    _accept(instance, owner, accepted_first)
+
+    with pytest.raises(ProposalAdmissionError, match="source proposal actor"):
+        service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="reviewer")
+
+    first = service_readmit_playbill_proposal(
+        instance,
+        proposal_id=source_id,
+        actor_id="owner",
+    )
+    retry = service_readmit_playbill_proposal(
+        instance,
+        proposal_id=source_id,
+        actor_id="owner",
+    )
+
+    assert first == retry
+    assert first.proposal.proposal.evaluation.verdict == "candidate"
+    assert first.proposal.proposal.evaluation.rebased is True
+    tree_oid = first.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    assert set(instance.proposal_tree(tree_oid)) >= {
+        "documents/alpha.json",
+        "documents/beta.json",
+    }
+    coordinate = first.proposal.accepted_coordinate
+    assert (
+        first.operation_digest
+        == typed_digest(
+            Sha256Value,
+            "playbill-proposal-readmit-v1",
+            {
+                "source_proposal_id": source_id,
+                "current_accepted_coordinate": coordinate.model_dump(mode="json"),
+            },
+        ).tagged
+    )
+    assert first.proposal.proposal.admission.source_compilation_digest == first.operation_digest
+    assert (
+        instance.proposal_evidence().read_admission(source_id).model_dump_json(),
+        instance.proposal_evidence().read_evaluation(source_id).model_dump_json(),
+    ) == source_bytes
+    with pytest.raises(ProposalReadmitNotStale) as open_refusal:
+        service_readmit_playbill_proposal(
+            instance,
+            proposal_id=first.proposal.proposal.admission.proposal_id,
+            actor_id="owner",
+        )
+    assert open_refusal.value.status == "open"
+    assert open_refusal.value.error_code == "cruxible.proposal.readmit_not_stale"
+
+
+def test_readmit_returns_a_typed_refused_proposal_when_content_no_longer_preflights(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    first_body = service_store_playbill_body(instance, content=b"first").digest
+    other_body = service_store_playbill_body(instance, content=b"other").digest
+    accepted = service_propose_playbill_document(
+        instance,
+        shell=_shell("same", first_body, title="Accepted"),
+        actor_id="owner",
+        proposal_name="accepted-same",
+        timestamp=TIMESTAMP,
+    )
+    conflicting = service_propose_playbill_document(
+        instance,
+        shell=_shell("same", other_body, title="Conflicting"),
+        actor_id="owner",
+        proposal_name="conflicting-same",
+        timestamp=TIMESTAMP,
+    )
+    _accept(instance, owner, accepted)
+
+    result = service_readmit_playbill_proposal(
+        instance,
+        proposal_id=conflicting.proposal.admission.proposal_id,
+        actor_id="owner",
+    )
+
+    assert result.proposal.proposal.evaluation.verdict == "refused"
+    assert result.proposal.proposal.candidate is None
+    assert result.proposal.proposal.evaluation.diagnostics
+
+
+def test_readmit_refuses_stale_generated_claim_type_closure_before_admission(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    request = ClaimTypeMigrationRequest(
+        mode="submit",
+        successor=_successor(instance),
+        dependents=(
+            ClaimTypeDependentDisposition(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                disposition="successor",
+            ),
+        ),
+    )
+    migration = service_migrate_claim_type(
+        instance,
+        request=request,
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    source_id = migration.proposal.proposal.admission.proposal_id  # type: ignore[union-attr]
+    admissions_before_advance = len(instance.proposal_evidence().list_admissions())
+
+    body = service_store_playbill_body(instance, content=b"unrelated").digest
+    unrelated = service_propose_playbill_document(
+        instance,
+        shell=_shell("unrelated", body, title="Unrelated"),
+        actor_id="owner",
+        proposal_name="unrelated",
+        timestamp=TIMESTAMP,
+    )
+    _accept(instance, _owner, unrelated)
+    admissions_before_readmit = len(instance.proposal_evidence().list_admissions())
+    assert admissions_before_readmit == admissions_before_advance + 1
+
+    with pytest.raises(
+        ProposalReadmitRequiresResubmission,
+        match="rerun claim-type migration preflight/submit at current head",
+    ):
+        service_readmit_playbill_proposal(
+            instance,
+            proposal_id=source_id,
+            actor_id="owner",
+        )
+    assert len(instance.proposal_evidence().list_admissions()) == admissions_before_readmit
+
+    rerun = service_migrate_claim_type(
+        instance,
+        request=request.model_copy(update={"successor": _successor(instance)}),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert rerun.proposal.proposal.candidate is not None  # type: ignore[union-attr]
+
+
+def test_readmit_archived_stale_candidate_survives_gc(tmp_path: Path) -> None:
+    """A moved head does not destroy the bytes needed for ordinary readmission."""
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+
+    instance, owner = initialize_local(tmp_path)
+    proposals = []
+    for name in ("accepted", "stale"):
+        body = service_store_playbill_body(instance, content=name.encode()).digest
+        proposals.append(
+            service_propose_playbill_document(
+                instance,
+                shell=_shell(name, body, title=name),
+                actor_id="owner",
+                proposal_name=name,
+                timestamp=TIMESTAMP,
+            )
+        )
+    accepted, stale = proposals
+    _accept(instance, owner, accepted)
+    instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
+    instance._ledger._git(["gc", "--prune=now"])
+    assert instance._ledger.object_exists(stale.proposal.admission.candidate_commit_oid)
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    before = service_list_playbill_proposals(reopened)
+    result = service_readmit_playbill_proposal(
+        reopened, proposal_id=stale.proposal.admission.proposal_id, actor_id="owner"
+    )
+    assert result.proposal.proposal.evaluation.verdict == "candidate"
+    assert result.proposal.proposal.evaluation.rebased
+    assert len(service_list_playbill_proposals(reopened).entries) == len(before.entries) + 1
+
+
+def _propose(instance, name: str):  # type: ignore[no-untyped-def]
+    body = service_store_playbill_body(instance, content=name.encode()).digest
+    return service_propose_playbill_document(
+        instance,
+        shell=_shell(name, body, title=name),
+        actor_id="owner",
+        proposal_name=name,
+        timestamp=TIMESTAMP,
+    )
+
+
+def _stale_ids(instance, *, actor_id: str | None = "owner") -> list[str]:  # type: ignore[no-untyped-def]
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
+
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return [
+        item.proposal_id for item in stale_unreadmitted_proposals(instance, head, actor_id=actor_id)
+    ]
+
+
+def test_readmit_refuses_an_accepted_proposal_as_accepted_not_as_unstale(
+    tmp_path: Path,
+) -> None:
+    """An accepted proposal used to refuse "only a settled stale proposal may be readmitted"."""
+
+    instance, owner = initialize_local(tmp_path)
+    accepted = _propose(instance, "accepted")
+    _accept(instance, owner, accepted)
+    proposal_id = accepted.proposal.admission.proposal_id
+
+    with pytest.raises(ProposalReadmitAlreadyAccepted) as refusal:
+        service_readmit_playbill_proposal(instance, proposal_id=proposal_id, actor_id="owner")
+
+    assert refusal.value.accepted_as is None
+    assert refusal.value.error_code == "cruxible.proposal.readmit_already_accepted"
+    assert "was accepted" in str(refusal.value)
+
+
+def test_an_accepted_readmission_supersedes_its_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once its readmission is accepted, a stale source is no one's work.
+
+    The source stays `stale` in the inventory -- its own tree never activated --
+    but the readmission link says another proposal carried its change: it
+    leaves the stale set and its author's queue, and readmitting it again
+    refuses as already accepted, naming the proposal that was. Before that, a
+    live readmission that went stale itself is the row, not its source.
+    """
+
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
+    from cruxible_core.service.proposals.proposals import (
+        proposal_readmission,
+        service_withdraw_playbill_proposal,
+    )
+
+    def stale_rows() -> list[str]:
+        queue = service_playbill_next(
+            instance,
+            request=NextRequest(
+                evaluation_time=datetime(2026, 8, 22, 12, tzinfo=UTC),
+                access_profile=CoverageAccessProfile(
+                    profile_id="readmit", permitted_access_classes=("instance",)
+                ),
+            ),
+            caller_principal_id="owner",
+        )
+        return [item.subject_identity for item in queue.items if item.reason == "proposal_stale"]
+
+    def head() -> AcceptedCoordinate:
+        return AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    every_moved_base_overlaps(monkeypatch)
+    instance, owner = initialize_local(tmp_path)
+    first, source = _propose(instance, "first"), _propose(instance, "source")
+    source_id = source.proposal.admission.proposal_id
+    _accept(instance, owner, first)
+    assert _stale_ids(instance) == stale_rows() == [source_id]
+    assert _stale_ids(instance, actor_id="reviewer") == []
+
+    stalled = service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="owner")
+    stalled_id = stalled.proposal.proposal.admission.proposal_id
+    # Head moves before the readmission activates: it is stale itself, and it
+    # -- not its source -- is the row that asks to be readmitted or withdrawn.
+    _accept(instance, owner, _propose(instance, "interloper"))
+    assert _stale_ids(instance) == stale_rows() == [stalled_id]
+    carried = proposal_readmission(instance, head(), source_id)
+    assert carried is not None and (carried.proposal_id, carried.accepted) == (stalled_id, False)
+
+    # Withdrawn, it carries nothing: the source is the author's work again.
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=stalled_id,
+        actor_id="owner",
+        reason="readmit the source at the new head",
+        withdrawn_at=TIMESTAMP,
+    )
+    assert proposal_readmission(instance, head(), source_id) is None
+    assert stale_rows() == [source_id]
+
+    landed = service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="owner")
+    landed_id = landed.proposal.proposal.admission.proposal_id
+    _accept(instance, owner, landed.proposal)
+
+    assert _stale_ids(instance) == stale_rows() == []
+    carried = proposal_readmission(instance, head(), source_id)
+    assert carried is not None and (carried.proposal_id, carried.accepted) == (landed_id, True)
+    with pytest.raises(ProposalReadmitAlreadyAccepted) as refusal:
+        service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="owner")
+    assert refusal.value.accepted_as == landed_id
+    assert f"its readmission {landed_id} was accepted" in str(refusal.value)
+
+
+def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-002: supersession is read from immutable admission evidence, not a ref.
+
+    An unrelated proposal named ``readmit-`` plus the source's expected
+    operation digest used to read as its readmission: once accepted, the stale
+    source left its author's queue for good and readmit refused it as already
+    accepted. It carries no ``readmits`` record, so it links nothing.
+    """
+
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import (
+        proposal_readmission,
+        readmission_operation_digest,
+    )
+
+    every_moved_base_overlaps(monkeypatch)
+    instance, owner = initialize_local(tmp_path)
+    first, source = _propose(instance, "first"), _propose(instance, "source")
+    source_id = source.proposal.admission.proposal_id
+    _accept(instance, owner, first)
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    digest = readmission_operation_digest(source_id, head)
+    body = service_store_playbill_body(instance, content=b"unrelated").digest
+    impostor = service_propose_playbill_document(
+        instance,
+        shell=_shell("unrelated", body, title="Unrelated"),
+        actor_id="owner",
+        proposal_name="readmit-" + digest.removeprefix("sha256:")[:24],
+        timestamp=TIMESTAMP,
+    )
+    assert impostor.proposal.admission.readmits is None
+    assert _stale_ids(instance) == [source_id]
+
+    _accept(instance, owner, impostor)
+
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    assert proposal_readmission(instance, head, source_id) is None
+    assert _stale_ids(instance) == [source_id]
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=source_id, actor_id="owner"
+    )
+    admission = readmitted.proposal.proposal.admission
+    assert admission.readmits is not None
+    assert admission.readmits.source_proposal_id == source_id
+    assert admission.source_compilation_digest == admission.readmits.operation_digest
+
+
+def test_a_readmission_keeps_its_link_when_head_moves_before_evaluation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-003: the link names the coordinate readmit read, not the evaluated head.
+
+    The operation digest is taken at the coordinate readmit reads; an
+    interloper accepted just before the submission evaluates makes the
+    evaluation head a later one. Recomputing the link from the evaluation head
+    lost it, so the accepted readmission's source stayed stale work.
+    """
+
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import proposal_readmission
+
+    instance, owner = initialize_local(tmp_path)
+    first, source = _propose(instance, "first"), _propose(instance, "source")
+    source_id = source.proposal.admission.proposal_id
+    _accept(instance, owner, first)
+    interloper = _propose(instance, "interloper")
+    read_at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    real = type(instance).proposal_service
+    moved: list[bool] = []
+
+    def proposal_service(self):  # type: ignore[no-untyped-def]
+        service = real(self)
+        if moved:
+            return service
+
+        def late_submit(**values):  # type: ignore[no-untyped-def]
+            moved.append(True)
+            _accept(instance, owner, interloper)
+            return real(self).submit(**values)
+
+        service.submit = late_submit  # type: ignore[method-assign]
+        return service
+
+    monkeypatch.setattr(type(instance), "proposal_service", proposal_service)
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=source_id, actor_id="owner"
+    )
+    monkeypatch.undo()
+
+    assert moved
+    evaluation = readmitted.proposal.proposal.evaluation
+    assert evaluation.evaluated_base_oid != read_at.git_oid
+    link = readmitted.proposal.proposal.admission.readmits
+    assert link is not None and link.coordinate == read_at
+    _accept(instance, owner, readmitted.proposal)
+
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    carried = proposal_readmission(instance, head, source_id)
+    landed = readmitted.proposal.proposal.admission.proposal_id
+    assert carried is not None and (carried.proposal_id, carried.accepted) == (landed, True)
+    assert _stale_ids(instance) == []
+
+
+@pytest.mark.parametrize("target", ["kit-example-123", "provider-move-example"])
+def test_nonlowering_origins_still_refuse_stale_activation_and_readmit_exact_bytes(
+    tmp_path: Path, target: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    every_moved_base_overlaps(monkeypatch)
+    from cruxible_client.contracts.documents import document_path, render_document
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+
+    instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    digest = service_store_playbill_body(instance, content=b"exact-byte artifact").digest
+    shell = _shell("exact", digest, title="Exact")
+    tree = instance.immutable_tree_at(base.git_oid).fork()
+    tree[document_path(shell.document_id)] = render_document(shell)
+    source = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{target}", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+    assert source.candidate is not None
+    moving = service_propose_playbill_document(
+        instance,
+        shell=_shell("moving", digest, title="Moving"),
+        actor_id="owner",
+        proposal_name="moving",
+        timestamp=TIMESTAMP,
+    )
+    _accept(instance, owner, moving)
+    before = instance.proposal_evidence().list_admissions()
+    with pytest.raises(ProposalStale):
+        service_activate_playbill_proposal(
+            instance, proposal_id=source.admission.proposal_id, activated_by="owner"
+        )
+    assert instance.proposal_evidence().list_admissions() == before
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=source.admission.proposal_id, actor_id="owner"
+    )
+    assert readmitted.proposal.proposal.candidate is not None
+    assert instance._ledger.blob_at(
+        readmitted.proposal.proposal.admission.candidate_tree_oid, document_path(shell.document_id)
+    ) == render_document(shell)
+    assert instance.proposal_evidence().read_withdrawal(source.admission.proposal_id) is None
+
+
+@pytest.mark.parametrize(
+    ("reason", "detail", "why"),
+    [
+        (None, None, ""),
+        ("head_moved", None, " (head_moved)"),
+        (
+            "evaluation_refused",
+            "The predecessor moved.",
+            " (evaluation_refused: The predecessor moved)",
+        ),
+    ],
+)
+def test_stale_message_is_plain_words_with_one_period_and_the_code_structured(
+    reason: str | None, detail: str | None, why: str
+) -> None:
+    error = ProposalStale("prop-1", reason=reason, detail=detail)
+
+    assert error.error_code == "cruxible.proposal.stale"
+    message = str(error)
+    assert message == (
+        f"Proposal prop-1 is stale: accepted state moved since it was evaluated{why}, so it "
+        "cannot be activated as it stands. Run `cruxible proposal readmit prop-1` to rebase "
+        "it onto the current head as a new proposal to review, or `cruxible proposal "
+        "withdraw prop-1`."
+    )
+    assert ".." not in message
+    assert "cruxible.proposal.stale" not in message
+
+
+@pytest.mark.parametrize(
+    ("origin", "name", "approver", "operation", "arguments", "says"),
+    [
+        (
+            "line",
+            "advisories",
+            False,
+            "cruxible.line.run",
+            {"line": "advisories"},
+            "cruxible line run advisories",
+        ),
+        (
+            "procedure",
+            "import",
+            False,
+            "cruxible.procedure.run",
+            {"procedure": "import"},
+            "cruxible procedure run import INPUT",
+        ),
+        ("write", None, False, "cruxible.write", {}, "Make the write again at the current head"),
+        (
+            "procedure",
+            None,
+            False,
+            "cruxible.proposal.withdraw",
+            {"proposal_id": "prop-1"},
+            "retained run input is unavailable",
+        ),
+        (
+            "line",
+            "advisories",
+            True,
+            "cruxible.proposal.reject",
+            {"proposal_id": "prop-1"},
+            "cruxible proposal reject prop-1 --reason TEXT",
+        ),
+    ],
+)
+def test_a_refused_readmit_names_the_real_exit_by_origin_never_readmit(
+    origin: str,
+    name: str | None,
+    approver: bool,
+    operation: str,
+    arguments: dict[str, str],
+    says: str,
+) -> None:
+    from cruxible_client.contracts.errors import ProposalReadmitRefused
+
+    error = ProposalReadmitRefused(
+        "prop-1",
+        reason="effectful_operation_payload_mismatch",
+        detail="Recovery re-derived another change.",
+        origin=origin,  # type: ignore[arg-type]
+        origin_name=name,
+        approver=approver,
+    )
+
+    assert error.error_code == "cruxible.proposal.readmit_refused"
+    assert isinstance(error, ProposalStale)  # served as a stale-proposal refusal (409)
+    assert error.repair is not None
+    assert (error.repair.operation, error.repair.arguments) == (operation, arguments)
+    message = str(error)
+    assert says in message
+    assert "(effectful_operation_payload_mismatch: Recovery re-derived another change)" in message
+    assert "proposal readmit" not in message
+    assert ("proposal withdraw prop-1" in message) is not approver

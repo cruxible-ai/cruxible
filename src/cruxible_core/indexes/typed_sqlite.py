@@ -1,0 +1,797 @@
+"""Physical publication mechanics for the current typed directory."""
+
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+import functools
+import hashlib
+import sqlite3
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
+from typing import Any
+
+from cruxible_client.contracts.canonical import file_digest, is_candidate_card_path
+from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree
+from cruxible_core.indexes.evidence.backlinks import SCHEMA_SQL as BACKLINKS_SCHEMA_SQL
+from cruxible_core.indexes.evidence.backlinks import refresh_backlinks
+from cruxible_core.indexes.evidence.citation_sql import (
+    SCHEMA_SQL,
+    populate_citations,
+    remove_owner_citations,
+)
+from cruxible_core.indexes.evidence.evidence_counts import (
+    SCHEMA_SQL as EVIDENCE_COUNTS_SCHEMA_SQL,
+)
+from cruxible_core.indexes.evidence.evidence_counts import (
+    apply_evidence_changes,
+    evidence_states,
+    rebuild_evidence_counts,
+)
+from cruxible_core.indexes.logical_digest import (
+    NON_LOGICAL_TABLES,
+    RowDeltaRecorder,
+    compute_table_sums,
+    store_table_sums,
+    stored_table_sums,
+)
+from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION, AssemblerRequest
+from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
+from cruxible_core.indexes.typed_state import (
+    OWNER_CODECS,
+    insert_owners,
+    principal_registry,
+    schema_sql,
+)
+
+_METADATA_SQL = """
+CREATE TABLE compiler_coordinates (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    schema_version INTEGER NOT NULL, compiler_digest TEXT NOT NULL
+) STRICT;
+CREATE TABLE assembler_metadata (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    implementation TEXT NOT NULL, contract_version INTEGER NOT NULL
+) STRICT;
+CREATE TABLE generation_metadata (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    instance_id TEXT NOT NULL, git_object_format TEXT NOT NULL, git_oid TEXT NOT NULL,
+    semantic_root TEXT NOT NULL, generation_root TEXT NOT NULL
+) STRICT;
+CREATE TABLE tree_inventory (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    file_count INTEGER NOT NULL CHECK(file_count >= 0),
+    byte_total INTEGER NOT NULL CHECK(byte_total >= 0)
+) STRICT;
+CREATE TABLE logical_accumulators (
+    table_name TEXT PRIMARY KEY, row_count INTEGER NOT NULL CHECK(row_count >= 0),
+    row_sum BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
+"""
+
+
+def cold_claim_digest_resolver(
+    sources: Mapping[str, bytes],
+    *,
+    repository: Any,
+    head_oid: str,
+    coordinates: Mapping[int, Any],
+) -> Callable[[str], tuple[str, ...]]:
+    """Resolve full-rebuild inputs from exact retained occurrences, even if deleted.
+
+    The served/delta path supplies C's cutoff-bound lookup. This source-only
+    oracle deliberately pays historical traversal and holds no lineage index.
+    """
+    from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
+    from cruxible_core.proposals.settlement import parse_change_set_record
+
+    records = tuple(
+        sorted(
+            (
+                parse_change_set_record(content, path=path)
+                for path, content in sources.items()
+                if path.startswith("changesets/")
+            ),
+            key=lambda record: record.sequence,
+        )
+    )
+    latest = records[-1].sequence if records else 0
+
+    def resolve(digest: str) -> tuple[str, ...]:
+        identities: set[str] = set()
+        for record in records:
+            for member in record.members:
+                if member.artifact_kind != "claim":
+                    continue
+                exact = member.candidate_artifact_digest
+                if exact != digest:
+                    continue
+                coordinate = coordinates.get(record.sequence)
+                oid = None if coordinate is None else coordinate.git_oid
+                if oid is None:
+                    oid = head_oid
+                    for _ in range(latest - record.sequence):
+                        oid = repository.parent_of(oid)
+                content = repository.blob_at(oid, member.path)
+                if content is None:
+                    raise ProjectionIntegrityError("historical Claim occurrence source is absent")
+                claim = parse_claim(content, path=member.path)
+                actual = claim_artifact_digest(claim).tagged
+                if actual != exact:
+                    raise ProjectionIntegrityError(
+                        "historical Claim occurrence differs from retained artifact commitment"
+                    )
+                if actual == digest:
+                    identities.add(claim.identity.qualified)
+        return tuple(sorted(identities))
+
+    return resolve
+
+
+def parse_static_owners(
+    sources: Mapping[str, bytes],
+    *,
+    accepted: Any,
+    verified_change_sets: tuple[tuple[str, Any], ...] | None = None,
+    selected_member_history: tuple[tuple[str, Any], ...] | None = None,
+) -> ParsedProjectionTree:
+    """Parse exact owner contracts without making CAS availability an index authority.
+
+    ``verified_change_sets`` supplies the complete, already replay-verified record
+    prefix; ``selected_member_history`` instead supplies only the verified records
+    that touched ``sources``. Either way ``sources`` need not carry change-set blobs.
+    """
+    from dataclasses import replace
+
+    from cruxible_client.contracts.documents import document_digest, parse_document
+    from cruxible_core.compiler.compiler import require_current_compiler
+    from cruxible_core.compiler.projection_artifacts import (
+        ArtifactEnvelopeRow,
+        PinRow,
+        parse_projection_tree,
+        registered_path_kind,
+    )
+
+    require_current_compiler(accepted.compiler)
+    source_kinds = {
+        path: None if is_candidate_card_path(path) else registered_path_kind(path)
+        for path in sources
+    }
+    documents = {path: body for path, body in sources.items() if source_kinds[path] == "document"}
+    parsed = parse_projection_tree(
+        {path: body for path, body in sources.items() if path not in documents},
+        verified_change_sets=verified_change_sets,
+        selected_member_history=selected_member_history,
+        carry_members=True,
+        by_name=True,
+    )
+    envelopes = list(parsed.envelopes)
+    # Keyed exactly as parse_projection_tree keys them: a Claim's capture-contract
+    # provenance pins one entry per contract version.
+    pins = {
+        (
+            pin.source_identity,
+            pin.target_identity,
+            pin.target_digest
+            if pin.role == "capture-contract" and pin.source_identity.startswith("Claim:")
+            else "",
+        ): pin
+        for pin in parsed.pins
+    }
+    for path, content in documents.items():
+        document = parse_document(content, path=path)
+        envelopes.append(
+            ArtifactEnvelopeRow(
+                document.identity,
+                document.kind,
+                document.tag,
+                path,
+                document_digest(document).tagged,
+                document.predecessor_digest,
+                document.lifecycle.revision,
+            )
+        )
+        for pin in document.pins:
+            key = (document.identity, pin.target_identity, "")
+            previous = pins.get(key)
+            if previous is not None and previous.target_digest != pin.target_digest:
+                raise ProjectionIntegrityError(
+                    "one artifact pins the same dependency identity at conflicting digests"
+                )
+            pins[key] = PinRow(document.identity, pin.target_identity, pin.target_digest, pin.role)
+    return replace(
+        parsed,
+        envelopes=tuple(sorted(envelopes, key=lambda row: row.identity)),
+        pins=tuple(pins[key] for key in sorted(pins)),
+    )
+
+
+def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
+    """Cold completeness proof for static owner selection; requires no live CAS.
+
+    Covers all member commitments, every registered typed owner field, principal
+    rows, both pin kinds, the reuse vocabulary index and the carried tree
+    inventory. Citation envelope availability is evaluated under
+    its own live source rules, outside this proof.
+    """
+    from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
+
+    accepted = projection.accepted
+    sources = {
+        blob.path: blob.content
+        for blob in read_registered_tree(repository, accepted.git_oid, limits=TreeReadLimits())
+    }
+    parsed = parse_static_owners(sources, accepted=accepted)
+    expected = sqlite3.connect(":memory:")
+    try:
+        expected.executescript(schema_sql())
+        insert_members(expected, sources, accepted.git_object_format)
+        insert_owners(
+            expected,
+            parsed=parsed,
+            blobs=sources,
+            resolve_digest=cold_claim_digest_resolver(
+                sources,
+                repository=repository,
+                head_oid=accepted.git_oid,
+                coordinates={},
+            ),
+        )
+        from cruxible_core.indexes.provider_heads import (
+            cold_provider_source,
+            refresh_provider_heads,
+        )
+
+        refresh_provider_heads(
+            expected,
+            sources,
+            historical_source=cold_provider_source(repository, accepted.git_oid, sources),
+        )
+        from cruxible_core.indexes.subject_identity import refresh_subject_keys
+
+        refresh_subject_keys(expected)
+        from cruxible_core.indexes.claim_units import refresh_claim_units
+
+        refresh_claim_units(expected)
+        from cruxible_core.indexes.pair_units import refresh_pair_index
+
+        refresh_pair_index(expected)
+        for table in (
+            "members",
+            "principals",
+            "pins",
+            "claim_type_names",
+            "vocabulary_terms",
+            "subject_keys",
+            "claim_units",
+            "pair_ends",
+            "pair_slot_live",
+            "pair_units",
+            "subject_observations",
+            "pair_end_unobserved",
+            "provider_registration_order",
+            "provider_heads",
+            "provider_control_domains",
+            "provider_pinners",
+            "provider_operations",
+            *(owner.table for owner in OWNER_CODECS),
+        ):
+            info = expected.execute(f"PRAGMA table_info({table})").fetchall()
+            keys = [row[1] for row in sorted(info, key=lambda row: row[5]) if row[5]]
+            sql = f"SELECT * FROM {table} ORDER BY {','.join(keys)}"
+            if [
+                tuple(row)
+                for row in projection._connection.execute(
+                    sql.replace(f"FROM {table}", f"FROM main.{table}")
+                )
+            ] != expected.execute(sql).fetchall():
+                raise ProjectionIntegrityError(
+                    f"typed projection {table} rows differ from accepted source"
+                )
+        # The carried reader-limit totals successors build on: every file of
+        # the accepted tree, cards included.
+        inventory = projection._connection.execute(
+            "SELECT file_count,byte_total FROM main.tree_inventory WHERE singleton=1"
+        ).fetchone()
+        if inventory is None or tuple(inventory) != (
+            len(sources),
+            sum(len(content) for content in sources.values()),
+        ):
+            raise ProjectionIntegrityError(
+                "typed projection tree_inventory rows differ from accepted source"
+            )
+    finally:
+        expected.close()
+
+
+def complete_schema_sql() -> str:
+    return "\n".join(
+        (schema_sql(), SCHEMA_SQL, BACKLINKS_SCHEMA_SQL, EVIDENCE_COUNTS_SCHEMA_SQL, _METADATA_SQL)
+    )
+
+
+def schema_objects(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
+    return [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+        )
+    ]
+
+
+@functools.cache
+def _reference_schema_objects() -> tuple[tuple[object, ...], ...]:
+    """The registry schema is fixed per process; build its reference once."""
+
+    reference = sqlite3.connect(":memory:")
+    try:
+        reference.executescript(complete_schema_sql())
+        return tuple(schema_objects(reference))
+    finally:
+        reference.close()
+
+
+def verify_schema(connection: sqlite3.Connection) -> None:
+    if tuple(schema_objects(connection)) != _reference_schema_objects():
+        raise ProjectionIntegrityError("typed projection SQLite schema differs from its registry")
+
+
+def logical_export(connection: sqlite3.Connection) -> dict[str, object]:
+    verify_schema(connection)
+    tables = []
+    for object_type, name, _table, sql in schema_objects(connection):
+        if object_type != "table" or name in NON_LOGICAL_TABLES:
+            continue
+        info = connection.execute(f"PRAGMA table_info({name})").fetchall()
+        keys = [row[1] for row in sorted(info, key=lambda row: row[5]) if row[5]]
+        rows = connection.execute(f"SELECT * FROM {name} ORDER BY {','.join(keys)}").fetchall()
+        tables.append({"name": name, "sql": sql, "rows": [list(row) for row in rows]})
+    return {
+        "storage_schema_version": PROJECTION_STORAGE_SCHEMA_VERSION,
+        "schema": [list(row) for row in schema_objects(connection)],
+        "tables": tables,
+    }
+
+
+def row_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    return {
+        str(name): connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+        for (name,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+    }
+
+
+def insert_members(
+    connection: sqlite3.Connection,
+    blobs: Mapping[str, bytes],
+    object_format: str,
+    *,
+    replace_existing: bool = False,
+) -> None:
+    rows = []
+    for path, content in sorted(blobs.items()):
+        if is_candidate_card_path(path):
+            continue
+        digest = hashlib.new(
+            object_format, b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+        ).hexdigest()
+        rows.append((path, digest, file_digest(content).tagged, len(content)))
+    insert_rows(
+        connection,
+        "members",
+        rows,
+        suffix=(
+            " ON CONFLICT(path) DO UPDATE SET git_blob_oid=excluded.git_blob_oid,"
+            "file_digest=excluded.file_digest,byte_length=excluded.byte_length "
+            "WHERE members.git_blob_oid!=excluded.git_blob_oid "
+            "OR members.file_digest!=excluded.file_digest "
+            "OR members.byte_length!=excluded.byte_length"
+            if replace_existing
+            else ""
+        ),
+    )
+
+
+def replace_rows(
+    connection: sqlite3.Connection,
+    *,
+    request: AssemblerRequest,
+    parsed: ParsedProjectionTree,
+    sources: Mapping[str, bytes],
+    changed_paths: Iterable[str] = (),
+    resolve_digest: Callable[[str], Iterable[str]] | None = None,
+    bodies: Any = None,
+    whole_checks: bool = True,
+    historical_provider_source: Callable[[str, int], bytes | None] | None = None,
+) -> None:
+    from cruxible_core.indexes.claim_units import refresh_claim_units
+    from cruxible_core.indexes.pair_units import ClaimState, refresh_pair_index
+    from cruxible_core.indexes.subject_identity import refresh_subject_keys
+
+    changed = tuple(sorted(set(changed_paths)))
+    # The Subjects whose whole key the change may move: those it writes, the
+    # subjects of the Claims it replaces, and every Subject of a SubjectKind it
+    # replaces (``subject_keys`` is derived from all three).
+    key_subjects: set[str] = set()
+    key_kinds: set[str] = set()
+    for path in changed:
+        if path.startswith("subjects/"):
+            key_subjects.add(path)
+        elif path.startswith("subject-kinds/"):
+            key_kinds.add(path.removeprefix("subject-kinds/").removesuffix(".json"))
+    key_subjects.update(
+        str(row[0])
+        for row in select_in(
+            connection,
+            "SELECT subject_path FROM claims WHERE path IN ({})",
+            [path for path in changed if path.startswith("claims/")],
+        )
+    )
+    # Every replaced path's rows go in one statement per table (children before
+    # their parents, as the per-path loop deleted them): the same rows, whatever
+    # the number of paths.
+    # The unit index follows the Claims and ClaimTypes the change writes (the
+    # rows they leave and the rows they become) and the key Claims among them.
+    claim_paths = [path for path in changed if path.startswith("claims/")]
+    # The same read is the pair index's before-state: each replaced Claim's
+    # lifecycle, subject and predicate as the parent held it.
+    pair_before: dict[str, ClaimState] = {
+        str(identity): (str(lifecycle), str(subject_path), str(predicate))
+        for identity, subject_path, predicate, lifecycle in select_in(
+            connection,
+            "SELECT identity,subject_path,predicate,lifecycle FROM claims WHERE path IN ({})",
+            claim_paths,
+        )
+    }
+    unit_claims = {
+        (identity, subject_path, predicate)
+        for identity, (_lifecycle, subject_path, predicate) in pair_before.items()
+    }
+    type_inverses_before = {
+        str(identity): (kind, predicate)
+        for identity, kind, predicate in select_in(
+            connection,
+            "SELECT identity,inverse_key,inverse_key_predicate FROM claim_types WHERE path IN ({})",
+            [path for path in changed if path.startswith("claim-types/")],
+        )
+    }
+    replaced = sorted(
+        (str(path), str(identity), str(kind))
+        for path, identity, kind in select_in(
+            connection, "SELECT path,identity,kind FROM artifact_lookup WHERE path IN ({})", changed
+        )
+    )
+    # W8: the replaced Claims' evidence state before the change (keyed reads).
+    evidence_claims = {identity for identity, _subject, _predicate in unit_claims}
+    evidence_before = evidence_states(connection, evidence_claims)
+    from cruxible_core.indexes.provider_heads import remove_provider_domains
+
+    remove_provider_domains(
+        connection, [identity for _path, identity, kind in replaced if kind == "provider"]
+    )
+    incoming_claims = {row.identity for row in parsed.envelopes if row.kind == "claim"}
+    incoming_claim_paths = {
+        row.path: row.identity for row in parsed.envelopes if row.kind == "claim"
+    }
+    updated_claims = frozenset(
+        (identity, path)
+        for path, identity, kind in replaced
+        if kind == "claim" and incoming_claim_paths.get(path) == identity
+    )
+    updated_claim_paths = {path for _identity, path in updated_claims}
+    # A retained Claim's citations have no foreign key to its typed row. Leave
+    # them in place while replacing the owner; population below applies only
+    # the relationship delta, after the new owner is published.
+    owners: list[tuple[str, str]] = [
+        ("Claim", identity)
+        for _path, identity, kind in replaced
+        if kind == "claim" and (bodies is None or identity not in incoming_claims)
+    ]
+    attested = [identity for _path, identity, kind in replaced if kind == "attestation"]
+    if attested:
+        keys = dict(
+            select_in(
+                connection,
+                "SELECT identity,envelope_digest FROM attestations WHERE identity IN ({})",
+                attested,
+            )
+        )
+        owners.extend(("attestation", keys[identity]) for identity in attested)
+    if owners:
+        remove_owner_citations(connection, owners)
+    execute_in(
+        connection,
+        "DELETE FROM provider_operations WHERE source_identity IN ({})",
+        [identity for _path, identity, kind in replaced if kind == "provider"],
+    )
+    identities = [identity for _path, identity, _kind in replaced]
+    for table in ("provider_pinners", "claim_type_names", "vocabulary_terms"):
+        execute_in(connection, f"DELETE FROM {table} WHERE source_identity IN ({{}})", identities)
+    execute_in(
+        connection,
+        "DELETE FROM promotion_subjects WHERE promotion_identity IN ({})",
+        [identity for _path, identity, kind in replaced if kind == "exhaust-promotion"],
+    )
+    for owner in OWNER_CODECS:
+        execute_in(
+            connection,
+            f"DELETE FROM {owner.table} WHERE path IN ({{}})",
+            [path for path in changed if owner.kind != "claim" or path not in updated_claim_paths],
+        )
+    execute_in(connection, "DELETE FROM principals WHERE path IN ({})", changed)
+    execute_in(
+        connection,
+        "DELETE FROM members WHERE path IN ({})",
+        [path for path in changed if path not in sources],
+    )
+    insert_members(connection, sources, request.git_object_format, replace_existing=True)
+    insert_owners(
+        connection,
+        parsed=parsed,
+        blobs=sources,
+        resolve_digest=resolve_digest,
+        replaced_pin_sources=tuple(identities),
+        updated_claims=updated_claims,
+    )
+    from cruxible_core.indexes.provider_heads import refresh_provider_heads
+
+    refresh_provider_heads(connection, sources, historical_source=historical_provider_source)
+    if not changed:
+        refresh_subject_keys(connection)
+        refresh_claim_units(connection)
+        refresh_pair_index(connection)
+    else:
+        for row in parsed.envelopes:
+            if row.kind == "subject":
+                key_subjects.add(row.path)
+            elif row.kind == "subject-kind":
+                key_kinds.add(row.identity.removeprefix("SubjectKind:"))
+        key_subjects.update(
+            str(found[0])
+            for found in select_in(
+                connection,
+                "SELECT subject_path FROM claims WHERE identity IN ({})",
+                [row.identity for row in parsed.envelopes if row.kind == "claim"],
+            )
+        )
+        refresh_subject_keys(connection, subjects=key_subjects, kinds=key_kinds)
+        pair_after: dict[str, ClaimState] = {
+            str(identity): (str(lifecycle), str(subject_path), str(predicate))
+            for identity, subject_path, predicate, lifecycle in select_in(
+                connection,
+                "SELECT identity,subject_path,predicate,lifecycle FROM claims "
+                "WHERE identity IN ({})",
+                [row.identity for row in parsed.envelopes if row.kind == "claim"],
+            )
+        }
+        unit_claims.update(
+            (identity, subject_path, predicate)
+            for identity, (_lifecycle, subject_path, predicate) in pair_after.items()
+        )
+        type_inverses_after = {
+            str(identity): (kind, predicate)
+            for identity, kind, predicate in select_in(
+                connection,
+                "SELECT identity,inverse_key,inverse_key_predicate FROM claim_types "
+                "WHERE identity IN ({})",
+                [row.identity for row in parsed.envelopes if row.kind == "claim-type"],
+            )
+        }
+        refresh_claim_units(
+            connection,
+            claims={identity for identity, _subject, _predicate in unit_claims},
+            key_subjects={(subject, predicate) for _identity, subject, predicate in unit_claims},
+            claim_types={
+                identity
+                for identity in {*type_inverses_before, *type_inverses_after}
+                if type_inverses_before.get(identity, (None, None))
+                != type_inverses_after.get(identity, (None, None))
+            },
+        )
+        # Subjects absent from the parent (``replaced`` lists what it held).
+        held_subjects = {path for path, _identity, kind in replaced if kind == "subject"}
+        refresh_pair_index(
+            connection,
+            before=pair_before,
+            after=pair_after,
+            created=[
+                row.path
+                for row in parsed.envelopes
+                if row.kind == "subject" and row.path not in held_subjects
+            ],
+            changed_kinds=key_kinds,
+        )
+    if bodies is not None:
+        published = {
+            "Claim": {
+                row[0]
+                for row in select_in(
+                    connection,
+                    "SELECT identity FROM claims WHERE identity IN ({})",
+                    sorted(incoming_claims),
+                )
+            },
+            "attestation": {
+                row[0]
+                for row in select_in(
+                    connection,
+                    "SELECT envelope_digest FROM attestations WHERE identity IN ({})",
+                    [row.identity for row in parsed.envelopes if row.kind == "attestation"],
+                )
+            },
+        }
+        populate_citations(
+            connection,
+            sources,
+            bodies=bodies,
+            owner_exists=lambda kind, identity: identity in published[kind],
+        )
+    # After the citation index: a Claim's section citations are read from it.
+    refresh_backlinks(connection, parsed=parsed, sources=sources, replaced=replaced, bodies=bodies)
+    if not changed:
+        rebuild_evidence_counts(connection)
+    else:
+        apply_evidence_changes(
+            connection,
+            evidence_before,
+            evidence_states(connection, evidence_claims | incoming_claims),
+        )
+    for fact in parsed.semantic_facts:
+        if fact.schema_id not in ("cruxible.procedure.track_record", "cruxible.line.track_record"):
+            continue
+        value = fact.value
+        assert isinstance(value, dict)
+        digest = value["promotion_digest"]["$digest"]
+        owners = connection.execute(
+            "SELECT identity FROM exhaust_promotions WHERE artifact_digest=?", (digest,)
+        ).fetchall()
+        if len(owners) != 1:
+            raise ProjectionIntegrityError("promoted result has no exact unique typed owner")
+        connection.execute(
+            "INSERT INTO promotion_subjects VALUES (?,?,?,?)",
+            (owners[0][0], fact.subject_identity, fact.schema_id.split(".")[1], fact.fact_key),
+        )
+    if whole_checks:
+        check_whole_projection(connection, request=request)
+
+
+def check_whole_projection(connection: sqlite3.Connection, *, request: AssemblerRequest) -> None:
+    # Full registry validation is O(principals), explicitly distinct from indexed
+    # active-actor checks. This publication is a derivative, never a trust root.
+    if connection.execute("SELECT 1 FROM principals LIMIT 1").fetchone():
+        principal_registry(connection, request.semantic_root)
+    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+        raise ProjectionIntegrityError("typed projection has invalid ownership references")
+
+
+def _row_counts_from_sums(
+    connection: sqlite3.Connection, sums: Mapping[str, tuple[int, int]]
+) -> dict[str, int]:
+    counts = {name: count for name, (count, _total) in sums.items()}
+    for name in NON_LOGICAL_TABLES:
+        counts[name] = connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+    return dict(sorted(counts.items()))
+
+
+def initialize(
+    path: Path,
+    *,
+    request: AssemblerRequest,
+    parsed: ParsedProjectionTree,
+    sources: Mapping[str, bytes],
+    repository: Any,
+    assembler_implementation: str,
+    resolve_digest: Callable[[str], Iterable[str]] | None = None,
+    bodies: Any = None,
+) -> dict[str, int]:
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(f"PRAGMA user_version={PROJECTION_STORAGE_SCHEMA_VERSION}")
+        connection.executescript(complete_schema_sql())
+        from cruxible_core.indexes.provider_heads import cold_provider_source
+
+        replace_rows(
+            connection,
+            historical_provider_source=cold_provider_source(repository, request.git_oid, sources),
+            request=request,
+            parsed=parsed,
+            sources=sources,
+            resolve_digest=resolve_digest,
+            bodies=bodies,
+        )
+        connection.execute(
+            "INSERT INTO compiler_coordinates VALUES (1,?,?)",
+            (request.schema_version, request.compiler_digest),
+        )
+        connection.execute(
+            "INSERT INTO assembler_metadata VALUES (1,?,?)",
+            (assembler_implementation, request.contract_version),
+        )
+        connection.execute(
+            "INSERT INTO generation_metadata VALUES (1,?,?,?,?,?)",
+            (
+                request.instance_id,
+                request.git_object_format,
+                request.git_oid,
+                request.semantic_root,
+                request.generation_root,
+            ),
+        )
+        # Every file of the accepted tree, cards included: the reader limits'
+        # aggregates, carried forward so a successor checks only its changes.
+        connection.execute(
+            "INSERT INTO tree_inventory VALUES (1,?,?)",
+            (len(sources), sum(len(content) for content in sources.values())),
+        )
+        store_table_sums(connection, compute_table_sums(connection))
+        connection.commit()
+        verify_schema(connection)
+        return row_counts(connection)
+    finally:
+        connection.close()
+
+
+def update(
+    path: Path,
+    *,
+    parent: sqlite3.Connection | None,
+    request: AssemblerRequest,
+    parsed: ParsedProjectionTree,
+    sources: Mapping[str, bytes],
+    changed_paths: Iterable[str],
+    inventory: tuple[int, int],
+    bodies: Any = None,
+    resolve_digest: Callable[[str], Iterable[str]] | None = None,
+) -> dict[str, int]:
+    """Apply changed owners to a copy of a verified parent in O(changed rows).
+
+    ``parent`` is copied page by page unless ``path`` already holds a
+    byte-identical clone of it (``parent=None``). The logical sums are carried
+    forward through the rows the transaction touched. With foreign keys
+    enforced on every statement, a delta cannot orphan a row the verified
+    parent held, so only a changed principal registry is re-validated.
+    """
+    connection = sqlite3.connect(path)
+    try:
+        if parent is not None:
+            parent.backup(connection)
+        connection.execute("PRAGMA foreign_keys=ON")
+        recorder = RowDeltaRecorder(connection)
+        parent_sums = stored_table_sums(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        replace_rows(
+            connection,
+            request=request,
+            parsed=parsed,
+            sources=sources,
+            changed_paths=changed_paths,
+            bodies=bodies,
+            resolve_digest=resolve_digest,
+            whole_checks=False,
+        )
+        sums, changed_tables = recorder.apply(parent_sums)
+        if "principals" in changed_tables:
+            principal_registry(connection, request.semantic_root)
+        store_table_sums(connection, sums)
+        connection.execute(
+            "UPDATE tree_inventory SET file_count=?,byte_total=? WHERE singleton=1", inventory
+        )
+        connection.execute(
+            "UPDATE generation_metadata SET instance_id=?,git_object_format=?,git_oid=?,semantic_root=?,generation_root=? WHERE singleton=1",
+            (
+                request.instance_id,
+                request.git_object_format,
+                request.git_oid,
+                request.semantic_root,
+                request.generation_root,
+            ),
+        )
+        connection.commit()
+        # The recorder's TEMP log and triggers go with the connection below.
+        verify_schema(connection)
+        return _row_counts_from_sums(connection, sums)
+    finally:
+        connection.close()

@@ -1,0 +1,649 @@
+"""DP-0B guardrails for the Playbill-only public and dependency surfaces."""
+
+from __future__ import annotations
+
+import ast
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+CORE = SRC / "cruxible_core"
+GOLDENS = ROOT / "tests" / "goldens" / "playbill"
+
+FACADE = CORE / "runtime" / "playbill_api.py"
+HTTP_ROUTES = CORE / "server" / "routes" / "playbill.py"
+MCP_HANDLERS = CORE / "mcp" / "handlers.py"
+
+ORACLE_COMMITS = {
+    "family_1": "e3fe35b360d098f14a5d59bf770ffee401224f0c",
+    "procedure_graph_program": "986307d56649eb51747ca227228fbe19f73e3895",
+}
+
+SERVED_ROOTS = (
+    "cruxible_core.cli.main",
+    "cruxible_core.cli.commands._common",
+    "cruxible_core.cli.commands.context",
+    "cruxible_core.cli.commands.credentials",
+    "cruxible_core.cli.commands.playbill",
+    "cruxible_core.cli.commands.server",
+    "cruxible_core.mcp.handlers",
+    "cruxible_core.mcp.server",
+    "cruxible_core.mcp.tools",
+    "cruxible_core.runtime.host_api",
+    "cruxible_core.runtime.playbill_api",
+    "cruxible_core.runtime.playbill_manager",
+    "cruxible_core.server.app",
+    "cruxible_core.server.auth",
+    "cruxible_core.server.actor_identity",
+    "cruxible_core.server.playbill_request_models",
+    "cruxible_core.server.routes.hosted_instances",
+    "cruxible_core.server.routes.instances",
+    "cruxible_core.server.routes.playbill",
+    "cruxible_core.server.routes.runtime_credentials",
+    "cruxible_core.service.authoring.documents",
+    "cruxible_core.service.discovery.explain",
+    "cruxible_core.service.proposals.review",
+    "cruxible_core.service.evidence.file_catalog",
+)
+
+FORBIDDEN_MODULE_PREFIXES = (
+    "cruxible_core.playbill",
+    "cruxible_core.query.executor",
+    "cruxible_core.providers.registry",
+    "cruxible_core.governance.store",
+    "cruxible_core.runtime.api",
+    "cruxible_core.runtime.instance_manager",
+    "cruxible_core.instance_protocol",
+    "cruxible_core.graph",
+    "cruxible_core.procedure",
+    "cruxible_core.predicate",
+    "cruxible_core.receipt_tree",
+    "cruxible_core.workflow",
+    "cruxible_core.provider",
+    "cruxible_core.client",
+    "cruxible_core.config.schema",
+    "cruxible_core.service.mutations",
+    "cruxible_core.service.execution",
+    "cruxible_core.storage.sqlite",
+    "cruxible_core.snapshot",
+    "cruxible_core.telemetry",
+    "cruxible_core.transport",
+    "cruxible_core.working_set",
+)
+
+
+def _module_path(module: str) -> Path | None:
+    relative = Path(*module.split("."))
+    file_path = SRC / relative.with_suffix(".py")
+    if file_path.is_file():
+        return file_path
+    package_path = SRC / relative / "__init__.py"
+    return package_path if package_path.is_file() else None
+
+
+def _imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    result: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            result.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            result.add(node.module)
+            for alias in node.names:
+                candidate = f"{node.module}.{alias.name}"
+                if _module_path(candidate) is not None:
+                    result.add(candidate)
+    with_parents = set(result)
+    for module in result:
+        parts = module.split(".")
+        with_parents.update(".".join(parts[:index]) for index in range(1, len(parts)))
+    return with_parents
+
+
+def _dependency_closure(roots: tuple[str, ...]) -> set[str]:
+    pending = list(roots)
+    visited: set[str] = set()
+    while pending:
+        module = pending.pop()
+        if module in visited or not module.startswith("cruxible_core"):
+            continue
+        visited.add(module)
+        path = _module_path(module)
+        if path is None:
+            continue
+        pending.extend(_imports(path) - visited)
+    return visited
+
+
+def _playbill_facade_calls(path: Path) -> tuple[str, ...]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "playbill_api"
+        and node.func.attr.startswith("playbill_")
+    }
+    return tuple(sorted(calls))
+
+
+def _facade_operations() -> tuple[str, ...]:
+    tree = ast.parse(FACADE.read_text(encoding="utf-8"), filename=str(FACADE))
+    return tuple(
+        sorted(
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("playbill_")
+        )
+    )
+
+
+def test_playbill_served_dependency_closure_excludes_legacy_core() -> None:
+    closure = _dependency_closure(SERVED_ROOTS)
+    violations = sorted(
+        module
+        for module in closure
+        if any(
+            module == prefix or module.startswith(f"{prefix}.")
+            for prefix in FORBIDDEN_MODULE_PREFIXES
+        )
+    )
+    assert violations == []
+
+
+def test_importing_playbill_http_surface_does_not_initialize_legacy_core() -> None:
+    check = (
+        "import sys; import cruxible_core.server.routes.playbill; "
+        f"prefixes={FORBIDDEN_MODULE_PREFIXES!r}; "
+        "bad=sorted(m for m in sys.modules if any(m==p or m.startswith(p+'.') "
+        "for p in prefixes)); "
+        "assert not bad, bad"
+    )
+    subprocess.run(
+        [sys.executable, "-c", check],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_http_and_mcp_playbill_calls_delegate_to_the_dedicated_facade() -> None:
+    from scripts.update_playbill_served_surface import verify_served_surface_snapshot
+
+    expected = json.loads((GOLDENS / "served-surface-dp0b-v1.json").read_text(encoding="utf-8"))
+    verify_served_surface_snapshot(expected)
+    surface = expected["surface"]
+    facade = _facade_operations()
+    http = _playbill_facade_calls(HTTP_ROUTES)
+
+    assert list(facade) == surface["facade_verbs"]
+    assert http == facade
+    # MCP has no in-process road: every tool reaches the facade through the
+    # daemon's routes, so the handlers name no facade verb at all.
+    assert _playbill_facade_calls(MCP_HANDLERS) == ()
+    assert "playbill_api" not in MCP_HANDLERS.read_text(encoding="utf-8")
+    assert "host_api" not in MCP_HANDLERS.read_text(encoding="utf-8")
+    assert "from cruxible_core.runtime import api\n" not in HTTP_ROUTES.read_text(encoding="utf-8")
+
+
+def test_legacy_public_modules_and_mixed_runtime_facade_are_absent() -> None:
+    deleted_cli = {
+        "attestations.py",
+        "config_views.py",
+        "decision_records.py",
+        "feedback.py",
+        "gates.py",
+        "groups.py",
+        "instances.py",
+        "kits.py",
+        "lifecycle_verbs.py",
+        "lists.py",
+        "mutations.py",
+        "outcome_contracts.py",
+        "procedures.py",
+        "read_stats.py",
+        "reads.py",
+        "source_artifacts.py",
+        "state.py",
+        "telemetry.py",
+        "workflows.py",
+        "working_set.py",
+    }
+    deleted_routes = {
+        "attestations.py",
+        "bindings.py",
+        "decision_records.py",
+        "feedback.py",
+        "gates.py",
+        "groups.py",
+        "installs.py",
+        "mutations.py",
+        "outcome_contracts.py",
+        "procedures.py",
+        "queries.py",
+        "snapshots.py",
+        "source_artifacts.py",
+        "state.py",
+        "telemetry.py",
+        "workflows.py",
+    }
+    assert not (CORE / "runtime" / "api.py").exists()
+    assert all(not (CORE / "cli" / "commands" / name).exists() for name in deleted_cli)
+    assert all(not (CORE / "server" / "routes" / name).exists() for name in deleted_routes)
+
+
+def test_dp0c_deleted_products_are_absent() -> None:
+    """DP-0C products leave no compatibility package or orphaned test surface."""
+    for package in (
+        "bindings",
+        "blueprint",
+        "canonical_views",
+        "decision",
+        "feedback",
+        "installs",
+        "kit_distribution",
+        "snapshot",
+        "telemetry",
+        "transport",
+        "ui_static",
+    ):
+        package_root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in package_root.rglob("*")
+        )
+
+    for service_module in (
+        "analysis.py",
+        "bindings.py",
+        "config_mutations.py",
+        "decisions.py",
+        "feedback.py",
+        "installs.py",
+        "snapshots.py",
+        "state.py",
+        "state_diff.py",
+        "telemetry.py",
+        "views.py",
+    ):
+        assert not (CORE / "service" / service_module).exists()
+    for family in (
+        "test_bindings",
+        "test_blueprint",
+        "test_decision",
+        "test_feedback",
+        "test_installs",
+        "test_snapshot",
+        "test_telemetry",
+        "test_transport",
+        "test_ui_static",
+    ):
+        family_root = ROOT / "tests" / family
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in family_root.rglob("*")
+        )
+    assert not (ROOT / "docs" / "blueprints.md").exists()
+    assert not (ROOT / "docs" / "local-state-and-backups.md").exists()
+    assert not (ROOT / "docs" / "publishing-states.md").exists()
+    assert not (ROOT / "docs" / "state-resolution-and-maintenance.md").exists()
+    assert not (CORE / "cli" / "formatting.py").exists()
+    assert not (CORE / "working_set.py").exists()
+    assert not (CORE / "runtime" / "instance_manager.py").exists()
+    assert not (CORE / "mcp" / "kit_surface.py").exists()
+    assert not (CORE / "server" / "telemetry.py").exists()
+    assert not (ROOT / "tests" / "test_working_set_capture.py").exists()
+    assert not any(
+        path.is_file() and "__pycache__" not in path.parts for path in (ROOT / "kits").rglob("*")
+    )
+    for script in (
+        "build_kit_bundles.py",
+        "check_kit_lockfiles.py",
+        "check_kit_release_assets.py",
+        "generate_kit_docs.py",
+    ):
+        assert not (ROOT / "scripts" / script).exists()
+    assert (
+        ROOT / "tests" / "data" / "playbill_parity" / "modeling-parity-oracle-v1.json"
+    ).is_file()
+
+
+def test_public_registration_catalogs_are_playbill_only() -> None:
+    from mcp.server.fastmcp import FastMCP
+
+    from cruxible_client import CruxibleClient
+    from cruxible_core.cli.main import CLI_COMMANDS
+    from cruxible_core.mcp.tools import register_tools
+    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+
+    assert {"context", "credential", "mcp", "server", "query", "get"} <= set(CLI_COMMANDS)
+    assert "playbill" not in CLI_COMMANDS
+    registered_tools = set(register_tools(FastMCP("dp0b-registration-inventory")))
+    frozen = json.loads((GOLDENS / "served-surface-dp0b-v1.json").read_text(encoding="utf-8"))
+    frozen_tools = {row["name"] for row in frozen["surface"]["mcp_tools"]}
+    assert registered_tools == set(TOOL_PERMISSIONS)
+    assert set(TOOL_PERMISSIONS) == frozen_tools
+    public_client_methods = {
+        name
+        for name, value in vars(CruxibleClient).items()
+        if callable(value) and not name.startswith("_")
+    }
+    assert public_client_methods == {
+        "run_runbook",
+        "preview_runbook",
+        "list_predictions",
+        "close",
+        "version",
+        "daemon_identity",
+        "get",
+        "set",
+        "retire",
+        "write",
+        "server_info",
+        "server_restart",
+        "server_stop",
+        "create_host",
+        "show_host",
+        "host_workspace_registration",
+        "host_workspace_detach",
+        "host_workspace_attach",
+        "set_floor_delivery",
+        "deliver_floor_now",
+        "declare_block",
+        "observe_blocks",
+        "depublish_block",
+        "measure_procedure",
+        "dispose_procedure_resolution",
+        "list_procedure_readings",
+        "claim_runtime_bootstrap",
+        "create_runtime_credential",
+        "list_runtime_credentials",
+        "revoke_runtime_credential",
+        "rotate_runtime_credential",
+        "init",
+        "decommission_instance",
+        "rebuild_next",
+        "set_ledger_mirror",
+        "clear_ledger_mirror",
+        "publish_ledger",
+        "store_body",
+        "open_capture_upload",
+        "capture_upload_status",
+        "put_capture_upload_part",
+        "complete_capture_upload",
+        "upload_capture",
+        "propose_document",
+        "propose_compiler_upgrade",
+        "propose_principal_change",
+        "review_proposal",
+        "prepare_approval",
+        "submit_approval",
+        "approve_proposal",
+        "activate_proposal",
+        "compile_authoring",
+        "compile_authoring_input",
+        "submit_authoring_input",
+        "preview_authoring_input",
+        "get_authoring_intent",
+        "list_pending_authoring_intents",
+        "authoring_intent_status",
+        "preflight_authoring_intent",
+        "submit_authoring",
+        "submit_authoring_intent",
+        "read_capture",
+        "erase_capture",
+        "file_context",
+        "check_file_bundle",
+        "propose_file_bundle",
+        "propose_builtin_claim_type",
+        "propose_claim_type_input",
+        "propose_capture_contract_input",
+        "append_claim_attestation",
+        "prepare_claim_attestation_evidence",
+        "read_claim_batch",
+        "get_claim_backings",
+        "query",
+        "procedure_readiness",
+        "run_procedure",
+        "get_procedure_run",
+        "enable_line",
+        "disable_line",
+        "evaluate_line",
+        "dispatch_line",
+        "run_line",
+        "list_inbox",
+        "get_inbox_item",
+        "ack_inbox_item",
+        "dismiss_inbox_item",
+        "link_inbox_item",
+        "predict",
+        "settle_prediction",
+        "run_internal_action",
+        "export_floor",
+        "floor_delta",
+        "resolve_coverage",
+        "read_block_sync_backing",
+        "check_projection_blocks",
+        "list_proposals",
+        "resolve_proposal_selector",
+        "whoami",
+        "orient",
+        "head",
+        "get_batch",
+        "readmit_proposal",
+        "withdraw_proposal",
+        "reject_proposal",
+        "list_provider_packages",
+        "install_provider",
+        "move_provider",
+        "retire_provider",
+        "build_kit",
+        "kit_status",
+        "add_kit",
+        "remove_kit",
+        "migrate_claim_type",
+        "next",
+        "audit",
+        "list_curation",
+        "curation_duplicates",
+        "overrule_curation",
+        "accept_fixed_curation",
+        "suppress_curation",
+        "unsuppress_curation",
+        "since",
+        "backlinks",
+    }
+
+
+def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:
+    for package in ("group", "kits"):
+        root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")
+        )
+
+    retired_modules = (
+        CORE / "procedure" / "migration.py",
+        CORE / "procedure" / "reading_store.py",
+        CORE / "procedure" / "store.py",
+        CORE / "workflow" / "apply.py",
+        CORE / "workflow" / "proposal_preview.py",
+        CORE / "workflow" / "proposals.py",
+        CORE / "service" / "execution.py",
+        CORE / "service" / "group_read_models.py",
+        CORE / "service" / "group_transitions.py",
+        CORE / "service" / "groups.py",
+        CORE / "service" / "lifecycle.py",
+        CORE / "service" / "procedure_migrations.py",
+        CORE / "service" / "procedures.py",
+    )
+    assert not any(path.exists() for path in retired_modules)
+
+    # PC-D's residual law was that the retained mutation service could not
+    # reach back into the group donor. PC-F deleted the mutation service
+    # itself, which subsumes it.
+    assert not (CORE / "service" / "mutations.py").exists()
+
+
+def test_pc_e1_retired_storage_authorities_and_executor_are_absent() -> None:
+    for package in ("receipt", "resolution_contracts"):
+        root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")
+        )
+
+    retired_modules = (
+        CORE / "service" / "resolution_contracts.py",
+        CORE / "service" / "artifact_lifecycle.py",
+        CORE / "service" / "gates.py",
+        CORE / "service" / "mutation_receipts.py",
+        CORE / "storage" / "resolution_evidence.py",
+        CORE / "workflow" / "execution_context.py",
+        CORE / "workflow" / "executor.py",
+        CORE / "workflow" / "io.py",
+        CORE / "workflow" / "step_handlers.py",
+        CORE / "workflow" / "tracing.py",
+    )
+    assert not any(path.exists() for path in retired_modules)
+
+    # PC-E1's residual laws named store classes, protocols, and accessors that
+    # had to stay absent from three retained donor harnesses. PC-F deleted all
+    # three harnesses, which subsumes every one of those substring checks.
+    for retired_harness in (
+        CORE / "storage" / "sqlite.py",
+        CORE / "instance_protocol.py",
+    ):
+        assert not retired_harness.exists()
+
+
+def test_pc_del1_retired_old_core_families_are_absent() -> None:
+    """The old schema, graph, Procedure, query, receipt, and workflow island is gone."""
+    for module in (
+        CORE / "instance_protocol.py",
+        CORE / "sqlite_ddl.py",
+        CORE / "cli" / "instance.py",
+        CORE / "server" / "auth_managed_entities.py",
+        CORE / "storage" / "protocols.py",
+        CORE / "storage" / "sqlite.py",
+        CORE / "config" / "composition_ownership.py",
+        CORE / "config" / "ownership.py",
+        CORE / "config" / "provenance.py",
+    ):
+        assert not module.exists(), module
+
+    for service_module in (
+        "direct_write_policy.py",
+        "evidence.py",
+        "lifecycle_inputs.py",
+        "mutation_guards.py",
+        "mutation_proposals.py",
+        "mutation_transactions.py",
+        "mutations.py",
+        "queries.py",
+        "server.py",
+        "types.py",
+        "playbill_documents.py",
+        "playbill_explain.py",
+        "playbill_review.py",
+        "playbill_source_catalog.py",
+    ):
+        assert not (CORE / "service" / service_module).exists(), service_module
+
+    for package in (
+        "client",
+        "config",
+        "graph",
+        "procedure",
+        "provider",
+        "receipt_tree",
+        "workflow",
+    ):
+        root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")
+        ), package
+    assert not (CORE / "workflow_execution_types.py").exists()
+
+
+def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
+    """Coverage points at accepted state; it may never reach a write path.
+
+    Transitive closure is the wrong instrument here -- every read model in the
+    substrate eventually imports the acceptance kernel through `claims` -- so
+    the checkable statement is the one that actually constrains the batch: the
+    coverage modules import from an explicit read-side allowlist and from
+    nothing else, so there is no name in scope through which a resolver could
+    propose, compile, accept, activate, settle, or touch the ledger.
+    """
+
+    package = CORE / "coverage"
+    modules = sorted(path.stem for path in package.glob("*.py"))
+    assert modules == [
+        "__init__",
+        "adapter",
+        "contracts",
+        "indexes",
+        "manifest",
+        "middleware",
+        "render",
+        "resolver",
+        "workspace",
+    ]
+
+    permitted = {
+        "cruxible_core",
+        "cruxible_core.indexes",
+        "cruxible_client.contracts.artifacts",
+        "cruxible_client.contracts.canonical",
+        "cruxible_client.contracts.captures",
+        "cruxible_client.contracts.claims",
+        "cruxible_client.contracts.claim_verdicts",
+        "cruxible_core.coverage",
+        "cruxible_core.coverage.adapter",
+        "cruxible_core.coverage.contracts",
+        "cruxible_core.coverage.indexes",
+        "cruxible_core.coverage.manifest",
+        "cruxible_core.coverage.middleware",
+        "cruxible_core.coverage.render",
+        "cruxible_core.coverage.resolver",
+        "cruxible_core.coverage.workspace",
+        "cruxible_client.contracts.discovery",
+        "cruxible_client.contracts.errors",
+        "cruxible_core.indexes.projection",
+        "cruxible_core.query",
+        "cruxible_client.contracts.query.grammar",
+        "cruxible_core.query.semantic_discovery",
+        "cruxible_client.contracts.semantic",
+        "cruxible_client.contracts.source_references",
+    }
+    forbidden = (
+        "cruxible_core.ledger.activation",
+        "cruxible_core.compiler.compiler",
+        "cruxible_core.ledger.git",
+        "cruxible_core.proposals.proposals",
+        "cruxible_core.proposals.settlement",
+        "cruxible_core.server",
+        "cruxible_core.service",
+        "cruxible_core.storage",
+    )
+
+    imported: set[str] = set()
+    for path in package.glob("*.py"):
+        imported.update(module for module in _imports(path) if module.startswith("cruxible_core"))
+    assert sorted(imported - permitted) == []
+    assert sorted(module for module in imported if module in forbidden) == []
+
+
+def test_destructive_pass_oracles_are_exact_and_immutable() -> None:
+    metadata = json.loads((GOLDENS / "oracles-v1.json").read_text(encoding="utf-8"))
+    assert metadata["format"] == "playbill-oracles-v1"
+    for name, commit in ORACLE_COMMITS.items():
+        assert metadata[name]["commit"] == commit
+        assert len(commit) == 40
+        assert commit == commit.lower()
+        assert all(character in "0123456789abcdef" for character in commit)

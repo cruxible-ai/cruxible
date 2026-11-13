@@ -1,0 +1,366 @@
+"""Parent-bound main settlement and ordered post-CAS publication."""
+
+from __future__ import annotations
+
+import secrets
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Final, Protocol
+
+from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.types import GenesisCoordinate
+from cruxible_core.compiler.assembler import ProjectionAssembler, ProjectionCrashHook
+from cruxible_core.compiler.upgrades import compiler_after_record
+from cruxible_core.indexes.projection import (
+    AcceptedCoordinate,
+    AcceptedProjectionCoordinate,
+    AssemblerResult,
+)
+from cruxible_core.indexes.serving import (
+    publish_serving_manifest,
+    remove_exact_projection_build,
+)
+from cruxible_core.indexes.sqlite import bind_projection
+from cruxible_core.ledger.checkpoints import (
+    DEFAULT_CHECKPOINT_INTERVAL,
+    ReplayCheckpointBodyV3,
+    checkpoint_body,
+    write_checkpoint,
+)
+from cruxible_core.ledger.git import GitLedger
+from cruxible_core.ledger.witness import WitnessRecord, WitnessSink
+from cruxible_core.proposals.settlement import (
+    VerifiedGenerationBundle,
+    render_generation_descriptor,
+)
+from cruxible_core.runtime.phase_timing import timed_phase
+from cruxible_core.storage.acceptance import flush_acceptance
+from cruxible_core.storage.cas import BodyProjectionProtocol, ContentAddressedBodyStore
+
+MAIN_CAS: Final = "main.cas"
+GENERATION_NOTE: Final = "generation.note"
+SERVING_PUBLICATION: Final = "serving.publication"
+WITNESS_PUBLICATION: Final = "witness.publication"
+ORPHAN_CLEANUP: Final = "orphan.cleanup"
+
+ACTIVATION_CRASH_POINTS: Final = (
+    MAIN_CAS,
+    GENERATION_NOTE,
+    SERVING_PUBLICATION,
+    WITNESS_PUBLICATION,
+    ORPHAN_CLEANUP,
+)
+
+if TYPE_CHECKING:
+    from cruxible_core.compiler.projection_delta import MemberHistory
+
+
+class ActivationCrashHook(Protocol):
+    def __call__(self, checkpoint: str) -> None: ...
+
+
+def _checkpoint(point: str, phase: str, hook: ActivationCrashHook | None) -> None:
+    if point not in ACTIVATION_CRASH_POINTS or phase not in {"before", "after"}:
+        raise SettlementIntegrityError("unknown activation crash checkpoint")
+    if hook is not None:
+        hook(f"{phase}:{point}")
+
+
+@dataclass(frozen=True)
+class ActivationResult:
+    status: str
+    accepted: AcceptedProjectionCoordinate | None
+    projection: AssemblerResult | None
+
+
+class ActivationPublisher:
+    """The only path that may turn a verified candidate into accepted state."""
+
+    def __init__(
+        self,
+        ledger: GitLedger,
+        *,
+        publication_directory: Path,
+        bodies: BodyProjectionProtocol,
+        witness: WitnessSink | None = None,
+        accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
+        checkpoint_directory: Path | None = None,
+        checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
+        genesis: GenesisCoordinate | None = None,
+        member_history: MemberHistory | None = None,
+        resolve_claim_digest: Callable[[str], tuple[str, ...]] | None = None,
+        defer_checkpoint: Callable[[Callable[[], None]], None] | None = None,
+    ) -> None:
+        if checkpoint_interval < 1:
+            raise SettlementIntegrityError("checkpoint interval must be at least one generation")
+        self.ledger = ledger
+        self.publication_directory = publication_directory.resolve(strict=True)
+        self.bodies = bodies
+        self.witness = witness
+        self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
+        self.checkpoint_directory = checkpoint_directory
+        self.checkpoint_interval = checkpoint_interval
+        self.genesis = genesis
+        self.member_history = member_history
+        self.resolve_claim_digest = resolve_claim_digest
+        self.defer_checkpoint = defer_checkpoint
+
+    @timed_phase("projection")
+    def prebuild(
+        self,
+        bundle: VerifiedGenerationBundle,
+        *,
+        base: AcceptedProjectionCoordinate,
+        crash_hook: ProjectionCrashHook | None = None,
+    ) -> AssemblerResult:
+        coordinate = bundle.projection_coordinate(base=base)
+        accepted_coordinates = dict(self.accepted_coordinates_by_sequence)
+        accepted_coordinates.setdefault(
+            bundle.record.sequence - 1,
+            AcceptedCoordinate(
+                git_oid=base.git_oid,
+                semantic_root=base.semantic_root,
+                generation_root=base.generation_root,
+                compiler_digest=base.compiler.rule_digest,
+            ),
+        )
+        accepted_coordinates[bundle.record.sequence] = AcceptedCoordinate(
+            git_oid=coordinate.git_oid,
+            semantic_root=coordinate.semantic_root,
+            generation_root=coordinate.generation_root,
+            compiler_digest=coordinate.compiler.rule_digest,
+        )
+        assembler = ProjectionAssembler(
+            self.ledger,
+            accepted=coordinate,
+            publication_directory=self.publication_directory,
+            bodies=self.bodies,
+            accepted_coordinates_by_sequence=accepted_coordinates,
+            resolve_claim_digest=self.resolve_claim_digest,
+        )
+        stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
+        from cruxible_core.compiler.projection_delta import GenerationDelta
+
+        delta = (
+            GenerationDelta(base, bundle, self.member_history)
+            if self.member_history is not None and coordinate.compiler == base.compiler
+            else None
+        )
+        return assembler.assemble(
+            assembler.request(output_staging_directory=stage),
+            crash_hook=crash_hook,
+            delta=delta,
+        )
+
+    @timed_phase("publish")
+    def activate(
+        self,
+        bundle: VerifiedGenerationBundle,
+        projection: AssemblerResult,
+        *,
+        base: AcceptedProjectionCoordinate,
+        crash_hook: ActivationCrashHook | None = None,
+        on_completed: Callable[[ActivationResult], None] | None = None,
+    ) -> ActivationResult:
+        """Publish and optionally hand off the outcome while still excluding writers.
+
+        The callback runs after all normal publication steps, including on a
+        lost CAS. A callback failure cannot undo a committed acceptance.
+        Callbacks must not reacquire the ledger activation lock.
+        """
+        with self.ledger.activation_lock():
+            result = self._activate_locked(
+                bundle,
+                projection,
+                base=base,
+                crash_hook=crash_hook,
+            )
+            if on_completed is not None:
+                on_completed(result)
+            return result
+
+    def _activate_locked(
+        self,
+        bundle: VerifiedGenerationBundle,
+        projection: AssemblerResult,
+        *,
+        base: AcceptedProjectionCoordinate,
+        crash_hook: ActivationCrashHook | None = None,
+    ) -> ActivationResult:
+        candidate_coordinate = bundle.projection_coordinate(base=base)
+        expected_projection = {
+            "instance_id": candidate_coordinate.instance_id,
+            "git_object_format": candidate_coordinate.git_object_format,
+            "git_oid": candidate_coordinate.git_oid,
+            "semantic_root": candidate_coordinate.semantic_root,
+            "generation_root": candidate_coordinate.generation_root,
+            "compiler_digest": candidate_coordinate.compiler.rule_digest,
+            "schema_version": candidate_coordinate.compiler.schema_version,
+        }
+        actual_projection = {
+            "instance_id": projection.manifest.instance_id,
+            "git_object_format": projection.manifest.git_object_format,
+            "git_oid": projection.manifest.git_oid,
+            "semantic_root": projection.manifest.semantic_root,
+            "generation_root": projection.manifest.generation_root,
+            "compiler_digest": projection.manifest.compiler_digest,
+            "schema_version": projection.manifest.schema_version,
+        }
+        if actual_projection != expected_projection:
+            raise SettlementIntegrityError("prebuilt projection differs from generation bundle")
+        verification_coordinate = AcceptedProjectionCoordinate(
+            instance_id=base.instance_id,
+            repository_path=base.repository_path,
+            git_object_format=base.git_object_format,
+            git_oid=bundle.oid,
+            semantic_root=bundle.semantic_root.tagged,
+            generation_root=bundle.generation_root.tagged,
+            compiler=compiler_after_record(bundle.record),
+        )
+        with bind_projection(
+            Path(projection.manifest_path),
+            expected=verification_coordinate,
+        ):
+            pass
+
+        with self.ledger.prepared_generation_note(
+            bundle.oid, render_generation_descriptor(bundle.descriptor)
+        ) as publish_note:
+            _checkpoint(MAIN_CAS, "before", crash_hook)
+            if isinstance(self.bodies, ContentAddressedBodyStore):
+                flush_acceptance(bundle.record, bundle.tree, self.bodies)
+            won = self.ledger.compare_and_set_main(
+                bundle.oid,
+                expected_oid=bundle.settlement.base_oid,
+            )
+            _checkpoint(MAIN_CAS, "after", crash_hook)
+            if not won:
+                _checkpoint(ORPHAN_CLEANUP, "before", crash_hook)
+                remove_exact_projection_build(projection, expected=projection.manifest)
+                self.ledger.collect_unreachable_generation(bundle.oid)
+                self.ledger.settle_generation_in_flight(bundle.oid)
+                _checkpoint(ORPHAN_CLEANUP, "after", crash_hook)
+                return ActivationResult(status="lost_cas", accepted=None, projection=None)
+            # On main: reachable, so nothing is left for recovery to collect.
+            self.ledger.settle_generation_in_flight(bundle.oid)
+
+            accepted = verification_coordinate
+            _checkpoint(GENERATION_NOTE, "before", crash_hook)
+            publish_note()
+            _checkpoint(GENERATION_NOTE, "after", crash_hook)
+
+        publish_serving_manifest(
+            self.publication_directory,
+            projection,
+            crash_hook=crash_hook,
+        )
+
+        _checkpoint(WITNESS_PUBLICATION, "before", crash_hook)
+        if self.witness is not None:
+            self.witness.publish(
+                WitnessRecord(
+                    instance_id=base.instance_id,
+                    object_format=base.git_object_format,
+                    head_oid=bundle.oid,
+                    semantic_root=bundle.semantic_root.tagged,
+                    generation_root=bundle.generation_root.tagged,
+                    sequence=bundle.record.sequence,
+                )
+            )
+        _checkpoint(WITNESS_PUBLICATION, "after", crash_hook)
+        self._advance_replay_checkpoint(bundle, base=base)
+        return ActivationResult(status="accepted", accepted=accepted, projection=projection)
+
+    def _advance_replay_checkpoint(
+        self,
+        bundle: VerifiedGenerationBundle,
+        *,
+        base: AcceptedProjectionCoordinate,
+    ) -> None:
+        """Summarize this coordinate every `checkpoint_interval` accepted generations.
+
+        Writing on a stride rather than on every acceptance keeps the cost of
+        rebuilding a full member manifest off the hot acceptance path while
+        bounding the suffix a reopen has to replay. The write is the last thing
+        activation does and is never load bearing: a torn, stale, or absent
+        checkpoint only ever costs replay time.
+
+        Off the stride, a `defer_checkpoint` owner may take a summary of this
+        coordinate to write once writes go quiet, so a restart after a burst of
+        acceptances starts at the head instead of replaying the burst. It
+        writes only while this generation is still main.
+        """
+
+        if self.checkpoint_directory is None or self.genesis is None:
+            return
+        sequence = bundle.record.sequence
+        on_stride = (
+            sequence % self.checkpoint_interval == 0
+            or compiler_after_record(bundle.record) != base.compiler
+        )
+        if not on_stride and self.defer_checkpoint is None:
+            return
+        parent = self.accepted_coordinates_by_sequence.get(sequence - 1)
+        if parent is None:
+            # Without the predecessor's replayed coordinate there is nothing to
+            # chain this summary to, so no checkpoint is written and the next
+            # reopen simply replays further.
+            return
+        if on_stride:
+            self._write_replay_checkpoint(bundle, base=base, parent=parent)
+            return
+        assert self.defer_checkpoint is not None
+        directory = self.checkpoint_directory
+
+        def summarize_if_head() -> None:
+            # Built outside the lock from immutable inputs; written under it, so
+            # a later acceptance's summary is never replaced by this older one.
+            body = self._replay_checkpoint_body(bundle, base=base, parent=parent)
+            with self.ledger.activation_lock():
+                if self.ledger.read_main() == bundle.oid:
+                    write_checkpoint(directory, body, verified=True)
+
+        self.defer_checkpoint(summarize_if_head)
+
+    def _write_replay_checkpoint(
+        self,
+        bundle: VerifiedGenerationBundle,
+        *,
+        base: AcceptedProjectionCoordinate,
+        parent: AcceptedCoordinate,
+    ) -> None:
+        assert self.checkpoint_directory is not None
+        body = self._replay_checkpoint_body(bundle, base=base, parent=parent)
+        write_checkpoint(self.checkpoint_directory, body, verified=True)
+
+    def _replay_checkpoint_body(
+        self,
+        bundle: VerifiedGenerationBundle,
+        *,
+        base: AcceptedProjectionCoordinate,
+        parent: AcceptedCoordinate,
+    ) -> ReplayCheckpointBodyV3:
+        assert self.genesis is not None
+        sequence = bundle.record.sequence
+        return checkpoint_body(
+            instance_id=base.instance_id,
+            object_format=base.git_object_format,
+            compiler=compiler_after_record(bundle.record),
+            genesis=self.genesis,
+            sequence=sequence,
+            git_oid=bundle.oid,
+            semantic_root=bundle.semantic_root.tagged,
+            generation_root=bundle.generation_root.tagged,
+            parent_generation_root=parent.generation_root,
+            tree=bundle.tree,
+            members=bundle.members,
+            merkle=bundle.merkle,
+        )
+
+
+__all__ = [
+    "ACTIVATION_CRASH_POINTS",
+    "ActivationPublisher",
+    "ActivationResult",
+]

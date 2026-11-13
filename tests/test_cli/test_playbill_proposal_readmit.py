@@ -1,0 +1,517 @@
+"""Readmit client and CLI preserve the typed operation result."""
+
+from __future__ import annotations
+
+import httpx
+import pytest
+from click.testing import CliRunner
+
+from cruxible_client import CruxibleClient, contracts
+from cruxible_client.contracts.errors import ProposalSelectorAmbiguousError
+from cruxible_core.cli.main import cli
+
+COORDINATE = contracts.AcceptedCoordinate(
+    git_oid="1" * 64,
+    semantic_root="sha256:" + "2" * 64,
+    generation_root="sha256:" + "3" * 64,
+    compiler_digest="sha256:" + "4" * 64,
+)
+
+SOURCE_ID = "sha256:" + "11" * 32
+NEW_ID = "sha256:" + "22" * 32
+OPERATION = "sha256:" + "33" * 32
+
+
+def _result() -> contracts.ProposalReadmitResult:
+    return contracts.ProposalReadmitResult(
+        tag="playbill-proposal-readmit-result-v1",
+        source_proposal_id=SOURCE_ID,
+        operation_digest=OPERATION,
+        proposal=contracts.ProposalInspection(
+            proposal={
+                "admission": {"proposal_id": NEW_ID},
+                "evaluation": {"verdict": "candidate"},
+                "candidate": {},
+            },
+            accepted_coordinate=COORDINATE,
+        ),
+    )
+
+
+def test_client_sends_the_frozen_tag_only_request() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class StubTransport:
+        def post(self, path, *, json):
+            calls.append((path, json))
+            return httpx.Response(200, json=_result().model_dump(mode="json"))
+
+    client = CruxibleClient(base_url="https://playbill.invalid")
+    client._client = StubTransport()  # type: ignore[assignment]
+
+    assert client.readmit_proposal("inst_test", SOURCE_ID) == _result()
+    assert calls == [
+        (
+            f"/api/v1/inst_test/proposals/{SOURCE_ID}/readmit",
+            {"tag": "playbill-proposal-readmit-request-v1"},
+        )
+    ]
+
+
+def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> None:
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id, selector):
+            assert (instance_id, selector) == ("inst_test", SOURCE_ID)
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def readmit_proposal(self, instance_id, proposal_id, **_control):
+            assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
+            return _result()
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "readmit",
+            SOURCE_ID,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "target: inst_test @ https://playbill.invalid (explicit)",
+        f"candidate  {NEW_ID}  from {SOURCE_ID}",
+    ]
+
+
+def test_cli_says_an_already_live_readmit_closed_as_answered(monkeypatch) -> None:
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def readmit_proposal(self, instance_id, proposal_id, **_control):
+            return contracts.ProposalReadmitResult(
+                tag="playbill-proposal-readmit-result-v1",
+                status="already_live",
+                source_proposal_id=SOURCE_ID,
+                operation_digest=OPERATION,
+                proposal=None,
+                accepted_coordinate=COORDINATE,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "readmit",
+            SOURCE_ID,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        f"{SOURCE_ID} is already live at the head: every change it carried is accepted; "
+        "closed as answered, nothing to review."
+    ]
+
+
+def test_proposal_list_filters_proposals_awaiting_readmit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str | None] = []
+
+    class StubClient:
+        def list_proposals(self, _instance_id: str, *, status: str | None, **_page: object):
+            seen.append(status)
+            return contracts.ProposalList(
+                coordinate=COORDINATE, status_filter="awaiting_readmit", entries=[]
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "list",
+            "--status",
+            "awaiting_readmit",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == ["awaiting_readmit"]
+
+
+def test_cli_renders_typed_selector_candidates_and_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def readmit_proposal(self, *args: object, **kwargs: object) -> object:
+            raise AssertionError("selector refusal must precede readmission")
+
+        def resolve_proposal_selector(self, _instance_id: str, selector: str):
+            raise ProposalSelectorAmbiguousError(selector, (SOURCE_ID, NEW_ID))
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "readmit",
+            "sha256:11111111",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert SOURCE_ID in result.stderr and NEW_ID in result.stderr
+    assert "Repair: cruxible proposal list" in result.stderr
+
+
+def test_proposal_list_rows_match_the_labelled_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def list_proposals(
+            self,
+            _instance_id: str,
+            *,
+            status: str | None,
+            limit: int | None = None,
+            cursor: str | None = None,
+        ):
+            assert status is None
+            return contracts.ProposalList(
+                coordinate=COORDINATE,
+                status_filter=None,
+                entries=[
+                    contracts.ProposalListEntry(
+                        proposal_id=SOURCE_ID,
+                        actor_id="operator",
+                        target_ref="refs/proposals/operator/open",
+                        admitted_at="2026-09-02T12:00:00.000000Z",
+                        verdict="candidate",
+                        candidate_digest="sha256:" + "4" * 64,
+                        status="open",
+                        terminal_reason=None,
+                    ),
+                    contracts.ProposalListEntry(
+                        proposal_id=NEW_ID,
+                        actor_id="operator",
+                        target_ref="refs/proposals/operator/refused",
+                        admitted_at="2026-09-02T12:01:00.000000Z",
+                        verdict="refused",
+                        candidate_digest=None,
+                        status="settled",
+                        terminal_reason="refused",
+                    ),
+                    contracts.ProposalListEntry(
+                        proposal_id="sha256:" + "9" * 64,
+                        actor_id=None,
+                        target_ref=None,
+                        admitted_at=None,
+                        verdict=None,
+                        status="incomplete",
+                        incomplete_reasons=("missing_admission", "missing_evaluation"),
+                        withdrawal_present=True,
+                    ),
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "list",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[0] == "STATUS  TERMINAL_REASON  PROPOSAL_ID  TARGET_REF  COORDINATE_TIME"
+    assert lines[1].startswith(f"open  -  {SOURCE_ID}  ")
+    assert lines[2].startswith(f"settled  refused  {NEW_ID}  ")
+    assert lines[3] == (
+        "incomplete  missing_admission,missing_evaluation  sha256:" + "9" * 64 + "  -  -"
+    )
+
+
+def _withdraw_result(*, already: bool = False) -> contracts.ProposalWithdrawResult:
+    return contracts.ProposalWithdrawResult(
+        proposal_id=SOURCE_ID,
+        actor_id="operator",
+        reason="its change-set record exceeds the ledger blob ceiling",
+        withdrawn_at="2026-09-08T09:00:00.000000Z",
+        already_withdrawn=already,
+    )
+
+
+def test_withdraw_client_sends_the_reason_it_records() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class StubTransport:
+        def post(self, path, *, json):
+            calls.append((path, json))
+            return httpx.Response(200, json=_withdraw_result().model_dump(mode="json"))
+
+    client = CruxibleClient(base_url="https://playbill.invalid")
+    client._client = StubTransport()  # type: ignore[assignment]
+
+    assert (
+        client.withdraw_proposal(
+            "inst_test",
+            SOURCE_ID,
+            reason="its change-set record exceeds the ledger blob ceiling",
+        )
+        == _withdraw_result()
+    )
+    assert calls == [
+        (
+            f"/api/v1/inst_test/proposals/{SOURCE_ID}/withdraw",
+            {
+                "tag": "playbill-proposal-withdraw-request-v1",
+                "reason": "its change-set record exceeds the ledger blob ceiling",
+            },
+        )
+    ]
+
+
+def test_withdraw_cli_resolves_the_selector_and_reports_the_recorded_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id, selector):
+            assert (instance_id, selector) == ("inst_test", "sha256:11111111")
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def withdraw_proposal(self, instance_id, proposal_id, *, reason, **_control):
+            assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
+            assert reason == "its change-set record exceeds the ledger blob ceiling"
+            return _withdraw_result()
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "withdraw",
+            "sha256:11111111",
+            "--reason",
+            "its change-set record exceeds the ledger blob ceiling",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "target: inst_test @ https://playbill.invalid (explicit)",
+        f"withdrawn  {SOURCE_ID}  2026-09-08T09:00:00.000000Z",
+        "Reason: its change-set record exceeds the ledger blob ceiling",
+    ]
+
+
+def test_withdraw_cli_says_when_the_answer_is_the_earlier_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def resolve_proposal_selector(self, _instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def withdraw_proposal(self, _instance_id, _proposal_id, *, reason, **_control):
+            assert reason == "second thoughts"
+            return _withdraw_result(already=True)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "withdraw",
+            SOURCE_ID,
+            "--reason",
+            "second thoughts",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "(already withdrawn)" in result.output
+    assert "Reason: its change-set record exceeds the ledger blob ceiling" in result.output
+
+
+def _reject_result() -> contracts.ProposalRejectResult:
+    return contracts.ProposalRejectResult(
+        proposal_id=SOURCE_ID,
+        actor_id="reviewer",
+        reason="the query reads the wrong field",
+        rejected_at="2026-09-08T09:00:00.000000Z",
+    )
+
+
+def test_reject_client_and_cli_send_and_report_the_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class StubTransport:
+        def post(self, path, *, json):
+            calls.append((path, json))
+            return httpx.Response(200, json=_reject_result().model_dump(mode="json"))
+
+    client = CruxibleClient(base_url="https://playbill.invalid")
+    client._client = StubTransport()  # type: ignore[assignment]
+    assert (
+        client.reject_proposal("inst_test", SOURCE_ID, reason="the query reads the wrong field")
+        == _reject_result()
+    )
+    assert calls == [
+        (
+            f"/api/v1/inst_test/proposals/{SOURCE_ID}/reject",
+            {
+                "tag": "playbill-proposal-reject-request-v1",
+                "reason": "the query reads the wrong field",
+            },
+        )
+    ]
+
+    class StubClient:
+        def resolve_proposal_selector(self, _instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def reject_proposal(self, instance_id, proposal_id, *, reason, **_control):
+            assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
+            assert reason == "the query reads the wrong field"
+            return _reject_result()
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "reject",
+            "sha256:11111111",
+            "--reason",
+            "the query reads the wrong field",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "target: inst_test @ https://playbill.invalid (explicit)",
+        f"rejected  {SOURCE_ID}  2026-09-08T09:00:00.000000Z",
+        "Reason: the query reads the wrong field",
+    ]
+
+
+def _already_live_wire(**extra: object) -> dict[str, object]:
+    """An already-live readmission as the daemon serves it."""
+
+    return {
+        "tag": "playbill-proposal-readmit-result-v1",
+        "status": "already_live",
+        "source_proposal_id": SOURCE_ID,
+        "operation_digest": OPERATION,
+        "proposal": None,
+        "accepted_coordinate": COORDINATE.model_dump(mode="json"),
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    "wire",
+    [_already_live_wire(), _already_live_wire(reobservations_refused={"claim_not_live": 2})],
+    ids=["no-refusal", "refused"],
+)
+def test_readmit_refusal_counts_round_trip_only_when_present(monkeypatch, wire) -> None:
+    import json
+
+    parsed = contracts.ProposalReadmitResult.model_validate(wire)
+    # A response with no refusals keeps its exact shape; counts are kept when present.
+    assert parsed.model_dump(mode="json") == wire
+
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def readmit_proposal(self, instance_id, proposal_id, **_control):
+            return parsed
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "readmit",
+            SOURCE_ID,
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == wire
+
+
+def test_the_other_refusal_fields_are_omitted_when_empty() -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.recompilation import ProposalRecompiled
+    from cruxible_core.procedures.egress import TerminalEgressChildReceiptV3
+
+    recompiled = ProposalRecompiled(
+        status="already_live",
+        source_proposal_id=SOURCE_ID,
+        members_identical=False,
+        accepted_coordinate=COORDINATE,
+    )
+    assert "reobservations_refused" not in recompiled.model_dump(mode="json")
+    child = TerminalEgressChildReceiptV3(
+        child_index=0,
+        item_key="k",
+        egress_digest=OPERATION,
+        path="claims/c.json",
+        reobserving_capture_digest=NEW_ID,
+        reobserved_at=datetime(2026, 11, 12, tzinfo=UTC),
+    )
+    assert "reobservation_refused" not in child.model_dump(mode="json")
+    refused = child.model_copy(update={"reobservation_refused": "head_moved"})
+    assert refused.model_dump(mode="json")["reobservation_refused"] == "head_moved"

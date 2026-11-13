@@ -1,0 +1,181 @@
+"""Client and HTTP request parity for composed ClaimType migration."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import httpx
+
+from cruxible_client import CruxibleClient
+
+
+def _result() -> dict[str, Any]:
+    return {
+        "tag": "playbill-claim-type-migration-result-v3",
+        "operation_digest": "sha256:" + "1" * 64,
+        "semantic_delta": [],
+        "dependents": [
+            {
+                "identity": {"kind": "Claim", "name": "CLM-" + "2" * 32},
+                "disposition": "retire",
+                "claim_retirement_reason": "was-rescinded",
+            }
+        ],
+        "proposal": {
+            "tag": "playbill-proposal-inspection-v1",
+            "proposal": {},
+            "accepted_coordinate": {
+                "tag": "playbill-accepted-coordinate-v1",
+                "git_oid": "3" * 64,
+                "semantic_root": "sha256:" + "4" * 64,
+                "generation_root": "sha256:" + "5" * 64,
+                "compiler_digest": "sha256:" + "6" * 64,
+            },
+        },
+    }
+
+
+def test_client_posts_the_frozen_migration_request_unchanged() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_result())
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(handler)
+    )
+    request = {
+        "tag": "playbill-claim-type-migration-request-v3",
+        "mode": "submit",
+        "successor": {"predicate": "project.work_item.status"},
+        "dependents": [],
+    }
+
+    result = client.migrate_claim_type("inst", request=request)
+
+    assert result.operation_digest == "sha256:" + "1" * 64
+    assert "lint" not in result.model_dump(mode="json")
+    assert "lint" not in result.proposal.model_dump(mode="json")
+    assert captured[0].url.path == "/api/v1/inst/claim-types/migrations"
+    assert json.loads(captured[0].content) == request
+
+
+def test_client_preserves_migration_lint_without_changing_candidate_fields() -> None:
+    warning = {
+        "code": "cruxible.claim_type.anticipated_source_contract_omitted",
+        "field_path": "$.evidence_admission_policy.rules",
+        "source_id": "corpus.runbook",
+        "contract_identity": "CaptureContract:playbill.foreign-source.corpus.runbook",
+        "contract_digest": "sha256:" + "7" * 64,
+        "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **_result(),
+                "lint": {"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]},
+            },
+        )
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(handler)
+    )
+
+    result = client.migrate_claim_type(
+        "inst",
+        request={
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "submit",
+            "successor": {"predicate": "project.work_item.status"},
+            "dependents": [],
+        },
+    )
+
+    assert result.lint is not None
+    assert [item.model_dump(mode="json") for item in result.lint.warnings] == [warning]
+
+
+def test_client_parses_v3_attributed_retirement_result_and_warning() -> None:
+    warning = {
+        "code": "cruxible.claim_type.invalidation_deprecated",
+        "field_path": "$.dependents[0].disposition",
+        "repair_operation": "cruxible.claim_type.migrate",
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **_result(),
+                "tag": "playbill-claim-type-migration-result-v3",
+                "dependents": [
+                    {
+                        "identity": {"kind": "Claim", "name": "CLM-" + "2" * 32},
+                        "disposition": "retire",
+                        "claim_retirement_reason": "was-wrong",
+                        "claim_effective_until": None,
+                    }
+                ],
+                "warnings": [warning],
+            },
+        )
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.migrate_claim_type(
+        "inst",
+        request={
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "submit",
+            "successor": {"predicate": "project.work_item.status"},
+            "dependents": [],
+        },
+    )
+
+    assert result.tag == "playbill-claim-type-migration-result-v3"
+    assert result.warnings == [warning]
+
+
+def test_client_preserves_named_builtin_proposal_lint() -> None:
+    warning = {
+        "code": "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "field_path": "$.evidence_admission_policy.rules",
+        "source_id": None,
+        "contract_identity": "CaptureContract:available",
+        "contract_digest": "sha256:" + "7" * 64,
+        "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "proposal": _result()["proposal"],
+                "lint": {"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]},
+            },
+        )
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(handler)
+    )
+
+    assert not hasattr(client, "propose_claim_type")
+    result = client.propose_builtin_claim_type(
+        "inst",
+        builtin="semantic.alias",
+        proposal_name="warn",
+    )
+
+    assert result.lint is not None
+    assert [item.model_dump(mode="json") for item in result.lint.warnings] == [warning]

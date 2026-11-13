@@ -1,0 +1,106 @@
+"""Typed service operations for governed QueryDefinition declarations."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from cruxible_client.contracts.errors import ClaimNotFoundError, ProjectionIntegrityError
+from cruxible_client.contracts.query.definitions import (
+    AcceptedQueryDefinition,
+    QueryDefinition,
+    query_definition_digest,
+    query_definition_path,
+)
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
+from cruxible_core.service.authoring.documents import (
+    AcceptedCoordinate,
+)
+
+QUERY_DEFINITION_PATH_PREFIX = "query-definitions/"
+
+
+class _StrictQueryDefinitionServiceModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class QueryDefinitionView(_StrictQueryDefinitionServiceModel):
+    tag: Literal["playbill-query-definition-read-v1"] = "playbill-query-definition-read-v1"
+    coordinate: AcceptedCoordinate
+    path: str
+    name: str
+    identity: str
+    artifact_digest: str
+    envelope: dict[str, object]
+
+
+def _view(
+    query: QueryDefinition,
+    *,
+    path: str,
+    coordinate: AcceptedProjectionCoordinate,
+) -> QueryDefinitionView:
+    from cruxible_client.contracts.query.authored import query_spec_from_definition
+
+    envelope = query.model_dump(mode="json")
+    if getattr(query, "artifact_format") == "cruxible-query-definition-v3":
+        try:
+            envelope = query_spec_from_definition(query).model_dump(
+                mode="json", by_alias=True, exclude_defaults=True
+            )
+        except ValueError:
+            pass
+    return QueryDefinitionView(
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        path=path,
+        name=query.identity.name,
+        identity=query.identity.qualified,
+        artifact_digest=query_definition_digest(query).tagged,
+        envelope=envelope,
+    )
+
+
+def accepted_query_definition(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    coordinate: AcceptedProjectionCoordinate,
+) -> AcceptedQueryDefinition:
+    """Return one accepted QueryDefinition bound to its exact accepted digest."""
+
+    path = query_definition_path(name)
+    identity = f"QueryDefinition:{name}"
+    with instance.bind_accepted_projection(coordinate) as projection:
+        envelope = projection.typed.envelope(identity)
+        if envelope is None:
+            raise ClaimNotFoundError(path)
+        query = projection.typed.source(identity)
+        if not isinstance(query, QueryDefinition):
+            raise ProjectionIntegrityError("accepted QueryDefinition source is absent or invalid")
+        return AcceptedQueryDefinition(
+            path=envelope.path,
+            query=query,
+            artifact_digest=envelope.artifact_digest,
+        )
+
+
+def service_get_playbill_query_definition(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    at: AcceptedCoordinate | None = None,
+) -> QueryDefinitionView:
+    """Return one accepted QueryDefinition, refusing when the name is absent."""
+
+    coordinate = accepted_coordinate_at(instance, at)
+    accepted = accepted_query_definition(instance, name=name, coordinate=coordinate)
+    return _view(accepted.query, path=accepted.path, coordinate=coordinate)
+
+
+__all__ = [
+    "QueryDefinitionView",
+    "accepted_query_definition",
+    "service_get_playbill_query_definition",
+]

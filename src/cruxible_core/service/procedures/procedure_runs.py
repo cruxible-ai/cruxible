@@ -1,0 +1,5576 @@
+"""Served readiness and Procedure / Line execution."""
+
+from __future__ import annotations
+
+import difflib
+import json
+import sqlite3
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from functools import partial
+from pathlib import Path
+from typing import Any, Literal, Protocol, cast, get_args
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import (
+    CanonicalValue,
+    Sha256Value,
+    canonical_bytes,
+    normalize_canonical,
+    typed_digest,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    capture_retention_policy,
+)
+from cruxible_client.contracts.claim_evidence import ClaimsDiagnostic, RunCompleteness
+from cruxible_client.contracts.dependencies import dependency_pins
+from cruxible_client.contracts.errors import (
+    CruxibleError,
+    ExecutionError,
+    ProjectionIntegrityError,
+    ProposalNotFoundError,
+)
+from cruxible_client.contracts.operational_reads import GetRunNode
+from cruxible_client.contracts.procedure_mandates import (
+    PROCEDURE_MANDATE_CLOCK_SKEW,
+    ProcedureMandate,
+    ProcedureMandateAny,
+)
+from cruxible_client.contracts.procedure_mandates import mandate_rung as procedure_mandate_rung
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_IDENTITY,
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicy,
+    procedure_runtime_policy_digest,
+)
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    ACQUISITION_RULES_DIGEST_DOMAIN,
+    AcquisitionInputDecision,
+    AcquisitionRule,
+    LineAcquisitionRule,
+    acquisition_rules_digest,
+    resolve_acquisition_rules,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
+    ProcedureArtifact,
+    ProcedureNodeSupport,
+    ProcedureRunnable,
+    acquisition_keys,
+    procedure_path,
+    procedure_runnability,
+)
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
+from cruxible_client.contracts.procedures.contracts import LINE_RUN_INPUT
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpec,
+    LineSpec,
+    evaluate_line_spec_law,
+    line_identity_digest,
+    line_requested_rung,
+    line_spec_digest,
+    parse_line_spec,
+)
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
+    RepeatBodyNode,
+    RepeatNode,
+    authority_for_rung,
+    caps_budget,
+    required_authority,
+)
+from cruxible_client.contracts.procedures.node_summary import (
+    NODE_RUN_SUMMARY_ADAPTER,
+    RunCounts,
+    run_counts,
+)
+from cruxible_client.contracts.procedures.reads import effective_read_rows
+from cruxible_client.contracts.procedures.results import (
+    InboxPostTruncation,
+    LineOpenProposalOutcome,
+    ProcedureAcquisitionPlan,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureAdmissionRefusal,
+    ProcedureAdmissionRefusalCode,
+    ProcedureBudgetBoundaryObservation,
+    ProcedureBudgetExceededDetail,
+    ProcedureBudgetExhausted,
+    ProcedureBudgetRefusalDetail,
+    ProcedureChildInvocation,
+    ProcedureFailureCause,
+    ProcedureHaltTerminal,
+    ProcedureInternalFailure,
+    ProcedureInternalFailureCode,
+    ProcedureJournalCoordinate,
+    ProcedureNodeRefusal,
+    ProcedureOperationalFailure,
+    ProcedureOperationalFailureCode,
+    ProcedureProviderBinding,
+    ProcedureReplayInputProjection,
+    ProcedureRunAttribution,
+    ProcedureRunBudget,
+    ProcedureRunBudgetObserved,
+    ProcedureRunNodePinSet,
+    ProcedureRunReceipt,
+    ProcedureRunReceiptStatus,
+    ProcedureSelectionDecision,
+    ProcedureSourceCaptureAssociation,
+    ProcedureSourceObservation,
+    ProcedureTerminal,
+    ProcedureTerminalEgress,
+    ProcedureTerminalEgressChild,
+    current_refusal_code,
+    procedure_acquisition_plan_digest,
+    procedure_admission_material_digest,
+    procedure_provider_bindings,
+    procedure_selection_decision_digest,
+)
+from cruxible_client.contracts.procedures.windows import (
+    BoundObservationWindow,
+    CaptureEventNameWindow,
+    LineTriggerBinding,
+    TriggerEventReference,
+)
+from cruxible_client.contracts.provider_execution import (
+    ProcedureDerivedSourceRequest,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationCompleted,
+    ProviderInvocationOutcome,
+    ProviderInvocationReceipt,
+    ProviderInvocationStarted,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReceiptReference,
+    ProviderSecretResolutionPlan,
+    VerifiedProviderBinding,
+    provider_invocation_receipt_digest,
+    provider_secret_binding_identity_digest,
+)
+from cruxible_client.contracts.provider_operations import LineBinding
+from cruxible_client.contracts.provider_registration import DeclaredOperation
+from cruxible_client.contracts.providers import (
+    AcceptedProvider,
+    ProviderV2,
+)
+from cruxible_client.contracts.repairs import (
+    RUNNABLE_REFUSAL_REPAIRS,
+    RepairOperation,
+    served_repair_for_refusal,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    InvestigationBinding,
+    ResolutionContractReference,
+)
+from cruxible_client.contracts.shapes import Contract, ContractRef
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.triggers import (
+    AcceptedTrigger,
+    CaptureLandingSchedule,
+    GenerationAcceptedSchedule,
+    Trigger,
+    WindowCloseSchedule,
+    schedule_is_timed,
+)
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceipt,
+    source_read_receipt_digest,
+)
+from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
+from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.documents.workspace_file import WorkspaceFileReader
+from cruxible_core.errors import PermissionDeniedError
+from cruxible_core.exhaust import (
+    PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+    JournalStreamIdentityV1,
+    LocalJournalBackend,
+)
+from cruxible_core.exhaust.line_inbox import LineInboxStore
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
+from cruxible_core.exhaust.records import (
+    JournalEventKindV1,
+    StoredProcedureJournalRecordV1,
+)
+from cruxible_core.exhaust.writer import ProcedureExhaustWriter
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import KeyRules
+from cruxible_core.indexes.typed_state import ProcedureInventoryRow, utc_microseconds
+from cruxible_core.procedures.acquisition import (
+    ACQUISITION_OVERSIZED,
+    ACQUISITION_REFUSED,
+)
+from cruxible_core.procedures.claims_context import AcceptedClaimsContext
+from cruxible_core.procedures.egress import (
+    EPHEMERAL_RUN_RUNG_CEILING,
+    SERVED_AUTHORITY_TERMS,
+    CaptureTerminalEgressSink,
+    PreparedTerminalEgressV1,
+    TerminalEgressError,
+    TerminalEgressReceiptV1,
+    TerminalEgressRequestV1,
+    compute_effective_rung,
+    compute_ephemeral_run_effective_rung,
+)
+from cruxible_core.procedures.execution import (
+    PROCEDURE_RUN_RECEIPT_DOMAIN,
+    AcceptedStateRunMaterial,
+    LandedCaptureRunMaterialV1,
+    PreparedProcedureRun,
+    ProcedureBoundaryRefused,
+    ProcedureClockProtocol,
+    ProcedureNodePinSetV1,
+    ProcedureRunAdmission,
+    ProcedureRunReceiptV1,
+    ProcedureRuntimePolicyAbsent,
+    ProviderRuntimeInvokerProtocol,
+    SystemProcedureClock,
+    bind_accepted_state_materials,
+    bind_line_admission_runtime_policy,
+    bind_prepared_investigation,
+    capture_admission_material_member,
+    empty_admission_material_manifest,
+    parse_admission_payload,
+    prepare_direct_procedure_run,
+    procedure_line_journal_stream,
+    procedure_line_partition,
+    procedure_node_pin_sets,
+    procedure_pin_set_digest,
+    procedure_replay_input_vector,
+    procedure_run_declared_budget,
+    resolve_procedure_resource_budget,
+    run_value_digest,
+    seal_procedure_run_admission,
+    verify_line_admission_spec,
+)
+from cruxible_core.procedures.inbox_delivery import InboxTerminalEgressSink
+from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
+from cruxible_core.procedures.proposal_delivery import (
+    ProposalTerminalEgressSink,
+)
+from cruxible_core.procedures.reference_binding import (
+    authored_procedure,
+    bind_procedure_references,
+    resolved_pin,
+)
+from cruxible_core.procedures.terminal_dependencies import (
+    AcquisitionInputOutcomeV1,
+    CaptureRootCache,
+    TerminalItemDependencyManifestV1,
+)
+from cruxible_core.providers.provider_local_runtime import (
+    ProviderLocalRuntimeRefused,
+    translate_provider_budget,
+)
+from cruxible_core.providers.provider_outcomes import map_provider_refusal
+from cruxible_core.providers.provider_process_leases import (
+    PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+)
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
+from cruxible_core.runtime.permissions import PermissionMode, get_capability_ceiling
+from cruxible_core.runtime.request_scope import projection_request
+from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
+from cruxible_core.service.procedures.procedures import (
+    PlaybillProcedureStateTapReader,
+    service_execute_direct_procedure,
+)
+from cruxible_core.service.procedures.resolution_contracts import (
+    TriggerCaptureRefused,
+    bind_investigation,
+    bind_window,
+    capture_event_time,
+    require_current_investigation,
+)
+from cruxible_core.service.read_refusals import nearest as read_nearest
+from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.material_reservations import (
+    ProcedureMaterialReservationStore,
+    ReservedCaptureStore,
+    reserve_admission_material_body,
+)
+from cruxible_core.triggers.cadence import timer_due
+
+PROCEDURE_RUN_STREAM_ID = "procedures"
+PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
+DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
+
+
+class _StrictProcedureSurfaceModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProcedureSurfaceError(CruxibleError):
+    """A served Procedure/Line surface refusal the caller can repair.
+
+    Every subclass is a REQUEST fault, never a daemon fault, so the served
+    envelope carries a 4xx status. ``error_code`` names the closed vocabulary
+    member the refusal belongs to, so the envelope carries the same code a
+    refusal detail would and the repair resolves out of the served catalog
+    instead of a class name.
+    """
+
+    code = "cruxible.procedure.refused"
+    error_code: str | None = None
+    http_status = 400
+
+
+class ProcedureNotFound(ProcedureSurfaceError):
+    """No accepted Procedure has this name; names the nearest live ones."""
+
+    code = "cruxible.procedure.not_found"
+    http_status = 404
+
+    def __init__(self, name: str, *, nearest: tuple[str, ...] = ()) -> None:
+        self.name = name
+        self.nearest = nearest
+        self.repair = RepairOperation(
+            operation="cruxible.orient", arguments={"section": "procedures"}
+        )
+        hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
+        super().__init__(
+            f"{self.code}: no accepted Procedure named {name!r}{hint}; run "
+            "`cruxible orient --section procedures` for every accepted Procedure"
+        )
+
+    @classmethod
+    def among(cls, name: str, inventory: Iterable[ProcedureInventoryRow]) -> ProcedureNotFound:
+        """The refusal for ``name``, naming the nearest live Procedures in ``inventory``."""
+
+        live = (
+            row.identity.removeprefix("Procedure:") for row in inventory if row.lifecycle == "live"
+        )
+        return cls(name, nearest=read_nearest(name, live))
+
+
+class ProcedureRetired(ProcedureSurfaceError):
+    code = "cruxible.procedure.retired"
+
+
+class ProcedureRunNotCurrent(ProcedureSurfaceError):
+    code = "cruxible.procedure.run.not_current"
+
+
+class ProcedureRunNotFound(ProcedureSurfaceError):
+    code = "cruxible.procedure.run.not_found"
+    http_status = 404
+
+
+class ProcedureRunRecoveryRequired(ProcedureSurfaceError):
+    code = "cruxible.procedure.run.recovery_required"
+
+
+class LineRunNotAccepted(ProcedureSurfaceError):
+    code = "cruxible.line.run.line_not_accepted"
+    error_code = "line_not_accepted"
+    http_status = 404
+
+
+class LineNeverEnabled(ProcedureSurfaceError):
+    """A Line read found no enablement, current or past."""
+
+    code = "cruxible.line.never_enabled"
+    error_code = "cruxible.line.never_enabled"
+    http_status = 404
+
+    def __init__(self, line: str) -> None:
+        super().__init__(
+            f"{self.code}: Line {line!r} has never been enabled; enable it with "
+            f"`cruxible line enable {line}`"
+        )
+        self.repair = RepairOperation(operation="cruxible.line.enable", arguments={"line": line})
+
+
+class LineMandateRequired(ProcedureSurfaceError):
+    """Enabling a Line that can propose or settle when no mandate covers it."""
+
+    code = "cruxible.line.mandate_required"
+    error_code = "line_mandate_required"
+    http_status = 409
+
+    def __init__(self, line: str, procedure: str) -> None:
+        super().__init__(
+            f"{self.code}: Line {line!r} can propose or settle, and Procedure {procedure!r} "
+            "has no current accepted ProcedureMandate, so every run would refuse; author "
+            "and accept one (`cruxible authoring example procedure-mandate`) "
+            "before enabling"
+        )
+        self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]
+
+
+#: A caller rung is ``PermissionMode.value - 1``: 0 read-only, 1 governed write.
+_CALLER_RUNG_MODES = ("READ_ONLY", "GOVERNED_WRITE", "GRAPH_WRITE", "ADMIN")
+#: A run that can propose or settle writes governed state, so it needs this rung.
+GOVERNED_RUN_CALLER_RUNG = 1
+
+
+def run_permission_rung(target_rung: int) -> int:
+    """The caller rung a run needs: governed write if it can propose or settle.
+
+    Every run also retains its journal and Captures, so on a daemon whose
+    capability ceiling is read-only every run needs governed write, which that
+    ceiling refuses (an observe-only run included).
+    """
+
+    if target_rung > 1 or get_capability_ceiling() < PermissionMode.GOVERNED_WRITE:
+        return GOVERNED_RUN_CALLER_RUNG
+    return 0
+
+
+def require_run_permission(tool_name: str, *, target_rung: int, caller_rung: int) -> None:
+    """Refuse a caller whose tier cannot do what the run it asks for can do.
+
+    The tier follows the target, not the tool: an observe-only Line or
+    Procedure runs at read-only, and one whose terminals propose or settle
+    needs governed write, whichever door triggers it. Under a read-only
+    capability ceiling every run refuses.
+    """
+
+    required = run_permission_rung(target_rung)
+    if caller_rung < required:
+        raise PermissionDeniedError(
+            tool_name,
+            _CALLER_RUNG_MODES[max(caller_rung, 0)],
+            _CALLER_RUNG_MODES[required],
+        )
+
+
+def line_run_target_rung(instance: PlaybillInstance, reference: str) -> int:
+    """What a run of this live Line can do, read at the current head."""
+
+    coordinate = instance.accepted_coordinate()
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=coordinate, reference=reference
+    )
+    accepted = _accepted_procedure(
+        instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+    )
+    return line_authority_rung(accepted_line, accepted)
+
+
+def procedure_run_target_rung(
+    instance: PlaybillInstance, name: str, at: AcceptedCoordinate | None
+) -> int:
+    """What a direct run of this Procedure can do: its terminal capability."""
+
+    accepted = _accepted_procedure(
+        instance, name=name, coordinate=accepted_coordinate_at(instance, at)
+    )
+    return int(accepted.procedure.definition.terminal_capability)
+
+
+def require_line_mandate(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    now: datetime,
+) -> None:
+    """Refuse up front when a Line that needs a mandate has none covering it."""
+
+    accepted = _accepted_procedure(
+        instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+    )
+    if line_authority_rung(accepted_line, accepted) <= 1:
+        return
+    if not _accepted_line_mandates(
+        instance,
+        accepted_line.line.identity,
+        accepted_line.artifact_digest,
+        coordinate=coordinate,
+        evaluation_time=now,
+    ):
+        raise LineMandateRequired(
+            accepted_line.line.identity.name, accepted.procedure.identity.name
+        )
+
+
+class LineRunIdentityMismatch(ProcedureSurfaceError):
+    code = "cruxible.line.run.line_identity_mismatch"
+    error_code = "line_identity_mismatch"
+
+
+class LineRunEvaluationInstantSkewed(ProcedureSurfaceError):
+    code = "cruxible.line.run.evaluation_instant_skewed"
+    error_code = "evaluation_instant_skewed"
+
+
+class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
+    #: ``line`` names a Procedure only a Line runs: ``line run`` one of its Lines.
+    kind: Literal["run", "line", "retry", "done", "terminal"]
+
+
+class ProviderRuntimeOperatorProtocol(Protocol):
+    def invoker_for(
+        self,
+        instance: PlaybillInstance,
+        *,
+        accepted_oid: str,
+        pins: Sequence[ArtifactPin] = (),
+    ) -> ProviderRuntimeInvokerProtocol: ...
+
+    def admit_line_provider(
+        self,
+        accepted_provider: AcceptedProvider,
+        operation: DeclaredOperation,
+        implementation_digest: str,
+        *,
+        eligible_environment_pin_keys: tuple[str, ...],
+    ) -> VerifiedProviderBinding: ...
+
+
+class ProcedureReadinessRequestV1(_StrictProcedureSurfaceModel):
+    tag: Literal["playbill-procedure-readiness-request-v1"] = (
+        "playbill-procedure-readiness-request-v1"
+    )
+    at: AcceptedCoordinate | None = None
+
+
+class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
+    """How one accepted Procedure can run: the one runnability answer, with its artifact."""
+
+    tag: Literal["playbill-procedure-readiness-result-v2"] = (
+        "playbill-procedure-readiness-result-v2"
+    )
+    coordinate: AcceptedCoordinate
+    procedure_identity: ArtifactIdentity
+    #: The Procedure's artifact digest, named as every other kind's proof names it.
+    artifact_digest: str
+    definition_digest: str
+    artifact: ProcedureArtifact
+    #: The governed Contracts the boundaries pin, with the Contracts they nest.
+    contracts: tuple[Contract, ...] = ()
+    runnable: ProcedureRunnable
+    unsupported_nodes: tuple[ProcedureNodeSupport, ...]
+    next_operation: ProcedureNextOperationV1
+
+
+class ProcedureRunRequest(_StrictProcedureSurfaceModel):
+    resolution_contract: ResolutionContractReference | None = None
+    trigger_event: TriggerEventReference | None = None
+    tag: Literal["playbill-procedure-run-request-v2"] = "playbill-procedure-run-request-v2"
+    at: AcceptedCoordinate | None = None
+    evaluation_time: datetime | None = None
+    bindings: ProcedureBindings = Field(
+        default_factory=dict,
+        description=(
+            "Slot -> 'provider[/build][#operation]'; an invoked child's slot is "
+            "'<invoke node>.<slot>'. Omitted slots are fitted when the run is admitted."
+        ),
+    )
+    acquisition: dict[str, LineAcquisitionRule] = Field(
+        default_factory=dict,
+        description=(
+            "Per capture output <alias>.<field> (an invoked child's: <invoke node "
+            "path>.<alias>.<field>): {max_age, on_unavailable, ...}. The direct run's "
+            "ephemeral Line spec carries them; one left out runs under the core default."
+        ),
+    )
+    parameters: dict[str, object] = Field(
+        default_factory=dict,
+        description=(
+            "The run's Procedure parameter values (its ephemeral Line spec's), over the "
+            "Procedure's parameter_defaults; checked against its params Contract."
+        ),
+    )
+    input: object
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _parameters(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
+
+    @field_validator("input", mode="before")
+    @classmethod
+    def _input(cls, value: object) -> CanonicalValue:
+        return normalize_canonical(value)
+
+
+class LineRunRequest(_StrictProcedureSurfaceModel):
+    """One manual run of an accepted Line, now: never a Trigger's occurrence.
+
+    The run uses the Line's own inputs, budgets, authority ceiling and mandate
+    and is recorded on its history. ``event`` is the retained Capture event a
+    Line whose Procedure takes an event input runs on; one the enabled Line
+    already admitted refuses unless ``repeat`` says to run it again.
+    """
+
+    tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
+    resolution_contract: ResolutionContractReference | None = None
+    event: TriggerEventReference | None = None
+    repeat: bool = Field(
+        default=False,
+        description="Run on an event the enabled Line already admitted, deliberately again.",
+    )
+    line: str
+    occurrence_id: str | None = None
+    evaluation_time: datetime | None = Field(
+        default=None,
+        description=(
+            "Reads EVALUATION INSTANT. An assertion only: the occurrence's instant "
+            "is the daemon clock's, and an assertion outside the ProcedureMandate "
+            "skew bound refuses."
+        ),
+    )
+    parameters: dict[str, object] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Per-run values over the Line's parameters (checked against the Procedure's "
+            "params Contract). A run whose parameters differ from the Line's runs without "
+            "the Line's mandate: it may propose, never settle. Triggers always run on the "
+            "Line's own parameters."
+        ),
+    )
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _parameters(cls, value: object) -> object:
+        return None if value is None else normalize_canonical(value)
+
+    @field_validator("line")
+    @classmethod
+    def _line(cls, value: str) -> str:
+        if value.startswith("sha256:"):
+            Sha256Value.from_tagged(value)
+        else:
+            ArtifactIdentity(kind="Line", name=value.removeprefix("Line:"))
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
+
+
+PROCEDURE_RUN_CONFIG_PATH = Path("daemon/procedure-runs.json")
+
+
+class ProcedureRunOperationalConfigV1(_StrictProcedureSurfaceModel):
+    """One daemon's operational bounds for served Procedure and Line runs.
+
+    Operational, not wire: an operator whose hosts keep looser time than the
+    ratified default widens this bound in the daemon's own state root, and no
+    caller can read or move it. The default is the ProcedureMandate skew the
+    bound protects.
+    """
+
+    tag: Literal["cruxible-procedure-run-operational-config-v1"] = (
+        "cruxible-procedure-run-operational-config-v1"
+    )
+    evaluation_instant_skew_seconds: float = Field(
+        default=PROCEDURE_MANDATE_CLOCK_SKEW.total_seconds(),
+        gt=0,
+        description="Reads VALIDITY WINDOW.",
+    )
+
+    @property
+    def evaluation_instant_skew(self) -> timedelta:
+        return timedelta(seconds=self.evaluation_instant_skew_seconds)
+
+
+def load_procedure_run_config(state_root: Path) -> ProcedureRunOperationalConfigV1:
+    """Read one daemon state root's served-run bounds, or the ratified defaults.
+
+    An absent file is the default configuration. A file that exists and cannot
+    be read as one is a daemon fault, not a caller's: it refuses loudly rather
+    than falling back, or an operator's typo would silently restore a bound the
+    operator meant to move.
+    """
+
+    path = state_root / PROCEDURE_RUN_CONFIG_PATH
+    if not path.exists():
+        return ProcedureRunOperationalConfigV1()
+    if path.is_symlink() or not path.is_file():
+        raise ExecutionError(
+            f"daemon procedure-run config is not a regular file: {PROCEDURE_RUN_CONFIG_PATH}"
+        )
+    try:
+        return ProcedureRunOperationalConfigV1.model_validate(json.loads(path.read_bytes()))
+    except (OSError, ValueError, ValidationError) as exc:
+        raise ExecutionError(
+            f"daemon procedure-run config is malformed: {PROCEDURE_RUN_CONFIG_PATH}"
+        ) from exc
+
+
+class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
+    capture_event: TriggerEventReference | None = None
+    sequence: int = Field(ge=1)
+    event_kind: str
+    node_id: str | None = None
+    payload_digest: str
+
+
+class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
+    investigation: InvestigationBinding | None = None
+    trigger_binding: LineTriggerBinding | None = None
+    tag: Literal["playbill-procedure-run-state-v2"] = "playbill-procedure-run-state-v2"
+    run_id: str | None
+    procedure_identity: ArtifactIdentity
+    procedure_artifact_digest: str
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    evaluation_time: datetime
+    status: Literal[
+        "running",
+        "succeeded",
+        "admission_refused",
+        "node_refused",
+        "operational_failed",
+        "internal_failed",
+        "halted",
+    ]
+    pending_inputs: tuple[str, ...]
+    outcomes: tuple[ProcedureRunOutcomeV1, ...]
+    next_operation: ProcedureNextOperationV1
+    result: object | None = None
+    attribution: ProcedureRunAttribution | None = None
+    semantic_replay_key_digest: str | None = None
+    semantic_result_digest: str | None = None
+    receipt: ProcedureRunReceipt | None = None
+    receipt_digest: str | None = None
+    terminal: ProcedureTerminal | None = None
+    children: tuple[ProcedureChildInvocation, ...] = ()
+    source_observations: tuple[ProcedureSourceObservation, ...] = ()
+    terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
+    findings: tuple[ClaimsDiagnostic, ...] = ()
+    findings_count: int = Field(default=0, ge=0)
+    completeness: RunCompleteness | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: Every node that finished, in journal order, with its run summary.
+    nodes: tuple[GetRunNode, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: A finished run's counts: written/settled/proposed, refused (top codes),
+    #: inbox postings and completeness. ``status`` says it finished; this says
+    #: what it achieved.
+    counts: RunCounts | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @property
+    def coordinate(self) -> AcceptedCoordinate:
+        return self.bound_coordinate
+
+
+def run_node(payload: object, *, sequence: int) -> GetRunNode:
+    """One ``node_fired`` record as a served node: its id, kind, verdict and summary.
+
+    The one reading of a ``node_fired`` payload, for the run card and the run
+    state alike. A record written before summaries were journaled has none.
+    """
+
+    values = payload if isinstance(payload, Mapping) else {}
+    summary = values.get("summary")
+    return GetRunNode(
+        node=str(values.get("node_id", "?")),
+        kind=None if values.get("kind") is None else str(values["kind"]),
+        verdict=None if values.get("verdict") is None else str(values["verdict"]),
+        sequence=sequence,
+        summary=None if summary is None else NODE_RUN_SUMMARY_ADAPTER.validate_python(summary),
+    )
+
+
+def accepted_key_rules(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> KeyRules:
+    """R12/D4: the SubjectKind identity rules (and key ClaimTypes) at this run's coordinate.
+
+    Like the enum and Contract resolvers, it reads the admitted (immutable)
+    coordinate, so a replay canonicalizes every key exactly as the run did.
+    """
+
+    from cruxible_client.contracts.claim_types import ClaimType
+    from cruxible_client.contracts.subject_kinds import SubjectKind
+
+    def read(identity: str) -> object:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            return projection.typed.source(identity)
+
+    def subject_kind(kind: str) -> SubjectKind | None:
+        value = read(f"SubjectKind:{kind}")
+        return value if isinstance(value, SubjectKind) else None
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        value = read(f"ClaimType:{predicate}")
+        return value if isinstance(value, ClaimType) else None
+
+    return BoundedKeyRules(subject_kind, claim_type)
+
+
+class BoundedKeyRules(KeyRules):
+    """A run's key rules: a canonical key part must also be a value its key ClaimType holds.
+
+    A key part outside its key ClaimType's declared value type (too long, out of
+    range) names no Subject that can exist: its key Claim would be refused at
+    publication. A run refuses it where it reads it (``KeyPartOutOfBounds``), so
+    an extract refuses that one record, ``key_part_out_of_bounds`` (D-R40).
+    """
+
+    def canonical(self, subject_kind: str, part: str | None, value: object) -> object:
+        from cruxible_client.contracts.shapes import FieldInvalid, KeyPartOutOfBounds, check_value
+        from cruxible_client.contracts.subject_kinds import key_predicate
+
+        canonical = super().canonical(subject_kind, part, value)
+        declared = self.kind(subject_kind)
+        assert declared is not None  # the canonical read refuses an undeclared kind
+        if part is not None:
+            parts: Mapping[str, object] = {part: canonical}
+        elif isinstance(canonical, Mapping):
+            parts = canonical
+        else:
+            parts = {declared.keys[0].removeprefix(subject_kind + "."): canonical}
+        for name, part_value in parts.items():
+            predicate = key_predicate(declared, name)
+            definition = None if predicate is None else self.claim_type(predicate)
+            if definition is None:
+                continue
+            # A problem only: no result is allocated for a part that holds.
+            checked = check_value(
+                part_value, definition.value, at="", field=name, _problem_only=True
+            )
+            if isinstance(checked, FieldInvalid):
+                raise KeyPartOutOfBounds(
+                    f"{predicate}: {checked.problem.code} for its declared value type"
+                )
+        return canonical
+
+    def rule_token(self, subject_kind: str) -> object:
+        """The identity rules, and each key ClaimType's value type the bound reads."""
+
+        from cruxible_client.contracts.shapes import render_type
+
+        declared = self.kind(subject_kind)
+        token = super().rule_token(subject_kind)
+        if declared is None:
+            return token
+        return {
+            "rules": token,
+            "bounds": {
+                predicate: None
+                if (definition := self.claim_type(predicate)) is None
+                else render_type(definition.value)
+                for predicate in declared.keys
+            },
+        }
+
+
+def accepted_contract_resolver(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> Callable[[ContractRef], Contract | None]:
+    """An extract's row Contract, and any Contract it nests, at this run's coordinate.
+
+    A Contract resolves by name and version and must reproduce the digest its
+    reference pins; the coordinate is immutable once admitted, so a replay
+    resolves the same Contracts.
+    """
+
+    from cruxible_client.contracts.shapes import contract_digest, contract_identity
+
+    found: dict[tuple[str, int], tuple[Contract, str] | None] = {}
+
+    def resolve(ref: ContractRef) -> Contract | None:
+        key = (ref.name, ref.version)
+        if key not in found:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                value = projection.typed.source(contract_identity(ref.name, ref.version).qualified)
+            # The digest is computed once per version, not once per nested value.
+            found[key] = (
+                (value, contract_digest(value).tagged) if isinstance(value, Contract) else None
+            )
+        entry = found[key]
+        if entry is None or (ref.digest is not None and entry[1] != ref.digest):
+            return None
+        return entry[0]
+
+    return resolve
+
+
+def _accepted_procedure(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    coordinate: AcceptedProjectionCoordinate,
+    allow_retired: bool = False,
+    bind_references: bool = False,
+    bindings: Mapping[str, LineBinding] | None = None,
+    requested_bindings: Mapping[str, str] | None = None,
+) -> AcceptedProcedure:
+    """One accepted Procedure, optionally bound into its execution plan.
+
+    ``bindings`` holds each slot's exact ``{build, operation}`` (a Line's, by
+    its own slot names). ``requested_bindings`` are a direct run's caller
+    choices (``provider[/build][#operation]``), resolved -- and any slot left
+    out fitted -- at this coordinate into the run's ephemeral spec. Run
+    admission never refits a Line's slots.
+    """
+
+    path = procedure_path(name)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        envelope = projection.typed.envelope(f"Procedure:{name}")
+        if envelope is None:
+            raise ProcedureNotFound.among(name, projection.typed.procedure_inventory())
+        procedure = projection.typed.source(envelope.identity)
+        assert procedure is not None
+        if procedure.lifecycle.state == "retired" and not allow_retired:
+            raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
+        accepted = AcceptedProcedure(
+            path=path, procedure=procedure, artifact_digest=envelope.artifact_digest
+        )
+        if not bind_references:
+            return accepted
+
+        def lookup(identity: ArtifactIdentity) -> tuple[Any, str] | None:
+            row = projection.typed.envelope(identity.qualified)
+            source = projection.typed.source(identity.qualified)
+            return None if row is None or source is None else (source, row.artifact_digest)
+
+        selected = dict(bindings or {})
+        if bindings is None:
+            from cruxible_client.contracts.procedures.line_specs import (
+                provisional_slot_signatures,
+            )
+            from cruxible_core.capabilities.lookup import capability_in_projection
+            from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+            from cruxible_core.providers.operation_index import resolve_slot_bindings
+
+            selected = resolve_slot_bindings(
+                projection.typed.connection,
+                provisional_slot_signatures(
+                    dict(procedure.definition.slots),
+                    lambda ref: capability_in_projection(projection, ref),
+                    builtin=builtin_slot_signatures(),
+                ),
+                dict(requested_bindings or {}),
+            )
+        return bind_procedure_references(accepted, lookup=lookup, bindings=selected)
+
+
+def direct_run_slot_bindings(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    coordinate: AcceptedProjectionCoordinate,
+    requested: Mapping[str, str],
+) -> dict[str, LineBinding]:
+    """A direct run's ephemeral bindings for every slot, its invoked children's included."""
+
+    from cruxible_core.capabilities.lookup import capability_in_projection
+    from cruxible_core.providers.operation_index import line_slot_map, resolve_slot_bindings
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        procedure = projection.typed.source(f"Procedure:{name}")
+        if procedure is None:
+            raise ProcedureNotFound.among(name, projection.typed.procedure_inventory())
+
+        def child(identity: ArtifactIdentity) -> Any:
+            source = projection.typed.source(identity.qualified)
+            return None if source is None else source.definition
+
+        return resolve_slot_bindings(
+            projection.typed.connection,
+            line_slot_map(
+                procedure.definition,
+                child,
+                lambda ref: capability_in_projection(projection, ref),
+            ),
+            requested,
+        )
+
+
+def _line_shape_at(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    accepted: AcceptedProcedure,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Every slot a Line over ``accepted`` binds and every capture output it may rule."""
+
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_capture_outputs,
+        line_slot_signatures,
+    )
+    from cruxible_core.capabilities.lookup import capability_in_projection
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+    from cruxible_core.providers.operation_index import line_child_definitions
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+
+        def child(identity: ArtifactIdentity) -> Any:
+            source = projection.typed.source(identity.qualified)
+            return None if source is None else source.definition
+
+        definition = authored_procedure(accepted).definition
+        children = line_child_definitions(definition, child)
+        slots = line_slot_signatures(
+            definition,
+            capabilities=lambda ref: capability_in_projection(projection, ref),
+            builtin=builtin_slot_signatures(),
+            child=children,
+        )
+    return slots, line_capture_outputs(definition, child=children)
+
+
+def _accepted_runtime_policy(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> ProcedureRuntimePolicy:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        policy = projection.typed.source(PROCEDURE_RUNTIME_POLICY_IDENTITY)
+        if policy is None:
+            raise ProcedureRuntimePolicyAbsent(
+                "procedure_runtime_policy_absent: seed ProcedureRuntimePolicy before Line admission"
+            )
+        if not isinstance(policy, ProcedureRuntimePolicy):
+            raise ProjectionIntegrityError("accepted ProcedureRuntimePolicy source is invalid")
+        return policy
+
+
+def _line_reference_digest(reference: str) -> str:
+    return (
+        reference
+        if reference.startswith("sha256:")
+        else line_identity_digest(
+            ArtifactIdentity(kind="Line", name=reference.removeprefix("Line:"))
+        )
+    )
+
+
+def _accepted_line_by_reference(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    reference: str,
+    allow_retired: bool = False,
+) -> AcceptedLineSpec:
+    """The accepted Line a reference names: live, or also retired where a caller reads or
+    stops one (disable, the Line card, the listener stopping a retired Line's enablement)."""
+
+    identity_digest = _line_reference_digest(reference)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        matches = projection.typed.connection.execute(
+            "SELECT identity,path,artifact_digest FROM lines WHERE identity_digest=? AND "
+            + ("lifecycle IN ('live','retired')" if allow_retired else "lifecycle='live'"),
+            (identity_digest,),
+        ).fetchall()
+        if len(matches) != 1:
+            live = sorted(
+                str(row[0]).removeprefix("Line:")
+                for row in projection.typed.connection.execute(
+                    "SELECT identity FROM lines WHERE lifecycle='live'"
+                ).fetchall()
+            )
+            shown = reference.removeprefix("Line:")
+            if projection.typed.connection.execute(
+                "SELECT 1 FROM lines WHERE identity_digest=? AND lifecycle='retired'",
+                (identity_digest,),
+            ).fetchone():
+                raise LineRunNotAccepted(
+                    f"{LineRunNotAccepted.code}: Line {shown!r} is retired; nothing runs it "
+                    "(get and disable still read it)"
+                )
+            nearest = difflib.get_close_matches(shown, live, n=3, cutoff=0.6)
+            listed = ", ".join(live[:20]) + (
+                f", and {len(live) - 20} more" if len(live) > 20 else ""
+            )
+            raise LineRunNotAccepted(
+                f"{LineRunNotAccepted.code}: no live accepted Line named {shown!r}"
+                + (f"; nearest: {', '.join(nearest)}" if nearest else "")
+                + (f"; accepted Lines: {listed}" if live else "; no Line is accepted")
+            )
+        identity, path, digest = matches[0]
+        line = projection.typed.source(identity)
+        assert isinstance(line, LineSpec)
+        return AcceptedLineSpec(path=path, line=line, artifact_digest=digest)
+
+
+def line_triggers(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> tuple[AcceptedTrigger, ...]:
+    """Every live Trigger aimed at this Line at one coordinate, in identity order."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.typed.connection.execute(
+            "SELECT identity,path,artifact_digest FROM triggers "
+            "WHERE target_kind='line' AND target=? AND lifecycle='live' ORDER BY identity",
+            (accepted_line.line.identity.qualified,),
+        ).fetchall()
+        triggers = []
+        for identity, path, digest in rows:
+            trigger = projection.typed.source(identity)
+            assert isinstance(trigger, Trigger)
+            triggers.append(AcceptedTrigger(path=path, trigger=trigger, artifact_digest=digest))
+    return tuple(triggers)
+
+
+# Per instance root and Trigger version: the instant that version was accepted.
+_TRIGGER_ACCEPTED_AT: OrderedDict[tuple[str, str], datetime] = OrderedDict()
+_TRIGGER_ACCEPTED_AT_CAPACITY = 4096
+
+
+def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTrigger) -> datetime:
+    """When this exact Trigger version was accepted: the floor of every instant it fires.
+
+    No Trigger fires retroactively, so its timer starts here and a successor's
+    starts again from its own acceptance. Accepted history is immutable, so the
+    instant is read once per version.
+    """
+
+    key = (str(instance.root), trigger.artifact_digest)
+    cached = memo_get(_TRIGGER_ACCEPTED_AT, key)
+    if cached is not None:
+        return cached
+    with instance.accepted_history_reader() as history:
+        occurrence = history.artifact(
+            trigger.artifact_digest, identity=trigger.trigger.identity.qualified
+        )
+        if occurrence is None:
+            raise ExecutionError("Trigger version has no accepted occurrence")
+        generation = history.generation(occurrence.occurrence_sequence)
+    accepted_at = instance.accepted_evaluation_time(generation.git_oid)
+    memo_put(_TRIGGER_ACCEPTED_AT, key, accepted_at, capacity=_TRIGGER_ACCEPTED_AT_CAPACITY)
+    return accepted_at
+
+
+def line_trigger_pins(triggers: tuple[AcceptedTrigger, ...]) -> dict[str, str]:
+    """The exact Trigger versions one arm or pending occurrence is bound to."""
+
+    return {item.trigger.identity.qualified: item.artifact_digest for item in triggers}
+
+
+def _trigger_reference(reference: str) -> str:
+    return "Trigger:" + reference.removeprefix("Trigger:")
+
+
+class LineTriggerMismatch(ExecutionError):
+    """A run names a Trigger that does not aim at the Line, or names none when some do."""
+
+
+class LineTriggersChanged(ExecutionError):
+    """The Triggers aimed at a Line differ at admission from the set an arm pinned."""
+
+
+class LineVersionChanged(ExecutionError):
+    """The accepted Line differs at admission from the version its pending binding pinned."""
+
+
+@contextmanager
+def _line_admission_head_gate(
+    instance: PlaybillInstance,
+    *,
+    accepted_line: AcceptedLineSpec,
+    coordinate: AcceptedProjectionCoordinate,
+    expected_line_artifact_digest: str | None,
+    expected_trigger_pins: dict[str, str] | None,
+    arm_gate: Callable[[], AbstractContextManager[None]] | None,
+) -> Iterator[None]:
+    """Record a Line admission only while accepted main is still the run's coordinate.
+
+    Everything the run validated -- the Line version and the complete Trigger set
+    aimed at it -- was read at `coordinate`. The executor enters this gate around
+    the admission append, so holding main still across the comparison and the
+    append leaves no window for an acceptance to change either between the last
+    check and the admission record. A moved head is classified after the hold is
+    released: a changed pin set or Line version stops an arm that pinned it,
+    anything else is the ordinary not-current refusal.
+    """
+
+    with arm_gate() if arm_gate is not None else nullcontext():
+        with instance.holding_accepted_head() as head:
+            if head == coordinate.git_oid:
+                yield
+                return
+    current = instance.accepted_coordinate()
+    try:
+        moved = _accepted_line_by_reference(
+            instance,
+            coordinate=current,
+            reference=line_identity_digest(accepted_line.line.identity),
+        )
+    except LineRunNotAccepted:
+        moved = None
+    if expected_trigger_pins is not None and (
+        moved is None
+        or line_trigger_pins(line_triggers(instance, moved, coordinate=current))
+        != expected_trigger_pins
+    ):
+        raise LineTriggersChanged(
+            "the Triggers aimed at this Line changed before its admission was recorded"
+        )
+    if expected_line_artifact_digest is not None and (
+        moved is None or moved.artifact_digest != expected_line_artifact_digest
+    ):
+        raise LineVersionChanged("the accepted Line changed before its admission was recorded")
+    raise ProcedureRunNotCurrent(
+        f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line admission"
+    )
+
+
+@dataclass(frozen=True)
+class TriggerFire:
+    """The Trigger occurrence a dispatch admits: its Trigger and what it fired on.
+
+    Only dispatch of matched or evaluated work supplies one; ``line run`` is a
+    manual occurrence and never names a Trigger.
+    """
+
+    trigger: str
+    event: TriggerEventReference | None = None
+    generation: int | None = None
+
+
+def select_line_trigger(
+    triggers: tuple[AcceptedTrigger, ...],
+    reference: str,
+    *,
+    line: ArtifactIdentity,
+) -> AcceptedTrigger:
+    """The live Trigger aimed at this Line that a dispatched occurrence fires on."""
+
+    wanted = _trigger_reference(reference)
+    found = next((item for item in triggers if item.trigger.identity.qualified == wanted), None)
+    if found is None:
+        raise LineTriggerMismatch(
+            f"{wanted!r} is not a live Trigger aimed at Line {line.name!r}"
+            + (
+                f"; its Triggers: {', '.join(item.trigger.identity.name for item in triggers)}"
+                if triggers
+                else "; no Trigger aims at it now"
+            )
+        )
+    return found
+
+
+def _accepted_line_predecessor(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    coordinate: AcceptedProjectionCoordinate,
+) -> AcceptedLineSpec | None:
+    digest = accepted_line.line.lifecycle.predecessor_digest
+    if digest is None:
+        return None
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        location = history.artifact(digest, identity=accepted_line.line.identity.qualified)
+        if location is None:
+            raise ProjectionIntegrityError("accepted Line predecessor has no retained occurrence")
+        generation = history.generation(location.occurrence_sequence)
+    raw = instance.blob_at(generation.git_oid, location.path)
+    if raw is None:
+        raise ProjectionIntegrityError("accepted Line predecessor source is unavailable")
+    line = parse_line_spec(raw, path=location.path)
+    if line.identity != accepted_line.line.identity or line_spec_digest(line).tagged != digest:
+        raise ProjectionIntegrityError("accepted Line predecessor differs from its pinned version")
+    return AcceptedLineSpec(path=location.path, line=line, artifact_digest=digest)
+
+
+def _line_catalogs(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    pins: Sequence[ArtifactPin],
+) -> dict[str, AcceptedProvider]:
+    from cruxible_core.runtime.provider_runtime import pinned_provider_catalogs
+
+    return pinned_provider_catalogs(instance, coordinate, pins)
+
+
+def _assert_line_closure_complete(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    coordinate: AcceptedProjectionCoordinate,
+) -> None:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for pin in dependency_pins(accepted_line.line, by_name=False):
+            target = projection.typed.dependency_state(pin.target.qualified)
+            if target is None:
+                # These component families remain exact registry pins until
+                # their owning law introduces ledger envelopes.
+                if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
+                    continue
+                raise ExecutionError(
+                    f"accepted Line closure lost {pin.target.qualified} ({pin.role})"
+                )
+            if target.lifecycle.state != "live" or (
+                isinstance(pin, ArtifactPin) and target.artifact_digest != pin.artifact_digest
+            ):
+                raise ExecutionError(
+                    f"accepted Line closure does not reproduce {pin.target.qualified} ({pin.role})"
+                )
+
+
+@dataclass(frozen=True)
+class _UnavailableLineAdmission:
+    """Authenticated admission identity whose binding cannot currently be read."""
+
+    stored: StoredProcedureJournalRecordV1
+
+    @property
+    def run_id(self) -> str:
+        run_id = self.stored.record.run_id
+        if run_id is None:
+            raise ExecutionError("Admission run identity is unavailable; restore its exhaust")
+        return run_id
+
+
+def _stored_line_admission(
+    instance: PlaybillInstance, stored: Any
+) -> ProcedureRunAdmission | _UnavailableLineAdmission | None:
+    if stored.record.event_kind != "admission_bound":
+        return None
+    payload = read_payload(
+        instance.body_store(),
+        stored.record.payload_digest,
+        access=BodyAccessContext(
+            principal_id="line-occurrence-registry",
+            can_read_body=True,
+        ),
+    )
+    if isinstance(payload, UnavailablePayload):
+        return _UnavailableLineAdmission(stored)
+    if not isinstance(payload, dict):
+        return None
+    admission = parse_admission_payload(payload).admission
+    # A nested child's admission is its parent's run, never a Line occurrence's.
+    if admission.invocation_origin != "line" or admission.parent_binding is not None:
+        return None
+    return admission
+
+
+def _line_admissions(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    *,
+    occurrence_id: str | None = None,
+) -> tuple[ProcedureRunAdmission | _UnavailableLineAdmission, ...]:
+    journal, _root = _journal(instance)
+    stream = procedure_line_journal_stream(instance.descriptor.instance_id)
+    partition = procedure_line_partition(accepted_line.line.identity)
+    admissions: list[ProcedureRunAdmission | _UnavailableLineAdmission] = []
+    for stored in journal.select_records(
+        stream,
+        partition_id=partition,
+        event_kind="admission_bound",
+        occurrence_id=occurrence_id,
+        descending=True,
+        limit=1,
+    ):
+        admission = _stored_line_admission(instance, stored)
+        if admission is not None:
+            admissions.append(admission)
+    return tuple(admissions)
+
+
+# Per process: (instance root, Line partition, Trigger) -> (last journal
+# sequence read, that Trigger's latest admission). Admission records are
+# append-only, so the chain only ever reads what landed since; an entry lost to
+# eviction or a concurrent write only means reading from an earlier sequence.
+_TRIGGER_CHAINS: OrderedDict[
+    tuple[str, str, str], tuple[int, ProcedureRunAdmission | _UnavailableLineAdmission | None]
+] = OrderedDict()
+_TRIGGER_CHAINS_CAPACITY = 4096
+
+
+def _trigger_admissions(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    trigger: ArtifactIdentity,
+) -> tuple[ProcedureRunAdmission | _UnavailableLineAdmission, ...]:
+    """The latest occurrence one Trigger fired on this Line.
+
+    A Line's admissions interleave every Trigger aimed at it, so a Trigger's
+    own latest is found by the Trigger each admission's binding names. Only
+    records past the last read are parsed; a restart rebuilds it from the
+    retained journal.
+    """
+
+    journal, _root = _journal(instance)
+    stream = procedure_line_journal_stream(instance.descriptor.instance_id)
+    partition = procedure_line_partition(accepted_line.line.identity)
+    key = (str(instance.root), partition, trigger.qualified)
+    seen, latest = memo_get(_TRIGGER_CHAINS, key) or (0, None)
+    for stored in journal.select_records(
+        stream,
+        partition_id=partition,
+        event_kind="admission_bound",
+        first_sequence=seen + 1,
+    ):
+        seen = max(seen, stored.record.sequence)
+        admission = _stored_line_admission(instance, stored)
+        if isinstance(admission, _UnavailableLineAdmission):
+            # Its Trigger cannot be proven. Keep the chain incomplete until an
+            # explicit repair/restart, even if later known admissions arrive.
+            latest = admission
+        binding = (
+            admission.trigger_binding if isinstance(admission, ProcedureRunAdmission) else None
+        )
+        if (
+            not isinstance(latest, _UnavailableLineAdmission)
+            and binding is not None
+            and binding.trigger == trigger
+        ):
+            latest = admission
+    memo_put(_TRIGGER_CHAINS, key, (seen, latest), capacity=_TRIGGER_CHAINS_CAPACITY)
+    return () if latest is None else (latest,)
+
+
+def _event_admission(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpec,
+    event: TriggerEventReference,
+) -> str | _UnavailableLineAdmission | None:
+    """The run a Trigger of this Line admitted on this exact event, if any."""
+
+    journal, _root = _journal(instance)
+    stream = procedure_line_journal_stream(instance.descriptor.instance_id)
+    partition = procedure_line_partition(accepted_line.line.identity)
+    for stored in journal.select_records(
+        stream, partition_id=partition, event_kind="admission_bound", descending=True
+    ):
+        admission = _stored_line_admission(instance, stored)
+        if isinstance(admission, _UnavailableLineAdmission):
+            # Without the binding this event cannot be proved unadmitted.
+            return admission
+        binding = None if admission is None else admission.trigger_binding
+        if admission is not None and binding is not None and binding.event == event:
+            return admission.run_id
+    return None
+
+
+def trigger_binding_for(
+    trigger: AcceptedTrigger,
+    *,
+    event: TriggerEventReference | None = None,
+    window: BoundObservationWindow | None = None,
+    generation: int | None = None,
+) -> LineTriggerBinding:
+    """The semantic cause one Trigger gives an occurrence."""
+
+    schedule = trigger.trigger.schedule
+    if isinstance(schedule, GenerationAcceptedSchedule):
+        return LineTriggerBinding(
+            kind="generation_accepted", trigger=trigger.trigger.identity, generation=generation
+        )
+    if schedule_is_timed(schedule):
+        return LineTriggerBinding(kind=schedule.kind, trigger=trigger.trigger.identity)
+    if isinstance(schedule, CaptureLandingSchedule):
+        return LineTriggerBinding(
+            kind="capture_landing", trigger=trigger.trigger.identity, event=event
+        )
+    if isinstance(schedule, WindowCloseSchedule):
+        assert window is not None
+        return LineTriggerBinding(
+            kind="window_close", trigger=trigger.trigger.identity, window=window, event=window.event
+        )
+    raise ExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
+
+
+@dataclass(frozen=True)
+class RunbookStepOccurrence:
+    """One step of one Trigger-fired Runbook fire (D-R36): a stable Line occurrence.
+
+    ``fire`` is the trigger-journal sequence of the fire the run serves. The
+    same Runbook, fire and step derive the same occurrence id however often
+    the run is replayed, so a step already admitted is read back, never run
+    again.
+    """
+
+    runbook: str
+    fire: int
+    step: int
+
+    def basis(self) -> dict[str, object]:
+        return {"fire": self.fire, "runbook": self.runbook, "step": self.step}
+
+
+def _line_occurrence(
+    accepted_line: AcceptedLineSpec,
+    *,
+    evaluation_time: datetime,
+    last_tick: datetime | None = None,
+    trigger: AcceptedTrigger | None = None,
+    binding: LineTriggerBinding | None = None,
+    exact_basis: datetime | None = None,
+    accepted_at: datetime | None = None,
+    manual_event: TriggerEventReference | None = None,
+    runbook_step: RunbookStepOccurrence | None = None,
+) -> tuple[str, datetime | None]:
+    """Derive one occurrence's identity and its next due instant.
+
+    With no Trigger the occurrence is a manual run at its evaluation instant,
+    on the exact event it was given, if any (its record digest names it).
+    A cadence or cron occurrence is the timer's next instant after
+    `last_tick`, the scheduled instant of the latest tick of its Trigger
+    already delivered (when it was dispatched never counts), and never before
+    the first instant after its Trigger version's acceptance (`accepted_at`):
+    no Trigger fires retroactively. `exact_basis` names a tick outright: one a
+    listener or an evaluation found on the timer, or a retained tick being
+    dispatched or retried.
+    """
+
+    next_due = None
+    occurrence_basis: object
+    if trigger is None and runbook_step is not None:
+        # One step of one Trigger-fired Runbook fire: its identity is the fire
+        # and the step, never the instant it runs, so a replay finds it admitted.
+        kind = "runbook_step"
+        occurrence_basis = runbook_step.basis()
+    elif trigger is None:
+        kind = "manual"
+        occurrence_basis = (
+            format_datetime(evaluation_time)
+            if manual_event is None
+            else {"at": format_datetime(evaluation_time), "event": manual_event.record_digest}
+        )
+    else:
+        schedule = trigger.trigger.schedule
+        kind = schedule.kind
+        if (
+            binding is None
+            or binding.kind != schedule.kind
+            or binding.trigger != trigger.trigger.identity
+        ):
+            raise ExecutionError(
+                "a Trigger occurrence requires its exact tick, retained event, or window"
+            )
+        if schedule_is_timed(schedule):
+            if exact_basis is not None:
+                next_due = exact_basis
+            else:
+                if accepted_at is None:
+                    raise ExecutionError("a timed occurrence needs its Trigger's acceptance")
+                next_due = timer_due(
+                    schedule,
+                    accepted_at=accepted_at,
+                    last=accepted_at if last_tick is None else max(last_tick, accepted_at),
+                )
+            occurrence_basis = format_datetime(next_due)
+        else:
+            occurrence_basis = binding.model_dump(mode="json")
+            if binding.window is not None:
+                next_due = binding.window.ends_at
+    occurrence_id = typed_digest(
+        Sha256Value,
+        "playbill-line-occurrence-v3",
+        {
+            "line_identity_digest": line_identity_digest(accepted_line.line.identity),
+            "occurrence_epoch": accepted_line.line.occurrence_epoch,
+            "trigger": None if trigger is None else trigger.trigger.identity.qualified,
+            "trigger_kind": kind,
+            "trigger_binding": occurrence_basis,
+        },
+    ).tagged
+    return occurrence_id, next_due
+
+
+def runbook_step_occurrence_id(
+    instance: PlaybillInstance, line: str, step: RunbookStepOccurrence
+) -> str:
+    """The Line occurrence a Runbook step is admitted as, at the Line's current version."""
+
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line
+    )
+    # A step's identity names no instant: the evaluation time is unused.
+    occurrence_id, _due = _line_occurrence(
+        accepted_line, evaluation_time=datetime(1970, 1, 1, tzinfo=UTC), runbook_step=step
+    )
+    return occurrence_id
+
+
+def admitted_runbook_step(
+    instance: PlaybillInstance, line: str, occurrence_id: str
+) -> ProcedureRunStateV2 | None:
+    """The run a Runbook step's recorded occurrence admitted, from the run journal, or None.
+
+    Durable and epoch-independent: admissions are partitioned by the Line's
+    identity and found by the exact occurrence id the step recorded before it
+    ran, whatever the Line's occurrence epoch has become since. One Line read
+    and one indexed admission lookup.
+    """
+
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line
+    )
+    existing = next(
+        iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None
+    )
+    if existing is None:
+        return None
+    if isinstance(existing, _UnavailableLineAdmission):
+        return _unavailable_run_state(existing.stored)
+    return _state_from_records(instance, run_id=existing.run_id)
+
+
+def _line_budget(
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
+) -> ProcedureBudget:
+    """The Line occurrence's operating budget: the Line's own, within the hard caps.
+
+    A Line that states no ``max_read_rows`` (or ``max_result_bytes``) reads
+    (and returns) under the Procedure's hard cap.
+    """
+
+    return accepted_line.line.budgets.budget(accepted_procedure.procedure.definition.hard_caps)
+
+
+def _line_state_materials(
+    instance: PlaybillInstance,
+    accepted_procedure: AcceptedProcedure,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    invocation_input: object,
+    parameters: object,
+    read_ceiling: int,
+) -> tuple[AcceptedStateRunMaterial, ...]:
+    return bind_accepted_state_materials(
+        accepted_procedure,
+        accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+        state_reader=PlaybillProcedureStateTapReader(
+            instance=instance, evaluation_time=evaluation_time
+        ),
+        bodies=instance.body_store(),
+        read_ceiling=read_ceiling,
+        invocation_input=invocation_input,
+        parameters=parameters,
+    )
+
+
+def _provider_nodes(
+    definition: ProcedureDefinition,
+) -> tuple[tuple[CallNode | RepeatBodyNode, str | None], ...]:
+    result: list[tuple[CallNode | RepeatBodyNode, str | None]] = []
+    for node in definition.nodes:
+        if isinstance(node, CallNode):
+            result.append((node, None))
+        elif isinstance(node, RepeatNode):
+            result.extend((body, node.node_id) for body in node.body if body.operation == "call")
+    return tuple(result)
+
+
+def _plan_external_occurrences(
+    accepted_procedure: AcceptedProcedure,
+    *,
+    providers: Mapping[str, AcceptedProvider],
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+    runtime_policy: ProcedureRuntimePolicy,
+    budget: ProcedureBudget,
+    supplied_source_inputs: frozenset[str] = frozenset(),
+) -> tuple[ProviderExternalOccurrencePlan, ...]:
+    """Plan every external Provider occurrence one admitted run will invoke.
+
+    Both served run lanes call THIS function. Each occurrence is its node's slot
+    binding exactly as the execution plan holds it (the Line's, or a direct
+    run's ephemeral spec): the bound build, the operation with its exact
+    Contract pins, and that Contract closure. Nothing is fitted here.
+    """
+
+    definition = accepted_procedure.procedure.definition
+    plan_bindings = {
+        item.slot: item for item in getattr(accepted_procedure.procedure, "slot_bindings", ())
+    }
+    occurrences: list[ProviderExternalOccurrencePlan] = []
+    for node, repeat_node_id in _provider_nodes(definition):
+        if isinstance(node, CallNode) and node.acquires and node.as_ in supplied_source_inputs:
+            continue
+        slot = node.slot
+        binding = plan_bindings.get(slot or "")
+        if slot is None or binding is None:
+            raise ExecutionError(f"node {node.node_id!r} has no bound slot in the execution plan")
+        try:
+            provider = providers[binding.build_digest]
+        except KeyError as exc:
+            raise ExecutionError(
+                f"the bound build for node {node.node_id!r} is not live at this coordinate"
+            ) from exc
+        if not isinstance(provider.provider, ProviderV2):
+            raise ExecutionError(f"node {node.node_id!r} binds a build without a runtime")
+        operation = binding.operation
+        implementation = next(
+            (
+                item
+                for item in provider.provider.implementations
+                if item.entrypoint == operation.entrypoint
+            ),
+            None,
+        )
+        if implementation is None:
+            raise ExecutionError(
+                f"the bound build has no prepared implementation for node {node.node_id!r}"
+            )
+        eligible = tuple(
+            sorted(
+                (
+                    item.environment_pin_key
+                    for item in implementation.materialization_references
+                    if item.kind == "local_env"
+                ),
+                key=str.encode,
+            )
+        )
+        if provider_runtime_operator is None:
+            raise ProviderLocalRuntimeRefused(
+                "provider_unavailable", "No daemon Provider runtime operator is installed."
+            )
+        local = provider_runtime_operator.admit_line_provider(
+            provider,
+            operation,
+            implementation.implementation_digest,
+            eligible_environment_pin_keys=eligible,
+        )
+        produces_capture = isinstance(node, CallNode) and node.acquires
+        call_kind = "call"
+        translation = translate_provider_budget(
+            budget=budget,
+            hard_caps=definition.hard_caps,
+            runtime_policy=runtime_policy,
+            remaining_wall_clock_microseconds=budget.wall_clock.microseconds,
+            result_bytes_cap=(
+                resolved.result_bytes_cap
+                if (
+                    resolved := resolve_procedure_resource_budget(
+                        budget, definition.hard_caps, runtime_policy
+                    )
+                )
+                is not None
+                else max(1, definition.hard_caps.max_capture_bytes)
+            ),
+            produces_capture=produces_capture,
+        )
+        common = {
+            "occurrence_path": (
+                f"repeat/{repeat_node_id}/{node.node_id}"
+                if repeat_node_id is not None
+                else f"{'source' if produces_capture else call_kind}/{node.node_id}"
+            ),
+            "occurrence_kind": "source" if produces_capture else call_kind,
+            "node_id": node.node_id,
+            "repeat_node_id": repeat_node_id,
+            "slot": slot,
+            "provider_artifact_digest": provider.artifact_digest,
+            "operation": operation,
+            "operation_signature_digest": binding.operation_signature_digest,
+            "implementation_digest": implementation.implementation_digest,
+            "effect_class": operation.effect,
+            "contracts": binding.contracts,
+            "local_execution": local,
+            "secret_plan": ProviderSecretResolutionPlan(),
+            "budget_translation": translation,
+        }
+        if isinstance(node, CallNode) and node.acquires:
+            occurrence = ProviderExternalOccurrencePlan.model_validate(
+                {
+                    **common,
+                    "input_name": node.as_,
+                    # Each capture field is pinned to its own CaptureContract.
+                    "capture_contracts": {
+                        field: resolved_pin(accepted_procedure, reference).artifact_digest
+                        for field, reference in node.captures.items()
+                    },
+                    "source_runtime_plan_digest": typed_digest(
+                        Sha256Value,
+                        "cruxible-acquiring-call-plan-v1",
+                        {
+                            "node_id": node.node_id,
+                            "input": node.input,
+                            "captures": sorted(node.captures),
+                        },
+                    ).tagged,
+                }
+            )
+        else:
+            occurrence = ProviderExternalOccurrencePlan.model_validate(common)
+        occurrences.append(occurrence)
+    return tuple(sorted(occurrences, key=lambda item: item.occurrence_path.encode("utf-8")))
+
+
+def _line_external_occurrences(
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
+    *,
+    providers: Mapping[str, AcceptedProvider],
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+    runtime_policy: ProcedureRuntimePolicy,
+    budget: ProcedureBudget,
+) -> tuple[ProviderExternalOccurrencePlan, ...]:
+    """Plan a Line occurrence's Provider occurrences through the shared planner."""
+
+    return _plan_external_occurrences(
+        accepted_procedure,
+        providers=providers,
+        provider_runtime_operator=provider_runtime_operator,
+        runtime_policy=runtime_policy,
+        budget=budget,
+        supplied_source_inputs=(
+            # The substituted call's alias: a trigger names its one capture output.
+            frozenset({accepted_line.line.trigger_input.partition(".")[0]})
+            if accepted_line.line.trigger_input is not None
+            else frozenset()
+        ),
+    )
+
+
+def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
+    definition = accepted.procedure.definition
+    return tuple(
+        sorted(
+            acquisition_keys(definition),
+            key=lambda item: item.encode("utf-8"),
+        )
+    )
+
+
+def _accepted_capture_contracts(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    pins: Sequence[ArtifactPin],
+) -> dict[str, CaptureContract]:
+    """Resolve pinned live accepted CaptureContracts by their own artifact digests.
+
+    Ruling: capture contracts come from the ACCEPTED tree, keyed by the pin
+    digest the graph names, never from caller input. A caller-supplied contract
+    would let the request choose the budget and grades that admit its own read.
+    """
+
+    contracts: dict[str, CaptureContract] = {}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for pin in dict.fromkeys(pins):
+            if pin.target.kind != "CaptureContract":
+                continue
+            if (
+                projection.typed.connection.execute(
+                    "SELECT 1 FROM capture_contracts "
+                    "WHERE identity=? AND artifact_digest=? AND lifecycle='live'",
+                    (pin.target.qualified, pin.artifact_digest),
+                ).fetchone()
+                is not None
+            ):
+                contract = projection.typed.source(pin.target.qualified)
+                if not isinstance(contract, CaptureContract):
+                    raise ProjectionIntegrityError("accepted CaptureContract source is invalid")
+                contracts[pin.artifact_digest] = contract
+    return contracts
+
+
+def procedure_acquisition_rules(
+    accepted: AcceptedProcedure,
+    line_rules: Mapping[str, LineAcquisitionRule] | None = None,
+) -> dict[str, AcquisitionRule]:
+    """The run's acquisition rule per capture output: the Line's, else the core default."""
+
+    return resolve_acquisition_rules(_source_input_names(accepted), line_rules=line_rules or {})
+
+
+def _plan_selection_decision(
+    rules: Mapping[str, AcquisitionRule],
+    *,
+    policy_digest: str,
+    occurrences: tuple[ProviderExternalOccurrencePlan, ...],
+    capture_contracts: Mapping[str, CaptureContract],
+) -> ProcedureSelectionDecision:
+    """Evaluate the run's acquisition rules against this plan, per capture output.
+
+    This is a PLAN-time evaluation and it says only what a plan can say: which
+    capture outputs (``<alias>.<field>``) each planned occurrence serves, and
+    whether each field's own CaptureContract is accepted and fits the run's
+    output budget (an oversized contract refuses).
+    It never invents an acquisition outcome: staleness and unavailability fire
+    only from a real read, in ``apply_acquisition_result`` at execution time.
+    """
+
+    decisions: list[AcquisitionInputDecision] = []
+    for occurrence in occurrences:
+        alias = occurrence.input_name
+        if occurrence.occurrence_kind != "source" or alias is None:
+            continue
+        for field, contract_digest in occurrence.capture_contracts.items():
+            key = f"{alias}.{field}"
+            if key not in rules:
+                continue
+            contract = capture_contracts.get(contract_digest)
+            if contract is None:
+                decisions.append(
+                    AcquisitionInputDecision(
+                        input_name=key, disposition="refused", reason_codes=(ACQUISITION_REFUSED,)
+                    )
+                )
+                continue
+            if contract.selection_budget.max_bytes > (
+                occurrence.budget_translation.policy_output_bytes_cap
+            ):
+                decisions.append(
+                    AcquisitionInputDecision(
+                        input_name=key,
+                        disposition="refused",
+                        reason_codes=(ACQUISITION_OVERSIZED,),
+                    )
+                )
+                continue
+            decisions.append(AcquisitionInputDecision(input_name=key, disposition="selected"))
+    ordered = tuple(
+        sorted(decisions, key=lambda item: item.input_name.encode("utf-8")),
+    )
+    return ProcedureSelectionDecision(
+        policy_digest=policy_digest,
+        verdict=(
+            "refused" if any(item.disposition == "refused" for item in ordered) else "selected"
+        ),
+        decisions=ordered,
+    )
+
+
+def _readiness(
+    accepted: AcceptedProcedure,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    instance: PlaybillInstance | None = None,
+) -> ProcedureReadinessResultV1:
+    """How the Procedure can run; with ``instance``, the boundary Contracts it pins too."""
+
+    from cruxible_client.contracts.provider_operations import contract_closure
+    from cruxible_client.contracts.shapes import contract_ref_for_identity
+
+    definition = accepted.procedure.definition
+    runnable, unsupported = procedure_runnability(definition)
+    boundaries = [definition.contract_in, definition.contract_out]
+    if definition.parameter_contract is not None:
+        boundaries.append(definition.parameter_contract)
+    contracts = (
+        None
+        if instance is None
+        else contract_closure(
+            tuple(contract_ref_for_identity(pin.target) for pin in boundaries),
+            accepted_contract_resolver(instance, coordinate),
+        )
+    )
+    return ProcedureReadinessResultV1(
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        procedure_identity=accepted.procedure.identity,
+        artifact_digest=accepted.artifact_digest,
+        definition_digest=accepted.procedure.definition_digest,
+        artifact=authored_procedure(accepted),
+        contracts=tuple(contracts or ()),
+        runnable=runnable,
+        unsupported_nodes=unsupported,
+        next_operation=ProcedureNextOperationV1(
+            kind={"direct": "run", "line": "line", "unsupported": "terminal"}[runnable]  # type: ignore[arg-type]
+        ),
+    )
+
+
+def service_playbill_procedure_readiness(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    request: ProcedureReadinessRequestV1,
+) -> ProcedureReadinessResultV1:
+    coordinate = accepted_coordinate_at(instance, request.at)
+    # A read: a retired Procedure is still readable, though nothing runs it.
+    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, allow_retired=True)
+    return _readiness(accepted, coordinate=coordinate, instance=instance)
+
+
+@dataclass(frozen=True)
+class _CurrentProcedureAuthority:
+    instance: PlaybillInstance
+
+    def current_procedure_digest(
+        self,
+        identity: ArtifactIdentity,
+        *,
+        coordinate: AcceptedCoordinate,
+    ) -> str | None:
+        del coordinate
+        current = self.instance.accepted_coordinate()
+        with self.instance.bind_accepted_projection(current) as projection:
+            state = projection.typed.dependency_state(identity.qualified)
+            return (
+                None if state is None or state.lifecycle.state != "live" else state.artifact_digest
+            )
+
+
+@dataclass
+class _DeterministicClock(ProcedureClockProtocol):
+    evaluation_time: datetime
+
+    def now(self) -> datetime:
+        return self.evaluation_time
+
+    def monotonic_ns(self) -> int:
+        return time.monotonic_ns()
+
+
+def _journal(instance: PlaybillInstance) -> tuple[LocalJournalBackend, Path]:
+    root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    root.mkdir(mode=0o700, exist_ok=True)
+    return LocalJournalBackend(root), root
+
+
+def _journal_for_write(instance: PlaybillInstance) -> tuple[LocalJournalBackend, Path]:
+    """Open the journal and recover append-window leases before the next write."""
+
+    journal, root = _journal(instance)
+    stream = _stream(instance)
+    bodies = instance.body_store()
+    ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
+        lambda reservation: journal.select_records(
+            stream, run_id=reservation.run_id, event_kind=reservation.intended_event_kind
+        ),
+        bodies=bodies,
+        intended_event_kinds=frozenset(
+            kind
+            for kind in get_args(JournalEventKindV1)
+            if kind
+            not in {
+                "line_dispatch_transition",
+                "resolution",
+                "resolution_activation",
+                "resolution_disposition",
+                "query_executed",
+                "claim_verdict_observed",
+            }
+        ),
+    )
+    return journal, root
+
+
+def _stream(instance: PlaybillInstance) -> JournalStreamIdentityV1:
+    return JournalStreamIdentityV1(
+        instance_id=instance.descriptor.instance_id,
+        journal_family=PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+        stream_id=PROCEDURE_RUN_STREAM_ID,
+    )
+
+
+def _activate_writer(
+    journal: LocalJournalBackend,
+    stream: JournalStreamIdentityV1,
+    partition_id: str,
+) -> None:
+    state = journal.writer_state(stream, partition_id)
+    if state is not None and state.active:
+        if state.fencing_token != PROCEDURE_RUN_FENCING_TOKEN:
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: another writer owns the partition"
+            )
+        return
+    journal.activate_writer(
+        stream,
+        partition_id,
+        fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+        expected_head=journal.read_head(stream, partition_id),
+    )
+
+
+def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[no-untyped-def]
+    journal, _root = _journal(instance)
+    records = tuple(
+        item
+        for item in journal.select_records(_stream(instance), run_id=run_id)
+        if item.record.admission_binding_digest is not None
+    )
+    partitions = {item.record.partition_id for item in records}
+    admission_digests = {
+        item.record.admission_binding_digest
+        for item in records
+        if item.record.admission_binding_digest is not None
+    }
+    if len(partitions) > 1 or len(admission_digests) > 1:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run id collides across journal authority"
+        )
+    return records
+
+
+def _journal_coordinate(stored) -> ProcedureJournalCoordinate:  # type: ignore[no-untyped-def]
+    record = stored.record
+    return ProcedureJournalCoordinate(
+        stream_instance_id=record.stream.instance_id,
+        journal_family=record.stream.journal_family,
+        stream_id=record.stream.stream_id,
+        partition_id=record.partition_id,
+        sequence=record.sequence,
+        record_digest=stored.record_digest,
+    )
+
+
+def _fold_terminal_egress(
+    current: ProcedureTerminalEgress | None,
+    payload: Mapping[str, object],
+    *,
+    journal_coordinate: ProcedureJournalCoordinate,
+) -> ProcedureTerminalEgress:
+    """Fold one `terminal_egress` journal record into the node's served account.
+
+    A terminal writes up to three records: the closure-bound refusal or the
+    `prepared` intent, then the resolving `delivered`/`refused`/`failed`. The
+    LAST verdict is the node's verdict; identities set by an earlier record
+    (operation key, targets, mandate) carry forward, and a delivered proposal
+    receipt contributes its proposal and candidate.
+    """
+
+    def _string(key: str) -> str | None:
+        value = payload.get(key)
+        return value if isinstance(value, str) else None
+
+    receipt = payload.get("receipt")
+    proposal_id = None
+    candidate_digest = None
+    settle: dict[str, object] = {}
+    if isinstance(receipt, dict) and receipt.get("tag") == "playbill-terminal-egress-receipt-v4":
+        settle = {
+            "settle_outcome": receipt.get("outcome"),
+            "accepted_git_oid": receipt.get("accepted_git_oid"),
+            "fallback_reason": receipt.get("fallback_reason"),
+            "outside_scope": tuple(receipt.get("outside_scope", ())),
+        }
+    # The cap is the journaled request's: the prepared record carries it, and
+    # every later record of the node keeps it.
+    request = payload.get("request")
+    capped_term = request.get("capped_by") if isinstance(request, dict) else None
+    capped_by = (
+        SERVED_AUTHORITY_TERMS[cast(Any, capped_term)]
+        if isinstance(capped_term, str)
+        else (None if current is None else current.capped_by)
+    )
+    line_open_proposal: LineOpenProposalOutcome | None = None
+    if isinstance(receipt, dict):
+        if receipt.get("tag") == "playbill-terminal-egress-still-current-receipt-v1":
+            line_open_proposal = LineOpenProposalOutcome(
+                outcome="still_current", proposal_id=str(receipt.get("open_proposal_id"))
+            )
+        elif isinstance(receipt.get("superseded_proposal_id"), str):
+            line_open_proposal = LineOpenProposalOutcome(
+                outcome="superseded", proposal_id=str(receipt["superseded_proposal_id"])
+            )
+        proposal_id = (
+            receipt.get("proposal_id") if isinstance(receipt.get("proposal_id"), str) else None
+        )
+        candidate_digest = (
+            receipt.get("candidate_digest")
+            if isinstance(receipt.get("candidate_digest"), str)
+            else None
+        )
+        handles = {
+            str(child.get("item_key")): child
+            for child in receipt.get("children", [])
+            if isinstance(child, dict)
+        }
+    else:
+        handles = {}
+    raw_children = payload.get("children")
+    children: list[ProcedureTerminalEgressChild] = []
+    if isinstance(raw_children, list):
+        for child in raw_children:
+            if not isinstance(child, dict):
+                continue
+            item_key = str(child.get("item_key"))
+            handle = handles.get(item_key, {})
+            children.append(
+                ProcedureTerminalEgressChild(
+                    child_index=int(cast(int, child.get("child_index", 0))),
+                    item_key=item_key,
+                    manifest_digest=str(child.get("manifest_digest")),
+                    egress_digest=handle.get("egress_digest"),
+                    path=handle.get("path"),
+                    unchanged=handle.get("disposition") in {"unchanged", "reused"},
+                    item_identity_digest=child.get("item_identity_digest"),
+                    change_kind=child.get("change_kind"),
+                    change_digest=child.get("change_digest"),
+                )
+            )
+    raw_targets = payload.get("target_paths")
+    target_paths = (
+        tuple(str(item) for item in raw_targets)
+        if isinstance(raw_targets, list)
+        else (() if current is None else current.target_paths)
+    )
+    verdict = _string("verdict") or "failed"
+    # The journal keeps the internal ordering; a served result speaks verbs.
+    if verdict == "refused_effective_rung":
+        verdict = "refused_effective_authority"
+    limiting_term = _string("limiting_term")
+    raw_refusal_code = _string("refusal_code")
+    return ProcedureTerminalEgress(
+        node_id=str(payload.get("node_id")),
+        kind=cast(Any, _string("kind")),
+        verdict=cast(Any, verdict),
+        required_authority=required_authority(int(cast(int, payload.get("required_rung", 0)))),
+        effective_authority=(
+            authority_for_rung(cast(int, payload["effective_rung"]))
+            if isinstance(payload.get("effective_rung"), int)
+            else (None if current is None else current.effective_authority)
+        ),
+        limiting_term=(
+            SERVED_AUTHORITY_TERMS[cast(Any, limiting_term)]
+            if limiting_term is not None
+            else (None if current is None else current.limiting_term)
+        ),
+        operation_key=_string("operation_key")
+        or (None if current is None else current.operation_key),
+        procedure_mandate_digest=(
+            _string("procedure_mandate_digest")
+            or (None if current is None else current.procedure_mandate_digest)
+        ),
+        target_paths=target_paths,
+        proposal_id=proposal_id,
+        candidate_digest=candidate_digest,
+        refusal_code=(
+            current_refusal_code(raw_refusal_code)
+            if verdict in {"refused", "failed"} and raw_refusal_code is not None
+            else None
+        ),
+        children=tuple(children) if children else (() if current is None else current.children),
+        journal_coordinate=journal_coordinate,
+        settle_outcome=cast(Any, settle.get("settle_outcome")),
+        accepted_git_oid=cast(Any, settle.get("accepted_git_oid")),
+        fallback_reason=cast(Any, settle.get("fallback_reason")),
+        outside_scope=cast(Any, settle.get("outside_scope", ())),
+        capped_by=capped_by,
+        inbox_truncation=(
+            InboxPostTruncation.model_validate(payload["inbox_truncation"])
+            if isinstance(payload.get("inbox_truncation"), dict)
+            else (None if current is None else current.inbox_truncation)
+        ),
+        line_open_proposal=line_open_proposal,
+        claims_diagnostics=tuple(
+            ClaimsDiagnostic.model_validate(d)
+            for d in cast(list[object], payload.get("claims_diagnostics", []))
+        )
+        or (() if current is None else current.claims_diagnostics),
+        claims_same_count=int(cast(int, payload.get("claims_same_count", 0))),
+        claims_diagnostics_count=int(cast(int, payload.get("claims_diagnostics_count", 0))),
+        claims_diagnostics_truncated=int(cast(int, payload.get("claims_diagnostics_truncated", 0))),
+        claims_diagnostics_inbox_truncation=(
+            InboxPostTruncation.model_validate(payload["claims_diagnostics_inbox_truncation"])
+            if isinstance(payload.get("claims_diagnostics_inbox_truncation"), dict)
+            else None
+        ),
+    )
+
+
+def _unavailable_run_state(stored, *, admission=None) -> ProcedureRunStateV2:  # type: ignore[no-untyped-def]
+    """Keep the authenticated run identity, without inventing a replay or receipt."""
+    record = stored.record
+    return ProcedureRunStateV2(
+        run_id=record.run_id,
+        procedure_identity=(
+            admission.procedure_identity
+            if admission is not None
+            else ArtifactIdentity(kind="Procedure", name="unavailable")
+        ),
+        procedure_artifact_digest=record.procedure_artifact_digest,
+        bound_coordinate=(
+            admission.bound_coordinate if admission is not None else record.accepted_coordinate
+        ),
+        head_at_admission=(
+            admission.head_at_admission if admission is not None else record.accepted_coordinate
+        ),
+        lane="current" if admission is None else admission.lane,
+        evaluation_time=record.recorded_at if admission is None else admission.admitted_at,
+        status="operational_failed",
+        pending_inputs=(),
+        outcomes=(),
+        next_operation=ProcedureNextOperationV1(kind="terminal"),
+        terminal=ProcedureOperationalFailure(
+            code="replay_material_unavailable",
+            message="Run exhaust payload is unavailable.",
+            journal_coordinate=_journal_coordinate(stored),
+            details={"payload_digest": record.payload_digest, "availability": "unavailable"},
+            repair=served_repair_for_refusal("replay_material_unavailable"),
+        ),
+    )
+
+
+def _provider_admission_terminal(
+    exc: ProviderLocalRuntimeRefused,
+    *,
+    message: str,
+    node_id: str,
+) -> tuple[
+    Literal["operational_failed", "node_refused"],
+    ProcedureOperationalFailure | ProcedureNodeRefusal,
+]:
+    """The status and terminal of a run the Provider lane refused at admission.
+
+    The lane precondition (no private runtime directory) is the operator's
+    environment: an operational failure naming its cause and repair. Any other
+    lane refusal stays the ``provider_unavailable`` node refusal.
+    """
+
+    details = {"reason": {"code": exc.code, "detail": str(exc)}, **exc.details}
+    if exc.code == PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE:
+        return "operational_failed", ProcedureOperationalFailure(
+            code=PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+            message=str(exc),
+            last_node_id=node_id,
+            details=details,
+            retryable=True,
+            repair=served_repair_for_refusal(PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE),
+        )
+    return "node_refused", ProcedureNodeRefusal(
+        code="provider_unavailable",
+        message=message,
+        node_id=node_id,
+        details=details,
+        retryable=True,
+        repair=served_repair_for_refusal("provider_unavailable"),
+    )
+
+
+def _source_observation_rows(
+    derived: Sequence[ProcedureDerivedSourceRequest],
+    reads: Sequence[SourceReadReceipt],
+    associations: Sequence[ProcedureSourceCaptureAssociation],
+    completed_inputs: Mapping[str, str],
+) -> list[
+    tuple[
+        ProcedureDerivedSourceRequest | None,
+        SourceReadReceipt | None,
+        ProcedureSourceCaptureAssociation | None,
+    ]
+]:
+    """One occurrence's observations: each Capture with the read and request behind it.
+
+    An occurrence derives one Source request (and one read) per file it read: a
+    glob read (D-R41) has one per member, matched to a Capture by the input its
+    invocation consumed. An occurrence that bound no Capture shows each read.
+
+    Both joins are index lookups, built once per occurrence rather than
+    rescanned per member: a glob with N matches stays linear in N instead of
+    rescanning ``derived``/``reads`` once per association.
+    """
+
+    by_request_digest: dict[str, ProcedureDerivedSourceRequest] = {}
+    for one_derived in derived:
+        by_request_digest.setdefault(one_derived.request_digest, one_derived)
+    by_provider_input: dict[str, SourceReadReceipt] = {}
+    if len(reads) > 1:
+        for one_read in reads:
+            by_provider_input.setdefault(one_read.provider_input_digest, one_read)
+
+    def request_for(read: SourceReadReceipt | None) -> ProcedureDerivedSourceRequest | None:
+        if read is not None:
+            found = by_request_digest.get(read.derived_request_digest)
+            if found is not None:
+                return found
+        return derived[0] if derived else None
+
+    def read_for(association: ProcedureSourceCaptureAssociation) -> SourceReadReceipt | None:
+        if len(reads) <= 1:
+            return reads[0] if reads else None
+        consumed = completed_inputs.get(association.invocation_receipt_digest)
+        return by_provider_input.get(consumed) if consumed is not None else None
+
+    if associations:
+        return [
+            (request_for(read), read, association)
+            for association in associations
+            for read in (read_for(association),)
+        ]
+    if reads:
+        return [(request_for(read), read, None) for read in reads]
+    return [(request_for(None), None, None)]
+
+
+#: The read refusals a late read (D-R38) makes mid-run, at its own node.
+_LATE_READ_REFUSAL_CODES = frozenset(
+    {"read_ceiling_exceeded", "query_contract_violated", "state_tap_refused"}
+)
+
+
+def _state_from_records(
+    instance: PlaybillInstance,
+    *,
+    run_id: str,
+    receipt: ProcedureRunReceiptV1 | None = None,
+) -> ProcedureRunStateV2:
+    records = _records_for_run(instance, run_id)
+    if not records:
+        raise ProcedureRunNotFound(f"{ProcedureRunNotFound.code}: {run_id}")
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="procedure-runtime", can_read_body=True)
+    admission: ProcedureRunAdmission | None = None
+    admission_count = 0
+    admission_material_manifest = None
+    admission_material_manifest_digest: str | None = None
+    acquisition_plan = None
+    acquisition_plan_digest: str | None = None
+    final = None
+    outcomes: list[ProcedureRunOutcomeV1] = []
+    invocation_receipt_digests: list[str] = []
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
+    provider_invocations: dict[str, Literal["started", "completed"]] = {}
+    # Per occurrence, each Source request it derived and each read, in journal
+    # order: a glob read (D-R41) derives and reads one per matched file.
+    derived_source_requests: dict[str, list[ProcedureDerivedSourceRequest]] = {}
+    source_reads: dict[str, list[SourceReadReceipt]] = {}
+    #: Each occurrence path's derived request digests seen so far: backs the
+    #: duplicate check and the provider-start validation without rescanning
+    #: ``derived_source_requests[path]``, which grows with a glob's members.
+    derived_request_digests: dict[str, set[str]] = {}
+    #: Each occurrence path's read derived-request digests seen so far: backs
+    #: the read duplicate check without rescanning ``source_reads[path]``.
+    source_read_digests: dict[str, set[str]] = {}
+    #: Each occurrence path's provider-input digests a started invocation may
+    #: present: one ``run_value_digest`` per derived request and one
+    #: ``provider_input_digest`` per read, folded in as each is seen rather
+    #: than rebuilt (and re-hashed) at every invocation start.
+    expected_provider_inputs: dict[str, set[str]] = {}
+    #: Each completed invocation's input digest, by its receipt digest.
+    completed_inputs: dict[str, str] = {}
+    produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
+    terminal_egress: dict[str, ProcedureTerminalEgress] = {}
+    children: list[ProcedureChildInvocation] = []
+    findings: list[ClaimsDiagnostic] = []
+    findings_count = 0
+    nodes: list[GetRunNode] = []
+    for stored in records:
+        payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            return _unavailable_run_state(stored, admission=admission)
+        if (
+            stored.record.event_kind == "child_invocation"
+            and isinstance(payload, dict)
+            and payload.get("verdict") == "completed"
+        ):
+            child_receipt = ProcedureRunReceiptV1.model_validate(payload["receipt"])
+            children.append(
+                ProcedureChildInvocation(
+                    node_id=str(payload["node_id"]),
+                    run_id=child_receipt.run_id,
+                    procedure=ArtifactIdentity.model_validate(payload["procedure"]),
+                    status=cast(
+                        Literal["succeeded", "refused", "failed", "halted"], payload["status"]
+                    ),
+                )
+            )
+        if stored.record.event_kind == "node_fired" and isinstance(payload, dict):
+            nodes.append(run_node(payload, sequence=stored.record.sequence))
+            findings_count += int(cast(int, payload.get("claims_diagnostics_count", 0)))
+            for finding in cast(list[Any], payload.get("claims_diagnostics", [])):
+                if len(findings) < 1000:
+                    findings.append(ClaimsDiagnostic.model_validate(finding))
+        if stored.record.event_kind == "terminal_egress" and isinstance(payload, dict):
+            folded = _fold_terminal_egress(
+                terminal_egress.get(str(payload.get("node_id"))),
+                payload,
+                journal_coordinate=_journal_coordinate(stored),
+            )
+            terminal_egress[folded.node_id] = folded
+        if stored.record.event_kind == "admission_bound":
+            admission_count += 1
+            bound = parse_admission_payload(payload)
+            admission = bound.admission
+            admission_material_manifest = bound.admission_material_manifest
+            admission_material_manifest_digest = bound.admission_material_manifest_digest
+            acquisition_plan = bound.acquisition_plan
+            acquisition_plan_digest = bound.acquisition_plan_digest
+        if stored.record.event_kind in {"node_fired", "attempt_finalized", "produced_capture"}:
+            node_id = payload.get("node_id") if isinstance(payload, dict) else None
+            outcomes.append(
+                ProcedureRunOutcomeV1(
+                    capture_event=TriggerEventReference(
+                        run_id=run_id,
+                        partition_id=stored.record.partition_id,
+                        sequence=stored.record.sequence,
+                        record_digest=stored.record_digest,
+                    )
+                    if stored.record.event_kind == "produced_capture"
+                    else None,
+                    sequence=stored.record.sequence,
+                    event_kind=stored.record.event_kind,
+                    node_id=node_id if isinstance(node_id, str) else None,
+                    payload_digest=stored.record.payload_digest,
+                )
+            )
+        if stored.record.event_kind == "attempt_finalized":
+            final = payload
+        if stored.record.event_kind == "source_request_derived":
+            try:
+                derived = ProcedureDerivedSourceRequest.model_validate(payload)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: derived Source request is invalid"
+                ) from exc
+            path_derived_digests = derived_request_digests.setdefault(
+                derived.occurrence_path, set()
+            )
+            if (
+                derived.run_id != run_id
+                or derived.admission_binding_digest != stored.record.admission_binding_digest
+                or derived.request_digest in path_derived_digests
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: derived Source request does not bind "
+                    "this run exactly"
+                )
+            derived_source_requests.setdefault(derived.occurrence_path, []).append(derived)
+            path_derived_digests.add(derived.request_digest)
+            expected_provider_inputs.setdefault(derived.occurrence_path, set()).add(
+                run_value_digest("provider-input", derived.request)
+            )
+        if stored.record.event_kind == "source_read" and isinstance(payload, dict):
+            try:
+                read_receipt = SourceReadReceipt.model_validate(payload.get("receipt"))
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Source read receipt is invalid"
+                ) from exc
+            path_read_digests = source_read_digests.setdefault(read_receipt.occurrence_path, set())
+            if (
+                read_receipt.run_id != run_id
+                or read_receipt.admission_binding_digest != stored.record.admission_binding_digest
+                or payload.get("receipt_digest") != source_read_receipt_digest(read_receipt)
+                or read_receipt.derived_request_digest in path_read_digests
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Source read receipt does not bind "
+                    "this run exactly"
+                )
+            # A governed workspace read hands the Provider the bytes the
+            # daemon really read, not the request that named them. The read
+            # receipt is what binds the two, so the reconstruction requires
+            # that binding before it accepts the substitution -- checked here,
+            # once per read, rather than rescanned per invocation start.
+            if read_receipt.derived_request_digest not in derived_request_digests.get(
+                read_receipt.occurrence_path, ()
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Source read receipt names "
+                    "another derived request"
+                )
+            source_reads.setdefault(read_receipt.occurrence_path, []).append(read_receipt)
+            path_read_digests.add(read_receipt.derived_request_digest)
+            expected_provider_inputs.setdefault(read_receipt.occurrence_path, set()).add(
+                read_receipt.provider_input_digest
+            )
+        if stored.record.event_kind == "provider_invocation_started":
+            try:
+                started = ProviderInvocationStarted.model_validate(payload)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider invocation start is invalid"
+                ) from exc
+            if started.invocation_id in provider_invocations:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider invocation start is duplicated"
+                )
+            planned = (
+                ()
+                if acquisition_plan is None
+                else tuple(
+                    item
+                    for item in acquisition_plan.external_occurrences
+                    if item.occurrence_path == started.occurrence_path
+                )
+            )
+            if len(planned) != 1:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider start is not admitted exactly"
+                )
+            if planned[0].occurrence_kind == "source":
+                # Every derived request's provider-input digest, and every
+                # read's binding to one, were folded into
+                # ``expected_provider_inputs`` above as each was seen (and the
+                # read's binding already validated there), so this is a set
+                # lookup: never a rescan of a glob's growing member lists, and
+                # never a re-hash of requests already seen.
+                if started.occurrence_path not in derived_request_digests:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
+                        "pre-spawn derived request result"
+                    )
+                expected_inputs = expected_provider_inputs.get(started.occurrence_path, set())
+                if started.input_digest not in expected_inputs:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: Source spawn lacks its exact "
+                        "pre-spawn derived request result"
+                    )
+            provider_invocations[started.invocation_id] = "started"
+        if stored.record.event_kind == "provider_invocation_completed":
+            try:
+                completed = ProviderInvocationCompleted.model_validate(payload)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider invocation receipt is invalid"
+                ) from exc
+            if provider_invocations.get(completed.invocation_id) != "started":
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider completion has no exact "
+                    "unmatched durable start"
+                )
+            if (
+                completed.receipt.run_id != run_id
+                or completed.receipt.admission_binding_digest
+                != stored.record.admission_binding_digest
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider completion names another run"
+                )
+            provider_invocations[completed.invocation_id] = "completed"
+            invocation_receipt_digests.append(completed.receipt_digest)
+            completed_inputs[completed.receipt_digest] = completed.receipt.input_digest
+        if stored.record.event_kind == "produced_capture" and isinstance(payload, dict):
+            occurrence_path = payload.get("occurrence_path")
+            invocation_receipt_digest = payload.get("invocation_receipt_digest")
+            if occurrence_path is not None or invocation_receipt_digest is not None:
+                try:
+                    if not isinstance(occurrence_path, str) or not isinstance(
+                        invocation_receipt_digest, str
+                    ):
+                        raise TypeError("Source Capture association is partial")
+                    association = ProcedureSourceCaptureAssociation(
+                        occurrence_path=occurrence_path,
+                        field=str(payload.get("field")),
+                        invocation_receipt_digest=invocation_receipt_digest,
+                        capture_digest=str(payload.get("capture_digest")),
+                    )
+                except (TypeError, ValueError, ValidationError) as exc:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: produced Source Capture is invalid"
+                    ) from exc
+                if association.invocation_receipt_digest not in invocation_receipt_digests:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: produced Source Capture precedes "
+                        "its Provider completion"
+                    )
+                produced_source_associations.append(association)
+    if admission is None:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run lacks a supported admission_bound"
+        )
+    if admission_count != 1:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run must have one admission_bound"
+        )
+    for stored in records:
+        record = stored.record
+        if (
+            record.stream != admission.journal_stream
+            or record.partition_id != admission.journal_partition_id
+            or record.accepted_coordinate != admission.accepted_coordinate
+            or record.procedure_artifact_digest != admission.procedure_artifact_digest
+            or record.definition_digest != admission.definition_digest
+            or record.run_id != admission.run_id
+            or record.line_spec_digest != admission.line_spec_digest
+            or record.occurrence_id != admission.occurrence_id
+            or record.attempt != admission.attempt
+            or record.admission_binding_digest != admission.admission_binding_digest
+            or record.actor_context != admission.actor_context
+        ):
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: run record metadata disagrees with admission"
+            )
+    status: Literal[
+        "running",
+        "succeeded",
+        "node_refused",
+        "operational_failed",
+        "internal_failed",
+        "halted",
+    ] = "running"
+    result = None
+    terminal: ProcedureTerminal | None = None
+    semantic_result_digest = None
+    if isinstance(final, dict):
+        try:
+            raw_associations = final.get("source_capture_associations", [])
+            if not isinstance(raw_associations, list):
+                raise TypeError("Source Capture associations are not a list")
+            source_capture_associations = tuple(
+                ProcedureSourceCaptureAssociation.model_validate(item) for item in raw_associations
+            )
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: Source Capture associations are invalid"
+            ) from exc
+        if tuple(
+            (item.occurrence_path, item.field) for item in source_capture_associations
+        ) != tuple(
+            sorted(
+                {(item.occurrence_path, item.field) for item in source_capture_associations},
+                key=lambda pair: (pair[0].encode("utf-8"), pair[1].encode("utf-8")),
+            )
+        ) or any(
+            item.invocation_receipt_digest not in invocation_receipt_digests
+            for item in source_capture_associations
+        ):
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: Source Capture associations do not "
+                "match durable Provider receipts"
+            )
+        expected_source_associations = tuple(
+            sorted(
+                produced_source_associations,
+                key=lambda item: (
+                    item.occurrence_path.encode("utf-8"),
+                    item.field.encode("utf-8"),
+                ),
+            )
+        )
+        if source_capture_associations != expected_source_associations:
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: final Source Capture associations do not "
+                "reproduce produced-Capture events"
+            )
+        raw_status = final.get("status")
+        if raw_status not in {
+            "succeeded",
+            "refused",
+            "failed",
+            "budget_exhausted",
+            "halted",
+        }:
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: final status is invalid"
+            )
+        status = (
+            "succeeded"
+            if raw_status == "succeeded"
+            else "halted"
+            if raw_status == "halted"
+            else "node_refused"
+            if raw_status in {"refused", "budget_exhausted"}
+            else "internal_failed"
+        )
+        result = final.get("output") if raw_status == "succeeded" else None
+        raw_semantic = final.get("semantic_result_digest")
+        semantic_result_digest = raw_semantic if isinstance(raw_semantic, str) else None
+        final_record = records[-1]
+        last_node_id = next(
+            (item.node_id for item in reversed(outcomes) if item.node_id is not None),
+            "procedure",
+        )
+        try:
+            if raw_status in {"refused", "budget_exhausted"}:
+                raw_refusal = final.get("refusal")
+                refusal = raw_refusal if isinstance(raw_refusal, dict) else {}
+                raw_budget = refusal.get("budget")
+                budget = (
+                    ProcedureBudgetRefusalDetail.model_validate(raw_budget)
+                    if isinstance(raw_budget, dict)
+                    else None
+                )
+                refusal_code = str(refusal.get("code", "guard_refused"))
+                raw_detail_code = refusal.get("detail_code")
+                if refusal_code in get_args(ProcedureAdmissionRefusalCode) and not (
+                    # A late read's refusal (D-R38) is its node's, not admission's.
+                    refusal_code in _LATE_READ_REFUSAL_CODES and refusal.get("node_id")
+                ):
+                    terminal = ProcedureAdmissionRefusal.model_validate(
+                        {
+                            "code": refusal_code,
+                            "message": str(refusal.get("message", "Procedure admission refused.")),
+                            "details": refusal.get("details", {}),
+                        }
+                    )
+                elif refusal_code == "budget_max_items_exceeded":
+                    terminal = ProcedureBudgetExhausted(
+                        node_id=str(refusal.get("node_id") or last_node_id),
+                        journal_coordinate=_journal_coordinate(final_record),
+                        details=ProcedureBudgetExceededDetail.model_validate(
+                            refusal.get("details", {})
+                        ),
+                    )
+                else:
+                    terminal = ProcedureNodeRefusal.model_validate(
+                        {
+                            "code": refusal_code,
+                            "message": str(
+                                refusal.get("message", "Procedure node refused execution.")
+                            ),
+                            "node_id": str(refusal.get("node_id") or last_node_id),
+                            "journal_coordinate": _journal_coordinate(final_record),
+                            # `detail_code` is an AUTHORED code and nothing else:
+                            # the Procedure's guard code, or the code the bound
+                            # operation declares. A daemon-authored
+                            # classification -- the workspace path class, say --
+                            # travels in `details`, where the refusal puts it.
+                            "detail_code": (
+                                raw_detail_code
+                                if refusal_code in ("guard_refused", "operation_refused")
+                                and isinstance(raw_detail_code, str)
+                                else None
+                            ),
+                            "details": refusal.get("details", {}),
+                            "budget": budget,
+                        }
+                    )
+            elif raw_status == "halted":
+                raw_halt = final.get("halt")
+                if not isinstance(raw_halt, dict):
+                    raise ValueError("halted run lacks typed halt material")
+                raw_reason = raw_halt.get("reason")
+                raw_message = raw_halt.get("message")
+                terminal = ProcedureHaltTerminal(
+                    node_id=str(raw_halt.get("node_id") or last_node_id),
+                    reason=raw_reason if isinstance(raw_reason, str) else None,
+                    message=raw_message if isinstance(raw_message, str) else None,
+                    journal_coordinate=_journal_coordinate(final_record),
+                )
+            elif raw_status == "failed":
+                failure_code = final.get("failure_code")
+                if failure_code in set(get_args(ProcedureOperationalFailureCode)):
+                    status = "operational_failed"
+                    messages = {
+                        "cas_unavailable_at_replay": (
+                            "Admitted Procedure replay material is unavailable."
+                        ),
+                        "replay_material_mismatch": (
+                            "Admitted Procedure replay material does not match its binding."
+                        ),
+                        "wall_clock_exhausted": (
+                            "Procedure execution exceeded its wall-clock budget."
+                        ),
+                        "admission_material_unavailable_by_policy": (
+                            "Admitted Procedure material is unavailable under its governed "
+                            "retention policy."
+                        ),
+                        "replay_material_unavailable": (
+                            "Required admitted Procedure replay material is unavailable."
+                        ),
+                        "admission_material_corrupt": (
+                            "Admitted Procedure replay material fails its content address."
+                        ),
+                    }
+                    raw_cause = final.get("failure_cause")
+                    cause = (
+                        ProcedureFailureCause.model_validate(raw_cause)
+                        if raw_cause is not None
+                        else None
+                    )
+                    terminal = ProcedureOperationalFailure.model_validate(
+                        {
+                            "code": failure_code,
+                            "message": messages.get(
+                                str(failure_code),
+                                "Provider execution failed for an operational reason.",
+                            ),
+                            "last_node_id": None if cause is None else cause.node_id,
+                            "cause": cause,
+                            "journal_coordinate": _journal_coordinate(final_record),
+                            "details": final.get("failure_details", {}),
+                        }
+                    )
+                elif failure_code in set(get_args(ProcedureInternalFailureCode)):
+                    terminal = ProcedureInternalFailure.model_validate(
+                        {
+                            "code": failure_code,
+                            "message": (
+                                "Provider execution violated an internal integrity contract."
+                            ),
+                            "correlation_id": run_id,
+                            "journal_coordinate": _journal_coordinate(final_record),
+                        }
+                    )
+                else:
+                    terminal = ProcedureInternalFailure(
+                        code="unexpected_exception",
+                        message="Procedure execution failed unexpectedly; inspect daemon logs.",
+                        correlation_id=run_id,
+                        journal_coordinate=_journal_coordinate(final_record),
+                        repair=served_repair_for_refusal("unexpected_exception"),
+                    )
+        except (ValidationError, TypeError, ValueError):
+            status = "internal_failed"
+            result = None
+            semantic_result_digest = None
+            terminal = ProcedureInternalFailure(
+                code="run_record_invalid",
+                message="Procedure run record is invalid; inspect daemon logs.",
+                correlation_id=run_id,
+                journal_coordinate=_journal_coordinate(final_record),
+                repair=served_repair_for_refusal("run_record_invalid"),
+            )
+    attribution = ProcedureRunAttribution(
+        actor_type=admission.actor_context.actor_type,
+        actor_id=admission.actor_context.actor_id,
+        org_id=admission.actor_context.org_id,
+        operation_id=admission.actor_context.operation_id,
+        request_id=admission.actor_context.request_id,
+        recorded_time=admission.actor_context.timestamp,
+    )
+    public_receipt: ProcedureRunReceipt | None = None
+    receipt_digest = None
+    if final is not None:
+        public_receipt = _public_run_receipt(
+            admission,
+            records=records,
+            final=final,
+            status=status,
+            terminal=terminal,
+            attribution=attribution,
+            semantic_result_digest=semantic_result_digest,
+            admission_material_manifest=admission_material_manifest,
+            admission_material_manifest_digest=admission_material_manifest_digest,
+            acquisition_plan=acquisition_plan,
+            acquisition_plan_digest=acquisition_plan_digest,
+            invocation_receipt_digests=tuple(invocation_receipt_digests),
+            source_capture_associations=source_capture_associations,
+        )
+        receipt_digest = typed_digest(
+            Sha256Value,
+            PROCEDURE_RUN_RECEIPT_DOMAIN,
+            {"receipt": public_receipt.model_dump(mode="json")},
+        ).tagged
+    next_kind: Literal["retry", "done", "terminal"] = (
+        "done" if status == "succeeded" else "retry" if status == "running" else "terminal"
+    )
+    # One observation per capture field an occurrence produced; an occurrence
+    # that produced none (omitted, refused, still running) reports its reads.
+    captures_by_path: dict[str, list[ProcedureSourceCaptureAssociation]] = {}
+    for item in source_capture_associations or tuple(produced_source_associations):
+        captures_by_path.setdefault(item.occurrence_path, []).append(item)
+    observations = tuple(
+        ProcedureSourceObservation(
+            occurrence_path=occurrence_path,
+            node_id=None if derived is None else derived.node_id,
+            input_name=(
+                None
+                if derived is None
+                else derived.input_name
+                if association is None
+                else f"{derived.input_name}.{association.field}"
+            ),
+            field=None if association is None else association.field,
+            source_read_receipt=receipt,
+            source_read_receipt_digest=(
+                None if receipt is None else source_read_receipt_digest(receipt)
+            ),
+            invocation_receipt_digest=(
+                None if association is None else association.invocation_receipt_digest
+            ),
+            capture_digest=None if association is None else association.capture_digest,
+        )
+        for occurrence_path, derived, receipt, association in (
+            (path, *row)
+            for path in sorted(
+                set(derived_source_requests) | set(source_reads) | set(captures_by_path),
+                key=lambda item: item.encode("utf-8"),
+            )
+            for row in _source_observation_rows(
+                derived_source_requests.get(path, []),
+                source_reads.get(path, []),
+                captures_by_path.get(path, []),
+                completed_inputs,
+            )
+        )
+    )
+    completeness = (
+        RunCompleteness.model_validate(final["completeness"])
+        if isinstance(final, dict) and final.get("completeness") is not None
+        else None
+    )
+    inbox, inbox_new = (
+        _run_inbox_postings(instance, run_id)
+        if status != "running"
+        and admission.invocation_origin == "line"
+        and _run_may_have_posted(
+            terminal_egress.values(), findings_count=findings_count, terminal=terminal
+        )
+        else (0, 0)
+    )
+    return ProcedureRunStateV2(
+        counts=(
+            None
+            if status == "running"
+            else run_counts(
+                (node.summary for node in nodes),
+                findings=findings,
+                completeness=completeness,
+                inbox=inbox,
+                inbox_new=inbox_new,
+            )
+        ),
+        run_id=run_id,
+        investigation=admission.investigation,
+        trigger_binding=admission.trigger_binding,
+        procedure_identity=admission.procedure_identity,
+        procedure_artifact_digest=admission.procedure_artifact_digest,
+        bound_coordinate=AcceptedCoordinate.model_validate(
+            admission.bound_coordinate.model_dump(mode="json")
+        ),
+        head_at_admission=AcceptedCoordinate.model_validate(
+            admission.head_at_admission.model_dump(mode="json")
+        ),
+        lane=admission.lane,
+        evaluation_time=admission.admitted_at,
+        status=status,
+        pending_inputs=(),
+        outcomes=tuple(outcomes),
+        next_operation=ProcedureNextOperationV1(kind=next_kind),
+        result=result,
+        attribution=attribution,
+        semantic_replay_key_digest=admission.semantic_replay_key_digest,
+        semantic_result_digest=semantic_result_digest,
+        receipt=public_receipt,
+        receipt_digest=receipt_digest,
+        terminal=terminal,
+        children=tuple(children),
+        findings=tuple(findings),
+        findings_count=findings_count,
+        nodes=tuple(nodes),
+        completeness=completeness,
+        source_observations=observations,
+        terminal_egress=tuple(
+            sorted(
+                (_with_prior_refusals(instance, item) for item in terminal_egress.values()),
+                key=lambda item: item.node_id.encode("utf-8"),
+            )
+        ),
+    )
+
+
+def _public_run_receipt(
+    admission: ProcedureRunAdmission,
+    *,
+    records: Sequence[StoredProcedureJournalRecordV1],
+    final: object,
+    status: str,
+    terminal: ProcedureTerminal | None,
+    attribution: ProcedureRunAttribution,
+    semantic_result_digest: str | None,
+    admission_material_manifest: ProcedureAdmissionMaterialManifest | None,
+    admission_material_manifest_digest: str | None,
+    acquisition_plan: ProcedureAcquisitionPlan | None,
+    acquisition_plan_digest: str | None,
+    invocation_receipt_digests: tuple[str, ...],
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...],
+) -> ProcedureRunReceipt:
+    """Project one finalized run onto the one public receipt, for every run lane."""
+
+    raw_budget = final.get("budget") if isinstance(final, dict) else None
+    if (
+        not isinstance(raw_budget, dict)
+        or admission_material_manifest is None
+        or admission_material_manifest_digest is None
+    ):
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: finalized run lacks its budget or manifest"
+        )
+    if (acquisition_plan is None) != (admission.acquisition_plan_digest is None):
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: admitted acquisition plan is absent"
+        )
+    stream = records[0].record.stream
+    return ProcedureRunReceipt(
+        run_id=admission.run_id,
+        admission_binding_digest=admission.admission_binding_digest,
+        semantic_replay_key_digest=admission.semantic_replay_key_digest,
+        semantic_result_digest=semantic_result_digest,
+        bound_coordinate=admission.bound_coordinate,
+        head_at_admission=admission.head_at_admission,
+        lane=admission.lane,
+        evaluation_time=admission.admitted_at,
+        validated_pins=admission.full_pins,
+        admitted_inputs=tuple(
+            cast(dict[str, object], item.model_dump(mode="json")) for item in admission.run_inputs
+        ),
+        late_reads=tuple(
+            cast(dict[str, object], item)
+            for item in (final.get("late_reads", ()) if isinstance(final, dict) else ())
+            if isinstance(item, dict)
+        ),
+        attribution=attribution,
+        stream_instance_id=stream.instance_id,
+        journal_family=stream.journal_family,
+        stream_id=stream.stream_id,
+        partition_id=records[0].record.partition_id,
+        first_sequence=records[0].record.sequence,
+        last_sequence=records[-1].record.sequence,
+        record_digests=tuple(item.record_digest for item in records),
+        chain_head_digest=records[-1].record_digest,
+        status=cast(ProcedureRunReceiptStatus, status),
+        terminal=terminal,
+        budget=ProcedureRunBudget.model_validate(raw_budget),
+        invocation_origin=admission.invocation_origin,
+        line_identity=admission.line_identity,
+        line_spec_digest=admission.line_spec_digest,
+        occurrence_id=admission.occurrence_id,
+        occurrence_evaluation_time=admission.occurrence_evaluation_time,
+        node_pin_sets=tuple(
+            ProcedureRunNodePinSet(node_id=item.node_id, pins=item.pins)
+            for item in admission.node_pin_sets
+        ),
+        pin_set_digest=admission.pin_set_digest,
+        replay_input_vector=tuple(
+            ProcedureReplayInputProjection.model_validate(item.model_dump(mode="json"))
+            for item in procedure_replay_input_vector(admission)
+        ),
+        deployment_snapshot_digest=admission.deployment_snapshot_digest,
+        acquisition_policy_digest=admission.acquisition_policy_digest,
+        selection_receipt_digest=admission.selection_receipt_digest,
+        selection_decision=admission.selection_decision,
+        selection_decision_digest=admission.selection_decision_digest,
+        resolved_provider_bindings=admission.resolved_provider_bindings,
+        sensitivity_policy_digest=admission.sensitivity_policy_digest,
+        mandate_coordinate_digest=admission.mandate_coordinate_digest,
+        taint_labels=admission.taint_labels,
+        epsilon_member=admission.epsilon_member,
+        admission_material_manifest=admission_material_manifest,
+        admission_material_manifest_digest=admission_material_manifest_digest,
+        acquisition_plan_digest=acquisition_plan_digest,
+        exhaust_access_binding_digest=admission.exhaust_access_binding_digest,
+        invocation_receipt_digests=invocation_receipt_digests,
+        source_capture_associations=source_capture_associations,
+    )
+
+
+#: Every terminal code a run can end with between an inbox post and the
+#: journal record that names it. A run posts in three places
+#: (``procedures.execution``), and each post is followed by its record before
+#: anything else runs: ``deliver_inbox_egress`` (``post_inbox``), then receipt
+#: verification, then the ``terminal_egress`` append; ``_route_findings`` on a
+#: claims terminal, then its ``terminal_egress`` append; ``_route_findings`` on
+#: an extract node, then its ``node_fired`` append. What can end the run in
+#: between:
+#:
+#: - the record's own append refusing: ``_journal_refusal_code`` maps every
+#:   ``JournalError`` to ``journal_conflict``, ``journal_integrity_error`` or
+#:   ``journal_append_failed``;
+#: - any other exception there -- the inbox store failing after its own journal
+#:   append is durable, the sink building its receipt, the record's reservation
+#:   or body store -- which the executor finalizes as ``unexpected_exception``
+#:   (an untyped exception or a bare ``ExecutionError``);
+#: - a ``post_inbox`` receipt failing verification: ``terminal_egress_unverified``;
+#: - a crash after a claims terminal routed its findings, before its delivered
+#:   record: the terminal was journaled ``prepared``, and recovery finishes the
+#:   run ``terminal_egress_recovered``.
+#:
+#: ``run_record_invalid`` is the fold's own: the final record could not be
+#: read, so nothing it journaled can rule a post out. Every other terminal code
+#: is raised at a node that posts nothing, after any earlier post's record.
+_POST_WINDOW_TERMINAL_CODES = frozenset(
+    {
+        "journal_append_failed",
+        "journal_conflict",
+        "journal_integrity_error",
+        "unexpected_exception",
+        "terminal_egress_unverified",
+        "terminal_egress_recovered",
+        "run_record_invalid",
+    }
+)
+
+
+def _run_may_have_posted(
+    terminal_egress: Iterable[ProcedureTerminalEgress],
+    *,
+    findings_count: int,
+    terminal: ProcedureTerminal | None,
+) -> bool:
+    """Whether a finished Line run's journal leaves room for an inbox posting.
+
+    A run posts at a ``post_inbox`` terminal, whose ``terminal_egress`` record
+    follows the post, or by routing findings, which the node's record counts.
+    A run with neither, that did not end in one of the few exits that can fall
+    between a post and its record, posted nothing: its count is 0 without
+    opening the inbox store.
+    """
+
+    return (
+        findings_count > 0
+        or any(item.kind == "post_inbox" for item in terminal_egress)
+        or getattr(terminal, "code", None) in _POST_WINDOW_TERMINAL_CODES
+    )
+
+
+def _run_inbox_postings(instance: PlaybillInstance, run_id: str) -> tuple[int | None, int | None]:
+    """The items a Line run posted to its inbox and how many were new items.
+
+    Both are ``None`` when the inbox is unreadable; the second alone is
+    ``None`` when the inbox did not record which postings were new.
+    """
+
+    from cruxible_core.exhaust.line_inbox import InboxUnavailable, LineInboxStore
+
+    try:
+        return LineInboxStore(instance).posted_by_run(run_id)
+    except (InboxUnavailable, ValueError, sqlite3.Error):
+        return None, None
+
+
+def _with_prior_refusals(
+    instance: PlaybillInstance, egress: ProcedureTerminalEgress
+) -> ProcedureTerminalEgress:
+    """Attach to each delivered proposal item its earlier refusals, as recorded.
+
+    A proposed Claim whose statement, on the same evidence, was retired or
+    rejected before its proposal was admitted carries the receipts; nothing
+    else about the run changes.
+    """
+
+    if egress.proposal_id is None or egress.kind not in {
+        "claims",
+    }:
+        return egress
+    try:
+        receipts, coverage = instance.refusal_index().prior_refusals_with_coverage(
+            instance, egress.proposal_id
+        )
+    except ProposalNotFoundError:
+        return egress
+    if not receipts and coverage is None:
+        return egress
+    return egress.model_copy(
+        update={
+            "prior_refusal_coverage": coverage,
+            "children": tuple(
+                child.model_copy(update={"prior_refusals": receipts[child.path]})
+                if child.path in receipts
+                else child
+                for child in egress.children
+            ),
+        }
+    )
+
+
+def _direct_refusal_state(
+    accepted: AcceptedProcedure,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    head_at_admission: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    code: ProcedureAdmissionRefusalCode,
+    message: str,
+    details: object,
+) -> ProcedureRunStateV2:
+    return ProcedureRunStateV2(
+        run_id=None,
+        procedure_identity=accepted.procedure.identity,
+        procedure_artifact_digest=accepted.artifact_digest,
+        bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+        head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+        lane="current",
+        evaluation_time=evaluation_time,
+        status="admission_refused",
+        pending_inputs=(),
+        outcomes=(),
+        next_operation=ProcedureNextOperationV1(kind="terminal"),
+        terminal=ProcedureAdmissionRefusal(
+            code=code,
+            message=message,
+            details=details,
+            repair=served_repair_for_refusal(code),
+        ),
+    )
+
+
+def _plan_direct_external_run(
+    instance: PlaybillInstance,
+    accepted: AcceptedProcedure,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    head_at_admission: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+    budget: ProcedureBudget,
+    acquisition: Mapping[str, LineAcquisitionRule] | None = None,
+    ephemeral_spec_digest: str | None = None,
+) -> (
+    tuple[
+        ProcedureAcquisitionPlan,
+        Mapping[str, AcquisitionRule] | None,
+        Mapping[str, CaptureContract],
+        ProcedureRuntimePolicy,
+    ]
+    | ProcedureRunStateV2
+):
+    """Resolve the shared external closure without executing or binding state reads."""
+
+    refuse = partial(
+        _direct_refusal_state,
+        accepted,
+        coordinate=coordinate,
+        head_at_admission=head_at_admission,
+        evaluation_time=evaluation_time,
+    )
+    try:
+        runtime_policy = _accepted_runtime_policy(instance, coordinate)
+    except ProcedureRuntimePolicyAbsent as exc:
+        return refuse(
+            code="procedure_runtime_policy_absent",
+            message="Served external execution requires an accepted ProcedureRuntimePolicy.",
+            details={"reason": str(exc), "repair": "Seed the instance ProcedureRuntimePolicy."},
+        )
+    rules: dict[str, AcquisitionRule] | None = None
+    source_names = _source_input_names(accepted)
+    # Calls bind the accepted runtime output cap, with no evidence selection.
+    # Source occurrences additionally bind the run's acquisition rules (the
+    # request's, else the core default) through the same plan.
+    policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
+    policy_format: str = runtime_policy.tag
+    if source_names:
+        rules = procedure_acquisition_rules(accepted, acquisition)
+        policy_digest = acquisition_rules_digest(rules)
+        policy_format = ACQUISITION_RULES_DIGEST_DOMAIN
+    providers = _line_catalogs(instance, coordinate, accepted.procedure.pins)
+    capture_contracts = _accepted_capture_contracts(instance, coordinate, accepted.procedure.pins)
+    try:
+        external_occurrences = _plan_external_occurrences(
+            accepted,
+            providers=providers,
+            provider_runtime_operator=provider_runtime_operator,
+            runtime_policy=runtime_policy,
+            budget=budget,
+        )
+    except ProviderLocalRuntimeRefused as exc:
+        status, terminal = _provider_admission_terminal(
+            exc,
+            message="The daemon Provider lane cannot admit this direct Source run.",
+            node_id="direct-admission",
+        )
+        return ProcedureRunStateV2(
+            run_id=None,
+            procedure_identity=accepted.procedure.identity,
+            procedure_artifact_digest=accepted.artifact_digest,
+            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+            lane="current",
+            evaluation_time=evaluation_time,
+            pending_inputs=(),
+            outcomes=(),
+            next_operation=ProcedureNextOperationV1(kind="terminal"),
+            status=status,
+            terminal=terminal,
+        )
+    except (ExecutionError, ValidationError) as exc:
+        # A bound slot whose operation effect cannot occupy its node (for
+        # example a Source bound to an ``external_mutation`` operation) fails
+        # ``ProviderExternalOccurrencePlan``'s own correspondence validator as
+        # a plain pydantic ValidationError, not an ExecutionError; both are a
+        # binding-closure defect, never a bare exception out of admission.
+        return refuse(
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Procedure is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
+    selection = (
+        ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())
+        if rules is None
+        else _plan_selection_decision(
+            rules,
+            policy_digest=policy_digest,
+            occurrences=external_occurrences,
+            capture_contracts=capture_contracts,
+        )
+    )
+    if selection.verdict == "refused":
+        return refuse(
+            code="source_acquisition_refused",
+            message="The run's acquisition rules refuse a declared Source input.",
+            details={
+                "decisions": [item.model_dump(mode="json") for item in selection.decisions],
+                "repair": "Fit the CaptureContract budget or repair the Source binding.",
+            },
+        )
+    selection_digest = procedure_selection_decision_digest(selection)
+    accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
+    try:
+        plan = ProcedureAcquisitionPlan(
+            accepted_coordinate=accepted_coordinate,
+            occurrence_evaluation_time=evaluation_time,
+            acquisition_policy_format=policy_format,
+            acquisition_policy_digest=policy_digest,
+            selection_decision=selection,
+            selection_decision_digest=selection_digest,
+            external_occurrences=external_occurrences,
+            ephemeral_spec_digest=ephemeral_spec_digest,
+        )
+    except ValidationError as exc:
+        # A planned occurrence whose effect class cannot occupy its node (a
+        # Source bound to an ``external_mutation`` operation) fails this
+        # construction's nested model_validator -- a binding-closure defect,
+        # never a bare ValidationError out of admission.
+        return refuse(
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Procedure is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
+    return plan, rules, capture_contracts, runtime_policy
+
+
+def _prepare_direct_external_run(
+    instance: PlaybillInstance,
+    accepted: AcceptedProcedure,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    head_at_admission: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    invocation_input: object,
+    actor_context: GovernedActorContext,
+    state_reader: PlaybillProcedureStateTapReader,
+    journal_stream: JournalStreamIdentityV1,
+    lane: Literal["current", "replay"],
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
+    effective_budget: ProcedureBudget | None = None,
+    effective_caps: ProcedureHardCaps | None = None,
+    acquisition: Mapping[str, LineAcquisitionRule] | None = None,
+    ephemeral_spec_digest: str | None = None,
+    parameters: Mapping[str, object] | None = None,
+) -> (
+    tuple[
+        PreparedProcedureRun,
+        Mapping[str, AcquisitionRule] | None,
+        Mapping[str, CaptureContract],
+    ]
+    | ProcedureRunStateV2
+):
+    """Bind state and external inputs through the same planner for root and child runs.
+
+    ``parameters`` are the run's values over the Procedure's defaults (an
+    invoked child supplies none: it runs on its defaults).
+    """
+    definition = accepted.procedure.definition
+    effective_parameters = definition.effective_parameters(parameters or {})
+    budget = effective_budget or caps_budget(definition.hard_caps)
+    caps = effective_caps or definition.hard_caps
+    planned = _plan_direct_external_run(
+        instance,
+        accepted,
+        coordinate=coordinate,
+        head_at_admission=head_at_admission,
+        evaluation_time=evaluation_time,
+        provider_runtime_operator=provider_runtime_operator,
+        budget=budget,
+        acquisition=acquisition,
+        ephemeral_spec_digest=ephemeral_spec_digest,
+    )
+    if isinstance(planned, ProcedureRunStateV2):
+        return planned
+    plan, rules, capture_contracts, runtime_policy = planned
+    accepted_coordinate = plan.accepted_coordinate
+    external_occurrences = plan.external_occurrences
+    policy_digest = plan.acquisition_policy_digest
+    selection = plan.selection_decision
+    selection_digest = plan.selection_decision_digest
+    plan_digest = procedure_acquisition_plan_digest(plan)
+    materials = bind_accepted_state_materials(
+        accepted,
+        accepted_coordinate=accepted_coordinate,
+        state_reader=state_reader,
+        bodies=instance.body_store(),
+        read_ceiling=effective_read_rows(budget.max_read_rows, caps.max_read_rows),
+        invocation_input=invocation_input,
+        parameters=effective_parameters,
+    )
+    node_pin_sets = procedure_node_pin_sets(accepted)
+    bindings = procedure_provider_bindings(external_occurrences)
+    deployment_snapshot_digest = typed_digest(
+        Sha256Value,
+        "playbill-provider-deployment-snapshot-v1",
+        {
+            "bindings": [
+                item.local_execution.model_dump(mode="json") for item in external_occurrences
+            ]
+        },
+    ).tagged
+    admission = seal_procedure_run_admission(
+        {
+            "instance_id": instance.descriptor.instance_id,
+            "attempt": 1,
+            "accepted_coordinate": accepted_coordinate,
+            "bound_coordinate": accepted_coordinate,
+            "head_at_admission": AcceptedCoordinate.from_internal(head_at_admission),
+            "lane": lane,
+            "procedure_identity": accepted.procedure.identity,
+            "procedure_path": accepted.path,
+            "procedure_artifact_digest": accepted.artifact_digest,
+            "definition_digest": accepted.procedure.definition_digest,
+            "activation_policy": accepted.procedure.activation_policy,
+            "full_pins": accepted.procedure.pins,
+            "node_pin_sets": node_pin_sets,
+            "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
+            "invocation_input": invocation_input,
+            "parameters": effective_parameters,
+            "accepted_state_inputs": tuple(item.input for item in materials),
+            "budget": budget,
+            "hard_caps": caps,
+            "actor_context": actor_context,
+            "invocation_origin": "actor",
+            "journal_stream": journal_stream,
+            "deployment_snapshot_digest": deployment_snapshot_digest,
+            "acquisition_policy_digest": policy_digest,
+            "occurrence_evaluation_time": evaluation_time,
+            "resolved_provider_bindings": bindings,
+            "selection_decision": selection,
+            "selection_decision_digest": selection_digest,
+            "provider_output_bytes_cap": runtime_policy.provider_output_bytes_cap,
+            "resource_budget": resolve_procedure_resource_budget(budget, caps, runtime_policy),
+            "acquisition_plan_digest": plan_digest,
+            "admitted_at": evaluation_time,
+        }
+    )
+    manifest, manifest_digest = empty_admission_material_manifest()
+    prepared = PreparedProcedureRun(
+        admission=admission,
+        accepted_state_materials=materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=manifest_digest,
+        acquisition_plan=plan,
+        acquisition_plan_digest=plan_digest,
+    )
+    return prepared, rules, capture_contracts
+
+
+def service_run_playbill_procedure(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    request: ProcedureRunRequest,
+    actor_context: GovernedActorContext,
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
+    caller_rung: int | None = None,
+    daemon_clock: ProcedureClockProtocol | None = None,
+) -> ProcedureRunStateV2:
+    """Run one accepted Procedure directly.
+
+    ``caller_rung`` is the served caller's tier (``PermissionMode.value - 1``);
+    a Procedure whose terminals propose or settle refuses a read-only caller.
+    ``None`` is an in-process caller that already holds its authority.
+
+    Without an explicit ``evaluation_time`` the run evaluates at the instant it
+    is admitted, by the daemon clock: the operator's invocation is the trigger,
+    so a Capture the run lands is observed when it was read, not at the
+    accepted head's older time (which no capture-landing Trigger accepted
+    after it could ever fire on). The run records that instant as its
+    ``evaluation_time``.
+    """
+    instance.require_writable()
+    coordinate = accepted_coordinate_at(instance, request.at)
+    evaluation_time = request.evaluation_time or ensure_utc(
+        (daemon_clock or SystemProcedureClock()).now()
+    )
+    head_at_admission = instance.accepted_coordinate()
+    # ``at`` binds a live invocation to an accepted coordinate. Exact replay is
+    # addressed only by run_id through service_get_playbill_procedure_run.
+    lane: Literal["current", "replay"] = "current"
+    # A direct run has no accepted Line: it instantiates an ephemeral one, its
+    # bindings named or fitted now and recorded with the run by digest.
+    spec_bindings = direct_run_slot_bindings(
+        instance, name=name, coordinate=coordinate, requested=request.bindings
+    )
+    accepted = _accepted_procedure(
+        instance,
+        name=name,
+        coordinate=coordinate,
+        bind_references=True,
+        bindings={key: value for key, value in spec_bindings.items() if "." not in key},
+    )
+    from cruxible_client.contracts.procedures.line_specs import (
+        EphemeralLineSpec,
+        ephemeral_line_spec_digest,
+    )
+
+    ephemeral_spec_digest = ephemeral_line_spec_digest(
+        EphemeralLineSpec(
+            procedure=ArtifactPin(
+                role="procedure",
+                target=accepted.procedure.identity,
+                artifact_digest=accepted.artifact_digest,
+            ),
+            parameters=request.parameters,
+            bindings=spec_bindings,
+            acquisition=request.acquisition,
+            budget=caps_budget(accepted.procedure.definition.hard_caps),
+        )
+    )
+    if caller_rung is not None:
+        require_run_permission(
+            "cruxible_procedure_run",
+            target_rung=int(accepted.procedure.definition.terminal_capability),
+            caller_rung=caller_rung,
+        )
+    readiness = _readiness(accepted, coordinate=coordinate)
+    # A Procedure whose terminals act outward (claims, emit_capture,
+    # post_inbox) still runs directly: it
+    # instantiates the ephemeral Line spec above and is capped at propose
+    # (ruling C4). Only node kinds no run lane executes at all are refused
+    # here; the terminal's own authority cap is enforced at execution.
+    if readiness.runnable == "unsupported":
+        refusal_message = "Procedure contains node kinds no run lane executes."
+        return ProcedureRunStateV2(
+            run_id=None,
+            procedure_identity=accepted.procedure.identity,
+            procedure_artifact_digest=accepted.artifact_digest,
+            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+            lane=lane,
+            evaluation_time=evaluation_time,
+            status="admission_refused",
+            pending_inputs=(),
+            outcomes=(),
+            next_operation=readiness.next_operation,
+            terminal=ProcedureAdmissionRefusal(
+                code="unsupported_node",
+                message=refusal_message,
+                details={
+                    "runnable": readiness.runnable,
+                    "unsupported_nodes": [
+                        item.model_dump(mode="json") for item in readiness.unsupported_nodes
+                    ],
+                },
+                repair=served_repair_for_refusal("unsupported_node"),
+            ),
+        )
+    current_digest = _CurrentProcedureAuthority(instance).current_procedure_digest(
+        accepted.procedure.identity,
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+    )
+    if current_digest != accepted.artifact_digest:
+        raise ProcedureRunNotCurrent(
+            f"{ProcedureRunNotCurrent.code}: Procedure is not current before journal creation"
+        )
+    if request.trigger_event is not None and request.resolution_contract is None:
+        raise ExecutionError("direct trigger event requires a resolution contract")
+    investigation = (
+        None
+        if request.resolution_contract is None
+        else bind_investigation(
+            instance, request.resolution_contract, event=request.trigger_event, now=evaluation_time
+        )
+    )
+    stream = _stream(instance)
+    state_reader = PlaybillProcedureStateTapReader(
+        instance=instance,
+        evaluation_time=evaluation_time,
+    )
+    prepared: PreparedProcedureRun
+    acquisition_rules: Mapping[str, AcquisitionRule] | None = None
+    capture_contracts: Mapping[str, CaptureContract] = {}
+    try:
+        if _source_input_names(accepted) or _provider_nodes(accepted.procedure.definition):
+            planned = _prepare_direct_external_run(
+                instance,
+                accepted,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                invocation_input=request.input,
+                actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+                state_reader=state_reader,
+                journal_stream=stream,
+                lane=lane,
+                provider_runtime_operator=provider_runtime_operator,
+                acquisition=request.acquisition,
+                ephemeral_spec_digest=ephemeral_spec_digest,
+                parameters=request.parameters,
+            )
+            if isinstance(planned, ProcedureRunStateV2):
+                return planned
+            prepared, acquisition_rules, capture_contracts = planned
+        else:
+            try:
+                direct_runtime_policy = _accepted_runtime_policy(instance, coordinate)
+            except ProcedureRuntimePolicyAbsent:
+                direct_runtime_policy = None  # Retained pre-runtime-policy coordinates.
+            prepared = prepare_direct_procedure_run(
+                accepted,
+                runtime_policy=direct_runtime_policy,
+                instance_id=instance.descriptor.instance_id,
+                accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+                invocation_input=request.input,
+                actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+                state_reader=state_reader,
+                bodies=instance.body_store(),
+                journal_stream=stream,
+                journal_partition_id=None,
+                head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+                lane=lane,
+                admitted_at=evaluation_time,
+                parameters=request.parameters,
+            )
+    except ProcedureBoundaryRefused as exc:
+        if exc.code not in {
+            "read_ceiling_exceeded",
+            "state_tap_refused",
+            "query_contract_violated",
+        }:
+            raise
+        # A read the admission refuses (past the run's read budget, or a
+        # selection the reader declines) is an admission refusal, not a crash.
+        return _direct_refusal_state(
+            accepted,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=cast(ProcedureAdmissionRefusalCode, exc.code),
+            message=str(exc),
+            details=exc.details,
+        )
+    # The journal is created only once an admission exists: a Source run that
+    # cannot be admitted leaves no run history behind it.
+    if investigation is not None:
+        prepared = bind_prepared_investigation(prepared, investigation=investigation)
+    journal, root = _journal_for_write(instance)
+    if investigation is not None and not journal.all_records(
+        stream, prepared.admission.journal_partition_id
+    ):
+        require_current_investigation(instance, investigation)
+    _activate_writer(journal, stream, prepared.admission.journal_partition_id)
+    if request.at is None and instance.accepted_coordinate() != coordinate:
+        raise ProcedureRunNotCurrent(
+            f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before append"
+        )
+    # A Procedure whose terminals act outward runs under the ephemeral Line
+    # spec's own authority (ruling C4): no accepted Line, so no Procedure
+    # mandate ever covers it, and its ceiling is fixed at propose.
+    direct_effective_rung = None
+    direct_egress_sink = None
+    if readiness.runnable == "line":
+        direct_effective_rung = compute_ephemeral_run_effective_rung(
+            procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
+            procedure_definition_digest=accepted.procedure.definition_digest,
+            ephemeral_spec_digest=ephemeral_spec_digest,
+        )
+        direct_egress_sink = _LineTerminalEgressSink(
+            capture=CaptureTerminalEgressSink(
+                store=ReservedCaptureStore(
+                    bodies=instance.body_store(),
+                    reservations=ProcedureMaterialReservationStore(
+                        instance.body_store().reservation_root
+                    ),
+                    admission=prepared.admission,
+                    event_kind="terminal_egress",
+                ),
+                contracts=capture_contracts,
+                producer=accepted.procedure.identity,
+                producer_binding_digest=accepted.artifact_digest,
+            ),
+            proposal=ProposalTerminalEgressSink(instance=instance, accepted_mandates={}),
+        )
+    try:
+        result = service_execute_direct_procedure(
+            prepared,
+            accepted,
+            journal=journal,
+            bodies=instance.body_store(),
+            run_index_path=root / "procedure-run-index.sqlite",
+            fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+            activation_authority=_CurrentProcedureAuthority(instance),
+            provider_runtime_invoker_factory=(
+                None
+                if provider_runtime_operator is None
+                else lambda: provider_runtime_operator.invoker_for(
+                    instance,
+                    accepted_oid=coordinate.git_oid,
+                    pins=accepted.procedure.pins,
+                )
+            ),
+            acquisition_rules=acquisition_rules,
+            capture_contracts=capture_contracts,
+            workspace_file_reader=workspace_file_reader,
+            effective_rung=direct_effective_rung,
+            egress_sink=direct_egress_sink,
+            ephemeral_spec_digest=ephemeral_spec_digest,
+            enum_resolver=accepted_enum_resolver(instance, coordinate),
+            contract_resolver=accepted_contract_resolver(instance, coordinate),
+            key_rules=accepted_key_rules(instance, coordinate),
+            claims_context=AcceptedClaimsContext(instance, coordinate),
+            state_reader=PlaybillProcedureStateTapReader(
+                instance=instance, evaluation_time=evaluation_time
+            ),
+            clock=_DeterministicClock(evaluation_time),
+            nested_runner=ServedNestedProcedureRunner(
+                instance,
+                coordinate,
+                head_at_admission,
+                evaluation_time,
+                provider_runtime_operator,
+                workspace_file_reader,
+                _DeterministicClock(evaluation_time),
+                bindings=spec_bindings,
+                acquisition=dict(request.acquisition),
+            ),
+        )
+    except ProcedureBoundaryRefused as exc:
+        return _direct_refusal_state(
+            accepted,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="pin_binding_mismatch",
+            message=str(exc),
+            details={"boundary_code": exc.code, "detail": exc.details},
+        )
+    except ExecutionError as exc:
+        if "run_recovery_required" in str(exc):
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: {exc}"
+            ) from exc
+        if "current" in str(exc):
+            raise ProcedureRunNotCurrent(f"{ProcedureRunNotCurrent.code}: {exc}") from exc
+        raise
+    return _state_from_records(instance, run_id=prepared.admission.run_id, receipt=result.receipt)
+
+
+def _line_refusal_state(
+    accepted: AcceptedProcedure,
+    accepted_line: AcceptedLineSpec,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    head_at_admission: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    code: str,
+    message: str,
+    details: object,
+    retryable: bool = False,
+) -> ProcedureRunStateV2:
+    return ProcedureRunStateV2(
+        run_id=None,
+        procedure_identity=accepted.procedure.identity,
+        procedure_artifact_digest=accepted.artifact_digest,
+        bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+        head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+        lane="current",
+        evaluation_time=evaluation_time,
+        status="admission_refused",
+        pending_inputs=(),
+        outcomes=(),
+        next_operation=ProcedureNextOperationV1(kind="terminal"),
+        terminal=ProcedureAdmissionRefusal.model_validate(
+            {
+                "code": code,
+                "retryable": retryable,
+                "message": message,
+                "details": {
+                    "line_identity_digest": line_identity_digest(accepted_line.line.identity),
+                    **(details if isinstance(details, dict) else {"detail": details}),
+                },
+            }
+        ),
+    )
+
+
+def line_authority_rung(accepted_line: AcceptedLineSpec, accepted: AcceptedProcedure) -> int:
+    """The most this Line's runs can do: 1 observe, 2 propose, 3 settle.
+
+    It is the lower of what the Procedure's terminals reach and what the Line
+    allows. A Line at rung 1 only observes: it needs no mandate, and running or
+    dispatching it needs only read permission.
+    """
+
+    return min(
+        int(accepted.procedure.definition.terminal_capability),
+        line_requested_rung(accepted_line.line),
+    )
+
+
+def _accepted_line_mandates(
+    instance: PlaybillInstance,
+    line_identity: ArtifactIdentity | None,
+    line_digest: str | None,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+) -> tuple[tuple[str, ProcedureMandateAny], ...]:
+    """The live Mandates granting this exact Line version (looked up by Line digest).
+
+    A direct run has no Line, so no Mandate grants it anything.
+    """
+
+    if line_identity is None or line_digest is None:
+        return ()
+    instant = utc_microseconds(evaluation_time)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        result = []
+        for identity, digest in projection.typed.connection.execute(
+            "SELECT identity,artifact_digest FROM procedure_mandates "
+            "WHERE line_identity=? AND line_digest=? AND lifecycle='live' "
+            "AND valid_from_us<=? AND expires_at_us>? ORDER BY artifact_digest",
+            (line_identity.qualified, line_digest, instant, instant),
+        ):
+            mandate = projection.typed.source(identity)
+            if not isinstance(mandate, ProcedureMandate):
+                raise ProjectionIntegrityError(
+                    "accepted ProcedureMandate source is absent or invalid"
+                )
+            result.append((digest, mandate))
+        return tuple(result)
+
+
+class _LineTerminalEgressSink:
+    """Dispatch each served terminal to its existing authority-owning sink."""
+
+    def __init__(
+        self,
+        *,
+        capture: CaptureTerminalEgressSink,
+        proposal: ProposalTerminalEgressSink,
+        inbox: InboxTerminalEgressSink | None = None,
+    ) -> None:
+        self.capture = capture
+        self.proposal = proposal
+        self.inbox = inbox
+        self.finding_kinds = () if inbox is None else inbox.finding_kinds
+
+    def deliver_inbox_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    ) -> TerminalEgressReceiptV1:
+        if self.inbox is None:
+            raise TerminalEgressError("post_inbox is delivered only under a Line")
+        return self.inbox.deliver_inbox_egress(request=request, manifests=manifests)
+
+    def route_findings(
+        self,
+        *,
+        admission: ProcedureRunAdmission,
+        node_id: str,
+        diagnostics: tuple[ClaimsDiagnostic, ...],
+        at: datetime,
+        captures: tuple[str, ...] = (),
+    ) -> None:
+        if self.inbox is not None:
+            self.inbox.route_findings(
+                admission=admission,
+                node_id=node_id,
+                diagnostics=diagnostics,
+                at=at,
+                captures=captures,
+            )
+
+    def grants_settle(self) -> bool:
+        return self.proposal.grants_settle()
+
+    def prepare_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        admission: ProcedureRunAdmission,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        derivations: Mapping[str, Collection[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
+    ) -> PreparedTerminalEgressV1:
+        return self.proposal.prepare_terminal_egress(
+            request=request,
+            admission=admission,
+            manifests=manifests,
+            derivations=derivations,
+            capture_root_cache=capture_root_cache,
+        )
+
+    def deliver_terminal_egress(
+        self, *, request: TerminalEgressRequestV1, admission: ProcedureRunAdmission | None = None
+    ) -> TerminalEgressReceiptV1:
+        if request.kind == "emit_capture":
+            return self.capture.deliver_terminal_egress(request=request)
+        return self.proposal.deliver_terminal_egress(request=request, admission=admission)
+
+
+@projection_request
+def service_run_playbill_line(
+    instance: PlaybillInstance,
+    *,
+    path_identity_digest: str,
+    request: LineRunRequest,
+    actor_context: GovernedActorContext,
+    caller_rung: int,
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
+    daemon_clock: ProcedureClockProtocol | None = None,
+    evaluation_instant_skew: timedelta | None = None,
+    occurrence_basis_time: datetime | None = None,
+    expected_line_artifact_digest: str | None = None,
+    expected_trigger_artifact_digest: str | None = None,
+    expected_trigger_pins: dict[str, str] | None = None,
+    trigger_fire: TriggerFire | None = None,
+    runbook_step: RunbookStepOccurrence | None = None,
+) -> ProcedureRunStateV2:
+    instance.require_writable()
+    if request.line != path_identity_digest:
+        raise LineRunIdentityMismatch(
+            f"{LineRunIdentityMismatch.code}: route and request Line identities differ"
+        )
+    from cruxible_core.procedures.line_admission import line_admission_guard
+
+    with line_admission_guard(instance.root, _line_reference_digest(path_identity_digest)):
+        return _run_playbill_line(
+            instance,
+            path_identity_digest=path_identity_digest,
+            request=request,
+            actor_context=actor_context,
+            caller_rung=caller_rung,
+            provider_runtime_operator=provider_runtime_operator,
+            workspace_file_reader=workspace_file_reader,
+            daemon_clock=daemon_clock,
+            evaluation_instant_skew=evaluation_instant_skew,
+            occurrence_basis_time=occurrence_basis_time,
+            expected_line_artifact_digest=expected_line_artifact_digest,
+            expected_trigger_artifact_digest=expected_trigger_artifact_digest,
+            expected_trigger_pins=expected_trigger_pins,
+            trigger_fire=trigger_fire,
+            runbook_step=runbook_step,
+        )
+
+
+def _run_playbill_line(
+    instance: PlaybillInstance,
+    *,
+    path_identity_digest: str,
+    request: LineRunRequest,
+    actor_context: GovernedActorContext,
+    caller_rung: int,
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
+    daemon_clock: ProcedureClockProtocol | None = None,
+    evaluation_instant_skew: timedelta | None = None,
+    occurrence_basis_time: datetime | None = None,
+    expected_line_artifact_digest: str | None = None,
+    expected_trigger_artifact_digest: str | None = None,
+    expected_trigger_pins: dict[str, str] | None = None,
+    trigger_fire: TriggerFire | None = None,
+    runbook_step: RunbookStepOccurrence | None = None,
+) -> ProcedureRunStateV2:
+    """Derive, admit, and execute one occurrence of an accepted Line.
+
+    With ``trigger_fire`` (dispatch only) the occurrence is that Trigger's;
+    without it, the run is manual: no Trigger is selected or consumed, so a
+    Trigger's tick accounting never sees it, and ``request.event`` reaches the
+    Procedure as its event input.
+
+    The occurrence's EVALUATION INSTANT is the daemon's, never the caller's: a
+    schedule whose due proof is an instant the caller chooses is not a rate at
+    all, because advancing the claimed instant mints a fresh occurrence in zero
+    wall time. A request may still assert the instant it believes it is running
+    at, and that assertion is checked against the daemon clock within the
+    operator's configured skew bound -- defaulting to the ProcedureMandate
+    skew -- so a mandate validity window cannot be entered by claiming a time.
+    """
+
+    clock = daemon_clock or SystemProcedureClock()
+    evaluation_time = ensure_utc(clock.now())
+    asserted = request.evaluation_time
+    skew = (
+        PROCEDURE_MANDATE_CLOCK_SKEW if evaluation_instant_skew is None else evaluation_instant_skew
+    )
+    if asserted is not None and abs(asserted - evaluation_time) > skew:
+        raise LineRunEvaluationInstantSkewed(
+            f"{LineRunEvaluationInstantSkewed.code}: asserted evaluation instant is outside the "
+            f"{int(skew.total_seconds())}s daemon clock skew bound"
+        )
+    coordinate = instance.accepted_coordinate()
+    head_at_admission = coordinate
+    accepted_line = _accepted_line_by_reference(
+        instance,
+        coordinate=coordinate,
+        reference=path_identity_digest,
+    )
+    accepted = _accepted_procedure(
+        instance,
+        name=accepted_line.line.procedure.target.name,
+        coordinate=coordinate,
+        bind_references=True,
+        bindings={
+            key: value for key, value in accepted_line.line.bindings.items() if "." not in key
+        },
+    )
+    # A Line supplies the Procedure's parameters; a Line run's input is empty. A
+    # manual run may override them (D-R39): the override is the run's own
+    # invocation input, so it is in the run's identity, and the run then runs
+    # without the Line's mandate, capped at propose.
+    supplied = accepted_line.line.parameters
+    if not isinstance(supplied, dict):  # the Line law accepts a record only
+        raise ExecutionError("accepted Line parameters are not a record")
+    if request.parameters is not None and trigger_fire is not None:
+        raise ExecutionError("a Trigger's occurrence runs on its Line's own parameters")
+    pinned_parameters = accepted.procedure.definition.effective_parameters(supplied)
+    line_parameters = accepted.procedure.definition.effective_parameters(
+        {**supplied, **(request.parameters or {})}
+    )
+    parameters_overridden = line_parameters != pinned_parameters
+    require_run_permission(
+        "cruxible_line_run",
+        target_rung=(
+            min(line_authority_rung(accepted_line, accepted), EPHEMERAL_RUN_RUNG_CEILING)
+            if parameters_overridden
+            else line_authority_rung(accepted_line, accepted)
+        ),
+        caller_rung=caller_rung,
+    )
+    if (
+        expected_line_artifact_digest is not None
+        and accepted_line.artifact_digest != expected_line_artifact_digest
+    ):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_binding_superseded",
+            message="The accepted Line changed after the pending binding was checked.",
+            details={
+                "expected_line_artifact_digest": expected_line_artifact_digest,
+                "current_line_artifact_digest": accepted_line.artifact_digest,
+            },
+        )
+    if (
+        accepted.procedure.identity != accepted_line.line.procedure.target
+        or accepted.artifact_digest != accepted_line.line.procedure.artifact_digest
+    ):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_closure_incomplete",
+            message=(
+                "The accepted Line pins another version of its Procedure; a Line runs the "
+                "exact version it pins."
+            ),
+            details={
+                "line_procedure_digest": accepted_line.line.procedure.artifact_digest,
+                "current_procedure_digest": accepted.artifact_digest,
+                "repair": "Author and accept a Line successor with the current Procedure pin.",
+            },
+        )
+    try:
+        _assert_line_closure_complete(instance, accepted_line, coordinate)
+    except ExecutionError as exc:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_closure_incomplete",
+            message=str(exc),
+            details={"repair": "Restore or succeed the missing accepted closure member."},
+        )
+    providers = _line_catalogs(
+        instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
+    )
+    slots, capture_outputs = _line_shape_at(instance, coordinate, accepted)
+    law = evaluate_line_spec_law(
+        accepted_line.line,
+        path=accepted_line.path,
+        procedure=AcceptedProcedure(
+            path=accepted.path,
+            procedure=authored_procedure(accepted),
+            artifact_digest=accepted.artifact_digest,
+        ),
+        predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
+        slots=slots,
+        providers={item.provider.identity.qualified: item for item in providers.values()},
+        capture_outputs=capture_outputs,
+        contracts=accepted_contract_resolver(instance, coordinate),
+        enum_members=accepted_enum_resolver(instance, coordinate),
+    )
+    if law.verdict != "accepted":
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="artifact_binding_mismatch",
+            message="The accepted Line no longer reproduces its complete Procedure closure.",
+            details={
+                "diagnostics": [item.model_dump(mode="json") for item in law.diagnostics],
+                "repair": "Author and accept a complete Line successor.",
+            },
+        )
+    mandates = _accepted_line_mandates(
+        instance,
+        accepted_line.line.identity,
+        accepted_line.artifact_digest,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+    )
+    if (
+        not mandates
+        and not parameters_overridden
+        and line_authority_rung(accepted_line, accepted) > 1
+    ):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_mandate_required",
+            message=(
+                "This Line can propose or settle, and its bound Procedure has no current "
+                "accepted ProcedureMandate."
+            ),
+            details={
+                "repair": "Author and accept a ProcedureMandate pinning this exact Procedure."
+            },
+        )
+    current_triggers = line_triggers(instance, accepted_line, coordinate=coordinate)
+    if (
+        expected_trigger_pins is not None
+        and line_trigger_pins(current_triggers) != expected_trigger_pins
+    ):
+        # An arm runs only under the complete Trigger set it pinned; one added,
+        # changed or retired since dispatch checked it stops the arm instead.
+        raise LineTriggersChanged(
+            "the Triggers aimed at this Line changed after the enablement pinned them"
+        )
+    try:
+        trigger = (
+            None
+            if trigger_fire is None
+            else select_line_trigger(
+                current_triggers, trigger_fire.trigger, line=accepted_line.line.identity
+            )
+        )
+    except LineTriggerMismatch as exc:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_trigger_mismatch",
+            message=str(exc),
+            details={},
+        )
+    if (
+        expected_trigger_artifact_digest is not None
+        and (None if trigger is None else trigger.artifact_digest)
+        != expected_trigger_artifact_digest
+    ):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_binding_superseded",
+            message="The Trigger changed after the pending binding was checked.",
+            details={"expected_trigger_artifact_digest": expected_trigger_artifact_digest},
+        )
+    schedule = None if trigger is None else trigger.trigger.schedule
+    event = request.event if trigger_fire is None else trigger_fire.event
+    trigger_binding = None
+    # The event, or the fixed window's close, this occurrence fires on.
+    anchor: datetime | None = None
+    try:
+        if trigger is not None and isinstance(schedule, GenerationAcceptedSchedule):
+            from cruxible_core.triggers.journal import trigger_generation
+
+            with instance.accepted_history_reader() as history:
+                generation = (
+                    history.sequence
+                    if trigger_fire is None or trigger_fire.generation is None
+                    else trigger_fire.generation
+                )
+                if (
+                    generation <= trigger_generation(instance, trigger.trigger)
+                    or generation > history.sequence
+                ):
+                    return _line_refusal_state(
+                        accepted,
+                        accepted_line,
+                        coordinate=coordinate,
+                        head_at_admission=head_at_admission,
+                        evaluation_time=evaluation_time,
+                        code="occurrence_not_due",
+                        message=(
+                            "Generation must follow this Trigger's acceptance "
+                            "and belong to accepted history."
+                        ),
+                        details={},
+                    )
+            trigger_binding = trigger_binding_for(trigger, generation=generation)
+        elif trigger is not None and schedule is not None and schedule_is_timed(schedule):
+            trigger_binding = trigger_binding_for(trigger)
+        elif trigger is not None and isinstance(schedule, CaptureLandingSchedule):
+            if event is None:
+                return _line_refusal_state(
+                    accepted,
+                    accepted_line,
+                    coordinate=coordinate,
+                    head_at_admission=head_at_admission,
+                    evaluation_time=evaluation_time,
+                    code="occurrence_not_due",
+                    message="The Trigger is waiting for a matching retained capture event.",
+                    details={"repair": "Supply the retained capture event when it arrives."},
+                )
+            anchor = capture_event_time(instance, schedule.event, event, now=evaluation_time)
+            trigger_binding = trigger_binding_for(trigger, event=event)
+        elif trigger is not None and isinstance(schedule, WindowCloseSchedule):
+            if isinstance(schedule.window, CaptureEventNameWindow) and event is None:
+                return _line_refusal_state(
+                    accepted,
+                    accepted_line,
+                    coordinate=coordinate,
+                    head_at_admission=head_at_admission,
+                    evaluation_time=evaluation_time,
+                    code="occurrence_not_due",
+                    message="The observation window is waiting for its capture event anchor.",
+                    details={"repair": "Supply the retained anchor event when it arrives."},
+                )
+            line_event = event
+            if (
+                not isinstance(schedule.window, CaptureEventNameWindow)
+                and request.resolution_contract is not None
+            ):
+                line_event = None
+            window = bind_window(instance, schedule.window, line_event, now=evaluation_time)
+            trigger_binding = trigger_binding_for(trigger, window=window)
+            anchor = (
+                window.starts_at
+                if isinstance(schedule.window, CaptureEventNameWindow)
+                else window.ends_at
+            )
+        elif (
+            event is not None
+            and request.resolution_contract is None
+            and accepted_line.line.trigger_input is None
+        ):
+            raise ExecutionError(
+                "this Line takes no event input: its Procedure reads no triggering Capture"
+            )
+        if (
+            trigger is not None
+            and anchor is not None
+            and anchor <= trigger_accepted_at(instance, trigger)
+        ):
+            # No Trigger fires retroactively, whoever asks: matching skips such
+            # events, and admission refuses one supplied or queued anyway.
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="trigger_event_precedes_acceptance",
+                message=(
+                    "The Trigger fires only on events and windows after its version was "
+                    "accepted; this one is at or before that acceptance."
+                ),
+                details={
+                    "trigger_accepted_at": format_datetime(trigger_accepted_at(instance, trigger))
+                },
+            )
+        investigation = (
+            None
+            if request.resolution_contract is None
+            else bind_investigation(
+                instance,
+                request.resolution_contract,
+                event=event,
+                now=evaluation_time,
+                trigger_binding=trigger_binding,
+            )
+        )
+    except TriggerCaptureRefused as exc:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=exc.refusal_code,
+            message=str(exc),
+            retryable=exc.retryable,
+            details=exc.details,
+        )
+    if (
+        investigation is not None
+        and trigger_binding is not None
+        and trigger_binding.window is not None
+        and investigation.window != trigger_binding.window
+    ):
+        raise ExecutionError("Line and resolution contract must bind the same observation window")
+    is_timed = schedule is not None and schedule_is_timed(schedule)
+    if is_timed and occurrence_basis_time is None:
+        raise ExecutionError("a timed Trigger fire names the exact tick it dispatches")
+    cadence_basis = (
+        min(occurrence_basis_time, evaluation_time)
+        if occurrence_basis_time is not None and is_timed
+        else None
+    )
+    # A timed occurrence happened at its tick, however late it is dispatched: a
+    # backfilled tick records the lapsed tick's instant, while the run is still
+    # admitted (and acts) at the daemon's instant.
+    occurrence_time = cadence_basis or evaluation_time
+    if trigger is None and event is not None and not request.repeat:
+        # A manual run on an event the enabled Line's automation already ran is
+        # almost always a mistake; it runs again only when asked to.
+        admitted = _event_admission(instance, accepted_line, event)
+        if isinstance(admitted, _UnavailableLineAdmission):
+            return _unavailable_run_state(admitted.stored)
+        if admitted is not None:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="occurrence_already_admitted",
+                message=(
+                    f"The enabled Line already admitted this event as run {admitted}; "
+                    "pass repeat to run it again deliberately."
+                ),
+                details={"run_id": admitted, "repair": "Read its run, or run with repeat."},
+            )
+    occurrence_id, next_due = _line_occurrence(
+        accepted_line,
+        evaluation_time=cadence_basis or evaluation_time,
+        trigger=trigger,
+        binding=trigger_binding,
+        manual_event=event if trigger is None else None,
+        runbook_step=runbook_step if trigger_fire is None else None,
+        # A retained tick is admitted as exactly the tick it names, automatically
+        # or explicitly: its identity is its scheduled instant, so when it is
+        # dispatched never moves which later ticks are due.
+        exact_basis=cadence_basis,
+        accepted_at=trigger_accepted_at(instance, trigger)
+        if trigger is not None and is_timed
+        else None,
+    )
+    # Dispatch asserts the retained pending tick/event it is about to admit.
+    # Keep that integrity check: admitting a different occurrence would leave
+    # the named pending work unfulfilled. Manual identities include this run's
+    # daemon instant, so the derived id is never advice for a later manual retry.
+    if request.occurrence_id is not None and request.occurrence_id != occurrence_id:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="occurrence_id_mismatch",
+            message="The asserted occurrence id differs from the daemon-derived occurrence.",
+            details={
+                "derived_occurrence_id": occurrence_id,
+                "repair": (
+                    "Use cruxible line dispatch with a retained pending occurrence id "
+                    "from line evaluate or get Line:NAME. Manual occurrence ids include "
+                    "the daemon evaluation instant and cannot select pending work."
+                ),
+            },
+        )
+    if next_due is not None and evaluation_time < next_due:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="occurrence_not_due",
+            message="The next scheduled Line occurrence is not due.",
+            details={
+                "next_due": format_datetime(next_due),
+                "repair": "Re-run at or after next_due.",
+            },
+        )
+    existing = next(
+        iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None
+    )
+    if isinstance(existing, _UnavailableLineAdmission):
+        return _unavailable_run_state(existing.stored)
+    if existing is not None:
+        if runbook_step is not None and trigger_fire is None:
+            # A Runbook step already admitted is read back, never run again.
+            return _state_from_records(instance, run_id=existing.run_id)
+        # An occurrence admitted with an investigation or trigger binding
+        # retries as itself; any other is done.
+        if existing.investigation is None and existing.trigger_binding is None:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="occurrence_already_admitted",
+                message="The retained occurrence has already been admitted.",
+                details={"occurrence_id": occurrence_id, "repair": "Read its retained run."},
+            )
+        if existing.investigation != investigation or existing.trigger_binding != trigger_binding:
+            raise ExecutionError(
+                "occurrence retry must retain its original investigation and trigger binding"
+            )
+        return _state_from_records(instance, run_id=existing.run_id)
+    if investigation is not None:
+        require_current_investigation(instance, investigation)
+    runtime_policy = _accepted_runtime_policy(instance, coordinate)
+    budget = _line_budget(accepted_line, accepted)
+    capture_contracts = _accepted_capture_contracts(
+        instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
+    )
+    # A Source-free Line acquires nothing. Its plan binds the accepted runtime
+    # policy instead, exactly as a direct run of a Source-free Procedure does.
+    line_rules: dict[str, AcquisitionRule] | None = None
+    if not _source_input_names(accepted):
+        policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
+        policy_format: str = runtime_policy.tag
+    else:
+        line_rules = procedure_acquisition_rules(accepted, accepted_line.line.acquisition)
+        policy_digest = acquisition_rules_digest(line_rules)
+        policy_format = ACQUISITION_RULES_DIGEST_DOMAIN
+    landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
+    if isinstance(accepted_line.line, LineSpec) and accepted_line.line.trigger_input is not None:
+        from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
+
+        assert line_rules is not None  # a trigger input is a Source input
+
+        try:
+            landed_materials = (
+                bind_trigger_capture(
+                    instance,
+                    line=accepted_line.line,
+                    procedure=accepted,
+                    event=event,
+                    contracts=capture_contracts,
+                    rules=line_rules,
+                    evaluation_time=evaluation_time,
+                    max_bytes=budget.max_capture_bytes,
+                ),
+            )
+        except TriggerCaptureRefused as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code=exc.refusal_code,
+                message=str(exc),
+                retryable=exc.retryable,
+                details={"input_name": accepted_line.line.trigger_input, **exc.details},
+            )
+        except (CruxibleError, ValueError) as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="trigger_capture_invalid",
+                message="The exact triggering Capture cannot be admitted as this Source input.",
+                details={"reason": str(exc), "input_name": accepted_line.line.trigger_input},
+            )
+    try:
+        external_occurrences = _line_external_occurrences(
+            accepted_line,
+            accepted,
+            providers=providers,
+            provider_runtime_operator=provider_runtime_operator,
+            runtime_policy=runtime_policy,
+            budget=budget,
+        )
+    except ProviderLocalRuntimeRefused as exc:
+        status, terminal = _provider_admission_terminal(
+            exc,
+            message="The daemon Provider lane cannot admit this Line occurrence.",
+            node_id="line-admission",
+        )
+        return ProcedureRunStateV2(
+            run_id=None,
+            procedure_identity=accepted.procedure.identity,
+            procedure_artifact_digest=accepted.artifact_digest,
+            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+            lane="current",
+            evaluation_time=evaluation_time,
+            pending_inputs=(),
+            outcomes=(),
+            next_operation=ProcedureNextOperationV1(kind="terminal"),
+            status=status,
+            terminal=terminal,
+        )
+    except (ExecutionError, ValidationError) as exc:
+        # Same binding-closure defect as the direct-run planner: a bound slot
+        # whose operation effect cannot occupy its node fails
+        # ProviderExternalOccurrencePlan's correspondence validator as a bare
+        # pydantic ValidationError; surface it as a typed admission refusal
+        # rather than letting it escape uncaught.
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Line is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
+    selection = (
+        ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())
+        if line_rules is None
+        else _plan_selection_decision(
+            line_rules,
+            policy_digest=policy_digest,
+            occurrences=external_occurrences,
+            capture_contracts=capture_contracts,
+        )
+    )
+    if selection.verdict == "refused":
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="source_acquisition_refused",
+            message="The Line's acquisition rules refuse a declared Source input.",
+            details={
+                "decisions": [item.model_dump(mode="json") for item in selection.decisions],
+                "repair": "Fit the CaptureContract budget or repair the Source binding.",
+            },
+        )
+    if landed_materials:
+        selection = selection.model_copy(
+            update={
+                "decisions": tuple(
+                    sorted(
+                        (
+                            *selection.decisions,
+                            *(
+                                AcquisitionInputDecision(
+                                    input_name=item.input.input_name,
+                                    disposition="selected",
+                                    considered_capture_digests=(item.input.capture_digest,),
+                                    selected_capture_digests=(item.input.capture_digest,),
+                                )
+                                for item in landed_materials
+                            ),
+                        ),
+                        key=lambda item: item.input_name.encode("utf-8"),
+                    )
+                )
+            }
+        )
+    selection_digest = procedure_selection_decision_digest(selection)
+    accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
+    try:
+        plan = ProcedureAcquisitionPlan(
+            accepted_coordinate=accepted_coordinate,
+            line_identity=accepted_line.line.identity,
+            line_spec_digest=accepted_line.artifact_digest,
+            occurrence_id=occurrence_id,
+            occurrence_evaluation_time=occurrence_time,
+            acquisition_policy_format=policy_format,
+            acquisition_policy_digest=policy_digest,
+            selection_decision=selection,
+            selection_decision_digest=selection_digest,
+            external_occurrences=external_occurrences,
+        )
+    except ValidationError as exc:
+        # Same binding-closure defect as the direct-run planner: a planned
+        # occurrence whose effect class cannot occupy its node fails this
+        # construction's nested model_validator as a bare ValidationError.
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Line is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
+    plan_digest = procedure_acquisition_plan_digest(plan)
+    try:
+        materials = _line_state_materials(
+            instance,
+            accepted,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            invocation_input=LINE_RUN_INPUT,
+            parameters=line_parameters,
+            read_ceiling=effective_read_rows(
+                budget.max_read_rows, accepted.procedure.definition.hard_caps.max_read_rows
+            ),
+        )
+    except ProcedureBoundaryRefused as exc:
+        if exc.code not in {
+            "read_ceiling_exceeded",
+            "state_tap_refused",
+            "query_contract_violated",
+        }:
+            raise
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=cast(ProcedureAdmissionRefusalCode, exc.code),
+            message=str(exc),
+            details=exc.details,
+        )
+    full_pins = accepted.procedure.pins
+    node_pin_sets = procedure_node_pin_sets(accepted)
+    # An overridden run binds none of the Line's mandates (D-R39).
+    run_mandates = () if parameters_overridden else mandates
+    mandate_coordinate_digest = typed_digest(
+        Sha256Value,
+        "playbill-line-mandate-coordinate-v1",
+        {
+            "accepted_coordinate": accepted_coordinate.model_dump(mode="json"),
+            "mandates": [digest for digest, _mandate in run_mandates],
+        },
+    ).tagged
+    sensitivity_policy_digest = typed_digest(
+        Sha256Value,
+        "playbill-line-sensitivity-coordinate-v1",
+        {"line_spec_digest": accepted_line.artifact_digest},
+    ).tagged
+    calibration_coordinate_digest = typed_digest(
+        Sha256Value,
+        "playbill-line-calibration-coordinate-v1",
+        {"accepted_coordinate": accepted_coordinate.model_dump(mode="json")},
+    ).tagged
+    deployment_snapshot_digest = typed_digest(
+        Sha256Value,
+        "playbill-provider-deployment-snapshot-v1",
+        {
+            "bindings": [
+                item.local_execution.model_dump(mode="json") for item in external_occurrences
+            ]
+        },
+    ).tagged
+    bindings = procedure_provider_bindings(external_occurrences)
+    admission = seal_procedure_run_admission(
+        {
+            "instance_id": instance.descriptor.instance_id,
+            "attempt": 1,
+            "accepted_coordinate": accepted_coordinate,
+            "bound_coordinate": accepted_coordinate,
+            "head_at_admission": AcceptedCoordinate.from_internal(head_at_admission),
+            "lane": "current",
+            "procedure_identity": accepted.procedure.identity,
+            "procedure_path": accepted.path,
+            "procedure_artifact_digest": accepted.artifact_digest,
+            "definition_digest": accepted.procedure.definition_digest,
+            "activation_policy": accepted.procedure.activation_policy,
+            "full_pins": full_pins,
+            "node_pin_sets": node_pin_sets,
+            "pin_set_digest": procedure_pin_set_digest(full_pins, node_pin_sets),
+            "invocation_input": LINE_RUN_INPUT,
+            "parameters": line_parameters,
+            "accepted_state_inputs": tuple(item.input for item in materials),
+            "landed_capture_inputs": tuple(item.input for item in landed_materials),
+            "budget": budget,
+            "hard_caps": accepted.procedure.definition.hard_caps,
+            "actor_context": actor_context.model_copy(update={"timestamp": evaluation_time}),
+            "invocation_origin": "line",
+            "journal_stream": procedure_line_journal_stream(instance.descriptor.instance_id),
+            "line_identity": accepted_line.line.identity,
+            "line_spec_digest": accepted_line.artifact_digest,
+            "occurrence_id": occurrence_id,
+            "occurrence_evaluation_time": occurrence_time,
+            "deployment_snapshot_digest": deployment_snapshot_digest,
+            "acquisition_policy_digest": policy_digest,
+            "selection_decision": selection,
+            "selection_decision_digest": selection_digest,
+            "resolved_provider_bindings": bindings,
+            "provider_output_bytes_cap": runtime_policy.provider_output_bytes_cap,
+            "resource_budget": resolve_procedure_resource_budget(
+                budget, accepted.procedure.definition.hard_caps, runtime_policy
+            ),
+            "acquisition_plan_digest": plan_digest,
+            "sensitivity_policy_digest": sensitivity_policy_digest,
+            "mandate_coordinate_digest": mandate_coordinate_digest,
+            "calibration_coordinate_digest": calibration_coordinate_digest,
+            "parameter_override_digest": (
+                typed_digest(
+                    Sha256Value,
+                    "playbill-line-parameter-override-v1",
+                    {
+                        "line_spec_digest": accepted_line.artifact_digest,
+                        "parameters": line_parameters,
+                    },
+                ).tagged
+                if parameters_overridden
+                else None
+            ),
+            "admitted_at": evaluation_time,
+        }
+    )
+    prepared_admission = service_prepare_playbill_line_admission(
+        instance,
+        admission=admission,
+        accepted_line=accepted_line,
+    )
+    if isinstance(prepared_admission, ProcedureAdmissionRefusal):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=prepared_admission.code,
+            message=prepared_admission.message,
+            details=prepared_admission.details,
+        )
+    manifest = ProcedureAdmissionMaterialManifest(
+        members=tuple(
+            capture_admission_material_member(
+                item.input,
+                policy=capture_retention_policy(
+                    capture_contracts[item.input.capture_contract_digest]
+                ),
+                admitted_at=evaluation_time,
+                body_digest=instance.body_store()
+                .digest_bytes(canonical_bytes(item.material.value))
+                .tagged,
+            )
+            for item in landed_materials
+        )
+    )
+    prepared = PreparedProcedureRun(
+        admission=prepared_admission,
+        accepted_state_materials=materials,
+        landed_capture_materials=landed_materials,
+        acquisition_outcomes=tuple(
+            AcquisitionInputOutcomeV1(
+                input_name=item.input.input_name,
+                disposition="selected",
+                capture_digests=(item.input.capture_digest,),
+            )
+            for item in landed_materials
+        ),
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+        acquisition_plan=plan,
+        acquisition_plan_digest=plan_digest,
+    )
+    # An observe-only Line runs with no mandate; its effective rung is then
+    # capped at the mandate-free ceiling, which is observe.
+    mandate_rung = max(
+        (procedure_mandate_rung(mandate) for _digest, mandate in run_mandates), default=None
+    )
+    effective_rung = compute_effective_rung(
+        procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
+        requested_terminal_rung=line_requested_rung(accepted_line.line),
+        selector_privacies={
+            item.input.capture_digest: capture_retention_policy(
+                capture_contracts[item.input.capture_contract_digest]
+            ).selector_privacy
+            for item in landed_materials
+        },
+        taint_labels=(),
+        procedure_definition_digest=accepted.procedure.definition_digest,
+        line_spec_digest=accepted_line.artifact_digest,
+        sensitivity_policy_digest=sensitivity_policy_digest,
+        mandate_coordinate_digest=mandate_coordinate_digest,
+        calibration_coordinate_digest=calibration_coordinate_digest,
+        procedure_mandate_rung=mandate_rung,
+        caller_tier_rung=caller_rung,
+        parameters_overridden=parameters_overridden,
+    )
+    if investigation is not None or trigger_binding is not None:
+        prepared = bind_prepared_investigation(
+            prepared, investigation=investigation, trigger=trigger_binding
+        )
+    reservations = []
+    try:
+        for item in landed_materials:
+            reservations.append(
+                reserve_admission_material_body(
+                    bodies=instance.body_store(),
+                    instance_id=instance.descriptor.instance_id,
+                    run_id=prepared.admission.run_id,
+                    admission_binding_digest=prepared.admission.admission_binding_digest,
+                    input_name=item.input.input_name,
+                    plane="landed_capture",
+                    content=canonical_bytes(item.material.value),
+                )
+            )
+        prepared = prepared.model_copy(
+            update={
+                "required_reservation_ids": tuple(
+                    sorted(item.reservation_id for item in reservations)
+                )
+            }
+        )
+        capture_store = ReservedCaptureStore(
+            bodies=instance.body_store(),
+            reservations=ProcedureMaterialReservationStore(instance.body_store().reservation_root),
+            admission=prepared.admission,
+            event_kind="terminal_egress",
+        )
+        egress_sink = _LineTerminalEgressSink(
+            capture=CaptureTerminalEgressSink(
+                store=capture_store,
+                contracts=capture_contracts,
+                producer=accepted.procedure.identity,
+                producer_binding_digest=accepted.artifact_digest,
+            ),
+            proposal=ProposalTerminalEgressSink(
+                instance=instance, accepted_mandates=dict(run_mandates)
+            ),
+            inbox=InboxTerminalEgressSink(
+                store=LineInboxStore(instance),
+                line=accepted_line.line.identity,
+                findings=accepted_line.line.findings,
+            ),
+        )
+        journal, root = _journal_for_write(instance)
+        _activate_writer(
+            journal,
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+        if instance.accepted_coordinate() != coordinate:
+            raise ProcedureRunNotCurrent(
+                f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line append"
+            )
+        # Preflight runs between that check and the admission append; the head
+        # gate closes the window by holding main still across the append itself.
+        admission_gate = LINE_ARM_ADMISSION_GATE.set(
+            partial(
+                _line_admission_head_gate,
+                instance,
+                accepted_line=accepted_line,
+                coordinate=coordinate,
+                expected_line_artifact_digest=expected_line_artifact_digest,
+                expected_trigger_pins=expected_trigger_pins,
+                arm_gate=LINE_ARM_ADMISSION_GATE.get(),
+            )
+        )
+        try:
+            result = service_execute_direct_procedure(
+                prepared,
+                accepted,
+                journal=journal,
+                bodies=instance.body_store(),
+                run_index_path=root / "procedure-run-index.sqlite",
+                fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+                activation_authority=_CurrentProcedureAuthority(instance),
+                provider_runtime_invoker_factory=(
+                    None
+                    if provider_runtime_operator is None
+                    else lambda: provider_runtime_operator.invoker_for(
+                        instance,
+                        accepted_oid=coordinate.git_oid,
+                        pins=accepted.procedure.pins,
+                    )
+                ),
+                acquisition_rules=line_rules,
+                capture_contracts=capture_contracts,
+                workspace_file_reader=workspace_file_reader,
+                effective_rung=effective_rung,
+                egress_sink=egress_sink,
+                enum_resolver=accepted_enum_resolver(instance, coordinate),
+                contract_resolver=accepted_contract_resolver(instance, coordinate),
+                key_rules=accepted_key_rules(instance, coordinate),
+                claims_context=AcceptedClaimsContext(instance, coordinate),
+                state_reader=PlaybillProcedureStateTapReader(
+                    instance=instance, evaluation_time=evaluation_time
+                ),
+                clock=_DeterministicClock(evaluation_time),
+                nested_runner=ServedNestedProcedureRunner(
+                    instance,
+                    coordinate,
+                    head_at_admission,
+                    evaluation_time,
+                    provider_runtime_operator,
+                    workspace_file_reader,
+                    _DeterministicClock(evaluation_time),
+                    mandates=dict(run_mandates),
+                    bindings=dict(accepted_line.line.bindings),
+                    acquisition=dict(accepted_line.line.acquisition),
+                ),
+            )
+        except ProcedureBoundaryRefused as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="pin_binding_mismatch",
+                message=str(exc),
+                details={"boundary_code": exc.code, "detail": exc.details},
+            )
+        finally:
+            LINE_ARM_ADMISSION_GATE.reset(admission_gate)
+        if result.status == "succeeded":
+            # The terminal and finalization are durable before staged bodies are released.
+            capture_store.release()
+        return _state_from_records(
+            instance,
+            run_id=prepared.admission.run_id,
+            receipt=result.receipt,
+        )
+    finally:
+        # admission_bound takes over retention before execution; before admission,
+        # no durable run owns these leases. Release on refusals and exceptions too.
+        store = ProcedureMaterialReservationStore(instance.body_store().reservation_root)
+        for reservation in reservations:
+            store.release(reservation.reservation_id)
+
+
+def service_get_playbill_procedure_run(
+    instance: PlaybillInstance,
+    *,
+    run_id: str,
+) -> ProcedureRunStateV2:
+    return _state_from_records(instance, run_id=run_id)
+
+
+@dataclass(frozen=True)
+class ProcedureRunGrainRecordV1:
+    """One run's authentic admission binding and the grains it actually reached.
+
+    Read-only material for producers that credit a run's exact grain (a
+    measurement reading, say) without joining the run's authoritative event
+    chain: the state is the served reconstruction, the occurrence and attempt
+    are the Line coordinates the admission really bound, and the node verdicts
+    and selected arms are exactly what the journal recorded.
+    """
+
+    state: ProcedureRunStateV2
+    invocation_origin: Literal["actor", "line"]
+    occurrence_id: str | None
+    attempt: int
+    line_identity: ArtifactIdentity | None
+    line_spec_digest: str | None
+    finalized: bool
+    #: Last recorded ``node_fired`` verdict per node id.
+    node_verdicts: Mapping[str, str]
+    #: Every arm a guard selected in this run, in journal order.
+    selected_arms: Mapping[str, tuple[str, ...]]
+    #: Authenticated admission choices, also retained for direct V3 receipts.
+    provider_bindings: tuple[ProcedureProviderBinding, ...] = ()
+    #: Graph pins include supplied Sources, which have no external occurrence.
+    node_pin_sets: tuple[ProcedureNodePinSetV1, ...] = ()
+    landed_capture_input_names: frozenset[str] = frozenset()
+
+
+def load_playbill_procedure_run_grain(
+    instance: PlaybillInstance,
+    *,
+    run_id: str,
+) -> ProcedureRunGrainRecordV1:
+    """Reconstruct one run's state and read back the grains its journal proves."""
+
+    state = _state_from_records(instance, run_id=run_id)
+    if (
+        isinstance(state.terminal, ProcedureOperationalFailure)
+        and state.terminal.code == "replay_material_unavailable"
+    ):
+        return ProcedureRunGrainRecordV1(
+            state=state,
+            invocation_origin="actor",
+            occurrence_id=None,
+            attempt=1,
+            line_identity=None,
+            line_spec_digest=None,
+            finalized=False,
+            node_verdicts={},
+            selected_arms={},
+        )
+    records = _records_for_run(instance, run_id)
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="procedure-run-grain", can_read_body=True)
+    admission: ProcedureRunAdmission | None = None
+    node_verdicts: dict[str, str] = {}
+    selected_arms: dict[str, list[str]] = {}
+    finalized = False
+    for stored in records:
+        kind = stored.record.event_kind
+        if kind not in {"admission_bound", "node_fired", "branch_evaluated", "attempt_finalized"}:
+            continue
+        payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        if not isinstance(payload, dict):
+            continue
+        if kind == "admission_bound":
+            admission = parse_admission_payload(payload).admission
+        elif kind == "node_fired":
+            node_id = payload.get("node_id")
+            verdict = payload.get("verdict")
+            if isinstance(node_id, str) and isinstance(verdict, str):
+                node_verdicts[node_id] = verdict
+        elif kind == "branch_evaluated":
+            node_id = payload.get("node_id")
+            arm = payload.get("selected_arm")
+            if isinstance(node_id, str) and isinstance(arm, str):
+                selected_arms.setdefault(node_id, []).append(arm)
+        else:
+            finalized = True
+    if admission is None:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run lacks a supported admission_bound"
+        )
+    return ProcedureRunGrainRecordV1(
+        state=state,
+        invocation_origin=admission.invocation_origin,
+        occurrence_id=admission.occurrence_id,
+        attempt=admission.attempt,
+        line_identity=admission.line_identity,
+        line_spec_digest=admission.line_spec_digest,
+        finalized=finalized,
+        node_verdicts=node_verdicts,
+        selected_arms={key: tuple(value) for key, value in selected_arms.items()},
+        provider_bindings=admission.resolved_provider_bindings,
+        node_pin_sets=admission.node_pin_sets,
+        landed_capture_input_names=frozenset(
+            item.input_name for item in admission.landed_capture_inputs
+        ),
+    )
+
+
+def service_recover_provider_invocations(
+    instance: PlaybillInstance,
+    *,
+    invocation_ids: tuple[str, ...],
+    recovery_failure_codes: Mapping[str, str] | None = None,
+    recorded_at: datetime,
+    close_in_process_starts: bool = False,
+) -> tuple[str, ...]:
+    """Close exact durable starts whose child groups were recovered at startup.
+
+    ``close_in_process_starts`` also closes every unmatched start of a core
+    built-in (an admitted occurrence fenced ``in_process``): it holds no process
+    lease, so no lease recovery names it, and the daemon calls this once at
+    startup, before it serves, when no in-process invocation can be live. That
+    holds only while this daemon is the instance's single owner; see
+    ``PlaybillInstanceManager.recover_in_process_provider_invocations``.
+    """
+
+    failures = {} if recovery_failure_codes is None else dict(recovery_failure_codes)
+    if not invocation_ids and not failures and not close_in_process_starts:
+        return ()
+    wanted = set(invocation_ids)
+    observed_failures: list[tuple[str, str, str]] = []
+    journal, _root = _journal_for_write(instance)
+    stream = _stream(instance)
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
+    recovered: list[str] = []
+    handled: set[str] = set()
+
+    def run_groups() -> Iterator[tuple[str, tuple[StoredProcedureJournalRecordV1, ...]]]:
+        """Each run's records: every open run, then the run of each named leftover.
+
+        An unmatched start lives in a run that has not finalized, so the open-run
+        set covers the startup scan. A lease recovery may name an invocation
+        whose run already finalized (its completion is durable): that run is
+        found through the index's invocation locator and read alone, to report
+        the invocation handled. Finished history is never scanned.
+        """
+
+        seen: set[str] = set()
+        for locator in tuple(journal.index.running(stream)):
+            seen.add(locator.run_id)
+            yield locator.partition_id, journal.select_records(stream, run_id=locator.run_id)
+        named = set(invocation_ids) | set(failures)
+        leftover = named - handled - {item[1] for item in observed_failures}
+        if not leftover:
+            return
+        located = journal.index.invocation_runs(
+            stream,
+            bodies=bodies,
+            invocation_ids=tuple(sorted(leftover, key=str.encode)),
+        )
+        for run_id, partition_id in sorted(set(located.values())):
+            if run_id in seen:
+                continue
+            seen.add(run_id)
+            yield partition_id, journal.select_records(stream, run_id=run_id)
+
+    for partition_id, records in run_groups():
+        if not invocation_ids and not failures:
+            # The startup scan for built-in starts: a run whose starts are all
+            # completed needs no body read.
+            kinds = [stored.record.event_kind for stored in records]
+            if kinds.count("provider_invocation_started") == kinds.count(
+                "provider_invocation_completed"
+            ):
+                continue
+        admission: ProcedureRunAdmission | None = None
+        plan = None
+        starts: dict[str, ProviderInvocationStarted] = {}
+        completed: dict[str, ProviderInvocationCompleted] = {}
+        for stored in records:
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                admission = None
+                break
+            if stored.record.event_kind == "admission_bound" and isinstance(payload, dict):
+                bound = parse_admission_payload(payload)
+                admission = bound.admission
+                plan = bound.acquisition_plan
+            elif stored.record.event_kind == "provider_invocation_started":
+                started = ProviderInvocationStarted.model_validate(payload)
+                starts[started.invocation_id] = started
+            elif stored.record.event_kind == "provider_invocation_completed":
+                parsed_completion = ProviderInvocationCompleted.model_validate(payload)
+                completed[parsed_completion.invocation_id] = parsed_completion
+        if admission is None or plan is None:
+            continue
+        handled.update(wanted & set(completed))
+        unresolved_ids = set(starts) - set(completed)
+        if close_in_process_starts:
+            # Built-in starts are closed by the startup scan, not by a lease.
+            in_process_paths = {
+                item.occurrence_path
+                for item in plan.external_occurrences
+                if item.local_execution.fence_scope == "in_process"
+            }
+            wanted |= {
+                invocation_id
+                for invocation_id in unresolved_ids
+                if starts[invocation_id].occurrence_path in in_process_paths
+            }
+        failed_pending_ids = tuple(sorted(set(failures) & unresolved_ids, key=str.encode))
+        for invocation_id in failed_pending_ids:
+            observed_failures.append((admission.run_id, invocation_id, failures[invocation_id]))
+        if failed_pending_ids:
+            # One possibly-live process keeps the whole attempt recovery-required;
+            # do not partially complete or terminalize its sibling invocations.
+            continue
+        pending_ids = tuple(sorted(wanted & unresolved_ids, key=str.encode))
+        if not pending_ids:
+            continue
+        resolved_occurrences = []
+        for invocation_id in pending_ids:
+            started = starts[invocation_id]
+            occurrences = tuple(
+                item
+                for item in plan.external_occurrences
+                if item.occurrence_path == started.occurrence_path
+                and item.implementation_digest == started.implementation_digest
+                and item.local_execution.materialization_digest == started.materialization_digest
+            )
+            if len(occurrences) != 1:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} recovered "
+                    "Provider start has no exact admitted occurrence"
+                )
+            resolved_occurrences.append((invocation_id, started, occurrences[0]))
+        writer = ProcedureExhaustWriter(
+            journal=journal,
+            bodies=bodies,
+            fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+        )
+        writer_state = journal.writer_state(stream, partition_id)
+        if (
+            writer_state is not None
+            and writer_state.active
+            and writer_state.fencing_token != PROCEDURE_RUN_FENCING_TOKEN
+        ):
+            journal.fence_writer(
+                stream,
+                partition_id,
+                expected_fencing_token=writer_state.fencing_token,
+            )
+        _activate_writer(journal, stream, partition_id)
+        try:
+            for invocation_id, started, occurrence in resolved_occurrences:
+                in_process = occurrence.local_execution.fence_scope == "in_process"
+                outcome = (
+                    map_provider_refusal(
+                        "provider_in_process_interrupted",
+                        message="Daemon startup closed a built-in invocation a crash interrupted.",
+                        detail={},
+                    )
+                    if in_process
+                    else map_provider_refusal(
+                        "provider_process_group_survived_recovery",
+                        message="Daemon startup terminated an incomplete Provider process group.",
+                        detail={},
+                    )
+                )
+                assert isinstance(outcome, ProviderInvocationOutcome)
+                declared = tuple(
+                    endpoint
+                    for endpoint in occurrence.local_execution.declared_endpoints
+                    if not endpoint.startswith("dynamic:")
+                )
+                dynamic = cast(
+                    tuple[Literal["dynamic:target-from-run-input"], ...],
+                    tuple(
+                        endpoint
+                        for endpoint in occurrence.local_execution.declared_endpoints
+                        if endpoint == "dynamic:target-from-run-input"
+                    ),
+                )
+                receipt = ProviderInvocationReceipt(
+                    invocation_id=invocation_id,
+                    occurrence_path=occurrence.occurrence_path,
+                    run_id=admission.run_id,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    provider_artifact_digest=occurrence.local_execution.provider_artifact_digest,
+                    implementation_digest=occurrence.local_execution.implementation_digest,
+                    materialization_digest=occurrence.local_execution.materialization_digest,
+                    deployment_digest=occurrence.local_execution.deployment_digest,
+                    operation=occurrence.local_execution.operation,
+                    operation_signature_digest=(
+                        occurrence.local_execution.operation_signature_digest
+                    ),
+                    protocol_version=occurrence.local_execution.protocol_version,
+                    capture_contracts=occurrence.capture_contracts,
+                    input_digest=started.input_digest,
+                    outcome=outcome,
+                    egress=ProviderEgressObservation(
+                        declared_endpoints=declared,
+                        observed_endpoints=(),
+                        dynamic_endpoint_forms=dynamic,
+                        observer_backend="core.in-process" if in_process else "child-self-report",
+                        observer_grade="attribution",
+                    ),
+                    fence_scope=occurrence.local_execution.fence_scope,
+                    secret_references=tuple(
+                        sorted(
+                            (
+                                ProviderSecretReceiptReference(
+                                    binding_identity_digest=(
+                                        provider_secret_binding_identity_digest(
+                                            ProviderSecretBindingIdentity(
+                                                realm=reference.realm,
+                                                name=reference.name,
+                                            )
+                                        )
+                                    ),
+                                    purpose=reference.purpose,
+                                )
+                                for reference in occurrence.secret_plan.references
+                            ),
+                            key=lambda item: item.binding_identity_digest.encode("ascii"),
+                        )
+                    ),
+                    budget_translation=occurrence.budget_translation,
+                    duration_microseconds=0,
+                    trace={},
+                    stderr="",
+                )
+                completion = ProviderInvocationCompleted(
+                    invocation_id=invocation_id,
+                    receipt=receipt,
+                    receipt_digest=provider_invocation_receipt_digest(receipt),
+                )
+                writer.append(
+                    stream=stream,
+                    partition_id=partition_id,
+                    event_kind="provider_invocation_completed",
+                    accepted_coordinate=admission.accepted_coordinate,
+                    procedure_artifact_digest=admission.procedure_artifact_digest,
+                    definition_digest=admission.definition_digest,
+                    run_id=admission.run_id,
+                    line_spec_digest=admission.line_spec_digest,
+                    occurrence_id=admission.occurrence_id,
+                    attempt=admission.attempt,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    actor_context=admission.actor_context,
+                    recorded_at=recorded_at,
+                    payload=completion.model_dump(mode="json"),
+                )
+                completed[invocation_id] = completion
+                recovered.append(invocation_id)
+                handled.add(invocation_id)
+            interrupted_in_process = all(
+                occurrence.local_execution.fence_scope == "in_process"
+                for _invocation_id, _started, occurrence in resolved_occurrences
+            )
+            ordered_completions = tuple(completed[item] for item in starts if item in completed)
+            provider_calls = len(ordered_completions)
+            invocation_receipt_digests = tuple(item.receipt_digest for item in ordered_completions)
+            wall_clock_microseconds = sum(
+                item.receipt.duration_microseconds for item in ordered_completions
+            )
+            writer.append(
+                stream=stream,
+                partition_id=partition_id,
+                event_kind="attempt_finalized",
+                accepted_coordinate=admission.accepted_coordinate,
+                procedure_artifact_digest=admission.procedure_artifact_digest,
+                definition_digest=admission.definition_digest,
+                run_id=admission.run_id,
+                line_spec_digest=admission.line_spec_digest,
+                occurrence_id=admission.occurrence_id,
+                attempt=admission.attempt,
+                admission_binding_digest=admission.admission_binding_digest,
+                actor_context=admission.actor_context,
+                recorded_at=recorded_at,
+                payload={
+                    "status": "failed",
+                    "output": None,
+                    "refusal": None,
+                    # A partition whose closed starts were all core built-ins
+                    # was interrupted in-process, not terminated as a child.
+                    "failure": (
+                        "Built-in Provider invocation was interrupted and closed at daemon startup."
+                        if interrupted_in_process
+                        else "Provider invocation was terminated during daemon recovery."
+                    ),
+                    "failure_code": "provider_completion_not_durable",
+                    "failure_details": {
+                        "provider_refusal_code": (
+                            "provider_in_process_interrupted"
+                            if interrupted_in_process
+                            else "provider_process_group_survived_recovery"
+                        )
+                    },
+                    "halt": None,
+                    "semantic_result_digest": None,
+                    "provider_calls": provider_calls,
+                    "capture_bytes": 0,
+                    "invocation_receipt_digests": list(invocation_receipt_digests),
+                    "budget": ProcedureRunBudget(
+                        declared=procedure_run_declared_budget(admission),
+                        observed=ProcedureRunBudgetObserved(
+                            max_items=ProcedureBudgetBoundaryObservation(high_water=0),
+                            result_bytes=ProcedureBudgetBoundaryObservation(high_water=0),
+                            provider_calls=provider_calls,
+                            capture_bytes=0,
+                            wall_clock_microseconds=wall_clock_microseconds,
+                        ),
+                    ).model_dump(mode="json"),
+                },
+            )
+        finally:
+            journal.fence_writer(
+                stream,
+                partition_id,
+                expected_fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+            )
+    if observed_failures:
+        detail = "; ".join(
+            f"run {run_id} invocation {invocation_id} requires recovery ({code})"
+            for run_id, invocation_id, code in sorted(observed_failures, key=lambda item: item[1])
+        )
+        raise ProcedureRunRecoveryRequired(f"{ProcedureRunRecoveryRequired.code}: {detail}")
+    return tuple(sorted(handled, key=str.encode))
+
+
+def service_prepare_playbill_line_admission(
+    instance: PlaybillInstance,
+    *,
+    admission: ProcedureRunAdmission,
+    accepted_line: AcceptedLineSpec,
+) -> ProcedureRunAdmission | ProcedureAdmissionRefusal:
+    """Bind the accepted runtime policy into a Line admission before publication."""
+
+    if bool(admission.exhaust_inputs) != (admission.exhaust_access_binding_digest is not None):
+        return ProcedureAdmissionRefusal(
+            code="exhaust_binding_carrier_required",
+            message="Exhaust inputs require exactly one opaque access-binding carrier.",
+            details={
+                "exhaust_input_count": len(admission.exhaust_inputs),
+                "carrier_present": admission.exhaust_access_binding_digest is not None,
+            },
+            repair=served_repair_for_refusal("exhaust_binding_carrier_required"),
+        )
+    coordinate = instance.resolve_accepted_coordinate(
+        git_oid=admission.bound_coordinate.git_oid,
+        semantic_root=admission.bound_coordinate.semantic_root,
+        generation_root=admission.bound_coordinate.generation_root,
+        compiler_digest=admission.bound_coordinate.compiler_digest,
+    )
+    try:
+        policy = _accepted_runtime_policy(instance, coordinate)
+    except ProcedureRuntimePolicyAbsent as exc:
+        return ProcedureAdmissionRefusal(
+            code="procedure_runtime_policy_absent",
+            message=str(exc),
+            details={"policy_path": PROCEDURE_RUNTIME_POLICY_PATH},
+            repair=served_repair_for_refusal("procedure_runtime_policy_absent"),
+        )
+    try:
+        bound = bind_line_admission_runtime_policy(admission, policy)
+        procedure = _accepted_procedure(
+            instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+        )
+        rules_digest = (
+            acquisition_rules_digest(
+                procedure_acquisition_rules(procedure, accepted_line.line.acquisition)
+            )
+            if _source_input_names(procedure)
+            else None
+        )
+        verify_line_admission_spec(
+            bound,
+            accepted_line,
+            procedure_binding=ArtifactPin(
+                role="procedure",
+                target=procedure.procedure.identity,
+                artifact_digest=procedure.artifact_digest,
+            ),
+            acquisition_rules_digest=rules_digest,
+        )
+    except ExecutionError as exc:
+        return ProcedureAdmissionRefusal(
+            code="artifact_binding_mismatch",
+            message=str(exc),
+            details={
+                "accepted_line_identity": accepted_line.line.identity.qualified,
+                "accepted_line_spec_digest": accepted_line.artifact_digest,
+            },
+            repair=served_repair_for_refusal("artifact_binding_mismatch"),
+        )
+    return bound
+
+
+class DirectProcedureReceiptReducer:
+    """Pure reducer for later ExhaustPromotion of one finalized direct run."""
+
+    @property
+    def reducer_digest(self) -> str:
+        return typed_digest(
+            Sha256Value,
+            DIRECT_RECEIPT_REDUCER_DOMAIN,
+            {"accepted_event_kinds": ["attempt_finalized"]},
+        ).tagged
+
+    def reduce(self, records: tuple[VerifiedExhaustRecordV1, ...]) -> object:
+        finalized = tuple(item for item in records if item.event_kind == "attempt_finalized")
+        if len(finalized) != 1 or finalized[0] != records[-1]:
+            raise ValueError("direct Procedure receipt range must end in one finalization")
+        run_ids = {item.run_id for item in records}
+        procedures = {item.procedure_artifact_digest for item in records}
+        if None in run_ids or len(run_ids) != 1 or len(procedures) != 1:
+            raise ValueError("direct Procedure receipt range mixes run identities")
+        return normalize_canonical(
+            {
+                "run_id": finalized[0].run_id,
+                "procedure_artifact_digest": finalized[0].procedure_artifact_digest,
+                "result": finalized[0].payload,
+                "record_count": len(records),
+            }
+        )
+
+
+__all__ = [
+    "DIRECT_RECEIPT_REDUCER_DOMAIN",
+    "DirectProcedureReceiptReducer",
+    "ProcedureRunGrainRecordV1",
+    "load_playbill_procedure_run_grain",
+    "LineRunIdentityMismatch",
+    "LineRunNotAccepted",
+    "LineRunRequest",
+    "ProcedureReadinessRequestV1",
+    "ProcedureReadinessResultV1",
+    "ProcedureRunRequest",
+    "ProcedureRunStateV2",
+    "ProcedureSurfaceError",
+    "service_get_playbill_procedure_run",
+    "service_playbill_procedure_readiness",
+    "service_prepare_playbill_line_admission",
+    "service_run_playbill_line",
+    "service_run_playbill_procedure",
+]

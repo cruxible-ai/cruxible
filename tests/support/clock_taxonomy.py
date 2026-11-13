@@ -1,0 +1,669 @@
+"""Closed clock taxonomy for Cruxible contract and runtime fields.
+
+The names here are wire-law language.  A time-bearing field has exactly one
+domain; code may order values within a domain, test an instant for membership
+in a validity window, or derive a window from an instant and duration.  It may
+not use ordering between two instant domains as a law input.
+
+Discovery and declaration are deliberately separate.  ``is_time_bearing_field``
+is the ruled AST predicate; ``CLOCK_FIELD_DECLARATIONS`` is the declaration.  A
+classifier that derived the domain from the field name would agree with itself
+on every field and therefore prove nothing -- and it would be wrong: it reads
+``deadline`` as an assertion, ``landed_at`` as an assertion, and the boolean
+``requires_explicit_evaluation_time`` as an instant.  A field discovered here
+and declared nowhere fails the architecture guard.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Literal, TypeAlias
+
+ClockDomainV1: TypeAlias = Literal[
+    "SETTLEMENT ORDER",
+    "ASSERTION TIME",
+    "VALIDITY WINDOW",
+    "EVALUATION INSTANT",
+]
+
+CLOCK_DOMAINS: frozenset[ClockDomainV1] = frozenset(
+    {
+        "SETTLEMENT ORDER",
+        "ASSERTION TIME",
+        "VALIDITY WINDOW",
+        "EVALUATION INSTANT",
+    }
+)
+
+TIME_FIELD_SUFFIXES = (
+    "_at",
+    "_time",
+    "_instant",
+    "_seconds",
+    "_microseconds",
+    "_until",
+    "generation",
+    "sequence",
+    "timestamp",
+)
+_TIME_ANNOTATION_TOKENS = ("datetime", "timedelta", "CanonicalDuration")
+# `generation`, `sequence` and `timestamp` name a whole field or its last
+# segment. Matching a bare suffix also caught `consequence`, a Literal that
+# carries no time at all. `timestamp` is the codebase's dominant canonical-time
+# spelling and is usually annotated `str`, so the annotation tokens never find
+# it: it is discovered by name or not at all.
+_WORD_SUFFIXES = ("generation", "sequence", "timestamp")
+
+
+def is_time_bearing_field(name: str, annotation: str) -> bool:
+    """Return the ruled AST discovery predicate for one annotated field."""
+
+    if any(token in annotation for token in _TIME_ANNOTATION_TOKENS):
+        return True
+    for suffix in TIME_FIELD_SUFFIXES:
+        if suffix in _WORD_SUFFIXES:
+            if name == suffix or name.endswith(f"_{suffix}"):
+                return True
+        elif name.endswith(suffix):
+            return True
+    return False
+
+
+# Every field the predicate discovers, declared exactly once by the class that
+# owns it. Two classes may read one field name on different clocks: a capture is
+# `observed_at` the instant the daemon evaluated the source, while an attestation
+# is `observed_at` the time its attestor asserts.
+CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    ("RecompileInput", "timestamp"): "EVALUATION INSTANT",
+    ("BuildRow", "registration_sequence"): "SETTLEMENT ORDER",
+    ("FloorConsumerOutcome", "generation"): "SETTLEMENT ORDER",
+    # The generation a forward floor render reached.
+    ("FloorStep", "generation"): "SETTLEMENT ORDER",
+    # The accepted generation whose change-set record holds a retired candidate.
+    ("SettledCandidateLocator", "sequence"): "SETTLEMENT ORDER",
+    # The accepted generation of one revision in a floor Claim's history.
+    ("_Revisions", "sequence"): "SETTLEMENT ORDER",
+    # The accepted generation of one revision in a floor definition's history,
+    # and the generations at which each of its views last changed.
+    ("DefinitionRevision", "sequence"): "SETTLEMENT ORDER",
+    ("DefinitionRevision", "view_at"): "SETTLEMENT ORDER",
+    # The generations at which each ClaimType's kinds last changed.
+    ("OntologyIndex", "kinds_at"): "SETTLEMENT ORDER",
+    ("LineTriggerBinding", "generation"): "SETTLEMENT ORDER",
+    # The accepted generation an accepted proposal's change set settled in (W5).
+    ("ProposalListEntry", "accepted_generation"): "SETTLEMENT ORDER",
+    ("PlaybillProposalListEntryV1", "accepted_generation"): "SETTLEMENT ORDER",
+    ("GetProposalCard", "generation"): "SETTLEMENT ORDER",
+    # The accepted generation a dispatched Trigger occurrence fires on.
+    ("TriggerFire", "generation"): "SETTLEMENT ORDER",
+    # A signed mint consent is accepted only within a window around the
+    # daemon's clock; issued_at anchors that window.
+    ("RuntimeCredentialMintStatement", "issued_at"): "VALIDITY WINDOW",
+    ("LineEnablement", "enabled_at"): "VALIDITY WINDOW",
+    ("LineEnablement", "evaluated_until"): "VALIDITY WINDOW",
+    ("LineEnablement", "stopped_at"): "VALIDITY WINDOW",
+    ("LineEvaluateRequest", "since"): "VALIDITY WINDOW",
+    ("LineEvaluateRequest", "until"): "VALIDITY WINDOW",
+    ("TriggerRange", "since"): "VALIDITY WINDOW",
+    ("TriggerRange", "until"): "VALIDITY WINDOW",
+    ("LineTriggerOccurrence", "eligible_at"): "VALIDITY WINDOW",
+    ("LineEvaluateResult", "checked_since"): "VALIDITY WINDOW",
+    ("LineEvaluateResult", "checked_until"): "VALIDITY WINDOW",
+    # A restart gap and the oldest pending occurrence `next` names for an
+    # enabled Line: ranges of the dispatch store's validity windows.
+    ("LineCoverageGap", "since"): "VALIDITY WINDOW",
+    ("LineCoverageGap", "until"): "VALIDITY WINDOW",
+    ("LinePendingWork", "oldest_eligible_at"): "VALIDITY WINDOW",
+    ("FixedWindow", "starts_at"): "VALIDITY WINDOW",
+    ("FixedWindow", "duration_seconds"): "VALIDITY WINDOW",
+    ("CaptureEventWindow", "duration_seconds"): "VALIDITY WINDOW",
+    ("CaptureEventNameWindow", "duration_seconds"): "VALIDITY WINDOW",
+    ("CaptureEventByNameWindow", "duration_seconds"): "VALIDITY WINDOW",
+    ("BoundObservationWindow", "starts_at"): "VALIDITY WINDOW",
+    ("BoundObservationWindow", "ends_at"): "VALIDITY WINDOW",
+    ("TerminalEgressChildReceiptV3", "reobserved_at"): "ASSERTION TIME",
+    ("TriggerEventReference", "sequence"): "SETTLEMENT ORDER",
+    # The instant the manual fire was appended to the trigger journal (the
+    # writer's own evaluation instant), not an author's assertion.
+    ("ActionRunResult", "fired_at"): "EVALUATION INSTANT",
+    ("RunbookRunResult", "started_at"): "EVALUATION INSTANT",
+    ("RunbookRunResult", "finished_at"): "EVALUATION INSTANT",
+    # A bound on how long --wait runs the owning consumer inline, not a point
+    # on any clock; a duration, like a process outcome's own.
+    ("ActionRunRequest", "wait_timeout_seconds"): "VALIDITY WINDOW",
+    ("ReobservationReading", "sequence"): "SETTLEMENT ORDER",
+    ("RecordedReobservation", "sequence"): "SETTLEMENT ORDER",
+    ("LandingHead", "sequence"): "SETTLEMENT ORDER",
+    ("Landing", "sequence"): "SETTLEMENT ORDER",
+    ("ReobservationReading", "boundaries"): "VALIDITY WINDOW",
+    ("GetRunOutcome", "sequence"): "SETTLEMENT ORDER",
+    ("ResolutionContractActivationV3", "activated_at"): "EVALUATION INSTANT",
+    ("AcceptedGenerationLocation", "sequence"): "SETTLEMENT ORDER",
+    ("AcceptedGenerationLocation", "parent_sequence"): "SETTLEMENT ORDER",
+    ("ArtifactVersionLocation", "occurrence_sequence"): "SETTLEMENT ORDER",
+    ("AcceptedMemberLocation", "sequence"): "SETTLEMENT ORDER",
+    ("GenerationRecordFacts", "sequence"): "SETTLEMENT ORDER",
+    # Canonical candidate timestamps are the author's assertion of when the
+    # candidate was made; nothing checks them against a daemon clock.
+    ("AuthoringIntent", "canonical_timestamp"): "ASSERTION TIME",
+    ("PreflightCertificate", "canonical_timestamp"): "ASSERTION TIME",
+    ("SemanticCandidate", "timestamp"): "ASSERTION TIME",
+    # The accepted record's own C_s instant, carried as a verified fact.
+    ("GenerationRecordFacts", "timestamp"): "ASSERTION TIME",
+    ("_MemberContext", "timestamp"): "ASSERTION TIME",
+    # The candidate timestamp an admission evaluation or settle condition ran at.
+    ("AdmittedEvaluation", "timestamp"): "ASSERTION TIME",
+    ("DelegatedAuthorityVerdict", "timestamp"): "ASSERTION TIME",
+    ("AuditClaimFactorsV1", "first_accepted_generation"): "SETTLEMENT ORDER",
+    ("AuditClaimFactorsV1", "last_independent_verification_generation"): "SETTLEMENT ORDER",
+    ("AuditCursor", "evaluation_time"): "EVALUATION INSTANT",
+    ("AuditEvidenceRefV1", "generation"): "SETTLEMENT ORDER",
+    ("AuditRunV1", "accepted_generation"): "SETTLEMENT ORDER",
+    ("AuditRunV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("AuthoringClaimStatement", "effective_from"): "VALIDITY WINDOW",
+    ("AuthoringClaimStatement", "effective_until"): "VALIDITY WINDOW",
+    ("AuthoringIntentEvent", "sequence"): "SETTLEMENT ORDER",
+    ("BlockObservationV1", "scan_generation"): "SETTLEMENT ORDER",
+    ("CandidateStatus", "accepted_generation"): "SETTLEMENT ORDER",
+    ("CaptureAcquisitionReceiptV1", "observed_at"): "EVALUATION INSTANT",
+    ("CaptureAcquisitionReceiptV1", "source_effective_time"): "VALIDITY WINDOW",
+    ("CaptureCursor", "sequence"): "SETTLEMENT ORDER",
+    ("CaptureEnvelopeV1", "observed_at"): "EVALUATION INSTANT",
+    ("CaptureEnvelopeV1", "source_effective_time"): "VALIDITY WINDOW",
+    ("CaptureEnvelope", "observed_at"): "EVALUATION INSTANT",
+    ("CaptureEnvelope", "source_effective_time"): "VALIDITY WINDOW",
+    ("CaptureLandingEventV1", "landed_at"): "EVALUATION INSTANT",
+    ("CaptureLandingEventV1", "sequence"): "SETTLEMENT ORDER",
+    ("CaptureLandingEvent", "landed_at"): "EVALUATION INSTANT",
+    ("CaptureLandingEvent", "sequence"): "SETTLEMENT ORDER",
+    ("CaptureRetentionErasurePolicy", "minimum_retention"): "VALIDITY WINDOW",
+    ("NamedCaptureRetentionPolicy", "minimum_retention"): "VALIDITY WINDOW",
+    ("CaptureRunCoordinateV1", "bound_generation"): "SETTLEMENT ORDER",
+    ("CaptureRunCoordinate", "bound_generation"): "SETTLEMENT ORDER",
+    ("CaptureReobservationEvidence", "observed_at"): "ASSERTION TIME",
+    ("CaptureReobservationEvidence", "recorded_at"): "ASSERTION TIME",
+    ("CaptureUploadSession", "expires_at"): "VALIDITY WINDOW",
+    ("CaptureUploadSessionRecord", "created_at"): "ASSERTION TIME",
+    ("CaptureUploadSessionRecord", "expires_at"): "VALIDITY WINDOW",
+    ("UploadLimits", "session_seconds"): "VALIDITY WINDOW",
+    # When an erasure was recorded: the journal record's own recording instant.
+    ("CaptureErasureRecord", "erased_at"): "ASSERTION TIME",
+    # An erasure's erasure journal position, and the landing log's position at
+    # it: storage event order, which decides what a judgment counted.
+    ("RecordedCaptureErasure", "sequence"): "SETTLEMENT ORDER",
+    ("GetCaptureErasure", "at"): "ASSERTION TIME",
+    ("CaptureVerdictEvidence", "observed_at"): "ASSERTION TIME",
+    ("CaptureVerdictEvidence", "source_effective_until"): "VALIDITY WINDOW",
+    ("ChangeSetRecord", "sequence"): "SETTLEMENT ORDER",
+    ("CheckpointGeneration", "sequence"): "SETTLEMENT ORDER",
+    ("ClaimAdjudicationRule", "max_evidence_age"): "VALIDITY WINDOW",
+    ("ClaimAdmissionCandidateContext", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimAttestationAppendResult", "partition_sequence"): "SETTLEMENT ORDER",
+    ("ClaimAttestationAppendResult", "recorded_at"): "ASSERTION TIME",
+    # When the daemon recorded a kit add that stopped at awaiting_providers.
+    ("KitResumeStatus", "recorded_at"): "ASSERTION TIME",
+    ("ClaimAttestationEventPayload", "recorded_at"): "ASSERTION TIME",
+    ("ClaimAttestationEvent", "sequence"): "SETTLEMENT ORDER",
+    ("ClaimAttestationPartitionGenesis", "sequence"): "SETTLEMENT ORDER",
+    ("ClaimAttestationPartitionHead", "sequence"): "SETTLEMENT ORDER",
+    ("ClaimAttestationPublishedRoot", "sequence"): "SETTLEMENT ORDER",
+    ("ClaimAttestationStatementV1", "observed_at"): "ASSERTION TIME",
+    ("ClaimAttestationStatementV1", "valid_until"): "VALIDITY WINDOW",
+    ("ClaimAttestationAccountV1", "attested_at"): "ASSERTION TIME",
+    ("ClaimAttestationAccountV1", "valid_until"): "VALIDITY WINDOW",
+    ("ClaimAttestationStatement", "attested_at"): "ASSERTION TIME",
+    ("ClaimAttestationStatement", "valid_until"): "VALIDITY WINDOW",
+    ("_UnsureHold", "attested_at"): "ASSERTION TIME",
+    ("_UnsureHold", "valid_until"): "VALIDITY WINDOW",
+    ("_Continuation", "evaluation_time"): "EVALUATION INSTANT",
+    ("_RowContext", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimAttestationStoreManifest", "initialized_at"): "ASSERTION TIME",
+    ("ClaimEvidenceFreshnessLineV1", "expires_at"): "VALIDITY WINDOW",
+    ("ClaimEvidenceFreshnessLineV1", "observed_at"): "ASSERTION TIME",
+    ("ClaimInput", "effective_from"): "VALIDITY WINDOW",
+    ("ClaimInput", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimLawEvidence", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimQueryResult", "evaluated_at"): "EVALUATION INSTANT",
+    ("ClaimQueryResult", "expires_at"): "VALIDITY WINDOW",
+    ("ClaimReferentContext", "observed_at"): "ASSERTION TIME",
+    ("ClaimRetireDependent", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimRetirementInput", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimRetirementMember", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimRetirementResultItemV1", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimStatement", "effective_from"): "VALIDITY WINDOW",
+    ("ClaimStatement", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimTemplateSpec", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimTemplate", "effective_until"): "VALIDITY WINDOW",
+    ("ClaimTypeDependentDisposition", "claim_effective_until"): "VALIDITY WINDOW",
+    ("ClaimTypeMigrationDisposition", "claim_effective_until"): "VALIDITY WINDOW",
+    ("ClaimTypeSuccessionDependent", "claim_effective_until"): "VALIDITY WINDOW",
+    ("ClaimVerdictResult", "evaluation_time"): "EVALUATION INSTANT",
+    ("ConsumptionAggregateV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
+    ("ConsumptionAggregateV1", "observed_since_generation"): "SETTLEMENT ORDER",
+    ("ConsumptionEpochV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
+    # The retention cutoff a fold compares receipts' recorded instants with: the
+    # accepted head's commit time (the writer's own timestamp) less the window.
+    ("ConsumptionFoldV1", "folded_before"): "ASSERTION TIME",
+    # Unfolded receipts' recorded instants, in the tally's expiry queue and
+    # once a fold's cutoff has passed them: the events' own recorded_at.
+    ("_Tally", "expiry"): "ASSERTION TIME",
+    ("_Tally", "overdue"): "ASSERTION TIME",
+    ("ConsumptionObservationGapV1", "unobserved_from_generation"): "SETTLEMENT ORDER",
+    ("ConsumptionObservationResumeV1", "observed_from_generation"): "SETTLEMENT ORDER",
+    ("CoverageManifestFileV1", "written_at"): "ASSERTION TIME",
+    ("CoverageManifestFileV2", "written_at"): "ASSERTION TIME",
+    ("CurationAcceptedFixedV1", "resolved_generation"): "SETTLEMENT ORDER",
+    ("CurationEvidenceRefV1", "generation"): "SETTLEMENT ORDER",
+    ("CurationItemV1", "first_proposed_generation"): "SETTLEMENT ORDER",
+    ("CurationItemV1", "last_observed_generation"): "SETTLEMENT ORDER",
+    ("CurationItemV1", "resolved_at_generation"): "SETTLEMENT ORDER",
+    ("CurationPatternObservedV1", "accepted_generation"): "SETTLEMENT ORDER",
+    ("CurationSuppressedV1", "until_generation"): "SETTLEMENT ORDER",
+    ("CurationSuppressedV2", "until_generation"): "SETTLEMENT ORDER",
+    ("CurationSuppressionV1", "until_generation"): "SETTLEMENT ORDER",
+    ("DependencyImpactRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("DependencyImpactV1", "evaluated_at"): "EVALUATION INSTANT",
+    ("DiscoveryPage", "evaluation_time"): "EVALUATION INSTANT",
+    ("DiscoveryRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("EvidenceFreshnessExpiration", "expires_at"): "VALIDITY WINDOW",
+    ("EvidenceFreshnessExpiration", "observed_at"): "ASSERTION TIME",
+    ("EvidenceFreshnessExpiration", "reobserved_at"): "ASSERTION TIME",
+    ("ExhaustPromotionV1", "first_sequence"): "SETTLEMENT ORDER",
+    ("ExhaustPromotionV1", "last_sequence"): "SETTLEMENT ORDER",
+    ("ExhaustReceiptSetManifestV1", "first_sequence"): "SETTLEMENT ORDER",
+    ("ExhaustReceiptSetManifestV1", "last_sequence"): "SETTLEMENT ORDER",
+    ("ExternalSourceReadRequestV1", "observed_at"): "EVALUATION INSTANT",
+    ("FloorGenerationPairV1", "current_generation"): "SETTLEMENT ORDER",
+    ("FloorGenerationPairV1", "floor_generation"): "SETTLEMENT ORDER",
+    # The floor carries no verdicts and no instants: a file's changed_at is the
+    # accepted generation that last touched one of its inputs.
+    ("FloorEntry", "changed_at"): "SETTLEMENT ORDER",
+    ("FloorManifest", "generation"): "SETTLEMENT ORDER",
+    ("FloorHead", "generation"): "SETTLEMENT ORDER",
+    ("FloorDeltaFile", "changed_at"): "SETTLEMENT ORDER",
+    ("FloorDelta", "base_generation"): "SETTLEMENT ORDER",
+    ("FloorApplyResult", "generation"): "SETTLEMENT ORDER",
+    ("FloorManifestFileV1", "changed_at"): "SETTLEMENT ORDER",
+    ("FloorFreshnessManifestV2", "generation"): "SETTLEMENT ORDER",
+    ("FloorInputs", "generation"): "SETTLEMENT ORDER",
+    ("_SubjectRender", "changed_at"): "SETTLEMENT ORDER",
+    ("_SubjectRender", "own_changed_at"): "SETTLEMENT ORDER",
+    ("GovernedActorContext", "timestamp"): "ASSERTION TIME",
+    ("LineAcquisitionRule", "max_age"): "VALIDITY WINDOW",
+    ("AcquisitionRule", "max_age"): "VALIDITY WINDOW",
+    ("JournalHeadStatementV1", "asserted_at"): "ASSERTION TIME",
+    ("JournalPartitionHeadV1", "sequence"): "SETTLEMENT ORDER",
+    # The journal head a resolution fold reached (perf B9).
+    ("_ResolutionFold", "head_sequence"): "SETTLEMENT ORDER",
+    ("JournalRangeV1", "first_sequence"): "SETTLEMENT ORDER",
+    ("JournalRangeV1", "last_sequence"): "SETTLEMENT ORDER",
+    ("JournalSegmentDescriptorV1", "first_sequence"): "SETTLEMENT ORDER",
+    ("JournalSegmentDescriptorV1", "last_sequence"): "SETTLEMENT ORDER",
+    ("JournalWriterStateV1", "generation"): "SETTLEMENT ORDER",
+    ("LineEgressReadingV1", "sequence"): "SETTLEMENT ORDER",
+    ("LineRunRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("CadenceSchedule", "interval_seconds"): "VALIDITY WINDOW",
+    ("MemberLawEvaluation", "evaluation_time"): "EVALUATION INSTANT",
+    ("AuditEvidenceRef", "generation"): "SETTLEMENT ORDER",
+    ("AuditFactors", "first_accepted_generation"): "SETTLEMENT ORDER",
+    ("AuditFactors", "last_independent_verification_generation"): "SETTLEMENT ORDER",
+    ("PlaybillAuditRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("AuditResult", "audited_through_generation"): "SETTLEMENT ORDER",
+    ("AuditResult", "evaluation_time"): "EVALUATION INSTANT",
+    ("AuditResult", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillAuditResultV1", "audited_through_generation"): "SETTLEMENT ORDER",
+    ("PlaybillAuditResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillAuditResultV1", "generation"): "SETTLEMENT ORDER",
+    ("BlockSyncReadResult", "generation"): "SETTLEMENT ORDER",
+    ("BlockSyncSuccessorCandidate", "generation"): "SETTLEMENT ORDER",
+    ("CandidateStatusRecord", "accepted_generation"): "SETTLEMENT ORDER",
+    ("QueryReceipt", "evaluation_time"): "EVALUATION INSTANT",
+    ("QueryRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("_RowRenderer", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillClaimExplanation", "admission_evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillClaimExplanation", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillClaimVerdictQuery", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimViewRecord", "admission_evaluation_time"): "EVALUATION INSTANT",
+    ("CurationActionResult", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillCurationActionResultV1", "generation"): "SETTLEMENT ORDER",
+    ("CurationListResult", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillCurationListResultV1", "generation"): "SETTLEMENT ORDER",
+    # Detection runs at its Trigger fire's recorded instant, through a generation.
+    ("CurationDetection", "detected_at"): "EVALUATION INSTANT",
+    ("CurationDetection", "detected_through_generation"): "SETTLEMENT ORDER",
+    ("PlaybillCurationDetectionV1", "detected_at"): "EVALUATION INSTANT",
+    ("PlaybillCurationDetectionV1", "detected_through_generation"): "SETTLEMENT ORDER",
+    ("BlockObserveResult", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillBlockObserveResultV1", "generation"): "SETTLEMENT ORDER",
+    ("BlockScanV1", "scan_generation"): "SETTLEMENT ORDER",
+    ("PlaybillCurationAcceptFixedRequestV1", "accepted_generation"): "SETTLEMENT ORDER",
+    ("PlaybillCurationSuppressRequestV1", "until_generation"): "SETTLEMENT ORDER",
+    ("PlaybillDocumentHistoryEntry", "sequence"): "SETTLEMENT ORDER",
+    ("NextRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("NextRequest", "expiring_within"): "VALIDITY WINDOW",
+    ("NextResult", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillNextResultV2", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
+    # When the daemon last tried to push. An assertion about an attempt, not a
+    # coordinate: the mirror is a copy of accepted state and its timing orders
+    # nothing.
+    ("LedgerMirror", "attempted_at"): "ASSERTION TIME",
+    ("LedgerMirrorStateV1", "attempted_at"): "ASSERTION TIME",
+    # Request order within one mirror destination, never accepted generation numbers.
+    ("LedgerMirrorStateV1", "requested_sequence"): "SETTLEMENT ORDER",
+    ("LedgerMirrorStateV1", "attempted_sequence"): "SETTLEMENT ORDER",
+    ("LedgerMirrorStateV1", "published_sequence"): "SETTLEMENT ORDER",
+    ("LedgerMirrorStateV1", "wait_sequence"): "SETTLEMENT ORDER",
+    ("LedgerMirror", "requested_sequence"): "SETTLEMENT ORDER",
+    ("LedgerMirror", "attempted_sequence"): "SETTLEMENT ORDER",
+    ("LedgerMirror", "published_sequence"): "SETTLEMENT ORDER",
+    ("LedgerMirror", "wait_sequence"): "SETTLEMENT ORDER",
+    ("ClaimReadBatchRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimValuesRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("ClaimValuesResult", "evaluation_time"): "EVALUATION INSTANT",
+    # The instants between which a remembered slot answer holds.
+    ("_RememberedSlot", "interval"): "VALIDITY WINDOW",
+    ("ProposalListEntry", "admitted_at"): "ASSERTION TIME",
+    ("PlaybillProposalListEntryV1", "admitted_at"): "ASSERTION TIME",
+    ("PlaybillReviewOperationalEventV1", "accepted_generation"): "SETTLEMENT ORDER",
+    ("PlaybillReviewOperationalEventV1", "recorded_at"): "ASSERTION TIME",
+    ("PlaybillReviewOperationalEventV1", "sequence"): "SETTLEMENT ORDER",
+    # The accepted candidate's own timestamp: the author's assertion of when
+    # the head generation was made, surfaced by orient beside its sequence.
+    ("OrientResult", "accepted_at"): "ASSERTION TIME",
+    ("OrientResult", "evaluation_time"): "EVALUATION INSTANT",
+    ("OrientResult", "generation"): "SETTLEMENT ORDER",
+    ("OrientGeneration", "sequence"): "SETTLEMENT ORDER",
+    ("OrientGeneration", "accepted_at"): "ASSERTION TIME",
+    # The activity feed: each row's own record instant (a journal record's, or a
+    # generation's acceptance), the generation a ledger row lists, and the
+    # instant a due occurrence is eligible from.
+    ("_OrientActivityRow", "at"): "ASSERTION TIME",
+    ("OrientActivityGenerationAccepted", "sequence"): "SETTLEMENT ORDER",
+    ("OrientActivityOccurrenceDue", "eligible_at"): "VALIDITY WINDOW",
+    ("EventLocator", "recorded_at"): "ASSERTION TIME",
+    ("DispatchActivity", "recorded_at"): "ASSERTION TIME",
+    ("InboxActivity", "recorded_at"): "ASSERTION TIME",
+    # The get read: its evaluation instant, and the times it reads back.
+    ("GetRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("GetResult", "evaluation_time"): "EVALUATION INSTANT",
+    ("GetProposalCard", "admitted_at"): "ASSERTION TIME",
+    ("GetProcedureTrackRecord", "first_sequence"): "SETTLEMENT ORDER",
+    ("GetProcedureTrackRecord", "last_sequence"): "SETTLEMENT ORDER",
+    ("GetCaptureEvidence", "observed_at"): "ASSERTION TIME",
+    ("GetAttestationEvidence", "at"): "ASSERTION TIME",
+    ("GetRevision", "sequence"): "SETTLEMENT ORDER",
+    ("GetRevision", "effective_from"): "VALIDITY WINDOW",
+    ("GetRevision", "effective_until"): "VALIDITY WINDOW",
+    ("GetClaimCard", "effective_from"): "VALIDITY WINDOW",
+    ("GetClaimCard", "effective_until"): "VALIDITY WINDOW",
+    ("_Shown", "effective_from"): "VALIDITY WINDOW",
+    ("_Shown", "effective_until"): "VALIDITY WINDOW",
+    ("_GetFieldEvent", "sequence"): "SETTLEMENT ORDER",
+    ("GetCoordinate", "generation"): "SETTLEMENT ORDER",
+    ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
+    # Operational reads: Lines, Captures, predictions, mandates and runs. An
+    # enablement's and an occurrence's instants are the dispatch store's validity
+    # windows; a Capture's observed_at is its producer's assertion; a run's
+    # times are its admission's evaluation instant, which the deterministic
+    # executor clock stamps on every journal record of the run.
+    ("GetLineEnablement", "enabled_at"): "VALIDITY WINDOW",
+    ("GetLineEnablement", "evaluated_until"): "VALIDITY WINDOW",
+    ("GetLineEnablement", "stopped_at"): "VALIDITY WINDOW",
+    ("GetLineOccurrence", "eligible_at"): "VALIDITY WINDOW",
+    ("GetCaptureCard", "observed_at"): "ASSERTION TIME",
+    ("OrientCapture", "observed_at"): "ASSERTION TIME",
+    ("OrientSourceLanding", "landed_at"): "ASSERTION TIME",
+    ("OrientSourceLanding", "observed_at"): "ASSERTION TIME",
+    ("GetPredictionWindow", "starts_at"): "VALIDITY WINDOW",
+    ("GetPredictionWindow", "ends_at"): "VALIDITY WINDOW",
+    ("OrientPrediction", "next_close"): "VALIDITY WINDOW",
+    ("GetMandateCard", "valid_from"): "VALIDITY WINDOW",
+    ("GetMandateCard", "expires_at"): "VALIDITY WINDOW",
+    ("OrientMandate", "expires_at"): "VALIDITY WINDOW",
+    # A Runbook row's latest run: when that run finished (its RunbookRunResult.finished_at).
+    ("OrientRunbook", "last_run_at"): "EVALUATION INSTANT",
+    ("ReobservationRecord", "observed_at"): "ASSERTION TIME",
+    ("ReobservationRecord", "recorded_at"): "ASSERTION TIME",
+    ("RunRow", "started_at"): "EVALUATION INSTANT",
+    ("GetProcedureRunCard", "started_at"): "EVALUATION INSTANT",
+    ("GetRunCurrentNode", "started_at"): "EVALUATION INSTANT",
+    ("GetPendingInput", "waiting_since"): "EVALUATION INSTANT",
+    ("GetRunNode", "sequence"): "SETTLEMENT ORDER",
+    # The accepted head a live operational read was taken at.
+    ("LiveHead", "generation"): "SETTLEMENT ORDER",
+    # The accepted head (or named coordinate) a head read answers.
+    ("Head", "generation"): "SETTLEMENT ORDER",
+    # One internal get batch, evaluated at one instant.
+    ("GetBatchRequest", "evaluation_time"): "EVALUATION INSTANT",
+    # The instant a query's first page pinned; its cursor continues it.
+    ("_QueryCursor", "evaluation_time"): "EVALUATION INSTANT",
+    ("RunLocator", "admitted_at"): "EVALUATION INSTANT",
+    ("SinceCursor", "last_generation"): "SETTLEMENT ORDER",
+    ("SinceCursor", "lower_generation"): "SETTLEMENT ORDER",
+    ("SinceRequest", "generation"): "SETTLEMENT ORDER",
+    ("SinceResult", "generation"): "SETTLEMENT ORDER",
+    ("SinceRow", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillSubjectHistoryEntry", "sequence"): "SETTLEMENT ORDER",
+    ("PreparedClaimAttestationRequest", "attested_at"): "ASSERTION TIME",
+    ("PreparedClaimAttestationRequest", "valid_until"): "VALIDITY WINDOW",
+    ("ProcedureAcquisitionPlan", "occurrence_evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureAdmissionMaterialMember", "retain_until"): "VALIDITY WINDOW",
+    ("ProcedureBudget", "wall_clock"): "VALIDITY WINDOW",
+    ("ProcedureHardCaps", "max_wall_clock"): "VALIDITY WINDOW",
+    ("LineBudgets", "max_wall_clock_microseconds"): "VALIDITY WINDOW",
+    ("LineBudgetsInput", "max_wall_clock_microseconds"): "VALIDITY WINDOW",
+    ("ProcedureJournalCoordinate", "sequence"): "SETTLEMENT ORDER",
+    ("ProcedureJournalRecordDraftV1", "recorded_at"): "ASSERTION TIME",
+    ("ProcedureJournalRecordV1", "recorded_at"): "ASSERTION TIME",
+    ("ProcedureJournalRecordV1", "sequence"): "SETTLEMENT ORDER",
+    ("ProcedureMandateAuthoringPayload", "expires_at"): "VALIDITY WINDOW",
+    ("ProcedureMandateAuthoringPayload", "valid_from"): "VALIDITY WINDOW",
+    ("ProcedureMandateInput", "expires_at"): "VALIDITY WINDOW",
+    ("ProcedureMandateInput", "valid_from"): "VALIDITY WINDOW",
+    ("ProcedureMandateInvocation", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureMandate", "expires_at"): "VALIDITY WINDOW",
+    ("ProcedureMandate", "valid_from"): "VALIDITY WINDOW",
+    ("ProcedureMeasurementDeclaration", "check_after"): "VALIDITY WINDOW",
+    ("ProcedureMeasurementDeclaration", "expires_after"): "VALIDITY WINDOW",
+    ("ProcedureMeasurementReviewTrigger", "window"): "VALIDITY WINDOW",
+    ("ProcedureReadingV1", "observed_at"): "ASSERTION TIME",
+    ("ProcedureReadingV1", "recorded_at"): "ASSERTION TIME",
+    ("ResolutionDispositionSummary", "recorded_at"): "ASSERTION TIME",
+    ("ResolutionDispositionSummary", "sequence"): "SETTLEMENT ORDER",
+    ("ProcedureResolutionDispositionV1", "recorded_at"): "ASSERTION TIME",
+    ("ProcedureResolutionDispositionV1", "sequence"): "SETTLEMENT ORDER",
+    ("ProcedureResolutionV1", "observed_at"): "ASSERTION TIME",
+    ("ProcedureResolutionV1", "recorded_at"): "ASSERTION TIME",
+    ("ProcedureResolutionV1", "sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunAdmission", "admitted_at"): "ASSERTION TIME",
+    ("ProcedureRunAdmission", "occurrence_evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureRunAttribution", "recorded_time"): "ASSERTION TIME",
+    ("ProcedureRunAttributionWithheld", "recorded_time"): "ASSERTION TIME",
+    ("_LinkedReadmission", "accepted_sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunBudgetObserved", "wall_clock_microseconds"): "VALIDITY WINDOW",
+    ("ProcedureRunIndexEntryV1", "first_sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunIndexEntryV1", "last_sequence"): "SETTLEMENT ORDER",
+    # The daemon-configured bound on how far a caller's asserted evaluation
+    # instant may sit from the daemon clock; it guards a ProcedureMandate's
+    # validity window, so it is a window, not an instant.
+    (
+        "ProcedureRunOperationalConfigV1",
+        "evaluation_instant_skew_seconds",
+    ): "VALIDITY WINDOW",
+    ("ProcedureRunOutcomeV1", "sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunReceiptV1", "first_sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunReceiptV1", "last_sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunReceipt", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureRunReceipt", "first_sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunReceipt", "last_sequence"): "SETTLEMENT ORDER",
+    ("ProcedureRunReceipt", "occurrence_evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureRunRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureRunStateV2", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProposalAwaitingApproval", "admitted_at"): "ASSERTION TIME",
+    ("ProposalAwaitingActivation", "admitted_at"): "ASSERTION TIME",
+    ("_ProjectionBlockStamp", "declared_generation"): "SETTLEMENT ORDER",
+    ("BlockSyncReadRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProjectionCheckRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProjectionCheckResult", "evaluation_time"): "EVALUATION INSTANT",
+    ("BlockDeclareResult", "declared_generation"): "SETTLEMENT ORDER",
+    ("BlockRepinResult", "declared_generation"): "SETTLEMENT ORDER",
+    ("DeclaredBlockRegistration", "declared_generation"): "SETTLEMENT ORDER",
+    # The instant the daemon recorded a workspace's declaration. It is
+    # protocol state -- nothing orders, expires or evaluates by it -- but it IS
+    # the instant the assertion "this instance stands behind this marker" was
+    # made, so it declares the same clock every other such record does.
+    ("DeclaredBlockRegistration", "declared_at"): "ASSERTION TIME",
+    ("ProjectionQueryBacking", "declared_evaluation_time"): "EVALUATION INSTANT",
+    ("ProposalAdmissionRecord", "admitted_at"): "ASSERTION TIME",
+    ("ProposalWithdrawalRecord", "withdrawn_at"): "ASSERTION TIME",
+    ("PlaybillProposalWithdrawResultV1", "withdrawn_at"): "ASSERTION TIME",
+    ("ProposalWithdrawResult", "withdrawn_at"): "ASSERTION TIME",
+    ("PlaybillProposalRejectResultV1", "rejected_at"): "ASSERTION TIME",
+    ("PriorRefusalReceipt", "decided_at"): "ASSERTION TIME",
+    ("PriorRefusalCoverage", "indexed_through_generation"): "SETTLEMENT ORDER",
+    ("PriorRefusalCoverage", "accepted_generation"): "SETTLEMENT ORDER",
+    ("LineSettledRefusals", "latest_settled_at"): "EVALUATION INSTANT",
+    ("SettledDelivery", "settled_at"): "EVALUATION INSTANT",
+    ("ProposalRejectResult", "rejected_at"): "ASSERTION TIME",
+    # An agent's inbox disposition is asserted at its request time; an item is
+    # posted at the evaluation instant of the run that posted it.
+    ("InboxAcknowledged", "decided_at"): "ASSERTION TIME",
+    ("InboxDismissed", "decided_at"): "ASSERTION TIME",
+    ("InboxLinked", "decided_at"): "ASSERTION TIME",
+    ("InboxSighting", "posted_at"): "EVALUATION INSTANT",
+    ("InboxPosting", "posted_at"): "EVALUATION INSTANT",
+    ("ProposalEvaluationRecord", "evaluated_at"): "EVALUATION INSTANT",
+    ("ProviderBudgetTranslation", "hard_cap_wall_clock_microseconds"): "VALIDITY WINDOW",
+    ("ProviderBudgetTranslation", "procedure_wall_clock_microseconds"): "VALIDITY WINDOW",
+    ("ProviderBudgetTranslation", "remaining_wall_clock_microseconds"): "VALIDITY WINDOW",
+    ("ProviderBudgetTranslation", "runtime_wall_clock_seconds"): "VALIDITY WINDOW",
+    ("ProviderDriverOutcomeV1", "duration_seconds"): "VALIDITY WINDOW",
+    ("ProviderInvocationReceipt", "duration_microseconds"): "VALIDITY WINDOW",
+    ("ProviderResultToExternalCapture", "observed_at"): "EVALUATION INSTANT",
+    ("ProviderResultToExternalCapture", "source_effective_time"): "VALIDITY WINDOW",
+    ("ProviderRuntimeBudgets", "wall_clock_seconds"): "VALIDITY WINDOW",
+    ("ProviderSigningKey", "valid_from"): "VALIDITY WINDOW",
+    ("ProviderSigningKey", "valid_until"): "VALIDITY WINDOW",
+    ("QueryEvaluationPolicy", "result_expiry"): "VALIDITY WINDOW",
+    ("QueryExecutionReceipt", "evaluation_time"): "EVALUATION INSTANT",
+    ("RecoveredGeneration", "sequence"): "SETTLEMENT ORDER",
+    ("ReplayCheckpointBodyV3", "sequence"): "SETTLEMENT ORDER",
+    ("ReplayCheckpointFileV3", "written_at"): "ASSERTION TIME",
+    ("MeasurementActivationBasisV1", "activated_at"): "ASSERTION TIME",
+    ("ClaimVerdictObservationV1", "observation_time"): "EVALUATION INSTANT",
+    ("_Continuation", "observation_time"): "EVALUATION INSTANT",
+    ("ProcedureMeasureRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureMeasureResult", "observation_time"): "EVALUATION INSTANT",
+    ("ProcedureReadingsRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("ProcedureReadingsResult", "observation_time"): "EVALUATION INSTANT",
+    ("ProcedureMeasurementEligibility", "activated_at"): "ASSERTION TIME",
+    ("ProcedureMeasurementEligibility", "check_at"): "EVALUATION INSTANT",
+    ("ProcedureMeasurementEligibility", "expires_at"): "VALIDITY WINDOW",
+    ("ProcedureMeasurementEligibility", "observation_time"): "EVALUATION INSTANT",
+    ("ProcedureMeasurementResolutionSummary", "observed_at"): "ASSERTION TIME",
+    ("ProcedureMeasurementResolutionSummary", "recorded_at"): "ASSERTION TIME",
+    ("ProcedureMeasurementResolutionSummary", "sequence"): "SETTLEMENT ORDER",
+    ("ProcedureReadingSummary", "observed_at"): "ASSERTION TIME",
+    ("ProcedureReadingSummary", "recorded_at"): "ASSERTION TIME",
+    ("ResolutionContractActivationV1", "activated_at"): "ASSERTION TIME",
+    ("ResolutionContractActivationV1", "check_at"): "EVALUATION INSTANT",
+    ("ResolutionContractActivationV1", "expires_at"): "VALIDITY WINDOW",
+    ("ReviewOperationalHeadV1", "initialized_generation"): "SETTLEMENT ORDER",
+    ("ReviewOperationalPartitionHeadV1", "sequence"): "SETTLEMENT ORDER",
+    ("ReviewOperationalStoreManifestV1", "initialized_at"): "ASSERTION TIME",
+    ("ReviewOperationalStoreManifestV1", "initialized_generation"): "SETTLEMENT ORDER",
+    ("RuntimeCredentialMetadata", "created_at"): "ASSERTION TIME",
+    ("RuntimeCredentialMetadata", "revoked_at"): "ASSERTION TIME",
+    ("SettledOutcomesQueryReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("ServedNestedProcedureRunner", "evaluation_time"): "EVALUATION INSTANT",
+    ("SettledOutcomesQueryRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("SettledOutcomesQueryResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    # The instant the daemon stamped the terminal lifecycle state; nothing is
+    # evaluated against it, it records when the operator's act landed.
+    ("Decommission", "decommissioned_at"): "ASSERTION TIME",
+    ("InstanceDecommissionResult", "decommissioned_at"): "ASSERTION TIME",
+    # The instant the daemon actually read the workspace file it receipted.
+    ("SourceReadReceipt", "read_at"): "EVALUATION INSTANT",
+    ("SourceEffectiveTime", "effective_from"): "VALIDITY WINDOW",
+    ("SourceEffectiveTime", "effective_until"): "VALIDITY WINDOW",
+    ("SubjectProfileV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("StaleProposal", "admitted_at"): "ASSERTION TIME",
+    ("TerminalChildReceiptV1", "sequence"): "SETTLEMENT ORDER",
+    ("TerminalEgressRequestV1", "prepared_at"): "EVALUATION INSTANT",
+    ("TerminalEgressRequestV2", "evaluation_time"): "EVALUATION INSTANT",
+    ("VerifiedClaimAttestation", "recorded_at"): "ASSERTION TIME",
+    ("VerifiedExhaustRecordV1", "sequence"): "SETTLEMENT ORDER",
+    ("WitnessRecord", "sequence"): "SETTLEMENT ORDER",
+    ("_AuditHistoryIndex", "attestation_first_generation"): "SETTLEMENT ORDER",
+    ("_AuditHistoryIndex", "first_statement_generation"): "SETTLEMENT ORDER",
+    ("_CaptureObservation", "generation"): "SETTLEMENT ORDER",
+    ("_CaptureObservation", "observed_at"): "ASSERTION TIME",
+    ("ClaimLineageNode", "generation"): "SETTLEMENT ORDER",
+    ("_CurationHistoryIndex", "last_generation"): "SETTLEMENT ORDER",
+    ("_DeterministicClock", "evaluation_time"): "EVALUATION INSTANT",
+    ("_GenerationWindow", "generation"): "SETTLEMENT ORDER",
+    ("_ProcessOutcome", "duration_seconds"): "VALIDITY WINDOW",
+    ("_RecordedCurationPatternObservedV1", "accepted_generation"): "SETTLEMENT ORDER",
+    ("_RunState", "wall_clock_microseconds"): "VALIDITY WINDOW",
+}
+
+# Discovered by name, carrying no clock value: a supplier of instants, a boolean
+# policy flag, and the kernel start tick that disambiguates a recycled pid.
+NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # A retained source selection locating own words in a file, not a time.
+        ("ClaimAuthoringPayload", "located_at"),
+        ("AuthoringIntentCoordinator", "clock"),
+        # Reads re-observations at the instant it is given; it holds no time.
+        ("ClaimFactRowV1", "_reobserved"),
+        ("QueryEvaluationPolicy", "requires_explicit_evaluation_time"),
+        ("ProviderProcessLeaseV1", "process_start_time"),
+        ("ProviderDescendantProcessV1", "process_start_time"),
+        # The Contract grammar's type tag naming a datetime field type; it holds no time.
+        ("DateTimeType", "kind"),
+        # A JSON Pointer to the count an extract's records must match; it holds no time.
+        ("CompleteWhen", "count_at"),
+        ("CompleteWhenResult", "count_at"),
+        ("ExtractCompleteWhen", "count_at"),
+        # A CaptureKind layout record set's JSON Pointer to its declared count; no time.
+        ("LayoutRecordSet", "count_at"),
+    }
+)
+
+
+def declared_clock(class_name: str, field_name: str) -> ClockDomainV1 | None:
+    """Return the declared domain, or None when the owner declared none."""
+
+    return CLOCK_FIELD_DECLARATIONS.get((class_name, field_name))
+
+
+def classify_clock_field(
+    class_name: str,
+    name: str,
+    annotation: str,
+) -> ClockDomainV1 | None:
+    """Return the declared clock of one discovered field, else None."""
+
+    if not is_time_bearing_field(name, annotation):
+        return None
+    return declared_clock(class_name, name)
+
+
+def clock_description(domain: ClockDomainV1) -> str:
+    """Return the canonical Pydantic Field-description sentence."""
+
+    return f"Reads {domain}."
+
+
+__all__ = [
+    "CLOCK_DOMAINS",
+    "CLOCK_FIELD_DECLARATIONS",
+    "NON_CLOCK_DECLARED_FIELDS",
+    "TIME_FIELD_SUFFIXES",
+    "ClockDomainV1",
+    "classify_clock_field",
+    "clock_description",
+    "declared_clock",
+    "is_time_bearing_field",
+]

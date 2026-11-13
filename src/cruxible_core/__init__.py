@@ -1,3 +1,3 @@
-"""Cruxible Core — hard state for AI agents: typed, governed, durable state with receipts."""
+"""Cruxible — governed semantic state for humans and AI agents."""
 
-__version__ = "0.3.2"
+__version__ = "0.5.1"

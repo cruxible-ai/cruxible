@@ -1,2419 +1,558 @@
-# MCP Tools Reference
-
-This is the full searchable reference for Cruxible MCP tools. MCP is a curated agent connector, not full CLI parity. The HTTP API/client remain the broader remote product surface; CLI keeps shell-only utilities such as `context`, `config views --update-readme`, `export edges`, and local receipt `explain`.
-
-## Permission Modes
-
-| Mode | Env value | Meaning |
-| --- | --- | --- |
-| READ_ONLY | `read_only` | Query, inspect, receipts, samples, evaluation, lint, snapshots listing. |
-| GOVERNED_WRITE | `governed_write` | READ_ONLY plus workflow and procedure runs, procedure/group proposals, claim attestations, outcomes, decision records, snapshot creation, and source artifact registration. Reaching the feedback tools is permitted at this tier, but every feedback ACTION now requires GRAPH_WRITE — see below. |
-| GRAPH_WRITE | `graph_write` | GOVERNED_WRITE plus raw graph mutation, canonical workflow apply, group resolution/trust updates, procedure resolution/retirement, attestation dispositions, and feedback **adjudication** (`approve` / `reject` / `correct`). |
-| ADMIN | `admin` | Full lifecycle, config reload, locks, snapshots, clone, state publication/pull, ingest, constraints, and policies. |
-
-`tools/list` advertises only tools allowed by the active `CRUXIBLE_MODE`; call-time permission checks still enforce the same tiers as a backstop.
-
-The **Permission** line on each tool below is the tier needed to *call* it, which
-is not always enough to succeed. Two surfaces additionally gate on the payload:
-the feedback tools require `GRAPH_WRITE` for the adjudication actions `approve` /
-`reject` / `correct` — which is all of them, so their `GOVERNED_WRITE` call floor
-admits no completable action — and the direct-write tools honor a type's
-config-declared `write_tier`.
-
-## Tool Catalog Curation
-
-Set `CRUXIBLE_MCP_PROFILE` to shrink the advertised catalog for focused clients:
-
-| Profile | Meaning |
-| --- | --- |
-| `full` | Default. Advertise every tool allowed by the active permission mode. |
-| `state_authoring` | Tools for creating, inspecting, querying, and directly loading state. |
-| `review` | Tools for queries, receipts, feedback, attestations, outcomes, and proposal-group review. |
-
-Set `CRUXIBLE_MCP_TOOLS` or `CRUXIBLE_MCP_TOOL_ALLOWLIST` to a comma-separated list of exact tool names for an explicit allowlist. Profile and allowlist curation are both intersected with `CRUXIBLE_MODE`.
-
-## Tool Prompt Style
-
-Tool descriptions are written for non-coding MCP clients. Each description starts with when to use the tool, uses kit-user vocabulary, and avoids implementation details that do not help with tool choice.
-
-## Self-Describing Tool Descriptions
-
-Where the loaded kit answers a question a tool leaves open, the served description also names it, so an agent can discover the config's vocabulary from the tool surface instead of being told it out of band:
-
-| Tool | Kit facts appended |
-| --- | --- |
-| `cruxible_query`, `cruxible_list_queries`, `cruxible_describe_query` | Named query names |
-| `cruxible_lock_workflow`, `cruxible_plan_workflow` | Registered provider names |
-| `cruxible_run_workflow`, `cruxible_propose_procedure` | Registered provider names and contract names with a short field preview |
-
-The **Purpose** lines documented below are the reviewed static descriptions; kit facts are appended to them and are never part of a tool's SCHEMA, which does not vary by kit. Long lists are truncated with a total.
-
-The kit is resolved from local state only, so `tools/list` keeps answering when no daemon is reachable: the config named by `CRUXIBLE_MCP_KIT_CONFIG`, otherwise — **in local mode only** — the sole locally registered instance. A server pointed at a remote daemon (`CRUXIBLE_SERVER_URL` or `CRUXIBLE_SERVER_SOCKET`) describes only what `CRUXIBLE_MCP_KIT_CONFIG` names: a local registry record on that host belongs to some unrelated instance and says nothing about the kit the daemon serves. With no local instance, more than one, a remote transport and no explicit config, or an unreadable config, the static descriptions are served unchanged.
-
-## Working-Set Capture
-
-Set `CRUXIBLE_WORKING_SET_DIR` to a directory path to opt the MCP server into agent-local working-set capture: entity/edge-shaped results returned by the read tools (`cruxible_query`, `cruxible_query_inline`, `cruxible_get_entity`, `cruxible_inspect_entity`, `cruxible_list`, `cruxible_sample`, `cruxible_get_relationship`) are ALSO recorded as revision-stamped working-set records rooted at that directory — the same record format, dedupe, and credential-scoped instance keys as the CLI's `--ws` capture (see the `cruxible ws` section of `docs/cli-reference.md`). Capture happens in the MCP server process, which is a client co-located with the agent; the daemon stays blind to it, and tool results are never changed by it.
-
-When the variable is unset, capture is a hard no-op — zero behavior or performance change. Precedence for the cache root everywhere (including the `cruxible ws` verbs): explicit `CRUXIBLE_WORKING_SET_DIR` > the default `~/.cruxible/working-set`.
-
-The cache is NON-AUTHORITATIVE and its files are same-user-writable by design: any same-user process can rewrite records undetected. Directory/file permission hygiene (0700/0600) and symlink refusal reduce accidents, not adversaries; verify records with `cruxible ws verify` before trusting them.
-
-## cruxible_version
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to confirm which cruxible build this MCP server is running.
-
-**Arguments:** none.
-
-**Returns:** Returns a JSON object with dynamic keys.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_server_info
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need live daemon details such as state directory, version, and how many instances are loaded.
-
-**Arguments:** none.
-
-**Returns:** Top-level fields: `server_required`, `state_dir`, `version`, `instance_count`, `auth_enabled`, `auth_required`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_init
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to create a governed instance from a config or reconnect to an existing instance after a daemon restart.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `root_dir` | yes | string |  |
-| `config_path` | no | string | null |  |
-| `config_yaml` | no | string | null |  |
-| `data_dir` | no | string | null |  |
-| `kits` | no | array | null | Ordered kit refs: standalone base first, overlay kits after. |
-| `bare` | no | boolean | Skip the configured default base kit on kit init. |
-
-**Returns:** Top-level fields: `instance_id`, `status`, `warnings`
-
-**Side Effects:** Creates a new instance or reloads an existing one.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_instance_backup
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need a portable same-identity backup of an instance, including its authoritative state database.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `artifact_path` | yes | string |  |
-| `label` | no | string | null |  |
-
-**Returns:** The backup artifact path and the instance identity it captured.
-
-**Side Effects:** Writes a portable backup artifact to disk; does not mutate instance state.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_instance_restore
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need to restore a daemon-backed instance from a same-identity backup artifact.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `artifact_path` | yes | string |  |
-| `root_dir` | no | string | null |  |
-
-**Returns:** The restored instance id and status.
-
-**Side Effects:** Creates an instance directory from the artifact and registers it with the daemon.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_instance_relocate
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need to move a healthy daemon-backed instance to a new directory while preserving its identity; the registry is repointed to the new location.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `to_dir` | yes | string |  |
-| `remove_source` | no | boolean |  |
-
-**Returns:** The instance id and its new on-disk location.
-
-**Side Effects:** Moves the instance directory and repoints the registry to the new location.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_validate
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to check whether a Cruxible config is valid before creating or reloading an instance.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `config_path` | no | string | null |  |
-| `config_yaml` | no | string | null |  |
-
-**Returns:** Top-level fields: `valid`, `name`, `entity_types`, `relationships`, `named_queries`, `warnings`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_state_create_overlay
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need a local overlay instance based on a published upstream state release.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `root_dir` | yes | string |  |
-| `transport_ref` | no | string | null |  |
-| `state_ref` | no | string | null |  |
-| `kit` | no | string | null |  |
-| `no_kit` | no | boolean |  |
-
-**Returns:** Top-level fields: `instance_id`, `manifest`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_lock_workflow
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when workflow inputs, providers, or artifacts changed and you need to refresh the workflow lock before running it.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `force` | no | boolean |  |
-
-**Returns:** Top-level fields: `lock_path`, `config_digest`, `providers_locked`, `artifacts_locked`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_plan_workflow
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to preview the concrete steps a configured workflow would run without executing those steps.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `workflow_name` | yes | string |  |
-| `input_payload` | no | object | null |  |
-
-**Returns:** Top-level fields: `plan`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_run_workflow
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to execute a configured workflow and receive its output, receipts, traces, and apply instructions if it is a preview.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `workflow_name` | yes | string |  |
-| `input_payload` | no | object | null |  |
-| `decision_record_id` | no | string | null |  |
-
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `read_metadata`, `trace_ids`, `receipt`, `traces`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_apply_workflow
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when a workflow preview returned an apply digest and you are ready to commit that exact workflow result.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `workflow_name` | yes | string |  |
-| `expected_apply_digest` | yes | string |  |
-| `expected_head_snapshot_id` | no | string | null |  |
-| `input_payload` | no | object | null |  |
-| `decision_record_id` | no | string | null |  |
-
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `apply_digest`, `head_snapshot_id`, `committed_snapshot_id`, `apply_previews`, `query_receipt_ids`, `read_metadata`, `trace_ids`, `receipt`, `traces`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_test_workflow
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to run workflow tests declared by the active config.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `name` | no | string | null |  |
-
-**Returns:** Top-level fields: `total`, `passed`, `failed`, `cases`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_query
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to run a named query from the active config and receive matching items plus a receipt. First call cruxible_list_queries or cruxible_describe_query when you do not know the query name, required params, result shape, or examples. For traversal queries, params must include the entry_point primary-key field, such as {'vehicle_id': 'V-123'} when the entry point is Vehicle and its primary key is vehicle_id; cruxible_schema shows entity primary keys. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Pass layout='graph' for multi-row traversal reads: it returns each entity and relationship once as nodes/edges with results as ordered references, instead of duplicating them per row.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `query_name` | yes | string |  |
-| `params` | no | object | null |  |
-| `limit` | no | integer | null |  |
-| `offset` | no | integer | Number of results to skip before the returned window. |
-| `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
-| `lifecycle_status` | no | string | null | Exact kind-correct lifecycle status: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `relationship_state`, which is the coarse visibility selector; this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
-| `decision_record_id` | no | string | null |  |
-| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-| `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds step-ref sequences; compact graph also interns repeated non-empty include maps in `include_sets`, referenced by integer `includes` values). |
-
-**Returns:** An object-rooted envelope `{"result": ...}` (MCP output schemas must be object-rooted; this result is a union of shapes). Inside `result`: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `lifecycle_status`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; compact graph with retained includes also returns `include_sets`. Every other field is unchanged.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_query_inline
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need a one-off bounded graph query without adding it to the config. Inline definitions use the configured named-query JSON shape plus a required name; promote repeated or workflow-critical queries into config. Items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Pass layout='graph' to receive deduplicated nodes/edges with results as ordered references instead of per-row items.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `definition` | yes | InlineQueryDefinition | Inline query definition object: same JSON shape as a configured named query (`mode`, `returns`, `traversal`, `where`, `select`, `order_by`, `include`, `limit`, `max_paths`, `max_paths_per_result`, ...) plus a required `name`. |
-| `params` | no | object | null |  |
-| `limit` | no | integer | null |  |
-| `relationship_state` | no | string | null | Read-visibility state: one of `live`, `accepted`, `all`, `not-live`, `pending`, or `reviewable`. Gates entities by lifecycle and edges by review+lifecycle. |
-| `lifecycle_status` | no | string | null | Exact kind-correct lifecycle status: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `relationship_state`, which is the coarse visibility selector; this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
-| `decision_record_id` | no | string | null |  |
-| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-| `layout` | no | string | Transport layout: `rows` (default, per-row items) or `graph` (normalized transport: `nodes`/`edges` carry each unique entity and relationship once, `results` preserves row order as index references, `paths` holds step-ref sequences; compact graph also interns repeated non-empty include maps in `include_sets`, referenced by integer `includes` values). |
-
-**Returns:** An object-rooted envelope `{"result": ...}` (MCP output schemas must be object-rooted; this result is a union of shapes). Inside `result`: `items`, `receipt_id`, `receipt`, `total`, `limit`, `offset`, `truncated`, `limit_truncated`, `path_truncated`, `truncation_reasons`, `max_paths`, `max_paths_per_result`, `total_path_count`, `retained_path_count`, `steps_executed`, `result_shape`, `dedupe`, `relationship_state`, `lifecycle_status`, `param_hints`, `policy_summary` (rows layout). With `layout='graph'` the `items` field is replaced by `layout`, `nodes`, `edges`, `results`, and `paths`; compact graph with retained includes also returns `include_sets`. Every other field is unchanged.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_list_queries
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to discover the named queries available in the active config. Returns bounded summaries (name, entry point, required params); call cruxible_describe_query for one query's full definition. Pass detail='full' only when you truly need every definition expanded. If truncated is true, pass the returned continuation_token back as continuation to fetch the next page.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `detail` | no | string | `summary` (default) returns bounded discovery cards; `full` returns complete definitions. |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-| `continuation` | no | string | null | Continuation token from a previous truncated page (same `detail`). Bound to the instance, config, and `read_revision`; replay after a mutation fails with a typed 409 stale-continuation error — restart the read. |
-
-**Returns:** An object-rooted envelope `{"result": ...}` (MCP output schemas must be object-rooted; this result is a union of shapes). Inside `result`: `items`, `total`, `limit`, `offset`, `truncated`, `read_revision`, `continuation_token`
-
-`read_revision` is the instance's monotonic state revision at read time — the
-freshness marker for pagination and caching. Receipts prove a computation
-happened; they never prove its inputs are still current.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Stale continuation token after a mutation (409) or malformed token (422).
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_describe_query
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the purpose, parameters, and result shape for one named query.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `query_name` | yes | string |  |
-
-**Returns:** Top-level fields: `name`, `mode`, `entry_point`, `required_params`, `returns`, `result_shape`, `dedupe`, `relationship_state`, `allow_relationship_state_override`, `select`, `order_by`, `include`, `limit`, `max_paths`, `max_paths_per_result`, `description`, `example_ids`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_receipt
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to inspect the proof record for a previous query, write, workflow, feedback, or outcome.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `receipt_id` | yes | string |  |
-
-**Returns:** Returns a JSON object with dynamic keys.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_get_trace
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the execution trace for one provider or workflow step.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID or local instance root. |
-| `trace_id` | yes | string | Provider execution trace ID, usually returned by workflow run/apply/propose results. |
-
-**Returns:** Returns the persisted trace with provider metadata, retained input/output payload fields, payload digest/size metadata, status, timings, and error details when present. Payload fields follow the instance config's `runtime.trace_payloads` retention policy.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Trace ID not found.
-- Permission mode too low for this tool.
-
-## cruxible_list_traces
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to browse execution traces by workflow, provider, or page.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID or local instance root. |
-| `workflow_name` | no | string | null | Filter by workflow name. |
-| `provider_name` | no | string | null | Filter by provider name. |
-| `limit` | no | integer | Maximum trace summaries to return. |
-| `offset` | no | integer | Number of summaries to skip. |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Invalid limit or offset.
-
-## cruxible_feedback
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when a person or reviewer agent adjudicated one explicit relationship and you need to record support, rejection, or a correction. To record a DOUBT without adjudicating, use cruxible_attest with stance 'contradict' instead. Use edge_key only to disambiguate multiple stored edges with the same relationship tuple; receipt_id is optional for explicit-coordinate feedback.
-
-**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `receipt_id` | no | string |  |
-| `action` | yes | enum: accept, reject, correct, approve, flag | Deprecated `approve` delegates to `accept`; deprecated `flag` is a refused compatibility alias. |
-| `from_type` | yes | string |  |
-| `from_id` | yes | string |  |
-| `relationship_type` | yes | string |  |
-| `to_type` | yes | string |  |
-| `to_id` | yes | string |  |
-| `edge_key` | no | integer | null | Unstable per-load hint for parallel-edge disambiguation; prefer `claim_id` where accepted; tuple coordinates remain authoritative. |
-| `reason` | no | string |  |
-| `reason_code` | no | string | null |  |
-| `scope_hints` | no | object | null |  |
-| `corrections` | no | object | null |  |
-| `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
-| `claim_id` | no | string | null | Stable claim identity; preferred disambiguator, takes precedence over `edge_key`, disagreement refused. |
-| `source` | no | string | null | Deprecated and ignored; actor kind is derived from `actor_context`. |
-
-**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_feedback_from_query
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when a query receipt and result index identify the relationship that needs feedback. This path requires receipt_id because the receipt/result selection is the target selector.
-
-**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID or local instance root. |
-| `receipt_id` | yes | string | Query receipt ID. |
-| `result_index` | yes | integer | Zero-based query result row index. |
-| `action` | yes | enum: accept, reject, correct, approve, flag | Deprecated `approve` delegates to `accept`; deprecated `flag` is a refused compatibility alias. |
-| `reason` | no | string | Reason for feedback. |
-| `reason_code` | no | string | Structured feedback reason code. |
-| `scope_hints` | no | object | Structured feedback scope hints. |
-| `corrections` | no | object | Edge property corrections for `action="correct"`. |
-| `group_override` | no | boolean | Deprecated compatibility write; use `force_review`. |
-| `path_index` | no | integer | Zero-based path segment index for path rows. |
-| `path_alias` | no | string | Traversal alias for the selected path segment. |
-| `source` | no | string | Deprecated and ignored; actor kind is derived from `actor_context`. |
-
-**Returns:** Top-level fields: `feedback_id`, `applied`, `receipt_id`, `deprecation_warnings`
-
-**Side Effects:** Creates normal feedback records and feedback receipts through the existing edge-feedback path.
-
-**Common Errors:**
-- Receipt is missing, not a query receipt, or result index is out of range.
-- Entity-shaped query rows do not contain relationship evidence.
-- Multi-hop path rows require exactly one of `path_index` or `path_alias`.
-- Selected path alias is missing or duplicated, or selected edge is no longer in the graph.
-
-## cruxible_feedback_batch
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to record several relationship feedback decisions from the same review session.
-
-**Action tier:** every live action this tool accepts — `accept` / `reject` / `correct` — adjudicates a claim and requires `GRAPH_WRITE`, so a `GOVERNED_WRITE` caller cannot successfully complete any of them (the tool's own `GOVERNED_WRITE` floor is the first gate, not a sufficient one; a refused adjudication also rolls back the `FeedbackRecord` it would have written). Deprecated `approve` in any item delegates to `accept` with a structured warning; deprecated `flag` is accepted only to return its structured refusal and never mutates state. While `CRUXIBLE_REFUSE_DIRECT_WRITES` is set, `accept` / `correct` are refused too. `correct` requires a non-empty `corrections` object. To record a doubt at `GOVERNED_WRITE` without adjudicating, use `cruxible_attest` with stance `contradict`.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `items` | yes | array |  |
-
-**Returns:** Top-level fields: `feedback_ids`, `applied_count`, `total`, `receipt_id`, `deprecation_warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_outcome
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to record what happened after a decision, query, workflow, or reviewed relationship.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `outcome` | yes | enum: correct, incorrect, partial, unknown |  |
-| `receipt_id` | no | string | null |  |
-| `anchor_type` | no | enum: resolution, receipt |  |
-| `anchor_id` | no | string | null |  |
-| `outcome_code` | no | string | null |  |
-| `scope_hints` | no | object | null |  |
-| `outcome_profile_key` | no | string | null |  |
-| `detail` | no | object | null |  |
-| `source` | no | string | null | Deprecated and ignored; actor kind is derived from `actor_context`. |
-
-**Returns:** Top-level fields: `outcome_id`, `deprecation_warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_list
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need a paged list of entities, relationships, receipts, feedback, or outcomes with optional filters. Use resource_type='entities' with entity_type and optional fields to reduce payload size; use where for bounded property predicates such as {'status': {'eq': 'active'}}. Entity and edge items default to the compact output profile; ask for profile='standard' or 'full' when you need provenance or actor context. Always check truncated: when true, pass the returned continuation_token back as continuation (same filters) to fetch the next page; a stale-continuation error means state changed - restart from the first page. read_revision on the envelope is the state freshness marker; receipts prove computation, never freshness.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `resource_type` | yes | enum: entities, edges, receipts, feedback, outcomes |  |
-| `entity_type` | no | string | null |  |
-| `relationship_type` | no | string | null |  |
-| `query_name` | no | string | null |  |
-| `receipt_id` | no | string | null |  |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-| `property_filter` | no | object | null |  |
-| `where` | no | object | null | Bounded entity/edge property predicates such as `{"status": {"eq": "active"}}`, `{"title": {"contains": "query"}}`, or `{"status": {"in": ["active", "planned"]}}`. |
-| `operation_type` | no | string | null |  |
-| `fields` | no | array[string] | null | Entity property fields to include for `resource_type="entities"`. |
-| `relationship_state` | no | string | null | Read-visibility state (`live`, `accepted`, `all`, `not-live`, `pending`, `reviewable`). For entities it gates by lifecycle (default `live`); for edges by review+lifecycle (default returns all stored edges). |
-| `lifecycle_status` | no | string | null | Exact kind-correct lifecycle status: relationships take `active`/`inactive`/`superseded`/`retracted`, entities take `live`/`retired`/`superseded`. Orthogonal to `relationship_state`, which is the coarse visibility selector; this is an exact-match filter on the lifecycle axis. Vocabulary from the wrong kind is refused. |
-| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-| `continuation` | no | string | null | Continuation token from a previous truncated page; repeat the SAME filters. Bound to the instance, config, and `read_revision`; replay after a mutation fails with a typed 409 stale-continuation error — restart the read. Malformed or re-bound tokens fail with 422. |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`, `read_revision`, `continuation_token`
-
-`continuation_token` is present iff the page is truncated and resumable —
-the pagination loop is: check `truncated`, pass `continuation_token` back as
-`continuation` with the same filters. `read_revision` is the instance's
-monotonic state revision at read time; receipts prove computation, never
-freshness.
-
-**Side Effects:** Read-only.
-
-For entity lists, `fields` is an opt-in projection that reduces payload size
-after the caller has selected an entity type. It trims entity `properties` but
-always keeps `entity_type` and `entity_id`; it is not topic search.
-Use `where` for bounded property predicates on entity or edge lists, for
-example `{"status": {"eq": "active"}}` or
-`{"dependency_basis": {"contains": "schema"}}`. This is not semantic search.
-For `resource_type="edges"`, this is a stored-relationship inspection surface:
-it may return pending, rejected, or otherwise non-live stored edges. Named
-queries are logical-state reads and apply `relationship_state` filtering, so
-use `cruxible_query` when you need live/reviewable truth rather than store
-inspection.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_evaluate
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need graph quality findings such as orphaned entities, coverage gaps, constraint issues, or candidate opportunities.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `max_findings` | no | integer |  |
-| `exclude_orphan_types` | no | array or null |  |
-| `severity_filter` | no | array | Optional list of `error`, `warning`, or `info` severities to return. |
-| `category_filter` | no | array | Optional list of evaluate categories to return. |
-
-**Returns:** Top-level fields: `entity_count`, `edge_count`, `findings`, `summary`, `constraint_summary`, `quality_summary`
-
-Filtered calls still return full pre-filter `summary`, `constraint_summary`,
-and `quality_summary` counts. Agent triage example: request
-`severity_filter=["error"]` with `max_findings=1` to check whether any
-error-level finding exists.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_stats
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need quick counts of entity and relationship types in an instance.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-
-**Returns:** Top-level fields: `entity_count`, `edge_count`, `entity_counts`, `relationship_counts`, `head_snapshot_id`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_lint
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need a combined quality report for config, graph state, feedback, and outcome coverage.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `max_findings` | no | integer |  |
-| `analysis_limit` | no | integer |  |
-| `min_support` | no | integer |  |
-| `exclude_orphan_types` | no | array | null |  |
-
-**Returns:** Top-level fields: `config_name`, `config_warnings`, `compatibility_warnings`, `evaluation`, `feedback_reports`, `outcome_reports`, `summary`, `has_issues`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_get_feedback_profile
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the allowed feedback codes and guidance for a relationship type.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `relationship_type` | yes | string |  |
-
-**Returns:** Top-level fields: `found`, `relationship_type`, `profile`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_analyze_feedback
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need patterns from recorded feedback, such as common corrections or recurring review issues.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `relationship_type` | yes | string |  |
-| `limit` | no | integer |  |
-| `min_support` | no | integer |  |
-| `decision_surface_type` | no | string | null |  |
-| `decision_surface_name` | no | string | null |  |
-| `property_pairs` | no | array | null |  |
-
-**Returns:** Top-level fields: `relationship_type`, `feedback_count`, `action_counts`, `source_counts`, `reason_code_counts`, `coded_groups`, `uncoded_feedback_count`, `uncoded_examples`, `constraint_suggestions`, `decision_policy_suggestions`, `quality_check_candidates`, `provider_fix_candidates`, `warnings`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_get_outcome_profile
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the allowed outcome codes and guidance for a decision surface.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `anchor_type` | yes | enum: resolution, receipt |  |
-| `relationship_type` | no | string | null |  |
-| `workflow_name` | no | string | null |  |
-| `surface_type` | no | string | null |  |
-| `surface_name` | no | string | null |  |
-
-**Returns:** Top-level fields: `found`, `profile_key`, `anchor_type`, `profile`, `deprecation_warnings`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_analyze_outcomes
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need patterns from recorded outcomes for a query, workflow, relationship, or decision surface.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `anchor_type` | yes | enum: resolution, receipt |  |
-| `relationship_type` | no | string | null |  |
-| `workflow_name` | no | string | null |  |
-| `query_name` | no | string | null |  |
-| `surface_type` | no | string | null |  |
-| `surface_name` | no | string | null |  |
-| `limit` | no | integer |  |
-| `min_support` | no | integer |  |
-
-**Returns:** Top-level fields: `anchor_type`, `outcome_count`, `outcome_counts`, `outcome_code_counts`, `coded_groups`, `uncoded_outcome_count`, `uncoded_examples`, `trust_adjustment_suggestions`, `workflow_review_policy_suggestions`, `query_policy_suggestions`, `provider_fix_candidates`, `debug_packages`, `workflow_debug_packages`, `warnings`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_schema
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the active entity types, relationships, queries, workflows, and governance settings.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-
-**Returns:** Returns a JSON object with dynamic keys.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_sample
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need example entities of one type before writing a query or review. Items default to the compact output profile; ask for profile='standard' or 'full' for complete property bags and metadata.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `entity_type` | yes | string |  |
-| `limit` | no | integer |  |
-| `fields` | no | array[string] | null | Entity property fields to include in sampled entities. |
-| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`, `entity_type`
-
-**Side Effects:** Read-only.
-
-`fields` is an opt-in projection for compact samples. It trims entity
-`properties` but always keeps `entity_type` and `entity_id`.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_inspect_entity
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need everything relevant about one entity within a bounded number of hops — the generic neighborhood read beneath named queries. Anchor on the entity, then expand: depth (1-4) sets the hop horizon; max_nodes and max_edges are explicit budgets and the response reports truncated with truncation_reasons instead of silently clipping. Filter with relationship_types and target_types; state selects relationship visibility exactly like query traversal (default all — every stored edge with its review/lifecycle markers, so pending edges in governed overlays are visible by default; an explicit state filters like traversal and edges_hidden_by_state counts edges at the explored frontier hidden by state alone). projection trims neighbor properties; payloads default to the compact output profile — ask for profile='standard' or 'full' when you need provenance or actor context. When the expanded read reports truncated on a budget, pass the returned continuation_token back as continuation (same parameters) to resume the expansion where it stopped; a stale-continuation error means state changed - restart the read.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `entity_type` | yes | string |  |
-| `entity_id` | yes | string |  |
-| `direction` | no | string | `incoming`, `outgoing`, or `both` (default). |
-| `relationship_type` | no | string | null | Legacy single relationship filter; unions with `relationship_types` when both are given. |
-| `limit` | no | integer | null | Legacy single-hop neighbor cap; maps to `max_nodes` on expanded reads so the cap reports `truncated` instead of clipping silently. |
-| `depth` | no | integer | null | Hop horizon for the expanded read (1-4, default 1). Providing it — even `depth=1` — opts into the expanded nodes/edges shape. |
-| `relationship_types` | no | array | null | Repeatable relationship filter for the expanded read; unions with `relationship_type`. |
-| `target_types` | no | array | null | Only expand into/return entities of these types (the anchor is exempt). |
-| `state` | no | string | null | Relationship visibility for the expanded read: `all` (default — every stored edge, the inspection contract), `live`, `accepted`, `not-live`, `pending`, `reviewable` — explicit states filter with identical semantics to named-query traversal. |
-| `projection` | no | array | null | Neighbor property names to keep (the anchor keeps full properties). Composes with `profile`: projection selects properties, profile shapes metadata. |
-| `max_nodes` | no | integer | null | Node budget for the expanded read (default 100, hard cap 500). |
-| `max_edges` | no | integer | null | Edge budget for the expanded read (default 200, hard cap 1000). |
-| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-| `continuation` | no | string | null | Continuation token from a previous budget-truncated expanded read; repeat the SAME structural parameters (entity, depth, direction, filters, state). Bound to the instance, config, and `read_revision`; replay after a mutation fails with a typed 409 stale-continuation error — restart the read. |
-
-**Returns:** An object-rooted envelope `{"result": ...}` (MCP output schemas must be object-rooted; this result is a union of shapes). Inside `result`: Legacy calls (no neighborhood argument): `found`, `entity_type`, `entity_id`, `properties`, `metadata`, `neighbors`, `total_neighbors`, `read_revision`. Expanded calls: `found`, `entity_type`, `entity_id`, `properties`, `metadata` (the anchor card), `depth`, `state`, `nodes` (each with `depth` and lifecycle markers), `edges` (each with review/lifecycle markers), `truncated`, `truncation_reasons` (`node_budget`/`edge_budget`/`depth`), `nodes_returned`, `edges_returned`, `edges_hidden_by_state` (edges at the explored frontier that passed every other filter but were excluded solely by an explicit state; always present, 0 under `state=all`), `read_revision`, `continuation_token` (present iff truncated on a budget — depth-horizon truncation is a different read, not a resumable page; the resumed pages are disjoint and their union is exactly the untruncated result set). `read_revision` marks state freshness; receipts prove computation, never freshness.
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_inspect_entity_history
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need receipt-derived property changes for one entity type or entity.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `entity_type` | yes | string |  |
-| `entity_id` | no | string | null |  |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-
-**Returns:** Top-level fields: `entity_type`, `entity_id`, `items`, `total`, `legacy_entity_write_count`, `warnings`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_inspect_ontology
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when orienting before a query or a write: compact entity and relationship property contracts, enum vocabularies, topology, and configured write policies.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-
-**Returns:** Top-level fields: `view`, `payload`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_inspect_workflows
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to understand the workflows declared by the active config.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-
-**Returns:** Top-level fields: `view`, `payload`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_inspect_queries
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to understand configured queries and their parameters.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-
-**Returns:** Top-level fields: `view`, `payload`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_inspect_governance
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to review feedback, outcome, group, and policy settings.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `limit` | no | integer |  |
-
-**Returns:** Top-level fields: `view`, `payload`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_inspect_overview
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need a single high-level summary of the instance.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `limit` | no | integer |  |
-
-**Returns:** Top-level fields: `view`, `payload`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_add_relationship
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when you need to add or update a small number of explicit relationships and the endpoint entities already exist. Set pending=true when the edge should enter relationship review state instead of immediately becoming live.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `relationships` | yes | array |  |
-| `dry_run` | no | boolean | false | Validate (schema + mutation guards) without mutating graph state |
-
-Each relationship may pass `citation_handles` beside the unchanged
-`source_evidence` locators. Handles are resolved to canonical revision-pinned
-source evidence before mutation guards run.
-
-**Returns:** Top-level fields: `added`, `updated`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_add_entity
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when you need to add or update a small number of explicit entities.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `entities` | yes | array |  |
-| `dry_run` | no | boolean | false | Validate (schema + mutation guards) without mutating graph state |
-
-**Returns:** Top-level fields: `entities_added`, `entities_updated`, `identity_warnings`, `receipt_id`. A config-declared `identity_hint` match leaves the write successful and adds `identity_warnings[].similar_existing_entity` with the existing entity ID and matched properties. Config-declared `unique_by` and `id_pattern` violations are typed `DataValidationError` failures instead.
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_batch_direct_write
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when you need to validate or apply one coherent batch of explicit entities and relationships; set dry_run first.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `payload` | yes | BatchDirectWritePayload | Object with `entities` (entity inputs), `relationships` (relationship inputs, each optionally carrying `citation_handles` and referencing `shared_evidence_keys`), and `shared_evidence` (map of key to shared evidence refs, source evidence, or citation handles). |
-| `dry_run` | no | boolean | Validate the payload without mutating graph state. |
-
-**Returns:** Top-level fields: `dry_run`, `valid`, `entities_added`, `entities_updated`, `relationships_added`, `relationships_updated`, `validation_errors`, `validation_warnings`, `identity_warnings`, `evidence_sources_used`, `pending_conflicts`, `updated_group_backed_edges`, `receipt_id`. A config-declared `identity_hint` match leaves the batch valid and adds `identity_warnings[].similar_existing_entity`; `unique_by` and `id_pattern` remain hard typed validation failures.
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_supersede_claim
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when the settled, receipted adjudication replaces one claim with an already-existing live same-type successor.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `claim_id` | yes | string | Predecessor claim; must be lifecycle-`active` with review not pending/rejected. |
-| `successor_claim_id` | yes | string | Existing live claim of the SAME relationship type. This verb links, it never creates the successor. |
-| `reason` | yes | string | Required. A settled transition with no reason is refused — the corpus would be starving itself. |
-| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference (`source`, `source_record_id`, plus optional artifact/table/row/label/metadata). |
-
-**Returns:** Top-level fields: `action`, `claim`, `reason`, `successor`, `receipt_id`
-
-**Side Effects:** A settled adjudication. Writes typed `claim_id` supersession pointers in BOTH directions (`successor.supersedes`, `predecessor.superseded_by`), moves the predecessor to `superseded`, stamps `closed_at`/`closed_by`, and records one mutation receipt naming the subject, transition, reason, and successor. The predecessor stays resolvable by `claim_id` afterwards. Properties are carried verbatim from the exact addressed edge; parallel siblings on the same tuple are untouched.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Empty `reason`; self-supersession; successor missing, not live, of a different relationship type, or already superseding another claim; predecessor not lifecycle-`active` or under pending/rejected review.
-
-## cruxible_retract_claim
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when the settled, receipted adjudication withdraws a claim without a successor.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `claim_id` | yes | string | Claim to retract; must be lifecycle-`active` with review not pending/rejected. |
-| `reason` | yes | string | Required. |
-| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference — a retraction's motivating observation is often a contradiction attestation. |
-
-**Returns:** Top-level fields: `action`, `claim`, `reason`, `receipt_id`
-
-**Side Effects:** A settled adjudication. Moves the claim to `retracted`, stamps `closed_at`/`closed_by`, and records one mutation receipt. Content is carried verbatim — a retraction never rewrites properties, and it succeeds even when the type's schema has since grown a required property. The `claim_id` stays resolvable with its settled state.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Empty `reason`; the claim is already settled, or its review is pending/rejected.
-
-## cruxible_supersede_entity
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when the settled, receipted adjudication replaces one entity with an already-existing live same-type successor; edges do not migrate.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `entity_type` | yes | string | Predecessor entity type. |
-| `entity_id` | yes | string | Predecessor entity ID; must be live. |
-| `successor_entity_type` | yes | string | Must equal `entity_type` — cross-type supersession is a modeling error. |
-| `successor_entity_id` | yes | string | Existing live entity. May be a DIFFERENT id from the predecessor (rename-via-supersession). |
-| `reason` | yes | string | Required. |
-| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference. |
-
-**Returns:** Top-level fields: `action`, `entity`, `reason`, `successor`, `stranded_live_edge_count`, `receipt_id`
-
-**Side Effects:** A settled adjudication. Writes typed `entity_type`/`entity_id` supersession pointers in BOTH directions, moves the predecessor to `superseded`, stamps `closed_at`/`closed_by`, and records one mutation receipt. Inbound edges do NOT migrate: a renamed successor starts with zero edges and re-pointing is the caller's job, so a rename can look "broken" until you re-point.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Empty `reason`; self-supersession; successor missing, not live, of a different entity type, or already superseding another entity; predecessor not live.
-
-## cruxible_retire_entity
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when the settled, receipted adjudication retires an entity without cascading edges.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `entity_type` | yes | string | Entity type. |
-| `entity_id` | yes | string | Entity ID; must be live. |
-| `reason` | yes | string | Required. |
-| `evidence_ref` | no | EvidenceRef | null | Optional evidence reference. |
-
-**Returns:** Top-level fields: `action`, `entity`, `reason`, `stranded_live_edge_count`, `receipt_id`
-
-**Side Effects:** A settled adjudication. Moves the entity to `retired`, stamps `closed_at`/`closed_by`, and records one mutation receipt. Reports `stranded_live_edge_count` — still-live attached edges, which stay visible in edge-level reads but drop out of traversals; cascade is deliberately not performed. The retired `entity_id` is preserved rather than freed: a later DIRECT add/update of that id is refused instead of minting a doppelganger with none of the history, while governed sources (workflow apply, group resolve) still reach it pending the deferred reinstate verb.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Empty `reason`; the entity is already retired or superseded.
-
-## cruxible_add_constraint
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need to add a graph quality rule that future evaluations should check.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `name` | yes | string |  |
-| `rule` | yes | string |  |
-| `severity` | no | enum: warning, error |  |
-| `description` | no | string | null |  |
-
-**Returns:** Top-level fields: `name`, `added`, `config_updated`, `warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_add_decision_policy
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need to record a policy that affects how a decision surface should be handled.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `name` | yes | string |  |
-| `applies_to` | yes | enum: query, workflow |  |
-| `relationship_type` | yes | string |  |
-| `effect` | yes | enum: suppress, require_review |  |
-| `match` | no | DecisionPolicyMatchInput | null |  |
-| `description` | no | string | null |  |
-| `rationale` | no | string |  |
-| `query_name` | no | string | null |  |
-| `workflow_name` | no | string | null |  |
-| `expires_at` | no | string | null |  |
-
-**Returns:** Top-level fields: `name`, `added`, `config_updated`, `warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_reload_config
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need to replace or reload the active config for an instance.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `config_path` | no | string | null |  |
-| `config_yaml` | no | string | null |  |
-| `allow_orphans` | no | boolean | Allow stored graph types absent from the incoming config (default false: strandings refuse the reload with per-type counts). |
-| `config_source_manifest` | no | object | Source paths and digests for uploaded composed YAML. File-based handlers build this automatically. |
-
-**Returns:** Top-level fields: `config_path`, `updated`, `warnings`, `type_delta`, `strandings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_config_status
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to check source drift or active config integrity.
-
-**Arguments:** `instance_id` is required. `current_source_manifest` is optional;
-without it, only the active materialized digest is checked.
-
-**Returns:** `status`, `config_path`, `materialized_matches`, `sources_checked`,
-`composed_matches`, `changed_sources`, and recorded `provenance`.
-
-## cruxible_propose_workflow
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when a workflow proposes reviewable relationship changes instead of writing them directly.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `workflow_name` | yes | string |  |
-| `input_payload` | no | object | null |  |
-| `decision_record_id` | no | string | null |  |
-
-**Returns:** Top-level fields: `workflow`, `output`, `receipt_id`, `mode`, `workflow_type`, `canonical`, `group_id`, `group_status`, `review_priority`, `suppressed`, `suppressed_members`, `query_receipt_ids`, `read_metadata`, `trace_ids`, `prior_resolution`, `policy_summary`, `receipt`, `traces`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_create_decision_record
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to open a tracked decision before gathering evidence, running workflows, or recording outcomes.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `question` | yes | string |  |
-| `subject_type` | no | string | null |  |
-| `subject_id` | no | string | null |  |
-| `opened_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
-
-**Returns:** Top-level fields: `record`, `events`, `receipt_id`, `deprecation_warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_get_decision_record
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the current state and optional event history for one decision.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `decision_record_id` | yes | string |  |
-| `include_events` | no | boolean |  |
-
-**Returns:** Top-level fields: `record`, `events`, `receipt_id`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_list_decision_records
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to find decision records by status, subject, class, or page.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `status` | no | string | null |  |
-| `subject_type` | no | string | null |  |
-| `subject_id` | no | string | null |  |
-| `decision_class` | no | string | null |  |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_list_decision_events
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the event timeline for decisions, optionally filtered by receipt.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `decision_record_id` | no | string | null |  |
-| `receipt_id` | no | string | null |  |
-| `trace_id` | no | string | null |  |
-| `status` | no | string | null |  |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_finalize_decision_record
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when a tracked decision has a final answer and rationale.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `decision_record_id` | yes | string |  |
-| `final_decision` | yes | string |  |
-| `decision_class` | yes | enum: recommended, rejected, deferred, escalated |  |
-| `rationale` | no | string |  |
-
-**Returns:** Top-level fields: `record`, `events`, `receipt_id`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_abandon_decision_record
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when a tracked decision should be closed without a final decision.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `decision_record_id` | yes | string |  |
-| `reason` | no | string |  |
-
-**Returns:** Top-level fields: `record`, `events`, `receipt_id`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_attest
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you observed evidence supporting, contradicting, or leaving you unsure about one relationship claim. Supply evidence for support or contradict; a note is optional but encouraged for unsure. If the claim does not exist yet, a 'support' stance CREATES it as a pending (unreviewed) claim from 'properties' — 'contradict' and 'unsure' are refused on an absent claim.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `relationship_type` | yes | string | Relationship type of the target claim. |
-| `from_type` | yes | string | Source endpoint entity type. |
-| `from_id` | yes | string | Source endpoint entity ID. |
-| `to_type` | yes | string | Target endpoint entity type. |
-| `to_id` | yes | string | Target endpoint entity ID. |
-| `stance` | yes | string | `support`, `contradict`, or `unsure`. |
-| `observed_at` | yes | string | ISO-8601 time when the world was observed; it cannot be in the future. |
-| `evidence_refs` | no | array or null | Evidence pointers; at least one is required for `support` and `contradict`. |
-| `edge_key` | no | integer or null | Unstable disambiguation hint; tuple coordinates remain authoritative. |
-| `claim_id` | no | string or null | Stable claim identity; the preferred disambiguator, taking precedence over `edge_key`. Supplying both with disagreeing values is refused. |
-| `properties` | no | object or null | Required relationship properties when absent support creates a pending claim; ignored on attach. |
-| `note` | no | string or null | Optional observation note, encouraged for `unsure`. |
-| `idempotency_key` | no | string or null | Retry-safe key scoped to the claim tuple and resolved actor. |
-
-**Returns:** The immutable attestation, pending-claim creation marker, warnings, replay marker, and receipt ID.
-
-**Side Effects:** Appends an attestation and receipt; absent support may also create one pending claim.
-
-## cruxible_list_attestations
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need immutable observation history for one claim tuple or stance.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `relationship_type` | no | string or null | Relationship type; provide all five claim coordinates together. |
-| `from_type` | no | string or null | Source endpoint type; provide all five claim coordinates together. |
-| `from_id` | no | string or null | Source endpoint ID; provide all five claim coordinates together. |
-| `to_type` | no | string or null | Target endpoint type; provide all five claim coordinates together. |
-| `to_id` | no | string or null | Target endpoint ID; provide all five claim coordinates together. |
-| `stance` | no | string or null | Optional `support`, `contradict`, or `unsure` filter. |
-| `limit` | no | integer | Maximum records. |
-| `offset` | no | integer | Records to skip. |
-
-**Returns:** Standard list envelope with immutable records, latest dispositions, and tuple-resolution markers.
-
-**Side Effects:** Read-only.
-
-## cruxible_attestation_queue
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when a reviewer needs live claims with open current-content contradictions, aggregated per claim.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `limit` | no | integer | Maximum per-claim entries. |
-| `offset` | no | integer | Entries to skip. |
-
-**Returns:** Standard list envelope with per-claim contradiction counts, a `distinct_actor_count` (the plain number of distinct attesting actors — it is *not* weighted, discounted, or otherwise scored), and latest observation time.
-
-**Side Effects:** Read-only.
-
-## cruxible_resolve_attestation
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when a reviewer needs to uphold, correct, or invalidate an attestation without changing its immutable history.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `attestation_id` | yes | string | Immutable attestation being reviewed. |
-| `verdict` | yes | string | `upheld`, `corrected`, or `invalidated`. |
-| `note` | no | string or null | Optional reviewer explanation. |
-| `follow_up_receipt_id` | no | string or null | Receipt for a follow-up correction or re-adjudication. |
-
-**Returns:** The appended disposition and receipt ID.
-
-**Side Effects:** Appends a disposition and receipt; never mutates the target claim or attestation.
-
-## cruxible_open_outcome_contract
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when a decision is about to be accepted and you need to state in advance what result counts as success, how it will be measured, when to check it, and when the commitment expires.
-
-**Preconditions:** The subject already exists, and its entity type is covered by
-a `requires_resolution_contract` mutation guard on the accepting transition;
-otherwise opening is refused. See the
-[`outcome_tracking` adoption convention](config-reference.md#outcome_tracking-adoption-convention).
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `entity_type` | yes | string | Subject entity type; the subject must already exist. |
-| `entity_id` | yes | string | Subject entity ID. |
-| `description` | yes | string | Free-text success criterion that survives mechanical rot. |
-| `check_at` | yes | string | ISO-8601 time when the outcome is first checked; must precede `expires_at`. |
-| `expires_at` | yes | string | ISO-8601 time when an unresolved contract ages into overdue. |
-| `measurement` | yes | object | `{kind: query, query_name, params, expect}` or `{kind: attestation, relationship_type, from_type, from_id, to_type, to_id}`; validated against the live config at open. |
-| `idempotency_key` | no | string or null | Retry-safe key scoped to the subject and resolved actor. |
-
-**Returns:** The prepared contract, the idempotent-replay marker, and the receipt ID.
-
-**Side Effects:** Appends a contract and receipt; never mutates the subject. Multiple open contracts on one subject are legal. A query measurement pins both the query definition digest and the effective execution options, so a later run under a different `relationship_state` cannot resolve it.
-
-## cruxible_resolve_outcome
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you checked an outcome contract and need to record what reality said: satisfied, contradicted, or indeterminate.
-
-**Preconditions:** The contract was activated by a successful
-`requires_resolution_contract`-guarded acceptance. A prepared contract that was
-never activated has nothing to resolve and simply expires.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `contract_id` | yes | string | Activated contract being answered. |
-| `verdict` | yes | string | `satisfied`, `contradicted`, or `indeterminate`. |
-| `observed_at` | yes | string | ISO-8601 observation time; `satisfied` requires it at or after `check_at`. It is recorded, but the cited evidence's own timestamps are what bind the verdict. |
-| `evidence_refs` | no | array or null | Evidence pointers; at least one is required for `satisfied` and `contradicted`. |
-| `note` | no | string or null | Observation note; required for `contradicted`. |
-| `resolving_query_receipt_id` | no | string or null | Receipt of the query run that observed a query-measured outcome. |
-| `resolving_attestation_ids` | no | array or null | Attestation ids backing an attestation-measured outcome. |
-
-**Returns:** The immutable resolution and receipt ID.
-
-**Side Effects:** Appends one resolution and receipt; never mutates the subject. A contract accepts exactly one standing resolution until a reviewer overturns it. Cited evidence must postdate the contract's opening by its own clock (and, for `satisfied`, the declared check time); a query receipt must carry a `read_revision` stamp and match the pinned execution options, and an attestation invalidated by a reviewer cannot be cited.
-
-## cruxible_list_outcome_contracts
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the outcome contracts on a subject with their status, activation, and standing answer.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `entity_type` | no | string or null | Filter to one subject entity type. |
-| `entity_id` | no | string or null | Filter to one subject entity ID. |
-| `status` | no | string or null | Filter the returned page by derived status: `prepared`, `open`, or `resolved`. |
-| `limit` | no | integer | Maximum contracts per page. |
-| `offset` | no | integer | Contracts to skip. |
-
-**Returns:** Standard list envelope with per-contract status, activation, standing resolution, disposition, expiry, and subject-drift markers.
-
-**Side Effects:** Read-only.
-
-## cruxible_outcome_due
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the outcome work list: contracts due for checking, overdue contracts, or contradicted outcomes awaiting a reviewer.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `queue` | no | string | `due` (past `check_at`), `overdue` (past `expires_at`), or `contradicted` (undisposed). |
-| `limit` | no | integer | Maximum entries. |
-| `offset` | no | integer | Entries to skip. |
-
-**Returns:** Standard list envelope of activated contracts on live subjects, oldest check time first.
-
-**Side Effects:** Read-only.
-
-## cruxible_dispose_outcome_resolution
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when a reviewer needs to uphold or overturn a recorded outcome; an overturn re-opens the contract for one new answer.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `resolution_id` | yes | string | Immutable resolution being reviewed. |
-| `verdict` | yes | string | `upheld` or `overturned`. |
-| `note` | no | string or null | Optional reviewer explanation. |
-
-**Returns:** The appended disposition and receipt ID.
-
-**Side Effects:** Appends a disposition and receipt; an `overturned` verdict re-opens the contract for exactly one further resolution. Dispositions are latest-wins: a further disposition on the same resolution supersedes the previous one (unless that one was an overturn a later resolution already answered). Never mutates the subject.
-
-## cruxible_propose_procedure
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to propose a bounded composition of procedure-exported actions for independent review.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `definition` | yes | object | Restricted procedure definition. |
-| `supersedes_procedure_id` | no | string or null | Immutable procedure being replaced. |
-| `evidence_refs` | no | array or null | Distillation evidence refs. |
-
-**Returns:** The pending procedure record, transition receipt ID, and `warnings`: non-blocking authoring lint findings (declared-but-unused `contract_in` fields, read-implying names backed by side-effecting providers, stringified JSON-object step inputs, a declared string field passed whole into an `arguments` parameter, read steps bundled with side-effecting ones or more than five provider steps in one procedure, and provider-call budget headroom the run can never reach). Statically impossible definitions are refused rather than warned about.
-
-**Side Effects:** Persists a pending procedure and receipt.
-
-## cruxible_list_procedures
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to find governed procedures by lifecycle status or page and compare their run-ledger track records before choosing one.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `status` | no | string or null | `pending`, `live`, `rejected`, or `retired`. |
-| `limit` | no | integer | Maximum records. |
-| `offset` | no | integer | Records to skip. |
-
-**Returns:** Standard list envelope with procedure records. Each record carries
-a `track_record` block summarizing its run ledger: `runs`, the exhaustive
-verdict buckets `succeeded`, `failed`, `refused`, `budget_exceeded`, and
-`in_flight` (started but not yet finalized, so `runs` always equals their sum),
-`last_succeeded_at`, the most frequent `top_refusal_reason`, and
-`linked_outcomes` (reserved, always null). `top_refusal_reason` is null when a
-procedure has never been refused and for refusals recorded before the reason
-was tracked. These buckets are read state, so running a procedure advances
-`read_revision` (once at start, once at finalization, refusals included) and a
-truncated page cannot be resumed across an invocation.
-
-**Side Effects:** Read-only.
-
-## cruxible_get_procedure
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need one procedure's definition, resolved input field schema, budget, precondition, lifecycle, and run-ledger track record.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `procedure_id` | yes | string | Procedure ID. |
-
-**Returns:** A `procedure` object envelope carrying the same `track_record`
-block as the list surface, plus `contract_in_schema`, the `contract_in` shape resolved against the active config: the contract `description`, `fields` (each with `name`, `type`, `required`, and any `default`, `enum`, `enum_ref`, `description`, and the nested `json_schema` a `json`-typed field is validated against), `allow_extra`, and `input_example` — a worked payload carrying every key the caller must supply, filled with type-appropriate values (an enum's first value, a declared default, a literal the field description quotes, else a placeholder for the type). A field carrying a default is reported as not required and is absent from `input_example`. `input_example` is `{}` for a contract that declares no fields but accepts extras (`cruxible.JsonObject`) and is omitted for one that accepts no payload at all (`cruxible.EmptyInput`). `contract_in_schema` is null when the definition's `contract_in` no longer resolves in the active config.
-
-**Side Effects:** Read-only.
-
-## cruxible_resolve_procedure
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when an independent reviewer needs to accept or reject a pending procedure.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `procedure_id` | yes | string | Procedure ID. |
-| `action` | yes | string | `accept` or `reject`. |
-| `expected_version` | yes | integer | Optimistic lifecycle version. |
-| `reason` | no | string or null | Required when rejecting. |
-
-**Returns:** The transitioned procedure and receipt ID.
-
-**Side Effects:** Accepts or rejects a pending procedure and writes a receipt.
-
-## cruxible_withdraw_procedure
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you changed your mind about a procedure YOU proposed and it is still pending: withdraw it instead of proposing a renamed variant. The name is immediately free to re-propose.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `procedure_id` | yes | string | Procedure ID. |
-| `expected_version` | yes | integer | Optimistic lifecycle version. |
-| `reason` | no | string or null | Optional note on why it was withdrawn. |
-
-**Returns:** The withdrawn procedure and receipt ID.
-
-**Side Effects:** Moves a pending proposal to `withdrawn` and writes a receipt.
-Withdrawing your own proposal needs only this tool's `GOVERNED_WRITE` floor;
-withdrawing another actor's pending proposal is refused below `GRAPH_WRITE`.
-
-## cruxible_retire_procedure
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when a reviewer needs to retire a live immutable procedure.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `procedure_id` | yes | string | Procedure ID. |
-| `expected_version` | yes | integer | Optimistic lifecycle version. |
-| `reason` | yes | string | Non-empty retirement reason. |
-
-**Returns:** The retired procedure and receipt ID.
-
-**Side Effects:** Retires a live procedure and writes a receipt.
-
-## cruxible_run_procedure
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to execute one live procedure through the generic receipted runner.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `procedure_id` | yes | string | Procedure ID. |
-| `input_payload` | yes | object | Input validated against the procedure contract. |
-
-**Returns:** Procedure, run, output, receipt, and step-output fields.
-
-**Side Effects:** Writes a crash-safe run record, provider traces where applicable, and a receipt.
-
-## cruxible_list_procedure_runs
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need invocation history or crash-visible started tombstones for one procedure.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID. |
-| `procedure_id` | yes | string | Procedure ID. |
-| `limit` | no | integer | Maximum records. |
-| `offset` | no | integer | Records to skip. |
-
-**Returns:** Standard list envelope containing finalized runs and
-`status: started`/`verdict: null` tombstones. A `refused` run also carries the
-`refusal_reason` classification that the procedure's `top_refusal_reason`
-counts; it is null on every other verdict and on refusals recorded before the
-reason was tracked.
-
-**Side Effects:** Read-only.
-
-## cruxible_propose_group
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to create a review group for candidate relationship changes.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `relationship_type` | yes | string |  |
-| `members` | yes | array |  |
-| `thesis_text` | no | string |  |
-| `thesis_facts` | no | object | null |  |
-| `analysis_state` | no | object | null |  |
-| `signal_sources_used` | no | array | null |  |
-| `suggested_priority` | no | string | null |  |
-| `expected_pending_version` | no | integer | null | Optimistic guard. A re-propose REWRITES the live pending group; pass the version you computed your delta against to have a bucket that moved underneath you refused instead of overwritten. Omit for an unconditional refresh. |
-| `proposed_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
-
-Each member and each nested signal may pass `citation_handles` beside the
-unchanged `source_evidence` locators.
-
-**Returns:** Top-level fields: `group_id`, `signature`, `status`, `review_priority`, `member_count`, `prior_resolution`, `suppressed`, `suppressed_members`, `policy_summary`, `receipt_id`, `deprecation_warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_resolve_group
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when a reviewer approves, rejects, or otherwise resolves a pending group.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `group_id` | yes | string |  |
-| `action` | yes | enum: approve, reject |  |
-| `expected_pending_version` | yes | integer |  |
-| `rationale` | no | string |  |
-| `stamp_existing` | no | boolean | On approve, bless each surviving pre-existing edge (member tuple already live) with this group's review status and provenance instead of skipping it. |
-| `resolved_by` | no | string | null | Deprecated and ignored; actor kind is derived from the runtime actor context. |
-
-**Returns:** Top-level fields: `group_id`, `action`, `edges_created`, `edges_skipped`, `resolution_id`, `receipt_id`, `skipped_members` (per-member skip explanations: identity plus `skip_kind`, `reason`, `stamped`), `edges_stamped`, `deprecation_warnings`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_update_trust_status
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when you need to mark a prior group resolution as trusted, invalidated, or otherwise updated.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `resolution_id` | yes | string |  |
-| `trust_status` | yes | enum: trusted, watch, invalidated |  |
-| `reason` | no | string |  |
-
-**Returns:** Top-level fields: `resolution_id`, `trust_status`, `receipt_id`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_get_group
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the details and members for one candidate relationship group.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `group_id` | yes | string |  |
-
-**Returns:** Top-level fields: `group`, `members`, `resolution`, `bucket_status`, `member_review`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_list_groups
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to find candidate relationship groups by type, status, or page.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `relationship_type` | no | string | null |  |
-| `status` | no | enum: pending_review, applying, resolved, withdrawn, auto_resolved | null | `auto_resolved` is DEPRECATED and read-only: nothing writes it any more, and it is filterable only so an operator upgrading from 0.2.x can find the rows it left behind. |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_list_resolutions
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to review past group decisions by relationship type or action.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `relationship_type` | no | string | null |  |
-| `action` | no | enum: approve, reject | null |  |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_group_status
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the latest status for a group or for a known group signature.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `group_id` | no | string | null |  |
-| `signature` | no | string | null |  |
-
-**Returns:** Top-level fields: `signature`, `relationship_type`, `thesis_text`, `thesis_facts`, `latest_trust_status`, `accepted_tuple_count`, `pending_delta_count`, `pending_group_id`, `pending_version`, `latest_approved_resolution_id`, `approved_history`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_state_publish
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need to publish the current instance state as an immutable release.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `transport_ref` | yes | string |  |
-| `state_id` | yes | string |  |
-| `release_id` | yes | string |  |
-| `compatibility` | yes | enum: data_only, additive_schema, breaking |  |
-
-**Returns:** Top-level fields: `manifest`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_create_snapshot
-
-**Permission:** `GRAPH_WRITE`
-
-**Purpose:** Use when you need to mark the current state with a named snapshot.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `label` | no | string | null |  |
-
-**Returns:** Top-level fields: `snapshot`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_list_snapshots
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to browse available snapshots for an instance.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `limit` | no | integer |  |
-| `offset` | no | integer |  |
-
-**Returns:** Top-level fields: `items`, `total`, `limit`, `offset`, `truncated`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_register_source_artifact
-
-**Permission:** `GOVERNED_WRITE`
-
-**Purpose:** Use when you need to register a source document so relationship evidence can cite stable chunks from it.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `source_path` | yes | string | Path to the local source document. |
-| `source_artifact_id` | no | string | null | Caller-supplied artifact id so pinned evidence locators can reference it deterministically; server-generated when omitted. Must be 3-64 chars of `[A-Za-z0-9._-]` starting with an alphanumeric. Duplicate ids are refused by the service. |
-| `source_kind` | no | enum: markdown | Only `markdown` is currently supported. |
-| `source_retention` | no | enum: manifest_only, archive | `manifest_only` stores chunk hashes only; `archive` also stores the document content. |
-| `original_uri` | no | string | null | Original document location for provenance. |
-| `label` | no | string | null | Human-readable label for the artifact. |
-
-**Returns:** Top-level fields: `source_artifact_id`, `artifact_revision_id`, `revision_handle`, `revision`, `source_kind`, `source_retention`, `original_uri`, `label`, `content_hash`, `byte_count`, `parser_version`, `archived`, `archive_content_hash`, `chunks` (each chunk includes `citation_handle`)
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Invalid or duplicate caller-supplied `source_artifact_id`.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_dereference_source_evidence
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to read back a registered source evidence chunk and verify its expected content hash.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `source_artifact_id` | yes | string | Artifact ID returned by `cruxible_register_source_artifact`. |
-| `artifact_revision_id` | no | string | null | Pin the read to one immutable revision (`{source_artifact_id}@{revision}`), as carried on the evidence ref you are replaying. Omit to read the current revision, which is reported as `revision_unpinned`. |
-| `chunk_id` | no | string | null | Chunk ID locator. |
-| `heading_path` | no | array | null | Heading-path locator (used with `block_selector`). |
-| `block_selector` | no | string | null | Block selector within the heading path. |
-| `expected_content_hash` | no | string | null | Expected chunk content hash for drift detection. |
-
-**Returns:** Top-level fields: `status` (one of `available`, `drifted`, `unavailable`, `revision_bytes_not_retained` — a pinned read of a superseded revision whose bytes were never archived, which is not drift), `source_artifact_id`, `chunk_id`, `content_hash`, `expected_artifact_hash`, `current_artifact_hash`, `body_origin`, `body`, `reason`, `chunk`, `artifact_revision_id`, `revision_unpinned`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_clone_snapshot
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when you need a new local instance created from an existing snapshot. On auth-enabled daemons the result carries a one-time admin_credential token for the new instance - save it immediately; it is never shown again.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `snapshot_id` | yes | string |  |
-| `root_dir` | yes | string |  |
-
-**Returns:** Top-level fields: `instance_id`, `snapshot`, `admin_credential` (auth-enabled daemons only: a one-time ADMIN token for the new instance — deliver it to the operator immediately; it is never shown again)
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_state_status
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to see whether an overlay is connected to an upstream state and whether pulls are available.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-
-**Returns:** Top-level fields: `upstream`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_state_diff
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the structured difference between two state coordinates - a snapshot vs current, current vs the materialized upstream release, or two snapshots. The complete body is persisted and content-addressed by diff_digest; treat the result as a reviewable plan only when artifact_complete is true, and re-read the whole body with artifact_digest.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `from_coordinate` | no | string | `current`, a `snap_` id, `upstream`, or `origin`; defaults to the parent of the head snapshot. |
-| `to_coordinate` | no | string | Defaults to `current`. `added` means present here only. |
-| `sections` | no | array | Restrict to `entities` / `edges` / `procedures`. |
-| `entity_types` | no | array | Restrict entities to these types. |
-| `relationship_types` | no | array | Restrict edges to these relationship types. |
-| `buckets` | no | array | Report only these buckets; counts stay whole. |
-| `changed_only` | no | boolean | Suppress added/removed items. |
-| `max_items_per_bucket` | no | integer | Per-bucket cap for the returned view (default 500, minimum 1); the persisted artifact is never capped. |
-| `artifact_digest` | no | string | Re-read a persisted artifact by content address instead of computing a diff. |
-
-**Returns:** Top-level fields: `diff_digest`, `view_digest`, `artifact_complete`, `artifact_ref`, `diff_engine_version`, `artifact_schema_version`, `artifact_trust`, `normalizations`, `liveness`, `selector`, `from_coordinate`, `to_coordinate`, `omitted_sections`, `context`, `sections`, `summary`, `view`, `default_basis`, `receipt_id`
-
-**Side Effects:** Reads are not side-effect-free: persists a `state_diff` receipt and a content-addressed artifact under `.cruxible/diffs/`. Neither touches graph state or advances `read_revision`. Both persistence failures fail the read.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_state_pull_preview
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to preview upstream state changes before applying them.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-
-**Returns:** Top-level fields: `current_release_id`, `target_release_id`, `compatibility`, `apply_digest`, `warnings`, `conflicts`, `lock_changed`, `upstream_entity_delta`, `upstream_edge_delta`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_state_pull_apply
-
-**Permission:** `ADMIN`
-
-**Purpose:** Use when a pull preview returned an apply digest and you are ready to apply it.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `expected_apply_digest` | yes | string |  |
-
-**Returns:** Top-level fields: `release_id`, `apply_digest`, `pre_pull_snapshot_id`, `receipt_id`
-
-**Side Effects:** May create governed state, graph state, config changes, snapshots, or audit records according to its permission tier.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_get_entity
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to fetch one entity by type and ID. The payload defaults to the compact output profile; ask for profile='standard' or 'full' for the complete property bag and metadata.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `entity_type` | yes | string |  |
-| `entity_id` | yes | string |  |
-| `profile` | no | string | null | Output profile: `compact` (default on this surface), `standard`, or `full`. Compact returns bounded identity cards that keep lifecycle/review markers; standard/full include provenance and actor context. |
-
-**Returns:** Top-level fields: `found`, `entity_type`, `entity_id`, `properties`, `metadata`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_get_relationship
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need to fetch one relationship by endpoints and relationship type.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string |  |
-| `from_type` | yes | string |  |
-| `from_id` | yes | string |  |
-| `relationship_type` | yes | string |  |
-| `to_type` | yes | string |  |
-| `to_id` | yes | string |  |
-| `edge_key` | no | integer | null | Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain authoritative. |
-
-**Returns:** Top-level fields: `found`, `from_type`, `from_id`, `relationship_type`, `to_type`, `to_id`, `edge_key`, `properties`, `metadata`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Missing config names, stale locks, invalid workflow/query/group identifiers, or invalid request shape where applicable.
-
-## cruxible_relationship_lineage
-
-**Permission:** `READ_ONLY`
-
-**Purpose:** Use when you need the provenance, review state, feedback, and receipts for one relationship.
-
-**Arguments:**
-
-| Name | Required | Type | Description |
-| --- | --- | --- | --- |
-| `instance_id` | yes | string | Governed instance ID or local instance root. |
-| `from_type` | yes | string | Source entity type. |
-| `from_id` | yes | string | Source entity ID. |
-| `relationship_type` | yes | string | Relationship type. |
-| `to_type` | yes | string | Target entity type. |
-| `to_id` | yes | string | Target entity ID. |
-| `edge_key` | no | integer | null | Unstable per-load hint for parallel-edge disambiguation; tuple coordinates remain authoritative. |
-
-**Returns:** Top-level fields: `found`, `relationship`, `provenance`, `group`, `resolution`, `source_workflow_receipt_id`, `source_trace_ids`, `warnings`
-
-**Side Effects:** Read-only.
-
-**Common Errors:**
-- Unknown `instance_id` or missing daemon configuration.
-- Permission mode too low for this tool.
-- Ambiguous relationship tuple without `edge_key`.
+# MCP tool reference
+
+The MCP server (`cruxible mcp`) is a client of the daemon's HTTP API, the same
+API the CLI and the Python SDK use; every tool runs on the daemon. Tool names
+follow the CLI command path: `cruxible proposal approve` is
+`cruxible_proposal_approve`. A few tools with no CLI command keep their own
+names (`cruxible_server_info`, `cruxible_query_spec`).
+
+`CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the
+everyday agent loop:
+
+- read with three verbs: `cruxible_orient` (the map of accepted state,
+  one kind in full, or one paged section), `cruxible_query` (any
+  question as rows of values with verdict flags) and `cruxible_get`
+  (one thing by any reference; `detail` picks summary, evidence, why, history,
+  a Subject's incoming edges or pairs, a Line's runs, proof, or a Document body range);
+- the work queue: `cruxible_next`;
+- the write verbs: `cruxible_set` (one value in one field, replacing
+  the live value), `cruxible_retire` (end one live Claim), and
+  `cruxible_write` (create, set, add and retire changes as one change set);
+- proposals through activation: `cruxible_proposal_list`,
+  `cruxible_proposal_review`, `cruxible_proposal_approve`, and
+  `cruxible_proposal_activate`;
+- identity and versions: `cruxible_whoami` and `cruxible_server_info`.
+
+To find something by name, grep the floor (`.cruxible/floor/`, which
+`cruxible floor export` and `cruxible_floor_export` write)
+and `get` the ref a hit names; an agent without a shell searches values with
+`cruxible_query` and `contains`.
+
+`full` advertises the complete catalog below, including the `authoring_*`
+intent tools, `cruxible_query_spec`, `cruxible_since`,
+curation, coverage, the floor, files, blocks, kits, Procedures, Lines, and the
+split approval pair
+`cruxible_proposal_approve_prepare` and `cruxible_proposal_approve_submit` for
+a signer outside the MCP process. `CRUXIBLE_MCP_TOOLS` (a comma-separated
+list) narrows the advertised set further to exactly those tools. Profiles and
+the list change discoverability only: the server's tier (`CRUXIBLE_MODE`, below)
+hides tools above it, and permission tiers still gate every call. There is no
+separate version tool: `cruxible_whoami` and `cruxible_server_info`
+both report the MCP adapter's package version and the daemon's (`GET /version`).
+
+## The daemon
+
+Every tool runs on a Cruxible daemon; the MCP server is a client of it and never
+serves state in its own process. It picks the daemon in this order:
+
+1. `CRUXIBLE_SERVER_SOCKET` or `CRUXIBLE_SERVER_URL` in its own environment;
+2. the transport the MCP workspace's `.cruxible/coverage.json` binds together
+   with an instance;
+3. the default socket, `~/.cruxible/run/daemon.sock` (under `CRUXIBLE_STATE_ROOT`
+   when that is set), when a daemon answers there;
+4. otherwise it starts one under that state root, holding
+   `<state root>/run/autostart.lock` so two MCP servers never start two: a live
+   daemon already serving the state root is reused, an installed user service
+   (`cruxible server install-service`) is started, and with neither it runs
+   `cruxible server start --socket <default socket>` detached, writing its
+   output to `<state root>/run/daemon.out`. The daemon outlives the MCP server.
+
+A transport from 1 or 2 that does not answer is refused by name; the server never
+starts a daemon in its place, whichever socket a workspace binding names (the
+default one included). When no daemon can be started, the call fails with
+`cruxible.mcp.daemon_unavailable` naming the failed step and the repair: start
+one with `cruxible server start`, install the service, or set a transport. A
+started daemon inherits an allowlist of the MCP server's environment: process
+basics (`PATH`, `HOME`, user, shell, temporary directories, locale, `TZ`, the XDG
+directories, `VIRTUAL_ENV`, `PYTHONPATH`), proxy and certificate settings, uv's
+cache and index URLs, `GIT_SSH_COMMAND`, and daemon configuration. Nothing else
+reaches it: not the server's transport, tier, instance or principal, and no
+credential (Cruxible tokens and keys, API keys, cloud or forge tokens).
+
+The MCP server and the CLI each ask the daemon's `/version` once per process
+before their first real request. What can break a call is the authoring
+contract, so its snapshot digest decides: a different digest refuses with
+`cruxible.sdk.daemon_version_incompatible` in one line naming both versions,
+both digests, where the daemon is and the fix (stop it with `cruxible server
+stop` and rerun, or use the daemon's version); the same digest proceeds
+silently whatever the package versions. `cruxible --version`, `--help`,
+`server stop` and `context show` never refuse. `CRUXIBLE_SKIP_VERSION_CHECK=1`
+skips the check, for development only. `cruxible --version` prints the version,
+the contract digest's first 12 hex and, in a source checkout, the commit.
+
+## Instances and the adapter environment
+
+Every tool that acts on one instance takes an optional `instance_id`. Omitted,
+it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
+in the `env` block of the MCP client config), and then to the instance the MCP
+workspace's `.cruxible/coverage.json` binds, provided the binding names the
+server's daemon; a binding on another daemon than the environment's is refused.
+The server never reads remembered CLI context. With none of these, the call fails and
+names `CRUXIBLE_INSTANCE_ID`. `cruxible_whoami` returns the instance it resolved together
+with the caller's identity there.
+
+`CRUXIBLE_PRINCIPAL_ID` in the same `env` block names the principal the MCP
+server acts as; it is sent with every request, and the daemon checks it is a
+registered, active principal before any write it attributes to it (reads stay
+open). With daemon auth off
+it is a claim of identity, not authentication (`authenticated: false` in
+`whoami`): every process of the same OS user is equally trusted. `whoami` also
+reports `can_author` and, when false, the `authoring_refusal` (code, detail and
+repair) that authoring would return.
+
+**The folder's identity record.** On one machine the person and an agent started
+in their project folder cannot be told apart, so `cruxible init` (and
+`cruxible workspace attach`, when the CLI knows who acts) writes
+`.cruxible/identity.json` beside the binding: the owner's principal ID, its
+instance ID and the absolute path of its key directory, which stays outside the
+project. It never holds a key or a token; committed by accident it reveals a
+principal ID, an instance ID and one local path (it is in Git's `info/exclude`
+like the binding). With none of `CRUXIBLE_PRINCIPAL_ID`, `CRUXIBLE_PRINCIPAL_KEY`,
+`CRUXIBLE_MCP_KEY_DIR` or a bearer token in its environment, the MCP server
+started in that folder acts as that principal for attributed writes,
+`cruxible_proposal_approve` and `cruxible_claim_attest`, and the CLI there does
+the same when its remembered context names no principal for the instance. Any
+of those variables takes precedence, so each agent session of a team can still
+be its own principal. The record is read only at the workspace root the shared
+resolver chooses and only over a local daemon socket; a TCP daemon ignores it.
+Before acting on it the server checks the principal is active on the instance and
+the key in that directory is its registered key; otherwise it refuses with
+`cruxible.identity.folder_record_invalid`, `folder_key_unavailable`,
+`folder_key_mismatch` or `folder_principal_unknown` and the repair, never falling
+back to `operator`. The repair fits the case: restore a missing or exposed key at
+the recorded path (mode 0600, in a 0700 directory); for a key or principal the
+instance does not hold, record the right principal by attaching with it and its
+key (`CRUXIBLE_PRINCIPAL_ID=ID CRUXIBLE_PRINCIPAL_KEY=/abs/keys/ID.ed25519 cruxible
+workspace attach --replace`) or remove the record;
+for a record that is not this folder's, remove it or record it again. The
+environment variables above override the record in every case. `whoami`'s `identity_source` says which applied:
+`environment`, `folder` or `none`.
+
+`CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
+read or write local files. The stdio MCP process is the client-side adapter; the
+workspace defaults to its working directory.
+All tool paths are normalized relative paths confined under that root; the
+daemon receives bytes and typed observations, never a client filesystem path.
+Floor operations always target the containing Git worktree's canonical
+`.cruxible/floor`. With no explicit workspace root, the adapter discovers that
+worktree from its working directory. An explicit `CRUXIBLE_MCP_WORKSPACE_ROOT`
+must equal the worktree root for floor export and status; a nested explicit
+root is refused rather than allowing a write above its configured filesystem
+boundary. `cruxible_proposal_activate` is a daemon act and writes nothing
+locally: the daemon's floor-refresh trigger delivers the floor to a workspace it
+serves, and `cruxible_floor_export mode=write` pulls it elsewhere.
+
+`CRUXIBLE_MCP_KEY_DIR` names the directory of local approval keys that
+`cruxible_proposal_approve` signs with: an absolute path outside the workspace
+holding `<signer_id>.ed25519`, the layout `cruxible principal add
+--key-dir` and `cruxible init --key-dir` write. Set it in the MCP
+server's environment; no tool argument can name a key path. The tool signs as
+`signer_id`, or as the directory's only key when `signer_id` is omitted, and
+passing the reviewed `candidate_digest` makes it refuse a candidate that
+changed since review. Unset, the tool refuses and says how to configure it.
+Only the public attestation leaves the process; key bytes never appear in a
+result or a log line.
+
+## Which daemon operations each tool publishes
+
+The served-surface snapshot under `tests/goldens/playbill/` is the
+machine-readable inventory of the whole served surface. Its `surface.mcp_tools` rows carry
+`client_operations`: the daemon client operations each tool reaches, per tool.
+MCP reaches state only through the daemon, so each operation is an HTTP route,
+and that route's row in `surface.http_routes` names the facade verbs it reaches.
+A deployment that decides what may be reached over MCP reads this join, or
+enforces at the daemon's routes, rather than inferring it from the
+`cruxible_<verb>` / `handle_<verb>` spelling, which nothing guarantees.
+
+The list is a reachability closure, not a read of the handler's own body: it
+covers the operations the handler calls itself, those of a sibling handler it
+delegates to, and those of the shared client-side code it hands the client to
+(block repin, the next-workspace observation, source compilation). An empty list
+means the tool reaches no daemon operation at all -- one tool is in that position
+today, `cruxible_authoring_example`, and it is `READ_ONLY`. A mutating tool may
+not publish an empty list without a declared exception naming its reason
+(`tests/test_guardrails/test_playbill_v1_served_surface.py`), because an
+overlay reading `[]` as "reaches nothing" would fail open.
+
+Every row is covered by the snapshot's `succession.surface_digest`, so a tool
+that starts reaching one more operation moves the pin.
+
+## Runtime
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
+| `cruxible_init` | Make the workspace folder an instance over the local daemon socket, as `cruxible init`: create the host attached to the folder, the binding, the owner principal (`principal_id`, default your OS username) and its key in the default key directory outside the folder, and the folder identity record; this session then authors as the owner. An initialized folder reports its instance and changes nothing. Returns the instance, principal, key directory and approval policy, never key material | `ADMIN` |
+| `cruxible_console` | Open the read-only console for the instance in the user's browser: the same loopback listener `cruxible console` serves, run on a background thread of this MCP server (one per instance; it ends with the server, or `stop=true` stops it). The tool opens the one-time sign-in link itself and returns only the address `http://127.0.0.1:<port>/i/<instance>`; the link is never returned. When no browser can be opened (`browser_opened: false`), a listener the call started is stopped (`status: no_browser`) and `message` tells the user to run `cruxible console` in their own terminal, which prints the link to them only. A second call reuses the running listener and opens a fresh link | `READ_ONLY` |
+| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), and the adapter and daemon versions | `READ_ONLY` |
+
+## Host and providers
+
+Setting up a host (`cruxible init`, or `cruxible host create` to allocate one
+without becoming its owner), releasing its worktree (`cruxible workspace
+detach`), decommissioning an instance (`cruxible instance decommission`) and
+rebuilding the `next` worker's state (`cruxible instance rebuild-next`) are
+operator acts with no MCP tool.
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_provider_list` | List provider packages from the configured daemon repository, each with its version and the provider interface IDs it implements | `READ_ONLY` |
+| `cruxible_provider_install` | Install a provider package by name (from the configured repository, else the provider index) or from staged wheel and lock digests, and register its interfaces and Provider; lands at once when the approval policy requires no approval, otherwise stops at `awaiting_approval`; grants no execution permission | `ADMIN` |
+| `cruxible_provider_move` | Move Procedures to an exact build or the most recently registered live build; preview re-pins, carried disabled Lines and propose-only Mandates | `GOVERNED_WRITE` |
+| `cruxible_provider_retire` | Retire an exact build with no live pinners, retaining its runtime environment | `ADMIN` |
+
+## Kits
+
+A kit is a release of definitions (ClaimTypes, CaptureContracts, QueryDefinitions,
+SourceAcquisitionPolicies, Procedures, Blueprints and the ProviderInterfaces they
+need) that installs as a diff against the consumer: one proposed change set that
+adds, replaces and retires definitions. A kit also bundles the provider packages
+its Procedures run on (wheel, uv lock and path-dependency wheels; never source):
+`kit_add` installs the missing ones first, under the install permission, and
+proposes the definitions once they land (`awaiting_providers` while an install
+awaits approval; the activation that lands it proposes them on its own). A kit can instead name a default provider for a contract its
+Blueprints leave open (`delivery: index`): `kit_add` installs it by name and
+exact version from the provider index unless a live Provider here already
+implements its interfaces (`satisfied`). Activation and any approval stay the
+ordinary steps.
+
+`kit_build` requires governed-write access because checking its automation
+template is an authoring preview performed as the caller's principal.
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release; `providers` names provider packages staged with `cruxible_body_store`, bundled or (`delivery: index`) as a default installed by name (every Provider a carried Procedure pins must be named, and every carried ProviderInterface must be what a named wheel registers) | `GOVERNED_WRITE` |
+| `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance, provider packages with their delivery and install state, and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
+| `cruxible_kit_add` | Install or upgrade a kit by `reference` (a kit directory or layout the adapter reads, or a registry reference it pulls) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval; a commit stages and installs bundled providers, and a default provider nothing here implements, first (`ADMIN` for the install); the result carries the kit's automation template text (`automation_template_content`) when the adapter holds the kit's files (any `reference`), never installed | `GOVERNED_WRITE` |
+| `cruxible_kit_remove` | Retire the definitions a kit owns (never what it only carried, nor its provider packages); a definition edited since install, or live Claims or definitions that depend on what it would retire, block it; lands at once when policy requires no approval | `GOVERNED_WRITE` |
+
+## Documents and proposals
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_body_store` | Store inert body bytes in CAS | `GOVERNED_WRITE` |
+| `cruxible_document_propose` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
+| `cruxible_proposal_review` | Render review material; a Procedure proposal's item reasons page with `item_reasons_after` / `item_reasons_limit` | `READ_ONLY` |
+| `cruxible_proposal_approve_prepare` | Return the exact approval challenge | `READ_ONLY` |
+| `cruxible_proposal_approve_submit` | Submit a public signed attestation; activates a candidate it completes unless `hold` | `GRAPH_WRITE` |
+| `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call; the approval that completes the candidate activates it unless `hold` | `GRAPH_WRITE` |
+| `cruxible_proposal_activate` | Activate by compare-and-set; returns the activation receipt (the daemon delivers the floor) | `GRAPH_WRITE` |
+| `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
+| `cruxible_proposal_readmit` | Recompile retained inputs at head, or readmit exact bytes | `GOVERNED_WRITE` |
+| `cruxible_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
+| `cruxible_proposal_reject` | Reject another actor's open proposal as its reviewer, with a recorded reason | `GRAPH_WRITE` |
+
+MCP never accepts a private key as a tool argument. `cruxible_proposal_approve`
+signs client-side, in the MCP server process, with a key from
+`CRUXIBLE_MCP_KEY_DIR`; a signer elsewhere uses `cruxible_proposal_approve_prepare`
+and `cruxible_proposal_approve_submit`. Only the public attestation reaches the
+daemon.
+
+## Accepted reads
+
+Accepted state is read through `cruxible_orient`,
+`cruxible_query` and `cruxible_get` (see
+[Queries, orient and get](#queries-orient-and-get)). Documents are listed by
+`orient(section="documents")` and read by `get("Document:<name>")`, its
+`why`, `history` and `body` details; a body read needs `GOVERNED_WRITE` and
+names the whole body's `body_digest`.
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_capture_read` | Verify retained Capture evidence and read bounded material (`request.max_bytes` bounds it); `request.capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying). A restricted CaptureKind's Capture answers its inventory view and a `body_restricted` notice unless the caller holds the non-MCP `cruxible_body_read_restricted` (`GOVERNED_WRITE`) | `READ_ONLY` |
+| `cruxible_capture_erase` | Erase one Capture's retained body (the bytes go; the envelope and an erasure record of who, when and `because` stay) when its CaptureContract authorizes erasure; irreversible, so it previews unless `dry_run=false` with `at` = the preview's `coordinate.digest` | `GRAPH_WRITE` |
+
+## Sources
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_files_compile` | Read the workspace's catalogued files and derive a file bundle | `READ_ONLY` |
+| `cruxible_files_check` | Check the catalogued files (or a compiled `bundle`) against accepted state | `READ_ONLY` |
+| `cruxible_files_propose` | Compile the catalog and propose one file (`file`) as its Document; the adapter reads the file | `GOVERNED_WRITE` |
+
+The catalog is discovered as every other command finds it
+(`.cruxible/files.yaml` or `files.yaml`, plus `.cruxible/files.local.yaml`);
+`catalog_path` names another. The adapter owns local path traversal and digest
+construction, so an agent supplies a file catalog name, not compilation wire or file
+bytes. A catalog entry with only `name` and `locator` is evidence-only: it can be
+cited and covered but not proposed.
+
+## Principals
+
+The principal registry is `orient(section="principals")`; one record is
+`get("Principal:<id>")`.
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
+| `cruxible_principal_propose` | Propose a principal registration, rotation, revocation, or recovery | `ADMIN` |
+
+## Subjects, ClaimTypes, and Claims
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias` or `semantic.distinct_from`) | `GOVERNED_WRITE` |
+| `cruxible_capture_contract_propose` | Propose authored evidence: `input: {name, shape}` with optional grade, replay, retention, erasable, max_bytes, selector_privacy and body_access (`open` or `restricted`, fixed with the name); omitted edit fields keep accepted values; lands when allowed (`accept: never` keeps the proposal) | `GOVERNED_WRITE` |
+| `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
+| `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; `because` cites your own words and `evidence` takes one of write's evidence options (self, section with `own_words`, file, capture, contract), made into Captures before signing; with neither, it cites the Claim's own evidence. Never a proposal | `GOVERNED_WRITE` |
+| `cruxible_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `cruxible.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
+| `cruxible_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
+| `cruxible_write` | Apply `create`, `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together. A `create` (`label`, `subject_kind`, `key`: a one-key value, each composite part as `{predicate, value}`, or none for a minted kind) makes a Subject the other changes name `{"created": label}` in any order; a key one live Subject holds lands on it (`resolved: existing`) unless `expect_new` | `GOVERNED_WRITE` |
+| `cruxible_backlinks` | What points into one target: `ref` a Subject (`kind/id`) for the notes and Documents linked `about` it and the workspace sections its live Claims cite; a ClaimType or Procedure for the Documents linked `guides` it (review guidance); `file` and `section` for the live Claims resting on that section. Keyset pages (`limit`, `cursor`); each section row carries `drift` (`changed_since_cited`, `unchanged`, `unknown`) checked against the MCP workspace. Notes are written with `cruxible_write` about changes | `READ_ONLY` |
+| `cruxible_get` | Read one thing by any reference (Claim id or prefix, `kind/id` or `Subject:kind/id`, predicate (a dotted tail like `work_item.status` matches live predicates only; an exact predicate reads any lifecycle), `ClaimType:`/`Document:`/`Procedure:`/`Blueprint:`/`query:`/`CaptureContract:`/`Trigger:`/`Principal:`/`Provider:NAME[/BUILD]`/`ProviderInterface:`/`SourceAcquisitionPolicy:<name>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, artifact path, proposal id, or an operational reference: `ProcedureRun:RUN-...`, `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is a TruncatedText preview `{truncated: true, preview, length, read_whole}`, never the value, and an object value is shown whole as `{object: {...}}`, where `read_whole` is the exact `cruxible_get` call `{ref, detail, at}` that returns it whole at the generation it was previewed at, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`: a Claim's revisions each with `change` -- `stated`, `changed`, `reobserved` or `retired` with its `retirement` -- and `reason`, its Procedure item's reason or its change set's rationale; a Subject's `{kind: "subject", revisions, events}`, each event one field change with `before` for a changed value and `contended` for a competing one, `field` narrowing to one field), `incoming` (a Subject's pointing edges: one page, by `limit` and `cursor`, of the live Claims whose subject-valued object it is, each `{claim, subject, predicate, qualifier}` naming the asserting Subject), `pairs` (the pair Subjects a Subject is an end of: one page, by `limit` and `cursor`, of `groups`, each `{kind, part, pairs, hidden}` in pair kind, part and id order, listing only pairs holding a visible (supported, current, positive) fact and counting the rest as `hidden`; a page examines at most `2 * limit + 8` candidates, so it may hold fewer rows than `limit` while `truncated`; a summary card lists at most five per group with `more`, and a pair's card lists its `ends`), `runs` (a Line's Procedure runs, newest admission first, paged by `limit` and `cursor` over the run journal's per-Line index, read live), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both; an all-digit `at` of 11 or fewer characters is always a generation); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
+
+A proposal is not accepted state. A Claim's verdict is computed at read time
+from accepted law evidence, never carried forward from acceptance.
+
+## Authoring intents
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_authoring_example` | Return a template for an authoring input: Claims, Subjects, named queries, Procedures, Blueprints and instances, Lines, Triggers, mandates, acquisition and approval policies, change sets and ClaimType successions | `READ_ONLY` |
+| `cruxible_authoring_get` | Read one authoring intent | `READ_ONLY` |
+| `cruxible_authoring_list` | List the caller's in-progress intents | `READ_ONLY` |
+| `cruxible_authoring_compile` | Stage a payload as an intent (new, or revising `intent_id`) and run every check | `GOVERNED_WRITE` |
+| `cruxible_authoring_bind` | Read an anchored selection of a catalogued workspace file (the stub's `source_id` must be its catalog name; `occurrence` picks one of several anchor matches), derive commitments, and compile | `GOVERNED_WRITE` |
+| `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
+| `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
+| `cruxible_authoring_submit_file` | Submit the authoring input file at a workspace-relative `path` (YAML or JSON, as `cruxible authoring submit FILE`), read beneath the workspace root without following a link, at most 1 MiB; `accept="never"` keeps the proposal | `GOVERNED_WRITE` |
+| `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
+| `cruxible_block_repin` | Stamp or refresh one projection block by its catalog `file` and `block`; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
+| `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page | `READ_ONLY` |
+| `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
+| `cruxible_block_depublish` | Release one block registration by `file_id`, the stored projection file identity; the file and catalog entry need not still exist | `GOVERNED_WRITE` |
+
+The daemon mints every identity, digest, base, timestamp, and proposal reference.
+It reports approval conditions but never obtains or impersonates an approval.
+
+The flow is `compile` (or `bind`), then `preflight` as needed (a refused intent
+whose base the head moved past advances when it checks clean at the head), then
+`submit` and `status`, with `get` and `list` to find work again; a one-shot write
+is `cruxible_authoring_submit` with a `payload`. `cruxible_authoring_example`
+prints a template for any input kind.
+
+Every payload is one tagless input, and the
+`change_set` kind carries any mix of members -- `claim`, `claim_type`,
+`claim_type_succession`, `claim_retirement`, `subject`, `subject_kind`,
+`subject_succession`, `query_definition`, `procedure`, `procedure_mandate`, `acquisition_policy`, `line`,
+`trigger` -- as one intent that admits or refuses whole, typed to the
+offending member index. A `subject` member creates a Subject by its declared
+kind and key (`{"kind": "subject", "subject_kind": ..., "key": {...}}`), never by
+id: core assigns the id and the result reports it; a key a live Subject holds
+names it instead. Every new Subject's kind needs a `subject_kind` (keyed
+`unique`/`hint`, or `minted`); `cruxible_authoring_example` with
+`subject-kind` prints one, and the CLI reference's "Subject kinds and creation"
+gives the full rule. `approval_policy` and `procedure_runtime_policy` parse
+as members but a change set refuses them; send each as its own singleton input.
+A one-key reference can use `{"subject_kind": "sec.package", "key": "Demo"}`;
+composite keys name each part in a mapping. Claim subjects and Subject-valued
+objects can also name a same-set creation as `sec.package/Demo`; core applies
+the key's canonical form and the usual reference ambiguity rules.
+There is no second batch tool.
+A `claim_type_succession` member succeeds an accepted ClaimType and dispositions
+its whole reverse-pin closure in the same generation, so vocabulary evolution
+needs no second tool and no second generation either.
+`cruxible_authoring_example` serves `change-set` and
+`claim-type-succession` as starting points, and `procedure`, `line`,
+`trigger` and `procedure-mandate` templates that are accepted
+together. A `line` input's `parameters` is checked against its Procedure's input
+contract at authoring; its optional `acquisition` map sets per-capture-output
+rules (`<call>.<field>` to `max_age`, `on_unavailable`, `on_stale`, ...).
+
+## Procedures
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_procedure_run` | Execute a directly runnable Procedure (`cruxible_get` shows `runnable: direct`) -- accepted-state reads, deterministic computation, and `source`/`call` occurrences through exactly pinned Providers -- at an explicit coordinate and time | `READ_ONLY` |
+| `cruxible_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
+| `cruxible_procedure_dispose` | Record an upheld/overturned measurement judgment with reason and authenticated reviewer attribution | `GOVERNED_WRITE` |
+| `cruxible_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
+| `cruxible_line_enable` | Enable a Line forward-only: its Triggers do nothing until then. The daemon admits what they match under the caller's credential, rechecked before each run, pinned to the current Line and Trigger versions. Needs governed write even for an observe-only Line; a proposing or settling Line needs a covering mandate. Repeating it unchanged returns `outcome: already_enabled`. Read it with `cruxible_get(ref="Line:NAME")`. | `GOVERNED_WRITE` |
+| `cruxible_line_disable` | Stop a Line admitting work on its own; admitted runs keep going. A stopped enablement returns `outcome: already_disabled`. | `GOVERNED_WRITE` |
+| `cruxible_line_run` | Run a Line once now as a manual occurrence under its own inputs, budgets, authority and mandate; it never consumes a Trigger. `event` is the event input for a Line whose Procedure takes one; an event its Triggers already admitted needs `repeat`. A Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
+| `cruxible_runbook_run` | Run an accepted Runbook now: its steps in order, each Line as your manual run and each action fired. It stops at the first step that fails or sends writes to review (a proposal); later steps report `not_run`. Each step is gated as its own Line run or action fire. | `READ_ONLY` |
+| `cruxible_runbook_preview` | What each Runbook step can read, write, call, settle, propose and set off, and its order problems, from accepted definitions only: nothing runs and no outcome is predicted. | `READ_ONLY` |
+| `cruxible_line_evaluate` | Evaluate a historical range (`since`, `until`) into pending work; never executes. `dry_run` only reports what the range makes eligible (a read, no range needed); enqueueing needs governed write. | `READ_ONLY` |
+| `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller's authority, up to `limit` (default 100) per call; follow `cursor` for more. | `READ_ONLY` |
+| `cruxible_inbox_list` | List one page of the Line inbox, newest postings first, with a bounded payload preview; filter by `line` and `status`, follow `next_cursor`. | `READ_ONLY` |
+| `cruxible_inbox_get` | Read one inbox item whole: envelope (Line, node, dedupe key, occurrences, first and recent sightings with their source Captures, disposition), payload as posted (at most 65,536 bytes), and its 10 most recent dispositions (`disposition_count` says how many in all). | `READ_ONLY` |
+| `cruxible_inbox_ack` | Acknowledge an inbox item: seen, owed nothing further. | `GOVERNED_WRITE` |
+| `cruxible_inbox_dismiss` | Dismiss an inbox item with a recorded `reason`. | `GOVERNED_WRITE` |
+| `cruxible_inbox_link` | Link an inbox item to the proposal (`{"kind": "proposal", "proposal_id": ...}`) or accepted Subject (`{"kind": "subject", "subject": "kind/id"}`) that records your judgment. | `GOVERNED_WRITE` |
+
+`procedure_run`, `line_run` and `line_dispatch` are read-tier only for targets
+that observe. A Procedure whose terminals can propose or settle, or a Line whose
+runs can (its Procedure's capability capped by its `max_authority`), needs
+`GOVERNED_WRITE` to run or dispatch, whichever path triggers it; the daemon
+decides this per target, and a read-only caller is refused with
+`PermissionDeniedError`.
+
+Read-tier Procedure runs append receipted journal records, following the same
+precedent as QueryDefinition runs. They never alter accepted state or grant
+themselves a governed track record; promotion remains a separate governed act.
+
+## Predictions
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_prediction_list` | Find the accepted predictions (resolution contracts) testing one Claim, by `claim` | `READ_ONLY` |
+| `cruxible_prediction_propose` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
+| `cruxible_prediction_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
+
+`cruxible_prediction_settle` requires `prediction_id` and the accepted
+observation Claim ID (`observation`). Its MCP form has no advanced `request`
+parameter. Exact references and mandated terminal evidence remain available in
+the SDK and HTTP `SettleRequest`; settlement remains full-profile only.
+
+Every Claim version these tools need can be a plain Claim ID (`CLM-...` or
+`Claim:CLM-...`); the daemon resolves its digests and accepting coordinate. The
+exact reference, and settle's full `request` (exact contract reference, anchor
+event, or terminal evidence), remain as the advanced form.
+
+Prediction settlement records the activation and resolution in operational
+exhaust; it does not create or mutate Claims, and it does not create a second
+authority plane beside accepted state.
+
+## Queries, orient and get
+
+`cruxible_query` takes exactly one mode: compact or a query `name`
+(a full spec runs through `cruxible_query_spec`, in the `full`
+profile, so the default tool stays small). Compact mode names a Subject
+`kind` or a definition kind, and/or free text `contains`. The definition
+kinds list every accepted definition of the ontology, live unless a
+`lifecycle` filter is given, each read at the ontology's size (never a scan
+over Claims or Captures): `ClaimType` (`predicate`, `subject_kinds`, `object`,
+`cardinality`, `members`, `description`, `evidence`; `select` adds `role`,
+`roles`, `stale_after`, `selector`, `on_conflict`, `captured_required` and
+`kit`), `Procedure` (`name`, `runnable`), `Trigger` (`name`, `schedule`,
+`target_kind`, `target`, `lifecycle`), `Line` (`name`, `procedure`,
+`authority`, `lifecycle`, `enabled`, `triggers`, `triggers_total`),
+`SubjectKind` (`kind`, `rule`, `keys`, `uniqueness`, `description`, `subjects`
+-- its live Subjects -- `kit`, `lifecycle`), `CaptureContract` (`name`,
+`version`, `lifecycle`, `source_kinds`, `grade`,
+`admitted_by`, `required_by`: the live ClaimTypes admitting it, and those of
+them that require a Capture), `ProcedureMandate` (`name`, `procedure`,
+`grant`, `state`, `scope`, `change_kinds`, `condition`, `suspended`,
+`lifecycle`, `expires_at`) and `QueryDefinition` (`name`, `parameters`,
+`description`, `result_shape`, `lifecycle`); `select` adds `version` to
+Triggers, Lines, SubjectKinds, mandates and QueryDefinitions. Their columns filter by type (integers
+and `expires_at` also compare with `lt` .. `gte`) and order typed, nulls last. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
+`ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
+`contains` (case-insensitive text); filters combine as all-of. A field is a
+predicate's full name, its name after the `KIND.` prefix (`adoption_state`),
+`subject_id`, or `alias.field` after `follow: [{field, as}]`; columns show that
+short name unless it is itself another predicate's full name or a reserved name
+(`subject_id`, `subject`, `kind`, `predicate`, `claim`, `flags`, `value.*`). Values are checked against the
+ClaimType first: an unknown kind, field or enum member, or an operator that does
+not apply, refuses with a code, the nearest valid names and a repair. `ne` means
+no value equals, so a Subject without the value matches. `contains` alone
+searches every live Claim value across kinds. Rows lead with values (an array
+for a many-valued predicate or a contested slot) and carry `flags` (`stale`,
+`contested`, `contradicted`, `uncovered`, `unsure_hold`); without `select` a kind
+shows up to 12 predicates and names the rest in `notes`. Cells show each slot's
+answer as `get` shows it (its accepted and conflicted Claims, or every live
+Claim when resolution accepted none); `status` adds Claims resolution set aside
+(`overturned`, `ineligible`) or withdrew (`retired`), and `claims: true` answers
+each cell's Claims under `rows[].claims[<column>]` with `claim`, `value`,
+`verdict`, `status` and `role`, so a slot's winner reads apart from its losers.
+`subject`, `subject_id`, `flags` and `claims` are row metadata; a column with one
+of those names is served as `value.<name>`. ClaimType rows name the
+CaptureContracts their evidence rules admit, never digests. `receipt` records the
+mode, the definition digest, the coordinate and the evaluation time (default
+now). A named query takes `budgets` up to its definition's maximum, and
+`receipt: "full"` adds `receipt.replay`: the engine result (the Claims each row
+read, traversal paths, bound parameters, verdict) and its execution receipt.
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_query` | Answer any question over accepted state in one call: compact (`kind` -- a Subject kind or a definition kind: `ClaimType`, `Procedure`, `Trigger`, `Line`, `SubjectKind`, `CaptureContract`, `ProcedureMandate`, `QueryDefinition` -- and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
+| `cruxible_query_spec` | Run one full `QueryDefinitionSpec` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_query`; `full` profile only | `READ_ONLY` |
+| `cruxible_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `enablements`: the instance's Line enablements by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `subject_kinds` (each live SubjectKind's `rule`, `keys` and `uniqueness`: how a new Subject of the kind is named), `queries`, `interfaces` (each with its interface digest, operation contract and implementing Providers' implementation digests), `principals`, `policies` (every live standalone or embedded governed policy), `generations` (the ledger timeline: accepted generations newest first, each `{sequence, git_oid, accepted_at, changeset_digest, proposal, proposer, approvals, because, members}`, paged by sequence), `graph` (the Subject graph: `graph.nodes` `{subject, kind}` for each live Subject, then `graph.edges` `{claim, source, predicate, qualifier, target}` for each live Subject-valued Claim, keyset-paged at one coordinate, with `graph.totals.subjects`), `pins` (each live definition's required pins `{source, role, target, target_digest, current}`, keyset-paged: read by target, who uses a contract, ClaimType or Procedure), `activity` (what just happened, newest first: one row per `event` -- generations accepted, Line occurrences and enablement changes, runs started and finished, Captures landed and erased, inbox items posted and decided -- each with its `at` and the `ref` that reads it, read live and keyset-paged), `sources` (each logical source runs have landed Captures from, cited or not, by name: `{logical_source, landings, latest, contracts}`, its landing count, latest landing with its run, Line and Capture, and contract versions, read live and keyset-paged, with `sources_unattributed` for landings whose record can no longer be read), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
+| `cruxible_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
+| `cruxible_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible next` does | `READ_ONLY` |
+| `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
+| `cruxible_curation_list` | List one page of the curation queue detection recorded (`limit`, `cursor`), with when detection last ran and which detectors are inactive; a pure read | `READ_ONLY` |
+| `cruxible_curation_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |
+| `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution | `GOVERNED_WRITE` |
+| `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |
+| `cruxible_curation_suppress` | Hide an item (`scope: item`) or its lineage (`scope: lineage`) without resolving it | `GOVERNED_WRITE` |
+| `cruxible_curation_unsuppress` | Lift a suppression on an item | `GOVERNED_WRITE` |
+| `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts (a daemon that delivers this workspace's floor is its only writer: over its socket it delivers now, over TCP `write` refuses); `mode=status` reports whether that floor is current, stale, or missing. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref), `current/<kind>/INDEX`, `ontology/` (the accepted definitions: kind cards and INDEX files), `changes/`, `sources/`, `projections/INDEX` and `manifest.json` (see [floor](cli-reference.md#what-is-in-the-floor)). `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
+| `cruxible_coverage_resolve` | Resolve working sources against accepted state, from `observations` you built or from a workspace file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) bound by the file catalog; `bindings` (`path`, `source` as `external:NAME` or `ledger:PATH`) override it path by path | `READ_ONLY` |
+
+`cruxible_next` renders each repair's `command` as the MCP tool call
+that performs it (for example `cruxible_prediction_settle(prediction_id="RSC-...")`,
+adding the observation's Claim ID), or none when its operands are local files.
+A row or nested finding whose repair the session cannot perform -- its profile
+does not advertise the tool that performs it, or its tier is too low -- stays in
+the queue with `repair: null` and `repair_requires: {tool, tier, because,
+profile?}` naming what running it needs, so `orient` attention and the queue
+count it for every caller. A status facet keeps its
+state either way, but drops a repair the session cannot perform and says
+`repair_hidden: true` with the same `repair_requires`. The `default` profile
+advertises neither `cruxible_prediction_settle` nor the Line tools, for example:
+a stopped Line enablement still shows as `consumer_stalled`, its repair withheld with
+`because: ["profile"]`. A session that cannot author on the instance at all (an
+unbound credential, or a principal that is not configured, registered or
+active) has every writing repair withheld with `because` including
+`"authoring"` and `authoring_refusal` carrying the same code, detail and repair
+`whoami` reports.
+
+Lists that can outgrow one answer are paged. `query`, `orient` sections,
+`proposal_list` and `curation_list` take `limit` and `cursor`; a cut page
+carries top-level `truncated: true` and a `next_cursor` to pass back as `cursor`.
+A cursor whose listing changed since its first page is refused as
+`cruxible.list.cursor_stale`; list again without it.
+
+Query execution is a read: a named query's `receipt: "full"` returns its
+`playbill-query-execution-receipt-v1`. Qualifying direct reads, named query
+runs, coverage delivery, and Procedure dependency resolution also append
+idempotent per-artifact touches to the daemon-local operational store. A
+`READ_ONLY` actor can therefore grow that store, but these records never alter
+accepted state or any semantic/generation root. Audit likewise appends an
+idempotent completed-run record, but audit and curation never create
+qualifying consumption touches and never execute Procedures or emit repair
+recommendations. The floor export returns bytes keyed by floor path;
+materializing a directory is a client act.
+Coverage resolution takes observations -- a declared logical-source binding and
+the bytes the caller read -- rather than paths, so the daemon reads no client
+filesystem. It changes no accepted state, and the evidence-index, overlay, and
+manifest digests it returns reproduce the answer; it appends a consumption
+receipt only when the daemon runs with `CRUXIBLE_CONSUMPTION_RECEIPTS=on`.
+
+## Permission tiers
+
+Read operations require read_only. CAS/proposal operations require
+governed_write. Approval submission and activation require graph_write.
+Principal changes, compiler upgrades and provider installs require admin.
+
+`CRUXIBLE_MODE` (`read_only`, `governed_write`, `graph_write`, or `admin`, the
+default) fixes the MCP server's own tier: tools above it are not advertised,
+and every call is capped at it.
+
+The daemon capability ceiling and bearer credential tier both apply. A
+Cruxible principal signature is an additional governance condition, not a
+replacement for transport authorization. Under a `read_only` ceiling
+`cruxible_line_run`, `cruxible_line_dispatch` and `cruxible_procedure_run`
+refuse even for an observe-only target, since every run retains its journal and
+Captures.
+
+Workspace source tools take `root_aliases` as a list of `{alias, path}` records.
+Coverage takes `bindings` as a list of `{path, source}` records. Duplicate aliases
+or paths are refused. Named-query `params` and Procedure `input` use the vocabulary
+and input contracts declared in accepted state, which the daemon validates. A `params`
+value may be `null`, which binds an optional parameter explicitly; omitting it takes the
+parameter's default.
+
+Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. `changed_members` lists up to 50 sorted paths marked added, replaced, or removed; `changed_members_truncated` marks a longer list. Review it normally; no approval carries. Providers are not run again.
+
+CaptureContract input uses the closed shapes `http_response`, `procedure_output`,
+`foreign_span`, `database_snapshot`. Defaults: `grade: observed`, `replay: attested`
+for HTTP and `exact` otherwise, `retention: P30D`, `erasable: false`,
+`max_bytes: 16777216`, `selector_privacy: direct_allowed`. Derived grade requires
+`procedure_output`. The engine supplies components; clients author this compact
+form. A rule's `capture_contracts` accepts names or
+`{contract: NAME, logical_sources: [SOURCE]}`. Empty sources means any; a
+restricted entry matches the external Capture's recorded source and cannot
+admit a CAS Capture. Each served Capture admission account carries one
+`decision`, with status, rule, admission mode and any refusal or repair hint.

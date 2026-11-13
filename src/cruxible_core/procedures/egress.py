@@ -1,0 +1,1955 @@
+"""§8.5 effective-rung cap, typed terminal egress, and the v1 effect gate.
+
+Terminal authority is never read from one place.  §8.5.1 computes effective
+capability as the minimum of five independent terms — the Procedure hard cap,
+the LineSpec's requested rung, the propagated sensitivity cap, the live mandate
+grant, and the calibration cap — and every one of them may only narrow.  A
+missing or expired Procedure mandate contributes nothing: it leaves the
+mandate-free ceiling at rung 1 rather than lifting it, so no trigger, landing event, or
+calibration reading can ever manufacture settlement authority.  Because the cap
+is a minimum, the refusal it produces names the exact limiting term; honest
+scarcity is a property of the refusal, not a later reconstruction.
+
+Egress above the cap does not exist, and egress below it is typed by kind:
+``emit_capture`` emits inert evidence, ``post_inbox`` posts items to the inbox for intelligence,
+``claims`` reaches proposal *receive* only under a rung-2 grant, and
+``claims`` settles under one exact rung-3 Procedure mandate or falls
+back to an ordinary proposal.  A receipt cannot relabel one as another: its
+disposition is keyed to its kind, so a proposal can never report itself settled.
+
+External effects are not a rung.  V1 registers no effect grant at all, so a
+provider call carrying an ``effect_policy`` may prepare a durable intent and
+nothing else unless an authenticated actor invocation initiated the run.  A
+future grant tag is refused rather than reinterpreted; the refusal path is
+reserved here, the artifact is not.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Collection, Mapping
+from datetime import datetime
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import (
+    CandidateDigest,
+    ProposalDigest,
+    Sha256Value,
+    canonical_bytes,
+    normalize_canonical,
+    typed_digest,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureObjectStoreProtocol,
+    CaptureRunCoordinate,
+    CaptureRunCoordinateV1,
+    build_cas_capture,
+    build_procedure_capture_v2,
+    capture_contract_digest,
+    contract_materialization_modes,
+    contract_source_kinds,
+)
+from cruxible_client.contracts.claim_evidence import (
+    ClaimEvidenceReceipt,
+    ClaimsDiagnostic,
+    FindingKind,
+)
+from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
+from cruxible_client.contracts.mandate_scope import SettleScopeGap
+from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandate,
+    ProcedureMandateAny,
+    ProcedureMandateInvocation,
+    evaluate_procedure_mandate,
+    procedure_mandate_digest,
+)
+from cruxible_client.contracts.procedures.models import (
+    TERMINAL_REQUIRED_RUNGS,
+    authority_for_rung,
+)
+from cruxible_client.contracts.procedures.node_summary import ReobservationRefusalReason
+from cruxible_client.contracts.procedures.results import ServedAuthorityTerm
+from cruxible_client.contracts.proposal_models import SETTLE_OUTSIDE_MANDATE_SCOPE
+from cruxible_client.contracts.repairs import (
+    HandEditInstruction,
+    HandEditRepair,
+    RepairOperation,
+    ServedRepair,
+)
+from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.claims_changes import CoreClaimsChange
+from cruxible_core.procedures.terminal_dependencies import (
+    TAINT_ACCEPTED_STATE,
+    TAINT_CONSERVATIVE_DEFAULT,
+    TAINT_OMITTED_OPTIONAL,
+    TAINT_UNPROMOTED_EXHAUST,
+    CaptureRootCache,
+    TerminalItemDependencyManifestV1,
+)
+
+if TYPE_CHECKING:
+    from cruxible_core.indexes.sqlite import ProjectionHandle
+    from cruxible_core.procedures.execution import ProcedureRunAdmission
+    from cruxible_core.procedures.nested import ProcedureDelegation
+
+TerminalEgressKindV1 = Literal[
+    "emit_capture",
+    "post_inbox",
+    "claims",
+]
+#: Terminals that change accepted state under an exact Procedure mandate.
+EFFECTFUL_TERMINAL_KINDS: frozenset[str] = frozenset({"claims"})
+
+TerminalEgressDispositionV1 = Literal["emitted", "posted", "received", "settled"]
+
+MandateOperationV1 = Literal["compile_capture", "propose_change_set", "activate_change_set"]
+
+EffectiveRungTermV1 = Literal[
+    "procedure_terminal_capability",
+    "line_requested_rung",
+    "propagated_sensitivity",
+    "mandate_grant",
+    "calibration",
+]
+
+#: The five §8.5.1 terms, in the order a tie between equal minima resolves.
+EFFECTIVE_RUNG_TERMS: tuple[EffectiveRungTermV1, ...] = (
+    "procedure_terminal_capability",
+    "line_requested_rung",
+    "propagated_sensitivity",
+    "mandate_grant",
+    "calibration",
+)
+
+#: What a served result calls each term: the Line's ceiling is authored as a verb.
+#: The calibration term has no served name: it always reads the top rung and is
+#: ordered last, so it never limits a run (`compute_effective_rung`).
+SERVED_AUTHORITY_TERMS: dict[EffectiveRungTermV1, ServedAuthorityTerm] = {
+    "procedure_terminal_capability": "procedure_terminal_capability",
+    "line_requested_rung": "line_max_authority",
+    "propagated_sensitivity": "propagated_sensitivity",
+    "mandate_grant": "mandate_grant",
+}
+
+#: A settle terminal whose effective rung reaches propose but not settle
+#: proposes instead -- the same fallback a settle mandate's failing condition
+#: takes -- for this reason, suffixed with the term that capped it.
+SETTLE_AUTHORITY_CAPPED = "cruxible.settle.authority_capped"
+
+
+def settle_authority_capped_reason(term: EffectiveRungTermV1) -> str:
+    """The fallback reason a capped settle terminal records: the cap and its term."""
+
+    return f"{SETTLE_AUTHORITY_CAPPED}_by_{SERVED_AUTHORITY_TERMS[term]}"
+
+
+def served_capped_by(request: TerminalEgressRequestV1) -> ServedAuthorityTerm | None:
+    """The served name of the term that capped a settle request, if one did."""
+
+    return None if request.capped_by is None else SERVED_AUTHORITY_TERMS[request.capped_by]
+
+
+#: Below rung 0 there is no governed egress at all.  A term reaches this value
+#: only by refusing to interpret something, never by grading it.
+NO_TERMINAL_EGRESS = -1
+
+#: The highest rung reachable without an exact live Procedure mandate. Capture
+#: and inbox posting remain free; proposals and settlement consume authority.
+MANDATE_FREE_RUNG_CEILING = 1
+
+#: The mandate operation each rung consumes.  Rung 1 posts to the Line inbox and
+#: consumes none, which is why a cap is folded as a monotone prefix.
+RUNG_REQUIRED_OPERATIONS: dict[int, MandateOperationV1 | None] = {
+    0: "compile_capture",
+    1: None,
+    2: "propose_change_set",
+    3: "activate_change_set",
+}
+
+#: Kind-keyed dispositions.  A sink reports the one its kind allows or none.
+TERMINAL_EGRESS_DISPOSITIONS: dict[TerminalEgressKindV1, TerminalEgressDispositionV1] = {
+    "emit_capture": "emitted",
+    "post_inbox": "posted",
+    "claims": "settled",
+}
+#: A settle terminal whose condition does not hold may fall back to an ordinary
+#: proposal; its receipt then reports the proposal's disposition, never settled.
+TERMINAL_EGRESS_FALLBACK_DISPOSITIONS: dict[str, TerminalEgressDispositionV1] = {
+    "claims": "received",
+}
+
+
+def _disposition_allowed(kind: str, disposition: str) -> bool:
+    return disposition in {
+        TERMINAL_EGRESS_DISPOSITIONS[kind],  # type: ignore[index]
+        TERMINAL_EGRESS_FALLBACK_DISPOSITIONS.get(kind),
+    }
+
+
+#: Terminal kinds whose egress traverses one exact pinned artifact: the
+#: CaptureContract an emission is written under.  The other kinds pin nothing
+#: of their own.
+TERMINAL_EGRESS_BOUND_KINDS: frozenset[TerminalEgressKindV1] = frozenset({"emit_capture"})
+
+#: How far material carrying one derived taint label may propagate.  Reading
+#: accepted state constrains nothing; a reduction over unpromoted exhaust, a
+#: conservative default, and an omitted optional input each stop short of
+#: unattended settlement.  An unrecognized label is not graded, it is refused.
+SENSITIVITY_TAINT_CEILINGS: dict[str, int] = {
+    TAINT_ACCEPTED_STATE: 3,
+    TAINT_CONSERVATIVE_DEFAULT: 2,
+    TAINT_OMITTED_OPTIONAL: 2,
+    TAINT_UNPROMOTED_EXHAUST: 2,
+}
+
+#: A pseudonymous-selector observation may inform an untrusted proposal or a
+#: human, never an unattended settlement of directly addressed accepted state.
+SELECTOR_PRIVACY_CEILINGS: dict[str, int] = {
+    "direct_allowed": 3,
+    "pseudonymous_required": 2,
+}
+
+#: V1 registers no external-effect grant.  Any declared grant tag is unknown by
+#: construction and is refused rather than reinterpreted as one.
+RECOGNIZED_EFFECT_GRANT_TAGS: frozenset[str] = frozenset()
+
+
+class TerminalEgressError(FormatError):
+    """A terminal egress request, receipt, or rung binding is not admissible."""
+
+
+class _StrictEgressModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _tagged(value: str) -> str:
+    Sha256Value.from_tagged(value)
+    return value
+
+
+# ---------------------------------------------------------------------------
+# The five-term effective rung
+# ---------------------------------------------------------------------------
+
+
+class EffectiveRungTermReadingV1(_StrictEgressModel):
+    """One independent §8.5.1 ceiling and the exact thing that set it."""
+
+    tag: Literal["playbill-effective-rung-term-v1"] = "playbill-effective-rung-term-v1"
+    term: EffectiveRungTermV1
+    rung: int = Field(ge=NO_TERMINAL_EGRESS, le=3)
+    reason: str
+    basis_digest: str | None = None
+
+    @field_validator("basis_digest")
+    @classmethod
+    def _basis(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+
+class EffectiveRungV1(_StrictEgressModel):
+    """The minimum of five independent terms, bound to the run that computed it."""
+
+    tag: Literal["playbill-effective-rung-v1"] = "playbill-effective-rung-v1"
+    procedure_definition_digest: str
+    line_spec_digest: str
+    sensitivity_policy_digest: str
+    mandate_coordinate_digest: str
+    calibration_coordinate_digest: str
+    #: Retained wire field for persisted admission evidence; always empty.
+    #: Procedure authority is the exact mandate named by ``mandate_grant``.
+    mandate_basis_digests: tuple[str, ...] = ()
+    terms: tuple[EffectiveRungTermReadingV1, ...]
+    effective_rung: int = Field(ge=NO_TERMINAL_EGRESS, le=3)
+    limiting_term: EffectiveRungTermV1
+
+    _digests = field_validator(
+        "procedure_definition_digest",
+        "line_spec_digest",
+        "sensitivity_policy_digest",
+        "mandate_coordinate_digest",
+        "calibration_coordinate_digest",
+    )(_tagged)
+
+    @field_validator("mandate_basis_digests")
+    @classmethod
+    def _basis(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value:
+            raise ValueError("an effective rung carries no inherited mandate basis")
+        return value
+
+    @model_validator(mode="after")
+    def _minimum(self) -> "EffectiveRungV1":
+        if tuple(item.term for item in self.terms) != EFFECTIVE_RUNG_TERMS:
+            raise ValueError("an effective rung binds exactly the five declared terms in order")
+        lowest = min(item.rung for item in self.terms)
+        if self.effective_rung != lowest:
+            raise ValueError("effective rung is not the minimum of its own terms")
+        limiting = next(item.term for item in self.terms if item.rung == lowest)
+        if self.limiting_term != limiting:
+            raise ValueError("limiting term is not the first term reaching the minimum")
+        return self
+
+    def term(self, name: EffectiveRungTermV1) -> EffectiveRungTermReadingV1:
+        return next(item for item in self.terms if item.term == name)
+
+    def permits(self, kind: TerminalEgressKindV1) -> bool:
+        return TERMINAL_REQUIRED_RUNGS[kind] <= self.effective_rung
+
+    def granted_operation(self, kind: TerminalEgressKindV1) -> MandateOperationV1 | None:
+        return RUNG_REQUIRED_OPERATIONS[TERMINAL_REQUIRED_RUNGS[kind]]
+
+    @property
+    def refusal_code(self) -> str:
+        """Return the typed code naming which term capped this run."""
+
+        return f"terminal_authority_capped_by_{SERVED_AUTHORITY_TERMS[self.limiting_term]}"
+
+
+def effective_rung_digest(rung: EffectiveRungV1) -> str:
+    payload = rung.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, "playbill-effective-rung-v1", payload).tagged
+
+
+def _sensitivity_term(
+    *,
+    selector_privacies: Mapping[str, str],
+    taint_labels: tuple[str, ...],
+    sensitivity_policy_digest: str,
+) -> EffectiveRungTermReadingV1:
+    rung = 3
+    reason = "No admitted input narrows propagation."
+    for input_name in sorted(selector_privacies, key=lambda item: item.encode("utf-8")):
+        privacy = selector_privacies[input_name]
+        ceiling = SELECTOR_PRIVACY_CEILINGS.get(privacy, NO_TERMINAL_EGRESS)
+        if ceiling < rung:
+            rung = ceiling
+            reason = f"Admitted input {input_name!r} declares selector privacy {privacy!r}."
+    for label in sorted(set(taint_labels), key=lambda item: item.encode("utf-8")):
+        ceiling = SENSITIVITY_TAINT_CEILINGS.get(label, NO_TERMINAL_EGRESS)
+        if ceiling < rung:
+            rung = ceiling
+            reason = f"Admitted taint label {label!r} narrows propagation."
+    return EffectiveRungTermReadingV1(
+        term="propagated_sensitivity",
+        rung=rung,
+        reason=reason,
+        basis_digest=sensitivity_policy_digest,
+    )
+
+
+def _mandate_term(
+    *,
+    mandate_coordinate_digest: str,
+    procedure_mandate_rung: int | None,
+    caller_tier_rung: int | None = None,
+    parameters_overridden: bool = False,
+) -> EffectiveRungTermReadingV1:
+    if parameters_overridden:
+        # D-R39: a run on other parameters than its Line's is not the run the
+        # Line's mandate covers. It proposes in full, as a direct run does.
+        return EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=EPHEMERAL_RUN_RUNG_CEILING,
+            reason=(
+                "This run overrides its Line's parameters, so it runs without the Line's "
+                "mandate: it may propose, never settle."
+            ),
+            basis_digest=mandate_coordinate_digest,
+        )
+    if procedure_mandate_rung is None:
+        return EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=MANDATE_FREE_RUNG_CEILING,
+            reason="No exact Procedure mandate is bound; proposing and settling are unavailable.",
+            basis_digest=mandate_coordinate_digest,
+        )
+    # A principal holds a rung either directly, by its authority tier, or
+    # through the Line's mandate. The receipt is a digested governance reading,
+    # so it names whichever source actually reached the rung rather than
+    # attributing a tier-held rung to a mandate that grants less.
+    if caller_tier_rung is not None and caller_tier_rung > procedure_mandate_rung:
+        return EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=caller_tier_rung,
+            reason=(
+                f"The calling principal's authority tier holds "
+                f"{authority_for_rung(caller_tier_rung)}; the exact accepted Procedure "
+                f"mandate grants {authority_for_rung(procedure_mandate_rung)}."
+            ),
+            basis_digest=mandate_coordinate_digest,
+        )
+    return EffectiveRungTermReadingV1(
+        term="mandate_grant",
+        rung=procedure_mandate_rung,
+        reason=(
+            f"The exact accepted Procedure mandate grants "
+            f"{authority_for_rung(procedure_mandate_rung)}."
+        ),
+        basis_digest=mandate_coordinate_digest,
+    )
+
+
+def compute_effective_rung(
+    *,
+    procedure_terminal_capability: int,
+    requested_terminal_rung: int,
+    selector_privacies: Mapping[str, str],
+    taint_labels: tuple[str, ...],
+    procedure_definition_digest: str,
+    line_spec_digest: str,
+    sensitivity_policy_digest: str,
+    mandate_coordinate_digest: str,
+    calibration_coordinate_digest: str,
+    procedure_mandate_rung: int | None = None,
+    caller_tier_rung: int | None = None,
+    parameters_overridden: bool = False,
+) -> EffectiveRungV1:
+    """Fold the five §8.5.1 terms; each may narrow the result and none may widen it.
+
+    ``procedure_mandate_rung`` is the rung of the exact accepted Procedure
+    mandate bound to this run; an absent mandate leaves
+    :data:`MANDATE_FREE_RUNG_CEILING` untouched. A manual run that overrides
+    its Line's parameters (``parameters_overridden``, D-R39) binds no mandate
+    and is capped at propose.  No calibration cap is
+    registered, so the calibration term reads rung 3 and never narrows.
+    """
+
+    terms = (
+        EffectiveRungTermReadingV1(
+            term="procedure_terminal_capability",
+            rung=procedure_terminal_capability,
+            reason=(
+                f"The accepted Procedure's terminals reach "
+                f"{authority_for_rung(procedure_terminal_capability)}."
+            ),
+            basis_digest=procedure_definition_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="line_requested_rung",
+            rung=requested_terminal_rung,
+            reason=(
+                f"The accepted Line allows at most {authority_for_rung(requested_terminal_rung)}."
+            ),
+            basis_digest=line_spec_digest,
+        ),
+        _sensitivity_term(
+            selector_privacies=selector_privacies,
+            taint_labels=taint_labels,
+            sensitivity_policy_digest=sensitivity_policy_digest,
+        ),
+        _mandate_term(
+            mandate_coordinate_digest=mandate_coordinate_digest,
+            procedure_mandate_rung=procedure_mandate_rung,
+            caller_tier_rung=caller_tier_rung,
+            parameters_overridden=parameters_overridden,
+        ),
+        EffectiveRungTermReadingV1(
+            term="calibration",
+            rung=3,
+            reason="No calibration cap narrows this run.",
+            basis_digest=calibration_coordinate_digest,
+        ),
+    )
+    lowest = min(item.rung for item in terms)
+    return EffectiveRungV1(
+        procedure_definition_digest=procedure_definition_digest,
+        line_spec_digest=line_spec_digest,
+        sensitivity_policy_digest=sensitivity_policy_digest,
+        mandate_coordinate_digest=mandate_coordinate_digest,
+        calibration_coordinate_digest=calibration_coordinate_digest,
+        terms=terms,
+        effective_rung=lowest,
+        limiting_term=next(item.term for item in terms if item.rung == lowest),
+    )
+
+
+#: A direct run's authority ceiling (ruling C4): it may propose in full, but
+#: never settle -- no accepted Line and no Procedure mandate ever covers it.
+EPHEMERAL_RUN_RUNG_CEILING = 2
+
+
+def compute_ephemeral_run_effective_rung(
+    *,
+    procedure_terminal_capability: int,
+    procedure_definition_digest: str,
+    ephemeral_spec_digest: str,
+) -> EffectiveRungV1:
+    """The effective rung for a direct ``procedure_run``'s ephemeral Line spec.
+
+    Ruling C4: a direct run has no accepted Line, so no Procedure mandate ever
+    covers it. Its ceiling is fixed at propose -- it runs a
+    ``claims`` terminal in full, and a ``claims``
+    terminal falls back to an ordinary proposal exactly as it would under an
+    accepted Line whose live mandate does not grant settle. The ephemeral
+    spec's own digest stands in for the Line and mandate coordinates a real
+    accepted Line would otherwise supply.
+    """
+
+    terms = (
+        EffectiveRungTermReadingV1(
+            term="procedure_terminal_capability",
+            rung=procedure_terminal_capability,
+            reason=(
+                f"The accepted Procedure's terminals reach "
+                f"{authority_for_rung(procedure_terminal_capability)}."
+            ),
+            basis_digest=procedure_definition_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="line_requested_rung",
+            rung=EPHEMERAL_RUN_RUNG_CEILING,
+            reason="A direct run's ephemeral Line spec requests at most propose.",
+            basis_digest=ephemeral_spec_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="propagated_sensitivity",
+            rung=3,
+            reason="No admitted input narrows propagation.",
+            basis_digest=ephemeral_spec_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=EPHEMERAL_RUN_RUNG_CEILING,
+            reason=(
+                "A direct run has no accepted Line, so no Procedure mandate covers it; "
+                "its ephemeral spec grants propose, never settle."
+            ),
+            basis_digest=ephemeral_spec_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="calibration",
+            rung=3,
+            reason="No calibration cap narrows this run.",
+            basis_digest=ephemeral_spec_digest,
+        ),
+    )
+    lowest = min(item.rung for item in terms)
+    return EffectiveRungV1(
+        procedure_definition_digest=procedure_definition_digest,
+        line_spec_digest=ephemeral_spec_digest,
+        sensitivity_policy_digest=ephemeral_spec_digest,
+        mandate_coordinate_digest=ephemeral_spec_digest,
+        calibration_coordinate_digest=ephemeral_spec_digest,
+        terms=terms,
+        effective_rung=lowest,
+        limiting_term=next(item.term for item in terms if item.rung == lowest),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Typed egress
+# ---------------------------------------------------------------------------
+
+
+class TerminalEgressItemV1(_StrictEgressModel):
+    """One fanout child, addressed by the manifest its own closure produced."""
+
+    tag: Literal["playbill-terminal-egress-item-v1"] = "playbill-terminal-egress-item-v1"
+    child_index: int = Field(ge=0)
+    item_key: str
+    manifest_digest: str
+    value: object
+
+    _manifest = field_validator("manifest_digest")(_tagged)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+#: ``mandate_pin`` and ``mandate_basis_digests`` stay on the request wire so
+#: persisted requests keep their shape, but no terminal carries either:
+#: effectful authority is only the exact Procedure mandate a v2 request names.
+_INHERITED_MANDATE_REFUSAL = (
+    "terminal egress refuses an inherited mandate pin or basis; effectful authority "
+    "is the exact Procedure mandate"
+)
+
+
+class TerminalEgressRequestV1(_StrictEgressModel):
+    """Exactly what one authorized terminal hands its sink, and nothing more."""
+
+    tag: Literal["playbill-terminal-egress-request-v1"] = "playbill-terminal-egress-request-v1"
+    kind: TerminalEgressKindV1
+    run_id: str
+    node_id: str
+    accepted_coordinate: AcceptedCoordinate
+    procedure_identity: ArtifactIdentity
+    procedure_artifact_digest: str
+    admission_binding_digest: str
+    effective_rung: int = Field(ge=0, le=3)
+    required_rung: int = Field(ge=0, le=3)
+    limiting_term: EffectiveRungTermV1
+    granted_operation: MandateOperationV1 | None = None
+    bound_artifact_pin: ArtifactPin | None = None
+    mandate_pin: ArtifactPin | None = None
+    mandate_basis_digests: tuple[str, ...] = ()
+    actor_context: GovernedActorContext
+    items: tuple[TerminalEgressItemV1, ...]
+    prepared_at: datetime = Field(description="Reads EVALUATION INSTANT.")
+    #: The term that capped a settle terminal at propose. Such a request asks
+    #: for propose authority (its required rung is propose's), and its sink
+    #: delivers the settle terminal's proposal fallback instead of settling.
+    capped_by: EffectiveRungTermV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: A typed post_inbox's dedupe_key: the item fields that are an item's
+    #: identity in the inbox (absent: the whole item).
+    inbox_dedupe_key: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Core-produced Claims receipts, outside provider/authored item values.
+    claims_changes: dict[str, CoreClaimsChange] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    claims_evidence: dict[str, ClaimEvidenceReceipt] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+
+    _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
+
+    @field_validator("prepared_at")
+    @classmethod
+    def _prepared_at(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressRequestV1":
+        if self.required_rung != _requested_rung(self):
+            raise ValueError("terminal egress required rung disagrees with its kind")
+        if self.required_rung > self.effective_rung:
+            raise ValueError("terminal egress above the effective rung is never requested")
+        if self.granted_operation != RUNG_REQUIRED_OPERATIONS[self.required_rung]:
+            raise ValueError("terminal egress operation disagrees with its rung")
+        if (self.bound_artifact_pin is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
+            raise ValueError(f"{self.kind} egress binds exactly the artifact its law traverses")
+        if self.mandate_pin is not None or self.mandate_basis_digests:
+            raise ValueError(_INHERITED_MANDATE_REFUSAL)
+        if self.inbox_dedupe_key and self.kind != "post_inbox":
+            raise ValueError("only a post_inbox terminal declares an inbox dedupe_key")
+        if self.kind == "claims":
+            if set(self.claims_changes) != {item.item_key for item in self.items}:
+                raise ValueError(
+                    "claims egress requires the executor's typed changes; use a claims node"
+                )
+        elif self.claims_changes or self.claims_evidence:
+            raise ValueError("only the claims executor produces Claim changes and evidence")
+        if not self.items:
+            raise ValueError("terminal egress requires at least one child item")
+        if tuple(item.child_index for item in self.items) != tuple(range(len(self.items))):
+            raise ValueError("terminal egress children must be declared fanout order")
+        return self
+
+
+class TerminalEgressChildReceiptV1(_StrictEgressModel):
+    """One delivered child and the exact handle its sink produced for it."""
+
+    tag: Literal["playbill-terminal-egress-child-receipt-v1"] = (
+        "playbill-terminal-egress-child-receipt-v1"
+    )
+    child_index: int = Field(ge=0)
+    item_key: str
+    egress_digest: str
+
+    _egress = field_validator("egress_digest")(_tagged)
+
+
+class TerminalEgressReceiptV1(_StrictEgressModel):
+    """What a sink may report.  Its disposition is keyed to its kind, so a
+    proposal can never report itself activated or settled."""
+
+    tag: Literal["playbill-terminal-egress-receipt-v1"] = "playbill-terminal-egress-receipt-v1"
+    kind: TerminalEgressKindV1
+    run_id: str
+    node_id: str
+    disposition: TerminalEgressDispositionV1
+    bound_artifact_digest: str | None = None
+    children: tuple[TerminalEgressChildReceiptV1, ...]
+
+    @field_validator("bound_artifact_digest")
+    @classmethod
+    def _bound(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressReceiptV1":
+        expected = TERMINAL_EGRESS_DISPOSITIONS[self.kind]
+        if not _disposition_allowed(self.kind, self.disposition):
+            raise ValueError(f"a {self.kind} egress reports {expected!r}, nothing else")
+        if (self.bound_artifact_digest is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
+            raise ValueError(f"{self.kind} egress reports exactly the artifact it traversed")
+        if not self.children:
+            raise ValueError("terminal egress reports at least one delivered child")
+        if tuple(item.child_index for item in self.children) != tuple(range(len(self.children))):
+            raise ValueError("terminal egress children must be reported in fanout order")
+        return self
+
+
+class ProcedureProducerReceiptV1(_StrictEgressModel):
+    """Pre-egress producer commitment that keeps the Capture graph acyclic."""
+
+    tag: Literal["playbill-procedure-producer-receipt-v1"] = (
+        "playbill-procedure-producer-receipt-v1"
+    )
+    admission_binding_digest: str
+    run_id: str
+    accepted_coordinate: AcceptedCoordinate
+    procedure_identity: ArtifactIdentity
+    procedure_artifact_digest: str
+    terminal_node_id: str
+    item_manifest_digests: tuple[str, ...]
+    capture_contract_digest: str
+
+    @field_validator(
+        "admission_binding_digest",
+        "procedure_artifact_digest",
+        "capture_contract_digest",
+    )
+    @classmethod
+    def _receipt_digests(cls, value: str) -> str:
+        return _tagged(value)
+
+    @field_validator("item_manifest_digests")
+    @classmethod
+    def _item_manifests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("producer receipt requires at least one item manifest")
+        for digest in value:
+            _tagged(digest)
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProcedureProducerReceiptV1":
+        if self.procedure_identity.kind != "Procedure":
+            raise ValueError("producer receipt must name a Procedure")
+        return self
+
+
+def procedure_producer_receipt_digest(receipt: ProcedureProducerReceiptV1) -> str:
+    payload = receipt.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        "playbill-procedure-producer-receipt-v1",
+        payload,
+    ).tagged
+
+
+def _requested_rung(request: TerminalEgressRequestV1) -> int:
+    """The rung a request asks for: its kind's, or propose's for a capped settle."""
+
+    if request.capped_by is None:
+        return TERMINAL_REQUIRED_RUNGS[request.kind]
+    if request.kind != "claims":
+        raise ValueError("only a settle terminal is capped")
+    # Below settle the limiting term caps it; at settle only a missing settle
+    # grant does (a caller's tier lifted the mandate term past its mandates).
+    reaches = request.effective_rung >= TERMINAL_REQUIRED_RUNGS["claims"]
+    if request.capped_by != ("mandate_grant" if reaches else request.limiting_term):
+        raise ValueError("a capped settle names its limiting term, or the absent settle grant")
+    return 2
+
+
+def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
+    """Derive one retry key from semantic run inputs, never delivery time."""
+
+    return typed_digest(
+        Sha256Value,
+        "playbill-terminal-operation-key-v1",
+        {
+            "admission_binding_digest": request.admission_binding_digest,
+            "kind": request.kind,
+            "node_id": request.node_id,
+            "item_manifest_digests": [item.manifest_digest for item in request.items],
+            "target_paths": list(getattr(request, "target_paths", ())),
+            "procedure_mandate_digest": getattr(request, "procedure_mandate_digest", None),
+            "ephemeral_spec_digest": getattr(request, "ephemeral_spec_digest", None),
+            "procedure_artifact_digest": request.procedure_artifact_digest,
+            # A capped settle is a proposal, not a settlement: another operation.
+            **({} if request.capped_by is None else {"capped_by": request.capped_by}),
+        },
+    ).tagged
+
+
+class TerminalEgressRequestV2(TerminalEgressRequestV1):
+    """Dark P2-C request; B2 will parent it from the final admission carrier."""
+
+    tag: Literal["playbill-terminal-egress-request-v2"] = "playbill-terminal-egress-request-v2"  # type: ignore[assignment]
+    procedure_mandate_digest: str | None = None
+    #: Ruling C4: a direct run's ephemeral Line spec digest, standing in for a
+    #: Procedure mandate when no accepted Line exists to pin one to. Grants
+    #: propose only -- the effective rung is already ceilinged below settle
+    #: (``EPHEMERAL_RUN_RUNG_CEILING``), so this never authorizes settlement.
+    ephemeral_spec_digest: str | None = None
+    calibration_reading_digests: tuple[str, ...] = ()
+    target_paths: tuple[str, ...] = ()
+    evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
+    operation_key: str | None = None
+    producer_receipt: ProcedureProducerReceiptV1 | None = None
+
+    @field_validator("procedure_mandate_digest", "ephemeral_spec_digest", "operation_key")
+    @classmethod
+    def _optional_digests(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+    @field_validator("calibration_reading_digests")
+    @classmethod
+    def _readings(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("calibration reading digests must be sorted and unique")
+        for digest in value:
+            _tagged(digest)
+        return value
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("terminal target paths must be sorted and unique")
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressRequestV2":
+        if self.required_rung != _requested_rung(self):
+            raise ValueError("terminal egress required rung disagrees with its kind")
+        if self.required_rung > self.effective_rung:
+            raise ValueError("terminal egress above the effective rung is never requested")
+        if self.granted_operation != RUNG_REQUIRED_OPERATIONS[self.required_rung]:
+            raise ValueError("terminal egress operation disagrees with its rung")
+        if (self.bound_artifact_pin is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
+            raise ValueError(f"{self.kind} egress binds exactly the artifact its law traverses")
+        effectful = self.kind in EFFECTFUL_TERMINAL_KINDS
+        if bool(self.target_paths) != effectful or (self.operation_key is not None) != effectful:
+            raise ValueError("effectful terminal egress requires exact targets and operation key")
+        if (self.producer_receipt is not None) != (self.kind == "emit_capture"):
+            raise ValueError("only Capture egress carries a producer receipt")
+        if self.producer_receipt is not None:
+            producer = self.producer_receipt
+            pin = self.bound_artifact_pin
+            if (
+                producer.admission_binding_digest != self.admission_binding_digest
+                or producer.run_id != self.run_id
+                or producer.accepted_coordinate != self.accepted_coordinate
+                or producer.procedure_identity != self.procedure_identity
+                or producer.procedure_artifact_digest != self.procedure_artifact_digest
+                or producer.terminal_node_id != self.node_id
+                or producer.item_manifest_digests
+                != tuple(item.manifest_digest for item in self.items)
+                or pin is None
+                or producer.capture_contract_digest != pin.artifact_digest
+            ):
+                raise ValueError("Capture producer receipt does not reproduce its egress request")
+        has_mandate_authority = self.procedure_mandate_digest is not None
+        has_ephemeral_authority = self.ephemeral_spec_digest is not None
+        if has_mandate_authority and has_ephemeral_authority:
+            raise ValueError(
+                "terminal egress authority is a Procedure mandate or an ephemeral spec, never both"
+            )
+        if (has_mandate_authority or has_ephemeral_authority) != effectful:
+            raise ValueError(
+                "effectful terminal egress requires an exact Procedure mandate or ephemeral "
+                "authority (ruling C4)"
+            )
+        if self.mandate_pin is not None or self.mandate_basis_digests:
+            raise ValueError(_INHERITED_MANDATE_REFUSAL)
+        expected_key = terminal_operation_key(self) if effectful else None
+        if self.operation_key != expected_key:
+            raise ValueError("terminal operation key does not reproduce from the request")
+        if not self.items:
+            raise ValueError("terminal egress requires at least one child item")
+        if tuple(item.child_index for item in self.items) != tuple(range(len(self.items))):
+            raise ValueError("terminal egress children must be declared fanout order")
+        return self
+
+
+class TerminalAuthorityRefusal(TerminalEgressError):
+    """Repair-carrying refusal for the dark Procedure authority boundary."""
+
+    def __init__(
+        self,
+        codes: str | tuple[str, ...],
+        message: str,
+        *,
+        request: TerminalEgressRequestV1,
+        repair_kind: Literal[
+            "create_mandate",
+            "author_successor",
+            "rebind_admission",
+            "use_declared_rung",
+        ],
+        repair: ServedRepair,
+    ) -> None:
+        normalized = (codes,) if isinstance(codes, str) else tuple(codes)
+        if not normalized:
+            raise ValueError("terminal authority refusal requires at least one code")
+        self.codes = normalized
+        self.code = normalized[0]
+        self.procedure_name = request.procedure_identity.name
+        self.required_rung = request.required_rung
+        self.target_namespace = tuple(getattr(request, "target_paths", ()))
+        self.repair_kind = repair_kind
+        self.repair = repair
+        super().__init__(
+            f"{', '.join(normalized)}: {message} "
+            f"Procedure={self.procedure_name!r}; "
+            f"required_authority={authority_for_rung(self.required_rung)}; "
+            f"target_namespace={list(self.target_namespace)!r}."
+        )
+
+
+PROCEDURE_MANDATE_REPAIR = RepairOperation(
+    operation="cruxible.authoring.example",
+    arguments={"example": "procedure-mandate"},
+)
+PROCEDURE_ADMISSION_REPAIR = HandEditRepair(
+    hand_edit=HandEditInstruction(
+        target="terminal-egress/admission",
+        required_change="rebuild_from_exact_admitted_run",
+    )
+)
+
+
+def _validated_run_admission(
+    request: TerminalEgressRequestV1,
+    admission: ProcedureRunAdmission,
+) -> ProcedureRunAdmission:
+    """Order two EVALUATION INSTANT values while binding admitted authority."""
+
+    from cruxible_core.procedures.execution import (
+        ProcedureRunAdmission,
+        procedure_admission_digest,
+    )
+
+    try:
+        if not isinstance(admission, ProcedureRunAdmission):
+            raise TypeError("not a Procedure admission")
+        validated = type(admission).model_validate(admission.model_dump(mode="python"))
+    except (TypeError, ValueError) as exc:
+        raise TerminalAuthorityRefusal(
+            "procedure_authority_admission_invalid",
+            "The authority source is not a valid admitted Procedure run.",
+            request=request,
+            repair_kind="rebind_admission",
+            repair=PROCEDURE_ADMISSION_REPAIR,
+        ) from exc
+    common_matches = (
+        validated.admission_binding_digest == procedure_admission_digest(validated)
+        and request.admission_binding_digest == validated.admission_binding_digest
+        and request.run_id == validated.run_id
+        and request.accepted_coordinate == validated.accepted_coordinate
+        and request.procedure_identity == validated.procedure_identity
+        and request.procedure_artifact_digest == validated.procedure_artifact_digest
+        and request.actor_context == validated.actor_context
+        and request.prepared_at >= validated.admitted_at
+    )
+    v2_matches = not isinstance(request, TerminalEgressRequestV2) or (
+        request.evaluation_time == request.prepared_at
+    )
+    if not common_matches or not v2_matches:
+        raise TerminalAuthorityRefusal(
+            "procedure_authority_admission_mismatch",
+            "The terminal request does not reproduce its admitted authority and monotone time.",
+            request=request,
+            repair_kind="rebind_admission",
+            repair=PROCEDURE_ADMISSION_REPAIR,
+        )
+    return validated
+
+
+def build_terminal_egress_request_v2(
+    request: TerminalEgressRequestV1,
+    *,
+    admission: ProcedureRunAdmission,
+    procedure_mandate_digest: str | None,
+    calibration_reading_digests: tuple[str, ...],
+    target_paths: tuple[str, ...],
+    ephemeral_spec_digest: str | None = None,
+) -> TerminalEgressRequestV2:
+    """Successor a prepared request from its exact admission, never caller authority.
+
+    ``ephemeral_spec_digest`` is the direct run's own ephemeral Line spec
+    digest (ruling C4): the authority basis for an effectful terminal that has
+    no accepted Line and so no Procedure mandate could ever cover it. It is
+    mutually exclusive with ``procedure_mandate_digest``.
+    """
+
+    _validated_run_admission(request, admission)
+    payload = {
+        field_name: getattr(request, field_name)
+        for field_name in TerminalEgressRequestV1.model_fields
+        if field_name != "tag"
+    }
+    payload["mandate_pin"] = None
+    payload["mandate_basis_digests"] = ()
+    provisional = TerminalEgressRequestV2.model_construct(
+        **payload,
+        procedure_mandate_digest=procedure_mandate_digest,
+        ephemeral_spec_digest=ephemeral_spec_digest,
+        calibration_reading_digests=calibration_reading_digests,
+        target_paths=target_paths,
+        evaluation_time=request.prepared_at,
+        operation_key=None,
+        producer_receipt=(
+            producer_receipt_for_request(request) if request.kind == "emit_capture" else None
+        ),
+    )
+    operation_key = (
+        terminal_operation_key(provisional) if request.kind in EFFECTFUL_TERMINAL_KINDS else None
+    )
+    wire = provisional.model_copy(update={"operation_key": operation_key}).model_dump(
+        mode="python", exclude={"claims_evidence", "claims_changes"}
+    )
+    # These immutable core-produced models were validated at expansion; do not
+    # serialize and rebuild every receipt just to successor the request.
+    wire["claims_evidence"] = request.claims_evidence
+    wire["claims_changes"] = request.claims_changes
+    return TerminalEgressRequestV2.model_validate(wire)
+
+
+class TerminalEgressReceiptV2(TerminalEgressReceiptV1):
+    tag: Literal["playbill-terminal-egress-receipt-v2"] = "playbill-terminal-egress-receipt-v2"  # type: ignore[assignment]
+    producer_receipt_digest: str | None = None
+    operation_key: str | None = None
+
+    @field_validator("producer_receipt_digest", "operation_key")
+    @classmethod
+    def _v2_digests(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressReceiptV2":
+        expected = TERMINAL_EGRESS_DISPOSITIONS[self.kind]
+        if not _disposition_allowed(self.kind, self.disposition):
+            raise ValueError(f"a {self.kind} egress reports {expected!r}, nothing else")
+        if (self.bound_artifact_digest is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
+            raise ValueError(f"{self.kind} egress reports exactly the artifact it traversed")
+        if (self.producer_receipt_digest is not None) != (self.kind == "emit_capture"):
+            raise ValueError("only Capture egress reports a producer receipt")
+        if (self.operation_key is not None) != (self.kind in EFFECTFUL_TERMINAL_KINDS):
+            raise ValueError("only effectful egress reports an operation key")
+        if not self.children:
+            raise ValueError("terminal egress reports at least one delivered child")
+        if tuple(item.child_index for item in self.children) != tuple(range(len(self.children))):
+            raise ValueError("terminal egress children must be reported in fanout order")
+        return self
+
+
+class TerminalEgressChildReceiptV2(TerminalEgressChildReceiptV1):
+    """A child receipt that also names the lowered artifact path it settled into."""
+
+    tag: Literal["playbill-terminal-egress-child-receipt-v2"] = (
+        "playbill-terminal-egress-child-receipt-v2"  # type: ignore[assignment]
+    )
+    path: str
+
+
+class TerminalEgressChildReceiptV3(TerminalEgressChildReceiptV2):
+    """A terminal item that changed nothing (identity-design-1009).
+
+    It restated a live Claim on content that Claim already cites, so it lowered
+    into no changed member: ``path`` is the existing Claim's path and
+    ``egress_digest`` its current artifact digest at the admitted base. The
+    re-observing Capture and when it observed the content ride along; the
+    re-observation is recorded on the evidence plane, never as a revision.
+    ``reobservation_refused`` names why delivery could not record it (omitted
+    when it was recorded): the item is still unchanged, but its Claim's
+    content was not observed again.
+    """
+
+    tag: Literal["playbill-terminal-egress-child-receipt-v3"] = (
+        "playbill-terminal-egress-child-receipt-v3"  # type: ignore[assignment]
+    )
+    disposition: Literal["unchanged"] = "unchanged"
+    reobserving_capture_digest: str
+    reobserved_at: datetime = Field(description="Reads ASSERTION TIME.")
+    reobservation_refused: ReobservationRefusalReason | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    _reobserving = field_validator("reobserving_capture_digest")(_tagged)
+
+    @field_validator("reobserved_at")
+    @classmethod
+    def _reobserved_at(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+
+class TerminalEgressChildReceiptV4(TerminalEgressChildReceiptV2):
+    """A Subject item whose key a live Subject already holds (identity D1).
+
+    Creation by key resolves to that Subject, so the item lowered into no
+    changed member: ``path`` is the existing Subject's path and
+    ``egress_digest`` its artifact digest at the admitted base.
+    """
+
+    tag: Literal["playbill-terminal-egress-child-receipt-v4"] = (
+        "playbill-terminal-egress-child-receipt-v4"  # type: ignore[assignment]
+    )
+    disposition: Literal["reused"] = "reused"
+
+
+#: An item that lowered into no changed member: a restated Claim or a reused Subject.
+UnchangedChildReceiptAny = Annotated[
+    TerminalEgressChildReceiptV3 | TerminalEgressChildReceiptV4, Field(discriminator="tag")
+]
+UNCHANGED_CHILD_RECEIPTS = (TerminalEgressChildReceiptV3, TerminalEgressChildReceiptV4)
+
+#: A proposal child: the candidate member it lowered into, or an unchanged item.
+ProposalChildReceiptAny = Annotated[
+    TerminalEgressChildReceiptV2 | TerminalEgressChildReceiptV3 | TerminalEgressChildReceiptV4,
+    Field(discriminator="tag"),
+]
+
+
+class TerminalEgressUnchangedReceiptV1(TerminalEgressReceiptV1):
+    """A proposal or settle terminal whose every item changed nothing.
+
+    Every child restated a live Claim on content it already cites: there is
+    nothing to propose, so no proposal is made and no authority is exercised.
+    The terminal completes with every child reported unchanged.
+    """
+
+    tag: Literal["playbill-terminal-egress-unchanged-receipt-v1"] = (
+        "playbill-terminal-egress-unchanged-receipt-v1"  # type: ignore[assignment]
+    )
+    disposition: Literal["unchanged"] = "unchanged"  # type: ignore[assignment]
+    children: tuple[UnchangedChildReceiptAny, ...]
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressUnchangedReceiptV1":
+        if self.kind not in {"claims"}:
+            raise ValueError("only proposal and settle egress report an unchanged terminal")
+        if self.bound_artifact_digest is not None:
+            raise ValueError("an unchanged terminal traversed no artifact")
+        if not self.children:
+            raise ValueError("terminal egress reports at least one delivered child")
+        if tuple(item.child_index for item in self.children) != tuple(range(len(self.children))):
+            raise ValueError("terminal egress children must be reported in fanout order")
+        return self
+
+
+#: A child of a terminal whose change is its Line's open proposal: an item that
+#: would have changed a member (``TerminalEgressChildReceiptV1``, its handle
+#: the item's own manifest digest, since nothing new was produced) or an
+#: unchanged one.
+StillCurrentChildReceiptAny = Annotated[
+    TerminalEgressChildReceiptV1 | TerminalEgressChildReceiptV3 | TerminalEgressChildReceiptV4,
+    Field(discriminator="tag"),
+]
+
+
+class TerminalEgressStillCurrentReceiptV1(TerminalEgressReceiptV1):
+    """A Line's proposal terminal whose change equals its Line's open proposal.
+
+    No change: the open proposal ``open_proposal_id`` is still current, so it
+    is kept untouched and nothing new is proposed or authorized. An unchanged
+    child still records its re-observation.
+    """
+
+    tag: Literal["playbill-terminal-egress-still-current-receipt-v1"] = (
+        "playbill-terminal-egress-still-current-receipt-v1"  # type: ignore[assignment]
+    )
+    disposition: Literal["still_current"] = "still_current"  # type: ignore[assignment]
+    open_proposal_id: str
+    children: tuple[StillCurrentChildReceiptAny, ...]
+
+    @field_validator("open_proposal_id")
+    @classmethod
+    def _open_proposal(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressStillCurrentReceiptV1":
+        if self.kind != "claims":
+            raise ValueError("only a Line's proposal terminal keeps its open proposal")
+        if self.bound_artifact_digest is not None:
+            raise ValueError("a still-current terminal traversed no artifact")
+        if not self.children:
+            raise ValueError("terminal egress reports at least one delivered child")
+        if tuple(item.child_index for item in self.children) != tuple(range(len(self.children))):
+            raise ValueError("terminal egress children must be reported in fanout order")
+        return self
+
+
+class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
+    """A proposal receipt that names the proposal and exact candidate it produced.
+
+    The handles are what a manager needs to retrieve, review, and activate the
+    candidate through the existing proposal doors; a receipt that carried only
+    per-child artifact digests could not be resolved back to either.
+    """
+
+    tag: Literal["playbill-terminal-egress-receipt-v3"] = "playbill-terminal-egress-receipt-v3"  # type: ignore[assignment]
+    proposal_id: str
+    candidate_digest: str
+    target_paths: tuple[str, ...]
+    #: A changed child settles into one of ``target_paths``; an unchanged one
+    #: names a live Claim (``TerminalEgressChildReceiptV3``) or Subject
+    #: (``TerminalEgressChildReceiptV4``) outside them.
+    children: tuple[ProposalChildReceiptAny, ...]
+    #: Recovery delivered to an admission under the operation's ref that this
+    #: operation's terminal did not submit (it names no such binding): the
+    #: items' reasons stay with the operation and are attached to no proposal.
+    item_reasons_unattributed: bool = Field(default=False, exclude_if=lambda value: value is False)
+    #: A Line run's proposal that withdrew its Line's earlier open proposal,
+    #: whose change differed, as superseded by this one. Omitted otherwise.
+    superseded_proposal_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("superseded_proposal_id")
+    @classmethod
+    def _superseded(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("proposal receipt target paths must be nonempty, sorted, and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _proposal_shape(self) -> "TerminalEgressReceiptV3":
+        if self.kind not in {"claims"}:
+            raise ValueError("only proposal and settle egress report a proposal receipt")
+        if self.superseded_proposal_id is not None and (
+            self.kind != "claims" or self.superseded_proposal_id == self.proposal_id
+        ):
+            raise ValueError("only a Line's proposal supersedes another proposal")
+        if any(
+            (child.path in self.target_paths) == isinstance(child, UNCHANGED_CHILD_RECEIPTS)
+            for child in self.children
+        ):
+            raise ValueError(
+                "every changed proposal child settles into one of the receipt's targets, "
+                "and no unchanged child does"
+            )
+        return self
+
+
+class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
+    """What a settle terminal did: settled under its mandate, or fell back to a proposal.
+
+    ``settled`` names the accepted generation the change landed in; ``proposed``
+    names only the ordinary proposal left open for review, so a fallback can
+    never read as a settlement.
+    """
+
+    tag: Literal["playbill-terminal-egress-receipt-v4"] = "playbill-terminal-egress-receipt-v4"  # type: ignore[assignment]
+    outcome: Literal["settled", "proposed"]
+    procedure_mandate_digest: str
+    accepted_git_oid: str | None = None
+    fallback_reason: str | None = None
+    #: The term that capped a settle at propose, from its request.
+    capped_by: ServedAuthorityTerm | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: Why the settle grant's scope left the change out, for an
+    #: outside-mandate-scope fallback (its proposal's settle submission).
+    outside_scope: tuple[SettleScopeGap, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+
+    @field_validator("procedure_mandate_digest")
+    @classmethod
+    def _mandate(cls, value: str) -> str:
+        return _tagged(value)
+
+    @model_validator(mode="after")
+    def _settle_shape(self) -> "TerminalEgressReceiptV4":
+        settled = self.outcome == "settled"
+        if settled != (self.disposition == "settled"):
+            raise ValueError("a settle receipt's disposition follows its outcome")
+        if settled != (self.accepted_git_oid is not None):
+            raise ValueError("only a settled outcome names its accepted generation")
+        if settled == (self.fallback_reason is not None):
+            raise ValueError("only a fallback proposal carries the reason it did not settle")
+        if settled and self.capped_by is not None:
+            raise ValueError("a capped settle never settles")
+        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(self.outside_scope):
+            raise ValueError("exactly an outside-scope fallback names why it fell outside")
+        return self
+
+
+LINE_CHANGE_SIGNATURE_DOMAIN = "cruxible-line-change-signature-v1"
+
+LineProposalDecisionV1 = Literal["propose", "still_current", "supersede"]
+
+
+class LineProposalPreparationV1(_StrictEgressModel):
+    """How a Line run's proposal terminal stands to its Line's open proposal.
+
+    Decided once, at prepare, and journaled with the preparation, so recovery
+    reproduces it rather than deciding again. ``signature`` commits to this
+    run's change (``line_change_signature``). ``propose``: the Line has no open
+    proposal, so this one is submitted as usual. ``still_current``: the open
+    proposal ``open_proposal_id`` carries the same change, so it is kept and
+    nothing is proposed. ``supersede``: it carries another change, so this one
+    is submitted and the open one withdrawn as superseded by it -- unless it
+    settled first, when nothing is withdrawn.
+    """
+
+    tag: Literal["playbill-line-proposal-preparation-v1"] = "playbill-line-proposal-preparation-v1"
+    line_id: str
+    signature: str
+    decision: LineProposalDecisionV1
+    open_proposal_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    _signature = field_validator("signature")(_tagged)
+
+    @field_validator("open_proposal_id")
+    @classmethod
+    def _open_proposal(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _decision_shape(self) -> "LineProposalPreparationV1":
+        if (self.decision == "propose") != (self.open_proposal_id is None):
+            raise ValueError("exactly a decision about an open proposal names it")
+        return self
+
+
+class PreparedTerminalEgressV1(_StrictEgressModel):
+    """What a preparer resolved for one effectful terminal before delivery.
+
+    `target_paths` are the ACTUAL changed paths shared lowering produced, so the
+    mandate is evaluated against what will be proposed rather than what the
+    template declared. `lowering_digest` commits to the exact changed member
+    bytes; a retry that reproduces it recovers the same proposal, one that does
+    not is refused rather than relabelled.
+    """
+
+    tag: Literal["playbill-prepared-terminal-egress-v1"] = "playbill-prepared-terminal-egress-v1"
+    target_paths: tuple[str, ...]
+    procedure_mandate_digest: str | None = None
+    lowering_digest: str
+    item_paths: tuple[tuple[str, str], ...]
+    #: The items that changed nothing (identity-design-1009), each the receipt
+    #: child it is reported as; when every item is one, ``target_paths`` is
+    #: empty and no proposal is made. Omitted when none.
+    unchanged: tuple[UnchangedChildReceiptAny, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    #: A Line run's proposal terminal: how its change stands to the Line's open
+    #: proposal. Omitted for any other run, terminal kind, or unchanged terminal.
+    line_proposal: LineProposalPreparationV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    _lowering = field_validator("lowering_digest")(_tagged)
+
+    @field_validator("procedure_mandate_digest")
+    @classmethod
+    def _mandate(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("prepared target paths must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _changed_or_unchanged(self) -> "PreparedTerminalEgressV1":
+        if not self.target_paths and not self.unchanged:
+            raise ValueError("prepared target paths must be nonempty unless no item changed")
+        if not self.target_paths and self.procedure_mandate_digest is not None:
+            raise ValueError("a terminal that changes nothing binds no mandate")
+        if self.line_proposal is not None and not self.target_paths:
+            raise ValueError("a terminal that changes nothing has no open proposal to weigh")
+        if self.keeps_open_proposal and self.procedure_mandate_digest is not None:
+            raise ValueError("a terminal that keeps its Line's open proposal binds no mandate")
+        return self
+
+    @property
+    def changes_nothing(self) -> bool:
+        """Whether every item restated what is already live: nothing to propose."""
+
+        return not self.target_paths
+
+    @property
+    def keeps_open_proposal(self) -> bool:
+        """Whether the change is its Line's open proposal's: nothing new to propose."""
+
+        return self.line_proposal is not None and self.line_proposal.decision == "still_current"
+
+    @property
+    def proposes_nothing(self) -> bool:
+        """Whether delivery submits no proposal and exercises no authority."""
+
+        return self.changes_nothing or self.keeps_open_proposal
+
+    @field_validator("item_paths")
+    @classmethod
+    def _item_paths(cls, value: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+        keys = tuple(item[0] for item in value)
+        if keys != tuple(sorted(set(keys), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("prepared item paths must be keyed by sorted unique item keys")
+        return value
+
+    def path_for(self, item_key: str) -> str | None:
+        return next((path for key, path in self.item_paths if key == item_key), None)
+
+
+@runtime_checkable
+class SettleGrantHolderProtocol(Protocol):
+    """A sink that knows whether any live mandate it holds grants settle."""
+
+    def grants_settle(self) -> bool: ...
+
+
+@runtime_checkable
+class TerminalEgressPreparerProtocol(Protocol):
+    """A sink that must lower before it can be asked what it will change."""
+
+    def prepare_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        admission: ProcedureRunAdmission,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        evidence: Mapping[str, str] | None = None,
+        derivations: Mapping[str, Collection[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
+    ) -> PreparedTerminalEgressV1: ...
+
+
+def require_procedure_mandate(
+    request: TerminalEgressRequestV2,
+    *,
+    admission: ProcedureRunAdmission,
+    accepted_mandates: Mapping[str, ProcedureMandateAny],
+    delegation: ProcedureDelegation | None = None,
+) -> ProcedureMandateAny | None:
+    """Resolve and evaluate authority before any effectful adapter is invoked.
+
+    Returns the exact accepted mandate the request bound, or ``None`` when the
+    request instead carries ephemeral authority (ruling C4): a direct run has
+    no accepted Line, so no Procedure mandate could ever cover it, and its own
+    ephemeral Line spec grants propose on its own -- never settle, since the
+    effective rung is already ceilinged below it.
+    """
+
+    _validated_run_admission(request, admission)
+    from cruxible_core.procedures.nested import authority_line
+
+    # A nested carrier alone is insufficient. This checks the executing parent
+    # frame, exact accepted Invoke node, same actor/lane, and constrained limits.
+    line_identity, line_digest = authority_line(admission, delegation)
+    if request.kind not in EFFECTFUL_TERMINAL_KINDS:
+        raise TerminalAuthorityRefusal(
+            "procedure_mandate_not_applicable",
+            "Only rung-2 and rung-3 terminals consume Procedure mandates.",
+            request=request,
+            repair_kind="use_declared_rung",
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target="terminal-egress/required-rung",
+                    required_change="use_declared_terminal_rung",
+                )
+            ),
+        )
+    if request.ephemeral_spec_digest is not None:
+        # A Line run claims ephemeral authority only as the override it was
+        # admitted with (D-R39): its parameters are not the ones its Line's
+        # mandate covers, so it proposes on its own, never settles.
+        overridden = (
+            admission.parameter_override_digest is not None
+            and admission.parent_binding is None
+            and request.ephemeral_spec_digest == admission.parameter_override_digest
+        )
+        if (line_identity is not None or line_digest is not None) and not overridden:
+            raise TerminalAuthorityRefusal(
+                "procedure_mandate_line_mismatch",
+                "Ephemeral authority is claimed by a run admitted under an accepted Line.",
+                request=request,
+                repair_kind="rebind_admission",
+                repair=PROCEDURE_ADMISSION_REPAIR,
+            )
+        if request.required_rung > EPHEMERAL_RUN_RUNG_CEILING:
+            # The request model's own shape already forbids this (required_rung
+            # can never exceed the effective rung, itself ceilinged here), but
+            # authority is re-checked defensively before any effect.
+            raise TerminalAuthorityRefusal(
+                "procedure_mandate_line_mismatch",
+                "A Mandate grants authority to one exact Line; a direct run has none.",
+                request=request,
+                repair_kind="create_mandate",
+                repair=PROCEDURE_MANDATE_REPAIR,
+            )
+        return None
+    digest = request.procedure_mandate_digest
+    mandate = None if digest is None else accepted_mandates.get(digest)
+    if mandate is None:
+        raise TerminalAuthorityRefusal(
+            "procedure_mandate_required",
+            "An exact accepted Procedure mandate is required before effect.",
+            request=request,
+            repair_kind="create_mandate",
+            repair=PROCEDURE_MANDATE_REPAIR,
+        )
+    assert digest is not None
+    if line_identity is None or line_digest is None:
+        raise TerminalAuthorityRefusal(
+            "procedure_mandate_line_mismatch",
+            "A Mandate grants authority to one exact Line; a direct run has none.",
+            request=request,
+            repair_kind="create_mandate",
+            repair=PROCEDURE_MANDATE_REPAIR,
+        )
+    evaluation = evaluate_procedure_mandate(
+        mandate,
+        ProcedureMandateInvocation(
+            line_identity=line_identity,
+            line_artifact_digest=line_digest,
+            requested_rung=request.required_rung,  # type: ignore[arg-type]
+            target_paths=request.target_paths,
+            evaluation_time=request.prepared_at,
+            accepted_mandate_digest=digest,
+        ),
+    )
+    if evaluation.verdict == "refused":
+        raise TerminalAuthorityRefusal(
+            evaluation.refusal_codes,
+            "The accepted Procedure mandate does not cover this terminal request.",
+            request=request,
+            repair_kind="author_successor",
+            repair=PROCEDURE_MANDATE_REPAIR,
+        )
+    return mandate
+
+
+def require_procedure_mandate_at_head(
+    request: TerminalEgressRequestV2,
+    *,
+    admission: ProcedureRunAdmission,
+    projection: ProjectionHandle,
+    delegation: ProcedureDelegation | None = None,
+) -> ProcedureMandateAny | None:
+    """Re-establish the bound mandate against the accepted tree an effect is about to touch.
+
+    Admission bound the mandate at the run's base. Accepted state may have
+    moved since -- the mandate retired, replaced, or removed -- and a proposal
+    is evaluated at the head, so the head is where the authority to create it
+    must still hold. The same mandate law runs, over the head's own copy of
+    the bound mandate; a head that no longer carries that exact mandate is a
+    superseded one.
+    """
+
+    from cruxible_core.procedures.nested import authority_line
+
+    line_identity, line_digest = authority_line(admission, delegation)
+    digest = request.procedure_mandate_digest
+    mandates = {}
+    if digest is not None:
+        row = projection.typed.connection.execute(
+            "SELECT identity FROM procedure_mandates WHERE artifact_digest=?", (digest,)
+        ).fetchone()
+        if row is not None:
+            mandate = projection.typed.source(row[0])
+            if (
+                not isinstance(mandate, ProcedureMandate)
+                or procedure_mandate_digest(mandate).tagged != digest
+            ):
+                raise ProjectionIntegrityError(
+                    "accepted ProcedureMandate source differs from its exact digest"
+                )
+            if mandate.line.target == line_identity and mandate.line.artifact_digest == line_digest:
+                # Retired mandates remain visible: the existing law produces
+                # the same superseded refusal as an absent or replaced digest.
+                mandates[digest] = mandate
+    if digest is not None and digest not in mandates:
+        raise TerminalAuthorityRefusal(
+            "procedure_mandate_superseded",
+            "The accepted head no longer carries the Procedure mandate this run was "
+            "admitted under.",
+            request=request,
+            repair_kind="author_successor",
+            repair=PROCEDURE_MANDATE_REPAIR,
+        )
+    return require_procedure_mandate(
+        request, admission=admission, accepted_mandates=mandates, delegation=delegation
+    )
+
+
+def producer_receipt_for_request(
+    request: TerminalEgressRequestV1,
+) -> ProcedureProducerReceiptV1:
+    if request.kind != "emit_capture" or request.bound_artifact_pin is None:
+        raise TerminalEgressError("producer receipts are defined only for Capture egress")
+    return ProcedureProducerReceiptV1(
+        admission_binding_digest=request.admission_binding_digest,
+        run_id=request.run_id,
+        accepted_coordinate=request.accepted_coordinate,
+        procedure_identity=request.procedure_identity,
+        procedure_artifact_digest=request.procedure_artifact_digest,
+        terminal_node_id=request.node_id,
+        item_manifest_digests=tuple(item.manifest_digest for item in request.items),
+        capture_contract_digest=request.bound_artifact_pin.artifact_digest,
+    )
+
+
+@runtime_checkable
+class FindingsSinkProtocol(Protocol):
+    finding_kinds: tuple[FindingKind, ...]
+    """Post bounded core diagnostics after successful terminal delivery."""
+
+    def route_findings(
+        self,
+        *,
+        admission: ProcedureRunAdmission,
+        node_id: str,
+        diagnostics: tuple[ClaimsDiagnostic, ...],
+        at: datetime,
+        captures: tuple[str, ...] = (),
+    ) -> None: ...
+
+
+@runtime_checkable
+class InboxEgressSinkProtocol(Protocol):
+    """A sink that posts ``post_inbox`` items, attaching each one's own evidence.
+
+    It receives each item's dependency manifest so it can attach exactly the
+    Captures the item's closure reached: an item cannot cite evidence the run
+    did not see.
+    """
+
+    def deliver_inbox_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    ) -> TerminalEgressReceiptV1: ...
+
+
+@runtime_checkable
+class TerminalEgressSinkProtocol(Protocol):
+    def deliver_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+    ) -> TerminalEgressReceiptV1: ...
+
+
+def verify_terminal_egress_receipt(
+    request: TerminalEgressRequestV1,
+    receipt: TerminalEgressReceiptV1,
+) -> None:
+    """Refuse any receipt that renames, drops, adds, or re-targets a child."""
+
+    if receipt.kind != request.kind or receipt.run_id != request.run_id:
+        raise TerminalEgressError("terminal egress receipt names another run or kind")
+    if receipt.node_id != request.node_id:
+        raise TerminalEgressError("terminal egress receipt names another terminal node")
+    expected_bound = (
+        None if request.bound_artifact_pin is None else request.bound_artifact_pin.artifact_digest
+    )
+    if receipt.bound_artifact_digest != expected_bound:
+        raise TerminalEgressError("terminal egress did not traverse the exact pinned artifact")
+    if len(receipt.children) != len(request.items):
+        raise TerminalEgressError("terminal egress receipt drops or invents a child")
+    for item, child in zip(request.items, receipt.children, strict=True):
+        if child.item_key != item.item_key:
+            raise TerminalEgressError("terminal egress receipt renames a child item")
+    if isinstance(receipt, TerminalEgressReceiptV2):
+        if not isinstance(request, TerminalEgressRequestV2):
+            raise TerminalEgressError("a v2 terminal receipt requires its exact v2 request")
+        expected_producer = (
+            None
+            if request.producer_receipt is None
+            else procedure_producer_receipt_digest(request.producer_receipt)
+        )
+        if receipt.producer_receipt_digest != expected_producer:
+            raise TerminalEgressError("Capture egress did not bind its exact producer receipt")
+        if receipt.operation_key != request.operation_key:
+            raise TerminalEgressError("effectful egress did not reproduce its operation key")
+        if isinstance(receipt, TerminalEgressReceiptV3):
+            if receipt.target_paths != request.target_paths:
+                raise TerminalEgressError("proposal egress did not settle the exact target paths")
+        elif request.kind in {"claims"}:
+            raise TerminalEgressError("proposal egress requires a receipt naming its proposal")
+        if request.kind == "claims" and (
+            not isinstance(receipt, TerminalEgressReceiptV4)
+            or receipt.procedure_mandate_digest
+            != (request.procedure_mandate_digest or request.ephemeral_spec_digest)
+            or receipt.capped_by != served_capped_by(request)
+        ):
+            raise TerminalEgressError("settle egress must report under its exact mandate")
+    elif isinstance(request, TerminalEgressRequestV2):
+        raise TerminalEgressError("v2 terminal egress requires a v2 receipt")
+    elif request.kind == "claims" and not isinstance(
+        receipt, (TerminalEgressUnchangedReceiptV1, TerminalEgressStillCurrentReceiptV1)
+    ):
+        # A v1 claims request is only ever the prepared no-op of a terminal
+        # that changed nothing; any change is proposed or settled under v2.
+        raise TerminalEgressError("claims egress that changes state requires its v2 request")
+
+
+class CaptureTerminalEgressSink:
+    """Rung-0 egress: inert Capture emission through the accepted Capture machinery.
+
+    This sink deliberately serves ``emit_capture`` alone.  Inbox, proposal, and
+    settlement egress traverse governed surfaces the run plane does not own, and
+    a sink that quietly served them here would be a second authority.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: CaptureObjectStoreProtocol,
+        contracts: Mapping[str, CaptureContract],
+        producer: ArtifactIdentity,
+        producer_binding_digest: str,
+    ) -> None:
+        self.store = store
+        self.contracts = dict(contracts)
+        self.producer = producer
+        self.producer_binding_digest = producer_binding_digest
+
+    def deliver_terminal_egress(
+        self,
+        *,
+        request: TerminalEgressRequestV1,
+    ) -> TerminalEgressReceiptV1:
+        if request.kind != "emit_capture":
+            raise TerminalEgressError(
+                f"the Capture egress sink serves emit_capture only, not {request.kind!r}"
+            )
+        pin = request.bound_artifact_pin
+        if pin is None:  # pragma: no cover - request law binds the contract
+            raise TerminalEgressError("emit_capture egress requires its pinned CaptureContract")
+        contract = self.contracts.get(pin.artifact_digest)
+        if contract is None or capture_contract_digest(contract).tagged != pin.artifact_digest:
+            raise TerminalEgressError("no accepted CaptureContract reproduces this egress pin")
+        if "cas" not in contract_source_kinds(
+            contract
+        ) or "cas" not in contract_materialization_modes(contract):
+            raise TerminalEgressError("emit_capture requires a CaptureContract permitting CAS")
+        if len(request.items) > contract.selection_budget.max_items or any(
+            len(canonical_bytes(item.value)) > contract.selection_budget.max_bytes
+            for item in request.items
+        ):
+            raise TerminalEgressError("emit_capture output exceeds its CaptureContract budget")
+        if contract.epistemic_grade == "derived":
+            raise TerminalEgressError(
+                "emit_capture cannot satisfy a derived CaptureContract without reducer "
+                "and input receipt-set proof"
+            )
+        request_v2 = request if isinstance(request, TerminalEgressRequestV2) else None
+        if request_v2 is not None and (
+            self.producer != request.procedure_identity
+            or self.producer_binding_digest != request.procedure_artifact_digest
+        ):
+            raise TerminalEgressError(
+                "Capture egress sink producer differs from the Procedure request"
+            )
+        run_coordinate = (
+            CaptureRunCoordinate(
+                run_kind="procedure",
+                run_id=request.run_id,
+                bound_generation=request.accepted_coordinate.generation_root,
+                executable_identity=self.producer,
+                executable_digest=self.producer_binding_digest,
+            )
+            if request_v2 is not None
+            else CaptureRunCoordinateV1(
+                run_kind="procedure",
+                run_id=request.run_id,
+                bound_generation=request.accepted_coordinate.generation_root,
+                executable_identity=self.producer,
+                executable_digest=self.producer_binding_digest,
+            )
+        )
+        children: list[TerminalEgressChildReceiptV1] = []
+        producer_receipt_digest = (
+            procedure_producer_receipt_digest(request_v2.producer_receipt)
+            if request_v2 is not None and request_v2.producer_receipt is not None
+            else None
+        )
+        capture_observed_at = (
+            request_v2.evaluation_time if request_v2 is not None else request.prepared_at
+        )
+        for item in request.items:
+            built = (
+                build_procedure_capture_v2(
+                    store=self.store,
+                    contract=contract,
+                    source_body=canonical_bytes(item.value),
+                    run_coordinate=cast(CaptureRunCoordinate, run_coordinate),
+                    producer_receipt_digest=producer_receipt_digest,
+                    producer=self.producer,
+                    producer_binding_digest=self.producer_binding_digest,
+                    observed_at=capture_observed_at,
+                )
+                if producer_receipt_digest is not None
+                else build_cas_capture(
+                    store=self.store,
+                    contract=contract,
+                    source_body=canonical_bytes(item.value),
+                    run_coordinate=cast(CaptureRunCoordinateV1, run_coordinate),
+                    run_receipt_digest=request.admission_binding_digest,
+                    producer=self.producer,
+                    producer_binding_digest=self.producer_binding_digest,
+                    observed_at=request.prepared_at,
+                )
+            )
+            children.append(
+                TerminalEgressChildReceiptV1(
+                    child_index=item.child_index,
+                    item_key=item.item_key,
+                    egress_digest=built.capture_digest,
+                )
+            )
+        if producer_receipt_digest is not None:
+            return TerminalEgressReceiptV2(
+                kind="emit_capture",
+                run_id=request.run_id,
+                node_id=request.node_id,
+                disposition="emitted",
+                bound_artifact_digest=pin.artifact_digest,
+                children=tuple(children),
+                producer_receipt_digest=producer_receipt_digest,
+            )
+        return TerminalEgressReceiptV1(
+            kind="emit_capture",
+            run_id=request.run_id,
+            node_id=request.node_id,
+            disposition="emitted",
+            bound_artifact_digest=pin.artifact_digest,
+            children=tuple(children),
+        )
+
+
+# ---------------------------------------------------------------------------
+# The v1 effect gate
+# ---------------------------------------------------------------------------
+
+
+def effect_dispatch_refusal(
+    *,
+    invocation_origin: Literal["actor", "line"],
+    actor_context: GovernedActorContext,
+    declared_effect_grants: tuple[str, ...] = (),
+) -> tuple[str, str] | None:
+    """Return the typed refusal that stops an unattended effect, or ``None``.
+
+    V1 has no unattended effect grant to check, so an unknown grant tag is
+    refused before anything else: reinterpreting one as the future
+    ``invoke_named_effect`` operation is exactly the mistake §4.4 forbids.
+    """
+
+    unknown = tuple(
+        sorted(
+            set(declared_effect_grants) - RECOGNIZED_EFFECT_GRANT_TAGS,
+            key=lambda item: item.encode("utf-8"),
+        )
+    )
+    if unknown:
+        return (
+            "effect_grant_unrecognized",
+            f"V1 registers no external-effect grant; {list(unknown)} is refused, not interpreted.",
+        )
+    if invocation_origin != "actor":
+        return (
+            "effect_dispatch_requires_actor",
+            "A line-originated run may prepare an effect intent but never dispatch the effect.",
+        )
+    if actor_context.actor_type == "system":
+        return (
+            "effect_dispatch_requires_authenticated_actor",
+            "A system context is not the authenticated actor request v1 effects require.",
+        )
+    return None
+
+
+__all__ = [
+    "require_procedure_mandate_at_head",
+    "EFFECTIVE_RUNG_TERMS",
+    "MANDATE_FREE_RUNG_CEILING",
+    "NO_TERMINAL_EGRESS",
+    "RECOGNIZED_EFFECT_GRANT_TAGS",
+    "RUNG_REQUIRED_OPERATIONS",
+    "SELECTOR_PRIVACY_CEILINGS",
+    "SENSITIVITY_TAINT_CEILINGS",
+    "SETTLE_AUTHORITY_CAPPED",
+    "TERMINAL_EGRESS_BOUND_KINDS",
+    "TERMINAL_EGRESS_DISPOSITIONS",
+    "CaptureTerminalEgressSink",
+    "EffectiveRungTermReadingV1",
+    "EffectiveRungTermV1",
+    "EffectiveRungV1",
+    "InboxEgressSinkProtocol",
+    "MandateOperationV1",
+    "TerminalEgressChildReceiptV1",
+    "TerminalEgressDispositionV1",
+    "TerminalEgressError",
+    "TerminalEgressItemV1",
+    "TerminalEgressKindV1",
+    "TerminalEgressReceiptV1",
+    "TerminalEgressReceiptV2",
+    "TerminalEgressReceiptV3",
+    "TerminalEgressReceiptV4",
+    "EFFECTFUL_TERMINAL_KINDS",
+    "TerminalEgressChildReceiptV2",
+    "TerminalEgressChildReceiptV3",
+    "TerminalEgressChildReceiptV4",
+    "UNCHANGED_CHILD_RECEIPTS",
+    "UnchangedChildReceiptAny",
+    "TerminalEgressStillCurrentReceiptV1",
+    "TerminalEgressUnchangedReceiptV1",
+    "LINE_CHANGE_SIGNATURE_DOMAIN",
+    "LineProposalDecisionV1",
+    "LineProposalPreparationV1",
+    "PreparedTerminalEgressV1",
+    "SettleGrantHolderProtocol",
+    "StillCurrentChildReceiptAny",
+    "TerminalEgressPreparerProtocol",
+    "TerminalEgressRequestV1",
+    "TerminalEgressRequestV2",
+    "TerminalEgressSinkProtocol",
+    "build_terminal_egress_request_v2",
+    "compute_effective_rung",
+    "compute_ephemeral_run_effective_rung",
+    "effect_dispatch_refusal",
+    "effective_rung_digest",
+    "verify_terminal_egress_receipt",
+    "ProcedureProducerReceiptV1",
+    "TerminalAuthorityRefusal",
+    "PROCEDURE_MANDATE_REPAIR",
+    "procedure_producer_receipt_digest",
+    "producer_receipt_for_request",
+    "require_procedure_mandate",
+    "served_capped_by",
+    "settle_authority_capped_reason",
+    "terminal_operation_key",
+]

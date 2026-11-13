@@ -7,18 +7,12 @@ and emit the same structured warning shape on every supported transport:
 changing one requires updating the registry, this table, tests, and changelog
 together.
 
+This schedule starts at the v1 baseline. Surfaces retired before it, and
+surfaces that never shipped, are recorded in `CHANGELOG.md` only. From the
+baseline on, a row stays after its surface is removed: this table is the
+historical schedule, not a list of what is still accepted.
+
 | Surface | Replacement | Deprecated in | Removal version |
 | --- | --- | --- | --- |
-| `feedback action 'flag'` | `attest --stance contradict` | 0.3.0 | 0.4.0 |
-| `feedback action 'approve'` | `feedback action 'accept'` | 0.3.0 | 0.4.0 |
-| `legacy outcome record functions` | `resolution contracts and attestations` | 0.3.0 | 0.4.0 |
-| `legacy outcome profile functions` | `resolution contract declarations` | 0.3.0 | 0.4.0 |
-| `feedback group_override write path` | `force_review` | 0.3.0 | 0.4.0 |
-| `FeedbackRecord.source input` | `actor_context` | 0.3.0 | 0.4.0 |
-| `OutcomeRecord.source input` | `actor_context` | 0.3.0 | 0.4.0 |
-| `GroupResolution.resolved_by input` | `resolved_actor_context` | 0.3.0 | 0.4.0 |
-| `CandidateGroup.proposed_by input` | `proposed_actor_context` | 0.3.0 | 0.4.0 |
-| `DecisionRecord.opened_by input` | `opened_actor_context` | 0.3.0 | 0.4.0 |
-| `GroupStatus 'auto_resolved' read-only member` | `resolved with resolution_source='auto_resolved'` | 0.3.0 | 0.4.0 |
-| `OperationType 'group_clear' read-only member` | `group_withdraw` | 0.3.0 | 0.4.0 |
-| `StateHealthGroupsSection.auto_resolved_count` | `withdrawn_count` | 0.3.0 | 0.4.0 |
+
+No surface is deprecated at the v1 baseline.

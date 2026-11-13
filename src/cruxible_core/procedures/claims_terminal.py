@@ -1,0 +1,1054 @@
+"""Lower declared Claims mappings, excluding inadmissible values before any proposal."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, cast
+
+from pydantic import ValidationError
+
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.authoring.models import ClaimDerivationBinding
+from cruxible_client.contracts.canonical import (
+    CanonicalValue,
+    canonical_bytes,
+)
+from cruxible_client.contracts.canonical_forms import canonicalize_literal
+from cruxible_client.contracts.claim_evidence import (
+    ClaimEvidenceReceipt,
+    ClaimsDiagnostic,
+    FindingKind,
+)
+from cruxible_client.contracts.claim_types import effective_canonical_form
+from cruxible_client.contracts.claims import claim_artifact_digest
+from cruxible_client.contracts.content_memo import sealed_memo
+from cruxible_client.contracts.procedures.claims import ClaimsNode, rationale_references
+from cruxible_client.contracts.procedures.extract import (
+    EXTRACTOR_VERSIONS,
+    ExtractNode,
+    extract_spec_digest,
+)
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    InvokeNode,
+    ReadNode,
+    RepeatNode,
+    TransformNode,
+)
+from cruxible_client.contracts.shapes import (
+    claim_has_line_break,
+    claim_rationale,
+    requires_complete_input,
+)
+from cruxible_core.procedures.claims_changes import (
+    CoreClaimChange,
+    CoreClaimsChange,
+    CoreReobservationChange,
+    CoreSubjectChange,
+)
+from cruxible_core.procedures.claims_context import ClaimsContext, KeyPartUnresolved
+from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
+from cruxible_core.procedures.claims_units import (
+    ClaimUnitUnresolved,
+    CreationIdentity,
+    ValueTarget,
+    claim_time,
+    claims_item_identity_digest,
+    resolve_value,
+    same_content,
+    same_value,
+    slot_unit_holders,
+    unit_holders,
+)
+from cruxible_core.procedures.extract import (
+    extract_specs,
+    plan_kind_lookup,
+)
+from cruxible_core.procedures.terminal_dependencies import DependencyToken
+
+if TYPE_CHECKING:
+    from cruxible_core.procedures.execution import (
+        ProcedureExecutor,
+        ProcedureRunAdmission,
+        _RunState,
+    )
+
+
+@sealed_memo
+def _receipt_extract_digest(node: ExtractNode) -> str:
+    """An immutable accepted extract specification is digested once per process."""
+    return extract_spec_digest(node)
+
+
+@dataclass
+class ExpandedClaims:
+    values: list[CanonicalValue]
+    tokens: tuple[frozenset[DependencyToken], ...]
+    diagnostics: ClaimsDiagnostics
+    evidence: tuple[ClaimEvidenceReceipt | None, ...]
+    changes: tuple[CoreClaimsChange, ...]
+    #: Each change's stable item identity (D-R37 g1), in the same order.
+    identities: tuple[str, ...] = ()
+    #: The items whose Subject the run creates: identified by key reference
+    #: here, finalized from delivery's lowering (D-R37 g fix 3).
+    creations: tuple[CreationIdentity, ...] = ()
+
+
+def listed_capture_members(
+    index: dict[str, frozenset[str]], node_id: str, listed: Sequence[object]
+) -> frozenset[str]:
+    """The members of the Capture list extract ``node_id`` read, indexed once per terminal.
+
+    Every Claim rooted in a list member checks its root against this one set:
+    the list is read once per extract, never once per Claim.
+    """
+
+    held = index.get(node_id)
+    if held is None:
+        held = index[node_id] = frozenset(item for item in listed if isinstance(item, str))
+    return held
+
+
+def expand_claims(
+    node: ClaimsNode,
+    *,
+    executor: ProcedureExecutor,
+    admission: ProcedureRunAdmission,
+    state: _RunState,
+    context: ClaimsContext,
+) -> ExpandedClaims:
+    from cruxible_core.procedures.execution import (
+        _budget_refusal,
+        _exact_evidence,
+        _fan_out_list,
+        _mentions_item_reference,
+        _referenced_aliases,
+        _referenced_reads,
+        _resolve_template,
+        _RunRefusal,
+    )
+    from cruxible_core.procedures.transforms import _record, _truth
+
+    def resolve(value: object, row: CanonicalValue | None = None) -> Any:
+        return _resolve_template(
+            value,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
+            item=row,
+        )
+
+    enumeration: LayoutExtractNode | None = None
+    if node.expect is not None:
+        from cruxible_core.procedures.claims_typing import (
+            ClaimsTypingRefused,
+            absence_enumeration,
+        )
+
+        aliases = (
+            {}
+            if executor.plan is None
+            else {getattr(n, "as_", None): n for n in executor.plan.definition.nodes}
+        )
+        try:
+            enumeration = absence_enumeration(node, aliases)
+        except ClaimsTypingRefused as exc:
+            raise _RunRefusal(exc.code.rsplit(".", 1)[-1], str(exc), node_id=node.node_id) from exc
+    rows, row_tokens = _fan_out_list(
+        node.for_each,
+        state=state,
+        node_id=node.node_id,
+        field="for_each",
+        noun="Claim rows",
+        invalid_code="proposal_item_invalid",
+        ambiguous_code="proposal_item_evidence_ambiguous",
+    )
+    max_items = admission.budget.max_items or admission.hard_caps.max_items
+    # Bound rows before expansion as well as emitted members at the terminal boundary.
+    if len(rows) > max_items:
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=max_items,
+            observed=len(rows),
+            node_id=node.node_id,
+            boundary=f"terminal:{node.node_id}",
+            field_path="for_each",
+        )
+    diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
+    evidence: list[ClaimEvidenceReceipt | None] = []
+    changes: list[CoreClaimsChange] = []
+    identities: list[str] = []
+    values: list[CanonicalValue] = []
+    tokens: list[frozenset[DependencyToken]] = []
+    # One Subject item per (kind, canonical key) the run creates, a row's
+    # Subject and a value's target alike (V5): a value target that is also a
+    # row's Subject shares its item, and two spellings of one key are one item.
+    created: set[tuple[str, str]] = set()
+    # D-R37 g fix 3: an item naming a Subject this run creates has no address
+    # for it yet. It is identified here by its key reference (the change's own
+    # ``subject_wire``, or a ``subject-key-v1`` object), and the executor
+    # finalizes it with the whole-artifact address delivery's lowering assigns
+    # that Subject's Subject item -- the address it has once accepted
+    # (``finalize_creation_identities``).
+    pending: list[
+        tuple[int, tuple[str, str] | None, tuple[str, str] | None, Any, dict[str, Any]]
+    ] = []
+    subject_items: dict[tuple[str, str], int] = {}
+    #: The key each Subject item carries, by slot: a pair names a pending end by it.
+    slot_keys: dict[tuple[str, str], Any] = {}
+
+    def identify(
+        subject_wire: Any,
+        key: tuple[str, str] | None,
+        target: tuple[str, str] | None = None,
+        **parts: Any,
+    ) -> None:
+        if key is not None or target is not None:
+            pending.append((len(identities), key, target, subject_wire, parts))
+        identities.append(
+            claims_item_identity_digest(node_id=node.node_id, subject=subject_wire, **parts)
+        )
+
+    def create_subject(
+        slot: tuple[str, str],
+        *,
+        kind: str,
+        key: Any,
+        rationale: str,
+        value: CanonicalValue,
+        closure: frozenset[DependencyToken],
+    ) -> None:
+        """The run's one Subject item for ``slot``, before the first change naming it."""
+
+        created.add(slot)
+        subject_items[slot] = len(values)
+        slot_keys[slot] = key
+        changes.append(CoreSubjectChange(subject_kind=kind, key=key, rationale=rationale))
+        identify({"subject_kind": kind, "key": key}, slot)
+        values.append(value)
+        tokens.append(closure)
+        evidence.append(None)
+
+    def create_target(
+        target: ValueTarget,
+        *,
+        rationale: str,
+        closure: frozenset[DependencyToken],
+        row_key: Any = None,
+    ) -> None:
+        """The run's Subject items for ``target``: its pending ends first (deepest first).
+
+        Each (kind, canonical key) is one item (V5), whoever names it first: a
+        row, a value, or an end of a pair. ``row_key`` is a row Subject's key as
+        the template spelled it (a literal kind's item keeps those bytes).
+        """
+
+        for end in target.ends():
+            if end.slot not in created:
+                key = end.key_mapping(slot_keys)
+                create_subject(
+                    end.slot,
+                    kind=end.kind,
+                    key=key,
+                    rationale=rationale,
+                    value=cast(CanonicalValue, {"key": key, "subject_kind": end.kind}),
+                    closure=closure,
+                )
+        if target.slot in created:
+            return
+        if row_key is not None:
+            key = row_key if not target.parts else target.key_mapping(slot_keys)
+            value: Any = {"key": key}
+        else:
+            key = target.key_mapping(slot_keys)
+            value = {"key": key, "subject_kind": target.kind}
+        create_subject(
+            target.slot,
+            kind=target.kind,
+            key=key,
+            rationale=rationale,
+            value=cast(CanonicalValue, value),
+            closure=closure,
+        )
+
+    nodes = (
+        {}
+        if executor.plan is None
+        else {getattr(n, "as_", None): n for n in executor.plan.definition.nodes}
+    )
+    # Runtime execution plans carry their accepted artifact separately on some paths.
+    source_cache: dict[str, tuple[tuple[Any, ...], tuple[str, ...], bool]] = {}
+    # Each extract's receipt digests its one resolved spec (its kind's layout applied).
+    spec_of = extract_specs(
+        nodes.values(),
+        plan_kind_lookup(executor.plan, executor.capture_contracts),
+        executor.contract_resolver,
+    )
+    extract_digests = {
+        n.node_id: _receipt_extract_digest(spec_of(n))
+        for n in nodes.values()
+        if isinstance(n, LayoutExtractNode)
+    }
+    #: Each list extract's members, indexed once for every Claim it roots (D-R37 a5).
+    listed_members: dict[str, frozenset[str]] = {}
+
+    def includes_input(value: object) -> bool:
+        from pydantic import BaseModel
+
+        if isinstance(value, str):
+            return value == "$input" or value.startswith("$input.")
+        if isinstance(value, dict):
+            return any(includes_input(v) for v in value.values())
+        if isinstance(value, list | tuple):
+            return any(includes_input(v) for v in value)
+        if isinstance(value, BaseModel):
+            return includes_input(value.model_dump(mode="python"))
+        return False
+
+    def lineage(alias: str) -> tuple[tuple[Any, ...], tuple[str, ...], bool]:
+        if alias in source_cache:
+            return source_cache[alias]
+        producer = nodes.get(alias)
+        if isinstance(producer, LayoutExtractNode):
+            found: tuple[tuple[Any, ...], tuple[str, ...], bool] = ((producer,), (), False)
+        elif producer is None or isinstance(producer, ReadNode | InvokeNode | RepeatNode):
+            # Accepted-state reads and opaque computations cannot be receipted
+            # as extraction. A derivation must bind its exact Claim inputs.
+            found = ((), (), True)
+        else:
+            from cruxible_core.procedures.execution import _node_reads
+
+            sources: dict[str, Any] = {}
+            transforms: dict[str, None] = {}
+            unsupported = includes_input(producer)
+            for parent, _ in _node_reads(producer):
+                parents, chain, blocked = lineage(parent)
+                sources.update((n.node_id, n) for n in parents)
+                transforms.update(dict.fromkeys(chain))
+                unsupported |= blocked
+            if isinstance(producer, CallNode):
+                sources = {producer.node_id: producer}
+            elif isinstance(producer, TransformNode):
+                transforms[producer.node_id] = None
+            found = (tuple(sources.values()), tuple(transforms), unsupported)
+        source_cache[alias] = found
+        return found
+
+    def report(
+        kind: FindingKind,
+        target: str,
+        **details: Any,
+    ) -> None:
+        diagnostics.add(ClaimsDiagnostic(kind=kind, target=target, **details))
+
+    shared = _exact_evidence(
+        [node.subject.key, node.subject.within, node.where],
+        state=state,
+        node_id=node.node_id,
+        field="subject",
+    )
+    within_paths: set[object] | None = None
+    if node.subject.within is not None:
+        if _mentions_item_reference(node.subject.within):
+            raise _RunRefusal(
+                "proposal_item_invalid",
+                "subject.within must be independent of $item; project the Subject set first",
+                node_id=node.node_id,
+            )
+        within = resolve(node.subject.within)
+        if not isinstance(within, list):
+            raise _RunRefusal(
+                "proposal_item_invalid",
+                "subject.within must be a Subject list",
+                node_id=node.node_id,
+            )
+
+        def path_of(item: object) -> object:
+            if isinstance(item, str):
+                if item.startswith("subjects/"):
+                    return item
+                return (
+                    "subjects/"
+                    + (item if "/" in item else node.subject.kind + "/" + item)
+                    + ".json"
+                )
+            if isinstance(item, dict):
+                if "path" in item:
+                    return item["path"]
+                if "subject_kind" in item and "subject_id" in item:
+                    return f"subjects/{item['subject_kind']}/{item['subject_id']}.json"
+            return None
+
+        within_paths = {path_of(item) for item in within}
+    attempted = 0
+
+    def reserve() -> None:
+        nonlocal attempted
+        attempted += 1
+        state.observe_items(attempted, f"terminal:{node.node_id}", "claims")
+        if attempted > max_items:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=max_items,
+                observed=attempted,
+                node_id=node.node_id,
+                boundary=f"terminal:{node.node_id}",
+                field_path="claims",
+            )
+
+    for row_index, (row, own_tokens) in enumerate(zip(rows, row_tokens, strict=True)):
+        record = _record(row, row_index, "claims")
+        if (
+            node.where is not None
+            and _truth(
+                node.where, record, state.parameters if isinstance(state.parameters, dict) else {}
+            )
+            != "true"
+        ):
+            continue
+        key = resolve(node.subject.key, row)
+        try:
+            named = context.named(node.subject.kind, key)
+        except KeyPartUnresolved as exc:
+            # A pair's end (or key part) names nothing here: this row alone,
+            # never a guess; the read is incomplete, so absence retires nothing.
+            state.completeness.note(node.node_id, "invalid_field")
+            report(
+                "extract_refused",
+                f"{node.subject.kind}:{row_index}",
+                field="subject.key",
+                problem="key_part_unresolved",
+                lexeme=str(exc)[:512],
+            )
+            continue
+        except ValueError as exc:
+            raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
+        subject = named.address
+        row_target = named.target
+        if subject is None and (node.subject.create == "never" or row_target is None):
+            continue
+        if within_paths is not None and (
+            subject is None or subject.artifact_path not in within_paths
+        ):
+            continue
+        assert subject is not None or row_target is not None
+        subject_wire: Any = (
+            subject.model_dump(mode="json")
+            if subject is not None
+            else {
+                "subject_kind": node.subject.kind,
+                "key": key,
+            }
+            if row_target is None or not row_target.parts
+            # A pair this run creates is named by its Subject item's key.
+            else row_target.created(slot_keys)
+        )
+        # D-R37 g fix: an existing Subject's identity is its resolved
+        # whole-artifact address (``subject_wire``); a Subject this run creates
+        # is finalized from the address delivery's lowering assigns it.
+        created_key = None if subject is not None or row_target is None else row_target.slot
+        for template_index, mapping in enumerate(node.claims):
+            reserve()
+            target = (
+                f"{node.subject.kind}:"
+                + canonical_bytes(key).decode("utf-8")
+                + f":{mapping.claim_type.target.name}"
+            )
+            # An invalid mapped field is reported even when present(...) is false.
+            raw = resolve(mapping.value, row)
+            if isinstance(raw, dict) and raw.get("tag") == "invalid":
+                state.completeness.note(node.node_id, "invalid_field")
+                problem = raw.get("problem", {})
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem=str(problem.get("code", "value_invalid")),
+                    lexeme=None if problem.get("lexeme") is None else str(problem["lexeme"])[:512],
+                )
+                continue
+            if (
+                mapping.when is not None
+                and _truth(
+                    mapping.when,
+                    record,
+                    state.parameters if isinstance(state.parameters, dict) else {},
+                )
+                != "true"
+            ):
+                continue
+            if isinstance(raw, dict) and raw.get("tag") == "absent":
+                continue
+            present = isinstance(raw, dict) and raw.get("tag") == "present"
+            value = raw["value"] if present else raw
+            ct = context.claim_type(mapping.claim_type.target.name)
+            if ct is None:
+                raise _RunRefusal(
+                    "proposal_item_invalid", "ClaimType.value is required", node_id=node.node_id
+                )
+            role = mapping.role or ct.default_role
+            if role not in ct.permitted_roles:
+                raise _RunRefusal(
+                    "proposal_item_invalid", "claims_role_forbidden", node_id=node.node_id
+                )
+            try:
+                replaces = ct.precedence.replacements(role, mapping.replaces)
+            except ValueError as exc:
+                raise _RunRefusal("proposal_item_invalid", str(exc), node_id=node.node_id) from exc
+            if claim_has_line_break(value):
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem="multiline_string",
+                    lexeme=str(value)[:512],
+                )
+                continue
+            obj, value_target = resolve_value(value, ct, context, executor, trusted=present)
+            if obj is None:
+                report("extract_refused", target, field=str(mapping.value), problem="value_invalid")
+                continue
+            if obj["kind"] == "literal":
+                value = obj["value"]
+            value_reads = _referenced_reads(
+                [
+                    node.for_each,
+                    node.where,
+                    node.subject.key,
+                    node.subject.within,
+                    mapping.value,
+                    mapping.when,
+                    mapping.qualifier,
+                    mapping.effective_from,
+                    mapping.effective_until,
+                    mapping.inputs,
+                ]
+            )
+            complete = state.completeness.at_sink(value_reads)
+            # An invalid used field makes a record incomplete independently of an alias flag.
+            metadata: dict[str, Any] = {}
+            metadata_invalid = False
+            for name, template in (
+                ("qualifier", mapping.qualifier),
+                ("effective_from", mapping.effective_from),
+                ("effective_until", mapping.effective_until),
+            ):
+                resolved = resolve(template, row)
+                if isinstance(resolved, dict) and resolved.get("tag") == "invalid":
+                    problem = resolved.get("problem", {})
+                    report(
+                        "extract_refused",
+                        target,
+                        field=name,
+                        problem=str(problem.get("code", "value_invalid")),
+                        lexeme=str(problem.get("lexeme", ""))[:512],
+                    )
+                    metadata_invalid = True
+                metadata[name] = (
+                    resolved.get("value")
+                    if isinstance(resolved, dict) and resolved.get("tag") in {"present", "absent"}
+                    else resolved
+                )
+            if metadata_invalid:
+                continue
+            qualifier = metadata["qualifier"]
+            held = () if subject is None else context.slot(subject, ct.predicate, qualifier)
+            if requires_complete_input(value, ct.requires_complete_input) and not complete:
+                incomplete = state.completeness.incomplete_inputs(value_reads)
+                report("incomplete_source", target, input=",".join(incomplete) or "control lineage")
+                # No destructive replacement over incomplete input, including a downgrade.
+                if ct.incomplete_fallback is None or held:
+                    state.completeness.skipped += 1
+                    continue
+                state.completeness.downgraded += 1
+                value = ct.incomplete_fallback
+                obj = {"kind": "literal", "value": value}
+                value_target = None
+            if obj["kind"] == "literal":
+                obj["value"] = canonicalize_literal(obj["value"], effective_canonical_form(ct))
+            # Typed once: every held-vs-incoming comparison and the write read
+            # this period (F6: never its wire text).
+            times: list[datetime | None] = []
+            for name in ("effective_from", "effective_until"):
+                try:
+                    times.append(claim_time(metadata[name]))
+                except ValidationError:
+                    report("extract_refused", target, field=name, problem="value_invalid")
+                    break
+            if len(times) != 2:
+                continue
+            period = (times[0], times[1])
+            try:
+                # D-R30: a many-valued slot's unit is the object; one-valued, the slot.
+                holders = (
+                    unit_holders((), obj, ct, context)
+                    if subject is None
+                    else slot_unit_holders(context, subject, obj, ct, qualifier)
+                )
+            except ClaimUnitUnresolved:
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem="inverse_unit_unresolved",
+                )
+                continue
+            blocked = [c for c in holders if c.statement.role not in replaces]
+            if blocked:
+                if any(same_value(c.statement, obj) for c in blocked):
+                    diagnostics.same += 1
+                else:
+                    for claim in blocked:
+                        report(
+                            "held_disagrees",
+                            target,
+                            claim=claim.identity.name,
+                            role=claim.statement.role,
+                            held_value=claim.statement.object.model_dump(mode="json"),
+                            incoming_value=obj,
+                        )
+                continue
+            if len(holders) > 1:
+                report("slot_contested", target)
+                continue
+            # The unit's one eligible holder is revised (a changed value, period or
+            # role) or, with the same content, re-observed; never a second live Claim.
+            predecessor = holders[0] if holders else None
+            refresh = (
+                [predecessor]
+                if predecessor is not None
+                and same_content(predecessor.statement, obj=obj, role=role, period=period)
+                else []
+            )
+            revises = None if predecessor is None else predecessor.identity.name
+            item_templates = [
+                mapping.value,
+                mapping.qualifier,
+                mapping.effective_from,
+                mapping.effective_until,
+                mapping.when,
+                list(rationale_references(mapping.rationale)),
+            ]
+            own = (
+                own_tokens
+                | shared
+                | _exact_evidence(item_templates, state=state, node_id=node.node_id, field="claims")
+            )
+            inputs: list[ArtifactPin] = []
+            input_captures: set[str] = set()
+            for template in mapping.inputs:
+                supplied = resolve(template, row)
+                try:
+                    pin, captures_read = bind_claim_input(
+                        supplied,
+                        outputs=state.outputs,
+                        provenance=state.provenance,
+                        read_aliases=frozenset(
+                            name
+                            for name, n in nodes.items()
+                            if isinstance(name, str) and isinstance(n, ReadNode) and n.reads_claims
+                        ),
+                        own_tokens=own,
+                        read_digests={
+                            name: entry.result_digest
+                            for name, producer in nodes.items()
+                            if isinstance(name, str)
+                            and isinstance(producer, ReadNode)
+                            and producer.reads_claims
+                            # A late read's record is the run's, not its admission's (D-R38).
+                            for entry in (
+                                *admission.accepted_state_inputs,
+                                *state.late_reads.values(),
+                            )
+                            if entry.input_name in {name, producer.node_id}
+                        },
+                    )
+                except ValueError as exc:
+                    raise _RunRefusal(
+                        "proposal_item_invalid", str(exc), node_id=node.node_id
+                    ) from exc
+                inputs.append(pin)
+                input_captures.update(captures_read)
+            if inputs and role != "derivation":
+                raise _RunRefusal(
+                    "proposal_item_invalid",
+                    "claims_inputs_invalid: only derivation uses inputs",
+                    node_id=node.node_id,
+                )
+            if len({p.target for p in inputs}) != len(inputs):
+                raise _RunRefusal(
+                    "proposal_item_invalid",
+                    "claims_inputs_invalid: inputs must be distinct",
+                    node_id=node.node_id,
+                )
+            direct_aliases = _referenced_aliases(mapping.value)
+            source_aliases = direct_aliases or _referenced_aliases(node.for_each)
+            # The interim ruling leaves literal/$params attribution unchanged:
+            # those templates still cite the selected record's extract. $item,
+            # explicit step reads and $input must prove their own data lineage.
+            record_constant = (
+                not direct_aliases
+                and not _mentions_item_reference(mapping.value)
+                and not includes_input(mapping.value)
+            )
+            sources: dict[str, Any] = {}
+            transforms: dict[str, None] = {}
+            unsupported = includes_input(mapping.value)
+            for alias in source_aliases:
+                s, t, blocked_basis = lineage(alias)
+                sources.update((n.node_id, n) for n in s)
+                transforms.update(dict.fromkeys(t))
+                unsupported |= blocked_basis and not record_constant
+            if unsupported and not inputs:
+                report(
+                    "extract_refused", target, field=str(mapping.value), problem="basis_unsupported"
+                )
+                continue
+            extractors = [n for n in sources.values() if isinstance(n, LayoutExtractNode)]
+            computed = any(
+                isinstance(n, TransformNode)
+                and n.node_id in transforms
+                and n.transform_kind in {"derive", "aggregate"}
+                for n in nodes.values()
+            )
+            if computed and role != "derivation":
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem="derived_role_required",
+                )
+                continue
+
+            if inputs and not any(t.slot in {"produced_capture", "admitted_capture"} for t in own):
+                from cruxible_core.procedures.terminal_dependencies import admitted_capture_token
+
+                own |= frozenset(admitted_capture_token(c) for c in input_captures)
+            from cruxible_core.procedures.terminal_dependencies import capture_root
+
+            root = capture_root(
+                (t.digest for t in own if t.slot in {"produced_capture", "admitted_capture"}),
+                state.derivations,
+                cache=state.capture_root_cache,
+            )
+            if root is None:
+                raise _RunRefusal(
+                    "proposal_item_evidence_missing",
+                    "Claims value requires exactly one root Capture in its own closure: one "
+                    "Capture, or one derived from all the others",
+                    node_id=node.node_id,
+                )
+            capture = root
+            basis: dict[str, Any]
+            if inputs:
+                basis = {
+                    "basis": "derived",
+                    "inputs": [
+                        p.model_dump(mode="json")
+                        for p in sorted(inputs, key=lambda p: p.target.qualified)
+                    ],
+                    "transform_node_ids": list(transforms),
+                }
+            elif len(extractors) == 1 and len(sources) == 1:
+                extracting = extractors[0]
+                read = state.outputs.get(extracting.capture_alias)
+                read_capture = (
+                    read.get(extracting.capture_field) if isinstance(read, dict) else None
+                )
+                # Over a list, the record's root is the one member it came from (D-R37 a5).
+                if isinstance(read, dict) and (
+                    capture
+                    not in listed_capture_members(listed_members, extracting.node_id, read_capture)
+                    if isinstance(read_capture, list)
+                    else read_capture != capture
+                ):
+                    # The root is cited for the records the extract read; a root
+                    # other than the Capture they came from would misattribute them.
+                    raise _RunRefusal(
+                        "proposal_item_evidence_missing",
+                        "Claims value's root Capture is not the Capture its extract read",
+                        node_id=node.node_id,
+                    )
+                contract = executor.capture_contracts.get(state.capture_contracts.get(capture, ""))
+                basis = {
+                    "basis": "extracted",
+                    "capture_digest": capture,
+                    "extract_spec_digest": extract_digests[extracting.node_id],
+                    "extractor_version": EXTRACTOR_VERSIONS[
+                        getattr(getattr(contract, "decoding", None), "format", "json")
+                    ],
+                    "record_locator": str(record["record"]),
+                    "record_key": record["key"],
+                    "field_path": str(raw.get("at", "")) if present else "",
+                    "transform_node_ids": list(transforms),
+                }
+            else:
+                calls = [n for n in sources.values() if isinstance(n, CallNode)]
+                binding = executor.slot_bindings.get(calls[0].slot) if len(calls) == 1 else None
+                from cruxible_client.contracts.workspace_file import is_workspace_file_signature
+
+                if binding is None and value != capture:
+                    raise _RunRefusal(
+                        "proposal_item_evidence_missing",
+                        "Value basis is unavailable: extract its source "
+                        "or bind exact read Claim inputs.",
+                        node_id=node.node_id,
+                    )
+                whole_capture = binding is None or is_workspace_file_signature(
+                    binding.operation_signature_digest
+                )
+                binding = cast(Any, binding)
+                basis = (
+                    {"basis": "capture", "capture_digest": capture}
+                    if whole_capture
+                    else {
+                        "basis": "measured",
+                        "capture_digest": capture,
+                        "operation": binding.operation.name,
+                        "build": binding.build.model_dump(mode="json"),
+                        "field_path": str(mapping.value),
+                        "transform_node_ids": list(transforms),
+                    }
+                )
+            if computed and basis["basis"] == "extracted":
+                basis = {
+                    "basis": "derived",
+                    "extractions": [basis],
+                    "transform_node_ids": list(transforms),
+                }
+            if role == "derivation" and basis["basis"] != "derived":
+                report(
+                    "extract_refused",
+                    target,
+                    field=str(mapping.value),
+                    problem="derivation_basis_required",
+                )
+                continue
+            receipt = ClaimEvidenceReceipt.model_validate(
+                {
+                    "node_id": node.node_id,
+                    "template": template_index,
+                    "procedure_digest": admission.procedure_artifact_digest,
+                    "value": basis,
+                }
+            )
+            if receipt.value.basis == "extracted":
+                matched = [
+                    c
+                    for c in refresh
+                    if c.backing.procedure_evidence is not None
+                    and c.backing.procedure_evidence.value.basis == "extracted"
+                    and c.backing.procedure_evidence.value.record_key == receipt.value.record_key
+                ]
+                if len(matched) == 1:
+                    diagnostics.same += 1
+                    held_claim = matched[0]
+                    if receipt.value.capture_digest not in held_claim.backing.capture_digests:
+                        changes.append(
+                            CoreReobservationChange(
+                                rationale="Re-observed the same declared value.",
+                                claim_id=held_claim.identity.name,
+                                artifact_digest=claim_artifact_digest(held_claim).tagged,
+                                value=obj,
+                            )
+                        )
+                        identify(
+                            subject_wire,
+                            created_key,
+                            claim_type=ct,
+                            qualifier=qualifier,
+                            obj=obj,
+                            context=context,
+                        )
+                        values.append(
+                            cast(
+                                CanonicalValue,
+                                {"key": key, "template": template_index, "value": value},
+                            )
+                        )
+                        tokens.append(own)
+                        evidence.append(receipt)
+                    continue
+            rationale = mapping.rationale
+            for ref in rationale_references(mapping.rationale):
+                quoted = resolve(ref, row)
+                if isinstance(quoted, dict) and quoted.get("tag") in {
+                    "present",
+                    "absent",
+                    "invalid",
+                }:
+                    quoted = quoted.get("value", "unknown")
+                rationale = rationale.replace("{" + ref + "}", str(quoted))
+            try:
+                claim_rationale(rationale)
+            except ValueError:
+                report("extract_refused", target, field="rationale", problem="rationale_invalid")
+                continue
+            if created_key is not None and row_target is not None:
+                create_target(row_target, rationale=rationale, closure=own, row_key=key)
+                if row_target.parts:
+                    subject_wire = row_target.created(slot_keys)
+            target_key = None if value_target is None else value_target.slot
+            if value_target is not None:
+                # The value's target is created in the same change (V1), by the
+                # one Subject item a row naming it would also use (V5); a pair
+                # target's ends first.
+                create_target(value_target, rationale=rationale, closure=own)
+                if value_target.parts:
+                    obj = value_target.object(slot_keys)
+            changes.append(
+                CoreClaimChange.model_validate(
+                    {
+                        "statement": {
+                            "subject": subject_wire,
+                            "predicate": ct.predicate,
+                            "object": obj,
+                            "role": role,
+                            "qualifier": qualifier,
+                            "effective_from": period[0],
+                            "effective_until": period[1],
+                        },
+                        "rationale": rationale,
+                        "predecessor": revises,
+                        "derivation": None
+                        if role != "derivation"
+                        else ClaimDerivationBinding(
+                            procedure=ArtifactPin(
+                                role="reducer",
+                                target=admission.procedure_identity,
+                                artifact_digest=admission.procedure_artifact_digest,
+                            ),
+                            inputs=tuple(sorted(inputs, key=lambda p: p.target.qualified)),
+                        ),
+                    }
+                )
+            )
+            identify(
+                subject_wire,
+                created_key,
+                target_key,
+                claim_type=ct,
+                qualifier=qualifier,
+                obj=obj,
+                context=context,
+            )
+            values.append(
+                cast(
+                    CanonicalValue,
+                    {
+                        "key": key,
+                        "template": template_index,
+                        "value": value,
+                    },
+                )
+            )
+            tokens.append(own)
+            evidence.append(receipt)
+    if enumeration is not None:
+        from cruxible_core.procedures.claims_absence import append_absence
+
+        try:
+            append_absence(
+                node,
+                enumeration=enumeration,
+                executor=executor,
+                admission=admission,
+                state=state,
+                context=context,
+                resolve=resolve,
+                values=values,
+                tokens=tokens,
+                evidence=evidence,
+                changes=changes,
+                identities=identities,
+                diagnostics=diagnostics,
+                reserve=reserve,
+                within=within_paths,
+                create_target=lambda found, closure: create_target(
+                    found,
+                    rationale="Complete source establishes the declared inverse.",
+                    closure=closure,
+                ),
+                creates=lambda slot: slot in created,
+                pend_object=lambda index, found, subject_wire, parts: pending.append(
+                    (index, None, found.slot, subject_wire, parts)
+                ),
+            )
+        except ClaimUnitUnresolved as exc:
+            raise _RunRefusal(
+                "claims_inverse_unit_unresolved", str(exc), node_id=node.node_id
+            ) from exc
+    return ExpandedClaims(
+        values,
+        tuple(tokens),
+        diagnostics,
+        tuple(evidence),
+        tuple(changes),
+        tuple(identities),
+        tuple(
+            CreationIdentity(
+                index=index,
+                subject_item=None if key is None else subject_items[key],
+                parts=parts,
+                object_item=None if target is None else subject_items[target],
+                subject=None if key is not None else subject_wire,
+            )
+            for index, key, target, subject_wire, parts in pending
+            # Every such item follows the Subject items it names; one with none
+            # (no Subject item precedes it) keeps its key reference.
+            if (key is None or key in subject_items) and (target is None or target in subject_items)
+        ),
+    )
+
+
+def bind_claim_input(
+    supplied: object,
+    *,
+    outputs: Any,
+    provenance: Any,
+    read_aliases: frozenset[str],
+    own_tokens: frozenset[DependencyToken],
+    read_digests: dict[str, str],
+) -> tuple[ArtifactPin, tuple[str, ...]]:
+    """Bind one cardinality-one Claim read, whole-output equal, in this row's closure.
+
+    The terminal currently requires exactly one Capture across that closure.
+    List/cardinality-many reads and multi-Capture derivations fail closed; callers
+    must project a supported one-Claim read rather than select an arbitrary id.
+    """
+    matches = [
+        name
+        for name in read_aliases
+        if outputs.get(name) == supplied
+        and name in provenance
+        and provenance[name].whole.issubset(own_tokens)
+    ]
+    if not matches or not isinstance(supplied, dict):
+        raise ValueError(
+            "claims_inputs_invalid: input is not an exact Claim read in this row's closure"
+        )
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_core.procedures.execution import run_value_digest
+
+    if not any(
+        read_digests.get(name) == run_value_digest("state-result", supplied) for name in matches
+    ):
+        raise ValueError("claims_inputs_invalid: forged Claim version")
+    digest = supplied.get("artifact_digest")
+    identity = supplied.get("claim_id")
+    captures = supplied.get("captures")
+    if (
+        not isinstance(digest, str)
+        or not isinstance(identity, str)
+        or not isinstance(captures, list)
+        or not all(isinstance(c, str) for c in captures)
+    ):
+        raise ValueError("claims_inputs_invalid: incomplete Claim read")
+    return ArtifactPin(
+        role="input-claim",
+        target=ArtifactIdentity(kind="Claim", name=identity),
+        artifact_digest=digest,
+    ), tuple(captures)

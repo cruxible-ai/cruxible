@@ -1,0 +1,131 @@
+{
+  "expected": {
+    "edge_set_preimage": "{\"edges\":[{\"pin_role\":\"provider\",\"source_artifact_digest\":\"sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf\",\"source_path\":\"claims/alpha.json\",\"tag\":\"playbill-dependency-proof-ref-v1\",\"target_artifact_digest\":\"sha256:f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1\",\"target_path\":\"providers/feed.json\"},{\"pin_role\":\"subject\",\"source_artifact_digest\":\"sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf\",\"source_path\":\"claims/alpha.json\",\"tag\":\"playbill-dependency-proof-ref-v1\",\"target_artifact_digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"target_path\":\"subjects/alpha.json\"}],\"tag\":\"playbill-depgraph-edges-v1\"}",
+    "empty_root": "depgraph-sha256:e74e769101be97d5bc63c5dc4060bb0645f44986936c74a94f18bf63535f7bc0",
+    "leaf_preimage": "{\"member_digest\":\"9bc5a055cbc732c363d928d1db0229567148ebcc5d8ec7dc215c8eb9c49d5da4\",\"path\":\"claims/alpha.json\",\"tag\":\"playbill-depgraph-leaf-v1\"}",
+    "members": {
+      "claims/alpha.json": "9bc5a055cbc732c363d928d1db0229567148ebcc5d8ec7dc215c8eb9c49d5da4",
+      "claims/nested/deep/beta.json": "0a0738874aa167fa102912f719c008fe0815b18f1234242637307ff9605c9c38",
+      "lines/daily.json": "539683ccc615dbee1e3ca527da9a75ce2eca52c94e7e33e3aa181c36e8afea7e"
+    },
+    "nodes": {
+      "": "sha256:e40ce4b402d5d521fa8ef0ea123df1a215f92ba3213a590bb862df1cd9fd866a",
+      "claims": "sha256:166491c0debf68458d3f114034e523351970cf158d8a93b42f0c725040dab63c",
+      "claims/alpha.json": "sha256:3adc90b46ded144a86660bc3c18517c50859f82e70db9283e6956e6b28d3f76a",
+      "claims/nested": "sha256:2b083851ca281591813867a10abfa09a6272c666cc98cb4498d82c67953ce180",
+      "claims/nested/deep": "sha256:1495c054cde27e5410171ba17021a2de8db6543252e2885b6f9d2bbdaf8a3102",
+      "claims/nested/deep/beta.json": "sha256:d33ec6f8fef862e6164f2f9a8107f47ce62da42ffc7ddf7a26542af0ea51099c",
+      "lines": "sha256:a833345a5db8f50fdac62ba39c4f11008e17e450fec834557b1b8729a8226b56",
+      "lines/daily.json": "sha256:9bd3f23133b3a8f2993fb369ba7a9a66098f85565897f8de6204f6d722968e73"
+    },
+    "parent_root": "depgraph-sha256:3014c51190570ab3edc9af6e6dd26ee2ae89d75d8ccfd2db1ffbcebf68d469f1",
+    "root": "depgraph-sha256:dd551c71f6bcf7fa0c6bece86d96dafa70dcf56755bb10a522793ea0fa829691",
+    "root_preimage": "{\"node\":\"e40ce4b402d5d521fa8ef0ea123df1a215f92ba3213a590bb862df1cd9fd866a\",\"tag\":\"playbill-depgraph-root-v1\"}"
+  },
+  "format": "playbill-depgraph-v3-golden-v1",
+  "input": {
+    "change_set": {
+      "removed": [
+        "documents/design.json"
+      ],
+      "updated": {
+        "claims/alpha.json": [
+          {
+            "pin_role": "subject",
+            "source_artifact_digest": "sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+            "source_path": "claims/alpha.json",
+            "tag": "playbill-dependency-proof-ref-v1",
+            "target_artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "target_path": "subjects/alpha.json"
+          },
+          {
+            "pin_role": "provider",
+            "source_artifact_digest": "sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+            "source_path": "claims/alpha.json",
+            "tag": "playbill-dependency-proof-ref-v1",
+            "target_artifact_digest": "sha256:f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "target_path": "providers/feed.json"
+          }
+        ],
+        "lines/daily.json": [
+          {
+            "pin_role": "procedure",
+            "source_artifact_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+            "source_path": "lines/daily.json",
+            "tag": "playbill-dependency-proof-ref-v1",
+            "target_artifact_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+            "target_path": "procedures/scan.json"
+          }
+        ]
+      }
+    },
+    "edges": [
+      {
+        "pin_role": "subject",
+        "source_artifact_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "source_path": "claims/nested/deep/beta.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_path": "subjects/alpha.json"
+      },
+      {
+        "pin_role": "subject",
+        "source_artifact_digest": "sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+        "source_path": "claims/alpha.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_path": "subjects/alpha.json"
+      },
+      {
+        "pin_role": "provider",
+        "source_artifact_digest": "sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+        "source_path": "claims/alpha.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "target_path": "providers/feed.json"
+      },
+      {
+        "pin_role": "procedure",
+        "source_artifact_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "source_path": "lines/daily.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "target_path": "procedures/scan.json"
+      }
+    ],
+    "parent_edges": [
+      {
+        "pin_role": "subject",
+        "source_artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_path": "claims/alpha.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_path": "subjects/alpha.json"
+      },
+      {
+        "pin_role": "claim-type",
+        "source_artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_path": "claims/alpha.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "target_path": "claim-types/measure.json"
+      },
+      {
+        "pin_role": "subject",
+        "source_artifact_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "source_path": "claims/nested/deep/beta.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_path": "subjects/alpha.json"
+      },
+      {
+        "pin_role": "referent",
+        "source_artifact_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "source_path": "documents/design.json",
+        "tag": "playbill-dependency-proof-ref-v1",
+        "target_artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_path": "subjects/alpha.json"
+      }
+    ]
+  }
+}

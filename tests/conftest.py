@@ -1,17 +1,90 @@
 """Shared test fixtures for cruxible-core."""
 
-import hashlib
-import json
+import contextlib
 import os
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from cruxible_core.cli.instance import CruxibleInstance
+from tests.core_support._world_templates import TEMPLATES, WORLD_STATS_ENV
+from tests.support.provider_checkout import (  # noqa: F401 - shared fixtures
+    provider_checkout,
+    provider_runtime,
+)
+from tests.support.sharding import ShardPlugin
+
+_PROCESS_TEMPORARY_ENV = "CRUXIBLE_TEST_PROCESS_TMPDIR"
+
+
+def _quiet_process_temporary_directory() -> None:
+    """Keep this suite's own temporary-file churn out of its instance roots' ancestry.
+
+    Instances and their indexes live in pytest's temporary tree, inside the
+    system temporary directory, and acquiring an index snapshot refuses (then
+    retries, boundedly) whenever any ancestor directory of the database changes.
+    Git signature checks, allowed-signer files and SQLite spill files land in the
+    system temporary directory many times a second, more so under xdist, so
+    every acquisition raced the suite's own churn and retries could run out.
+    Pytest's tree stays where it was (PYTEST_DEBUG_TEMPROOT); every other
+    temporary file of this process and its children goes to one sibling
+    directory that no instance path sits under. Its name stays short: a
+    Provider control socket may fall back under TMPDIR within the AF_UNIX limit.
+    xdist workers inherit the redirection from the controller.
+    """
+
+    scratch = os.environ.get(_PROCESS_TEMPORARY_ENV)
+    if scratch is None:
+        system = tempfile.gettempdir()
+        os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", system)
+        scratch = os.path.join(system, "cxt")
+        os.makedirs(scratch, mode=0o700, exist_ok=True)
+        os.environ[_PROCESS_TEMPORARY_ENV] = scratch
+        os.environ["TMPDIR"] = scratch
+        os.environ["SQLITE_TMPDIR"] = scratch
+    tempfile.tempdir = scratch
+
+
+_quiet_process_temporary_directory()
 
 _DOCKER_TEST_ENV = "CRUXIBLE_RUN_DOCKER_TESTS"
 _WHEEL_TEST_ENV = "CRUXIBLE_RUN_WHEEL_TESTS"
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_server_state_root(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Keep every test away from user-scoped current and legacy daemon state."""
+
+    state_root = tmp_path_factory.mktemp("server-state")
+    previous = os.environ.get("CRUXIBLE_STATE_ROOT")
+    os.environ["CRUXIBLE_STATE_ROOT"] = str(state_root)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("CRUXIBLE_STATE_ROOT", None)
+        else:
+            os.environ["CRUXIBLE_STATE_ROOT"] = previous
+
+
+@pytest.fixture(scope="session", autouse=True)
+def world_templates(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Share built worlds within this process (see `core_support/_world_templates.py`)."""
+
+    TEMPLATES.configure(tmp_path_factory.mktemp("world-templates"))
+    yield
+    stats = os.environ.get(WORLD_STATS_ENV)
+    if stats:
+        TEMPLATES.report(Path(stats))
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # CI shards (CRUXIBLE_TEST_SHARD=i/N); without the variable it deselects nothing.
+    config.pluginmanager.register(ShardPlugin(config), "cruxible-test-shards")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -53,290 +126,136 @@ def _opt_in_enabled(config: pytest.Config, *, marker: str, env_var: str) -> bool
     return marker in marker_expression and f"not {marker}" not in marker_expression
 
 
-WORKFLOW_CONFIG_YAML = """\
-version: "1.0"
-name: promo_workflows
-
-entity_types:
-  Product:
-    properties:
-      sku:
-        type: string
-        primary_key: true
-      category:
-        type: string
-      base_margin:
-        type: float
-        optional: true
-
-relationships: []
-
-named_queries:
-  get_promo_context:
-    mode: collection
-    returns: Product
-    result_shape: entity
-    where:
-      result.entity_id:
-        eq: $input.sku
-
-contracts:
-  PromoInput:
-    fields:
-      sku:
-        type: string
-      start_date:
-        type: date
-      end_date:
-        type: date
-  PromoContext:
-    fields:
-      sku:
-        type: string
-      category:
-        type: string
-      start_date:
-        type: date
-      end_date:
-        type: date
-  LiftForecast:
-    fields:
-      predicted_lift_pct:
-        type: float
-      confidence_lower:
-        type: float
-      confidence_upper:
-        type: float
-      model_version:
-        type: string
-  MarginResult:
-    fields:
-      expected_margin_pct:
-        type: float
-      decision:
-        type: string
-      calculator_version:
-        type: string
-
-artifacts:
-  promo_model:
-    kind: model
-    uri: file:///tmp/promo-model.bin
-    digest: abc123
-
-providers:
-  lift_predictor:
-    kind: model
-    contract_in: PromoContext
-    contract_out: LiftForecast
-    ref: tests.support.workflow_test_providers.lift_predictor
-    version: 1.2.0
-    deterministic: true
-    artifact: promo_model
-    runtime: python
-  margin_calculator:
-    kind: function
-    contract_in: LiftForecast
-    contract_out: MarginResult
-    ref: tests.support.workflow_test_providers.margin_calculator
-    version: 1.0.0
-    deterministic: true
-    runtime: python
-
-workflows:
-  evaluate_promo:
-    contract_in: PromoInput
-    steps:
-      - id: context
-        query: get_promo_context
-        params:
-          sku: $input.sku
-        as: context
-      - id: lift
-        provider: lift_predictor
-        input:
-          sku: $steps.context.results[0].entity_id
-          category: $steps.context.results[0].properties.category
-          start_date: $input.start_date
-          end_date: $input.end_date
-        as: lift
-      - id: margin
-        provider: margin_calculator
-        input:
-          predicted_lift_pct: $steps.lift.predicted_lift_pct
-          confidence_lower: $steps.lift.confidence_lower
-          confidence_upper: $steps.lift.confidence_upper
-          model_version: $steps.lift.model_version
-        as: margin
-      - id: margin_gate
-        assert:
-          left: $steps.margin.expected_margin_pct
-          op: gte
-          right: 0.05
-          message: Margin below threshold
-    returns: margin
-
-tests:
-  - name: promo_margin_smoke
-    workflow: evaluate_promo
-    input:
-      sku: SKU-123
-      start_date: "2026-03-01"
-      end_date: "2026-03-07"
-    expect:
-      output_contains:
-        decision: approve
-      receipt_contains_provider:
-        - lift_predictor
-        - margin_calculator
-"""
-
-PROPOSAL_WORKFLOW_CONFIG_YAML = """\
-version: "1.0"
-name: campaign_relationship_workflows
-
-entity_types:
-  Campaign:
-    properties:
-      campaign_id:
-        type: string
-        primary_key: true
-      region:
-        type: string
-  Product:
-    properties:
-      sku:
-        type: string
-        primary_key: true
-      category:
-        type: string
-
-relationships:
-  - name: recommended_for
-    from: Campaign
-    to: Product
-    properties:
-      reason:
-        type: string
-        optional: true
-    proposal_policy:
-      signals:
-        catalog:
-          role: required
-          always_review_on_unsure: true
-
-named_queries:
-  get_campaign_context:
-    mode: collection
-    returns: Campaign
-    result_shape: entity
-    where:
-      result.entity_id:
-        eq: $input.campaign_id
-
-contracts:
-  CampaignInput:
-    fields:
-      campaign_id:
-        type: string
-  CampaignContext:
-    fields:
-      campaign_id:
-        type: string
-      region:
-        type: string
-  RecommendationRows:
-    fields:
-      items:
-        type: json
-
-providers:
-  campaign_recommendations:
-    kind: function
-    contract_in: CampaignContext
-    contract_out: RecommendationRows
-    ref: tests.support.workflow_test_providers.campaign_recommendations
-    version: 1.0.0
-    deterministic: true
-    runtime: python
-
-workflows:
-  propose_campaign_recommendations:
-    type: proposal
-    contract_in: CampaignInput
-    steps:
-      - id: campaign
-        query: get_campaign_context
-        params:
-          campaign_id: $input.campaign_id
-        as: campaign
-      - id: recommend
-        provider: campaign_recommendations
-        input:
-          campaign_id: $steps.campaign.results[0].entity_id
-          region: $steps.campaign.results[0].properties.region
-        as: recommendations
-      - id: candidates
-        make_candidates:
-          relationship_type: recommended_for
-          items: $steps.recommendations.items
-          from_type: Campaign
-          from_id: $steps.campaign.results[0].entity_id
-          to_type: Product
-          to_id: $item.product_sku
-          properties:
-            reason: $item.reason
-        as: candidates
-      - id: catalog_signals
-        map_signals:
-          signal_source: catalog
-          items: $steps.recommendations.items
-          from_id: $steps.campaign.results[0].entity_id
-          to_id: $item.product_sku
-          evidence: $item.reason
-          enum:
-            path: verdict
-            map:
-              match: support
-              fallback: unsure
-              reject: contradict
-        as: catalog_signals
-      - id: proposal
-        propose_relationship_group:
-          relationship_type: recommended_for
-          candidates_from: candidates
-          signals_from:
-            - catalog_signals
-          thesis_text: Recommend products for regional campaign
-          analysis_state:
-            source: campaign_recommendations
-          suggested_priority: high
-        as: proposal
-    returns: proposal
-
-tests:
-  - name: campaign_proposal_smoke
-    workflow: propose_campaign_recommendations
-    input:
-      campaign_id: CMP-1
-    expect:
-      output_contains:
-        thesis_text: Recommend products for regional campaign
-      receipt_contains_provider: campaign_recommendations
-"""
-
-
 @pytest.fixture(autouse=True)
 def isolate_cli_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Keep tests isolated from any user-scoped remembered CLI/server context."""
 
     context_dir = tmp_path_factory.mktemp("cli-context")
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_dir / "client-context.json"))
+    # A bare `cruxible init` keeps keys under the per-user config home.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(context_dir / "config-home"))
     monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
+    monkeypatch.delenv("CRUXIBLE_WORKSPACE", raising=False)
+    if request.node.get_closest_marker("state_root_fallback") is not None:
+        isolated_home = tmp_path_factory.mktemp("state-root-fallback-home")
+        monkeypatch.setenv("HOME", str(isolated_home))
+        monkeypatch.delenv("CRUXIBLE_STATE_ROOT", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_daemon_checkpoint_mode() -> Iterator[None]:
+    """No test inherits the daemon's quiet-period replay checkpoints.
+
+    ``run_server`` reaches ``server.app._serve``, which turns quiet checkpoints on
+    for the process-wide instance manager (a daemon summarizes an off-stride head
+    5 s after acceptances pause). Tests that drive ``run_server`` with uvicorn
+    stubbed left it on for every later test in the same xdist worker, so a
+    deferred summary could land inside another test's "a preview writes
+    nothing" window. The setting is restored after every test.
+
+    Saved and restored directly, not through ``monkeypatch``: a live MonkeyPatch on
+    a runtime object makes world templates build every world fresh.
+    """
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    manager = get_playbill_manager()
+    saved = manager.quiet_checkpoint_seconds
+    try:
+        yield
+    finally:
+        manager.quiet_checkpoint_seconds = saved
+
+
+@pytest.fixture(autouse=True)
+def executor_only_procedure_steps(request: pytest.FixtureRequest) -> Iterator[None]:
+    """An ``executor_only`` test authors closed step kinds (D-R37 h1); see
+    :func:`tests.support.procedures.executor_only_steps`."""
+
+    if request.node.get_closest_marker("executor_only") is None:
+        yield
+        return
+    from tests.support.procedures import executor_only_steps
+
+    with executor_only_steps():
+        yield
+
+
+def test_owned_roots(base_temp: Path) -> tuple[Path, ...]:
+    """The directories a test is allowed to have put a workspace binding in.
+
+    Both spellings, because tests reach for both: the session's pytest temp
+    tree, and the platform temp directory that `tempfile` hands out directly.
+    Resolved, because macOS answers `/var/folders/...` and resolves it to
+    `/private/var/folders/...`, and one comparison has to see them as one place.
+    """
+
+    roots: list[Path] = []
+    for candidate in (base_temp, Path(tempfile.gettempdir())):
+        with contextlib.suppress(OSError):
+            roots.append(candidate.expanduser().resolve())
+    return tuple(roots)
+
+
+def _is_test_owned(path: Path, roots: tuple[Path, ...]) -> bool:
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except OSError:  # pragma: no cover - unreadable candidate root
+        return False
+    return any(resolved.is_relative_to(root) for root in roots)
+
+
+@pytest.fixture(autouse=True)
+def isolate_workspace_bindings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """No test reads a Cruxible workspace binding it did not create.
+
+    Workspace discovery walks up from the current directory to the enclosing Git
+    checkout looking for `.cruxible/coverage.json`, and prefers what it finds
+    over the remembered CLI context -- which is exactly right in a terminal and
+    exactly wrong in a test. A developer whose checkout is itself a governed
+    workspace was running a suite that silently retargeted at their real
+    instance: `test_remembered_playbill_write_marks_remembered_target` read the
+    live binding instead of the remembered one it had just written, and failed
+    on a machine where nothing was wrong with the code.
+
+    So the discovery seam answers "no binding here" for any candidate root
+    outside the test's own temporary directories. A test that wants a binding
+    still gets one -- it writes the file under `tmp_path` first, which is the
+    only way it could have known what to assert about it anyway. The suite's
+    answer stops depending on where the checkout happens to be.
+
+    Both discovery doors are covered: the CLI/SDK target resolver and the block
+    reader, which each read the same file through their own helper.
+    """
+
+    from cruxible_client.authoring import blocks as playbill_blocks
+    from cruxible_client.authoring import context as playbill_context
+
+    roots = test_owned_roots(tmp_path_factory.getbasetemp())
+    resolve_binding = playbill_context._workspace_binding
+    read_binding = playbill_blocks._workspace_binding
+
+    def _context_binding(root: Path):
+        if not _is_test_owned(root, roots):
+            return None, None
+        return resolve_binding(root)
+
+    def _block_binding(root: Path):
+        if not _is_test_owned(root, roots):
+            return None
+        return read_binding(root)
+
+    monkeypatch.setattr(playbill_context, "_workspace_binding", _context_binding)
+    monkeypatch.setattr(playbill_blocks, "_workspace_binding", _block_binding)
 
 
 @pytest.fixture
@@ -345,217 +264,66 @@ def configs_dir() -> Path:
     return Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture
-def car_parts_config(configs_dir: Path) -> str:
-    """Raw YAML string for car parts config."""
-    return (configs_dir / "car_parts.yaml").read_text()
+@pytest.fixture(autouse=True)
+def clean_playbill_manager_singleton() -> None:
+    """Start every test with a manager singleton that shadows none of its methods.
+
+    `get_playbill_manager()` is process-wide, and several tests patch a method
+    ON THAT OBJECT rather than on its class -- `monkeypatch.setattr(manager,
+    "get", ...)`. Undo does not DELETE what it set: it writes back the value it
+    read, and reading a method off an instance yields a BOUND METHOD, so the
+    undo installs that bound method into the instance `__dict__`. The singleton
+    then carries a permanent shadow of its own class attribute, and it outlives
+    both `manager.clear()` and the module that made it.
+
+    Nothing notices where it is made, because the shadow IS the real method. A
+    later test that patches the CLASS does: its patch becomes invisible, the
+    real method runs, and the failure lands somewhere else entirely -- a daemon
+    startup test whose injected recovery fold never fires, reported as card 122
+    and reproducible at the base commit with those two files alone.
+
+    Cleaning at SETUP rather than teardown is deliberate: a teardown finalizer
+    can run before `monkeypatch`'s own undo, which would then reinstate the
+    shadow. Only what a test finds when it starts is under its control.
+    """
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    manager = get_playbill_manager()
+    for name, value in tuple(vars(manager).items()):
+        if callable(value) and callable(getattr(type(manager), name, None)):
+            delattr(manager, name)
+
+
+@pytest.fixture(autouse=True)
+def no_mcp_daemon_autostart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test starts a daemon by accident: an MCP call with no daemon refuses.
+
+    The stdio adapter starts a local daemon when no transport is configured.
+    Tests bind the in-process daemon (`tests/support/mcp_daemon.py`) or a stub
+    client instead; the auto-start tests call the real function by its own
+    reference, under a short scratch state root.
+    """
+
+    from cruxible_core.mcp import daemon
+
+    def refuse(state_root: Path, **_: object) -> daemon.DaemonTarget:
+        raise daemon.DaemonUnavailableError(
+            f"test isolation: no daemon is auto-started for {state_root}; bind one with "
+            "tests.support.mcp_daemon.bind_mcp_daemon"
+        )
+
+    monkeypatch.setattr(daemon, "ensure_local_daemon", refuse)
+    daemon.forget_local_daemon()
+    # The CLI starts a daemon the same way; it is off for every test, and the
+    # CLI auto-start tests turn it back on under a scratch state root.
+    monkeypatch.setenv("CRUXIBLE_NO_AUTOSTART", "1")
 
 
 @pytest.fixture
-def workflow_config_yaml() -> str:
-    """Raw YAML string for terraform-primitives workflow tests."""
-    return WORKFLOW_CONFIG_YAML
+def mcp_daemon(monkeypatch: pytest.MonkeyPatch) -> object:
+    """Bind every MCP handler to the real app served in process (see support)."""
 
+    from tests.support.mcp_daemon import bind_mcp_daemon
 
-@pytest.fixture
-def proposal_workflow_config_yaml() -> str:
-    """Raw YAML string for relationship proposal workflow tests."""
-    return PROPOSAL_WORKFLOW_CONFIG_YAML
-
-
-@pytest.fixture
-def canonical_workflow_project(tmp_path: Path) -> Path:
-    """Project root for canonical preview/apply workflow tests."""
-    bundle_dir = tmp_path / "bundle"
-    bundle_dir.mkdir()
-    rows = [
-        {
-            "vendor_id": "vendor-acme",
-            "vendor_name": "Acme",
-            "product_id": "product-acme-widget",
-            "product_name": "Widget",
-            "cve_id": "CVE-2026-0001",
-            "description": "Widget issue",
-        },
-        {
-            "vendor_id": "vendor-acme",
-            "vendor_name": "Acme",
-            "product_id": "product-acme-widget-pro",
-            "product_name": "Widget Pro",
-            "cve_id": "CVE-2026-0002",
-            "description": "Widget Pro issue",
-        },
-    ]
-    (bundle_dir / "rows.json").write_text(json.dumps(rows, indent=2, sort_keys=True))
-    bundle_sha256 = _compute_directory_sha256(bundle_dir)
-
-    config_yaml = f"""\
-version: "1.0"
-name: canonical_reference_workflow
-
-entity_types:
-  Vendor:
-    properties:
-      vendor_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-  Product:
-    properties:
-      product_id:
-        type: string
-        primary_key: true
-      name:
-        type: string
-  Vulnerability:
-    properties:
-      cve_id:
-        type: string
-        primary_key: true
-      description:
-        type: string
-
-relationships:
-  - name: product_from_vendor
-    from: Product
-    to: Vendor
-  - name: vulnerability_affects_product
-    from: Vulnerability
-    to: Product
-
-named_queries:
-  get_vendors:
-    mode: collection
-    returns: Vendor
-    result_shape: entity
-    where:
-      result.entity_id:
-        eq: $input.vendor_id
-
-contracts:
-  EmptyInput:
-    fields: {{}}
-  BundleRows:
-    fields:
-      items:
-        type: json
-
-artifacts:
-  canonical_bundle:
-    kind: directory
-    uri: ./bundle
-    digest: {bundle_sha256}
-
-providers:
-  reference_loader:
-    kind: function
-    contract_in: EmptyInput
-    contract_out: BundleRows
-    ref: tests.support.workflow_test_providers.reference_bundle_loader
-    version: 1.0.0
-    deterministic: true
-    runtime: python
-    artifact: canonical_bundle
-
-workflows:
-  build_reference:
-    type: canonical
-    contract_in: EmptyInput
-    steps:
-      - id: rows
-        provider: reference_loader
-        input: {{}}
-        as: rows
-      - id: vendors
-        make_entities:
-          entity_type: Vendor
-          items: $steps.rows.items
-          entity_id: $item.vendor_id
-          properties:
-            vendor_id: $item.vendor_id
-            name: $item.vendor_name
-        as: vendors
-      - id: products
-        make_entities:
-          entity_type: Product
-          items: $steps.rows.items
-          entity_id: $item.product_id
-          properties:
-            product_id: $item.product_id
-            name: $item.product_name
-        as: products
-      - id: vulnerabilities
-        make_entities:
-          entity_type: Vulnerability
-          items: $steps.rows.items
-          entity_id: $item.cve_id
-          properties:
-            cve_id: $item.cve_id
-            description: $item.description
-        as: vulnerabilities
-      - id: product_vendor
-        make_relationships:
-          relationship_type: product_from_vendor
-          items: $steps.rows.items
-          from_type: Product
-          from_id: $item.product_id
-          to_type: Vendor
-          to_id: $item.vendor_id
-        as: product_vendor
-      - id: vulnerability_product
-        make_relationships:
-          relationship_type: vulnerability_affects_product
-          items: $steps.rows.items
-          from_type: Vulnerability
-          from_id: $item.cve_id
-          to_type: Product
-          to_id: $item.product_id
-        as: vulnerability_product
-      - id: apply_vendors
-        apply_entities:
-          entities_from: vendors
-        as: apply_vendors
-      - id: apply_products
-        apply_entities:
-          entities_from: products
-        as: apply_products
-      - id: apply_vulnerabilities
-        apply_entities:
-          entities_from: vulnerabilities
-        as: apply_vulnerabilities
-      - id: apply_product_vendor
-        apply_relationships:
-          relationships_from: product_vendor
-        as: apply_product_vendor
-      - id: apply_vulnerability_product
-        apply_relationships:
-          relationships_from: vulnerability_product
-        as: apply_vulnerability_product
-      - id: vendors_query
-        query: get_vendors
-        params:
-          vendor_id: vendor-acme
-        as: vendors_query
-    returns: vendors_query
-"""
-
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(config_yaml)
-    return tmp_path
-
-
-@pytest.fixture
-def canonical_workflow_instance(canonical_workflow_project: Path) -> CruxibleInstance:
-    """Filesystem instance for canonical preview/apply workflow tests."""
-    return CruxibleInstance.init(canonical_workflow_project, "config.yaml")
-
-
-def _compute_directory_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    for child in sorted(item for item in path.rglob("*") if item.is_file()):
-        digest.update(child.relative_to(path).as_posix().encode())
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(child.read_bytes()).hexdigest().encode())
-        digest.update(b"\0")
-    return f"sha256:{digest.hexdigest()}"
+    return bind_mcp_daemon(monkeypatch)

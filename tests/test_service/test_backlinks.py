@@ -1,0 +1,623 @@
+"""The backlink index and its reads (D-R12, D-R17).
+
+One index, keyed by target, joins three pointer kinds: section citations
+recorded by ``write``, notes linking a workspace section ``about`` Subjects,
+and governed Document links (``about``, ``guides``). Reads are keyset pages;
+a cited section whose bytes moved reads ``changed_since_cited``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.backlinks import BacklinksRequest
+from cruxible_client.contracts.doc_sections import section_digest
+from cruxible_client.contracts.documents import (
+    DocumentLifecycle,
+    DocumentLink,
+    DocumentShell,
+)
+from cruxible_client.contracts.errors import ReadRefusalError
+from cruxible_client.contracts.write import SectionEvidence, SetChange, WriteRequest
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_propose_playbill_document,
+    service_store_playbill_body,
+)
+from cruxible_core.service.authoring.write_verbs import service_playbill_write
+from cruxible_core.service.discovery.backlinks import (
+    review_guidance,
+    service_playbill_backlinks,
+)
+from cruxible_core.service.list_pages import ListCursorMismatch
+from tests.core_support._write_support import KIND, caller, seed_write_surface
+from tests.test_service.test_notes import SOURCE, about, observed
+
+STATUS = f"{KIND}.status"
+
+
+def write(instance, *changes):
+    result = service_playbill_write(
+        instance, request=WriteRequest(because="Context", changes=changes), caller=caller()
+    )
+    assert result.status == "accepted", result
+    return result
+
+
+def cite(subject: str, value: str, text: bytes = b"# Reason\nWords\n") -> SetChange:
+    return SetChange(
+        subject=f"{KIND}/{subject}",
+        field="status",
+        value=value,
+        evidence=SectionEvidence(file=SOURCE, section=("Reason",), observation=observed(text)),
+    )
+
+
+def links(instance, **fields):
+    return service_playbill_backlinks(instance, request=BacklinksRequest(**fields))
+
+
+def propose_document(instance, name: str, *links: DocumentLink) -> None:
+    body = service_store_playbill_body(instance, content=b"# Review\nRead the source.\n").digest
+    proposal = service_propose_playbill_document(
+        instance,
+        shell=DocumentShell(
+            identity=f"document:{name}",
+            document_kind="guidance",
+            title=f"Guidance {name}",
+            media_type="text/markdown",
+            body_digest=body,
+            links=tuple(sorted(links, key=lambda item: (item.relation, item.target_identity))),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        actor_id="owner",
+        proposal_name=f"doc-{name}",
+        timestamp="2026-09-29T12:30:00.000000Z",
+    )
+    assert proposal.proposal.candidate is not None, proposal
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal.proposal.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted", receipt
+
+
+def test_subject_reads_its_notes_and_the_sections_its_claims_cite(tmp_path: Path) -> None:
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    result = links(instance, ref=f"{KIND}/wi-1")
+    assert [(link.relation, link.source_kind) for link in result.links] == [
+        ("about", "Note"),
+        ("cites", "Claim"),
+    ]
+    note, citation = result.links
+    assert (note.file, note.section) == (SOURCE, ("Reason",))
+    assert citation.subject == f"{KIND}/wi-1" and citation.field == STATUS
+    assert citation.cited_digest == section_digest(b"# Reason\nWords\n")
+    assert {note.drift, citation.drift} == {"unknown"}
+    # From the section: the Claims resting on it.
+    section = links(instance, file=SOURCE, section=("Reason",))
+    assert [link.source for link in section.links] == [citation.source]
+    # A ClaimType no Document guides has no guidance; any other kind refuses.
+    assert links(instance, ref=STATUS).links == ()
+    claim = citation.source
+    with pytest.raises(ReadRefusalError) as refused:
+        links(instance, ref=claim)
+    assert refused.value.error_code == "cruxible.backlinks.target_unsupported"
+
+
+def test_retired_claim_and_unlinked_note_leave_the_index(tmp_path: Path) -> None:
+    from cruxible_client.contracts.write import AboutChange, RetireChange
+
+    instance, _ = seed_write_surface(tmp_path)
+    outcome = write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    claim = next(change.claim for change in outcome.changes if change.op == "set")
+    write(
+        instance,
+        RetireChange(target=claim),
+        AboutChange(file=SOURCE, section=("Reason",), unlink=(f"{KIND}/wi-1",)),
+    )
+    assert links(instance, ref=f"{KIND}/wi-1").links == ()
+    assert links(instance, file=SOURCE, section=("Reason",)).links == ()
+
+
+def test_a_later_observation_with_other_bytes_marks_earlier_citations_changed(
+    tmp_path: Path,
+) -> None:
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, cite("wi-1", "ready"))
+    write(instance, cite("wi-2", "ready", text=b"# Reason\nWords, revised\n"))
+    rows = {link.subject: link for link in links(instance, file=SOURCE, section=("Reason",)).links}
+    assert rows[f"{KIND}/wi-1"].drift == "changed_since_cited"
+    assert rows[f"{KIND}/wi-2"].drift == "unknown"
+
+
+def test_pages_are_keyset_ranges_continued_by_cursor(tmp_path: Path) -> None:
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    first = links(instance, ref=f"{KIND}/wi-1", limit=1)
+    assert first.truncated and first.next_cursor is not None
+    second = links(instance, ref=f"{KIND}/wi-1", limit=1, cursor=first.next_cursor)
+    assert [link.relation for link in (*first.links, *second.links)] == ["about", "cites"]
+    assert not second.truncated and second.next_cursor is None
+    with pytest.raises(ListCursorMismatch):
+        links(instance, ref=f"{KIND}/wi-2", cursor=first.next_cursor)
+
+
+def test_document_links_index_about_and_guides_and_review_shows_guidance(
+    tmp_path: Path,
+) -> None:
+    instance, _ = seed_write_surface(tmp_path)
+    propose_document(
+        instance,
+        "status-review",
+        DocumentLink(relation="guides", target_identity=f"ClaimType:{STATUS}"),
+        DocumentLink(relation="about", target_identity=f"Subject:{KIND}/wi-1"),
+        DocumentLink(relation="see-also", target_identity="document:elsewhere"),
+    )
+    guidance = links(instance, ref=STATUS)
+    assert [(link.relation, link.source, link.title) for link in guidance.links] == [
+        ("guides", "document:status-review", "Guidance status-review")
+    ]
+    subject = links(instance, ref=f"{KIND}/wi-1")
+    assert [(link.relation, link.source_kind) for link in subject.links] == [("about", "Document")]
+    shown = review_guidance(instance, (f"ClaimType:{STATUS}", "ClaimType:none.such"))
+    assert [(item.definition, item.document) for item in shown] == [
+        (f"ClaimType:{STATUS}", "document:status-review")
+    ]
+
+
+def test_document_links_refuse_wrong_kinds_and_dead_targets(tmp_path: Path) -> None:
+    instance, _ = seed_write_surface(tmp_path)
+    body = service_store_playbill_body(instance, content=b"# Review\n").digest
+
+    def propose(link: DocumentLink):
+        return service_propose_playbill_document(
+            instance,
+            shell=DocumentShell(
+                identity="document:bad",
+                document_kind="guidance",
+                title="Bad",
+                media_type="text/markdown",
+                body_digest=body,
+                links=(link,),
+                governance_scope=("project:playbill",),
+                lifecycle=DocumentLifecycle(revision=1),
+            ),
+            actor_id="owner",
+            proposal_name="doc-bad",
+            timestamp="2026-09-29T12:30:00.000000Z",
+            dry_run=True,
+        )
+
+    def codes(result) -> set[str]:
+        evaluation = result.proposal.evaluation
+        return {item.code for item in evaluation.diagnostics}
+
+    wrong = propose(DocumentLink(relation="guides", target_identity=f"Subject:{KIND}/wi-1"))
+    assert "cruxible.document.link_target_invalid" in codes(wrong), wrong
+    dead = propose(DocumentLink(relation="guides", target_identity="ClaimType:none.such"))
+    assert "cruxible.document.link_target_unavailable" in codes(dead), dead
+
+
+def test_a_continuation_resolves_its_target_where_its_first_page_read(tmp_path: Path) -> None:
+    """A key that moved, or a bare name made ambiguous, does not strand a valid cursor."""
+
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, SetChange(subject=f"{KIND}/wi-1", field="slug", value="alpha"))
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    first = links(instance, ref=f"{KIND}/alpha", limit=1)
+    assert first.target == f"{KIND}/wi-1" and first.next_cursor is not None
+    # The key moves: at the head `alpha` now names wi-2.
+    write(
+        instance,
+        SetChange(subject=f"{KIND}/wi-1", field="slug", value="beta"),
+        SetChange(subject=f"{KIND}/wi-2", field="slug", value="alpha"),
+    )
+    assert links(instance, ref=f"{KIND}/alpha").target == f"{KIND}/wi-2"
+    second = links(instance, ref=f"{KIND}/alpha", limit=1, cursor=first.next_cursor)
+    assert second.target == f"{KIND}/wi-1"
+    assert [link.relation for link in (*first.links, *second.links)] == ["about", "cites"]
+    # An explicit at must still agree with the cursor.
+    with pytest.raises(ListCursorMismatch):
+        links(
+            instance,
+            ref=f"{KIND}/alpha",
+            limit=1,
+            cursor=first.next_cursor,
+            at=instance.accepted_coordinate().git_oid,
+        )
+
+
+def test_a_bare_name_made_ambiguous_after_the_first_page_still_continues(
+    tmp_path: Path,
+) -> None:
+    instance, _ = seed_write_surface(tmp_path)
+    for name in ("guide-a", "guide-b"):
+        propose_document(
+            instance, name, DocumentLink(relation="guides", target_identity=f"ClaimType:{STATUS}")
+        )
+    first = links(instance, ref="status", limit=1)
+    assert first.target == f"ClaimType:{STATUS}" and first.next_cursor is not None
+    propose_document(instance, "status")  # Document:status: `status` is now ambiguous
+    with pytest.raises(ReadRefusalError) as ambiguous:
+        links(instance, ref="status")
+    assert ambiguous.value.error_code == "cruxible.get.ref_ambiguous"
+    second = links(instance, ref="status", limit=1, cursor=first.next_cursor)
+    assert [link.source for link in (*first.links, *second.links)] == [
+        "document:guide-a",
+        "document:guide-b",
+    ]
+
+
+def _vm_steps(instance, request: BacklinksRequest) -> int:
+    """SQLite virtual-machine steps one public backlinks read runs (every bound projection)."""
+
+    from contextlib import contextmanager
+
+    steps = [0]
+    bind = instance.bind_accepted_projection
+
+    @contextmanager
+    def counted(coordinate):  # type: ignore[no-untyped-def]
+        with bind(coordinate) as projection:
+            connection = projection.typed.connection
+
+            def step() -> int:
+                steps[0] += 1
+                return 0
+
+            connection.set_progress_handler(step, 1)
+            try:
+                yield projection
+            finally:
+                connection.set_progress_handler(None, 0)
+
+    instance.bind_accepted_projection = counted
+    try:
+        service_playbill_backlinks(instance, request=request)
+    finally:
+        del instance.bind_accepted_projection
+    return steps[0]
+
+
+#: Two worlds: extra ClaimTypes with their own leaves, and distractors sharing the
+#: target's leaf (``otherN.status``), which a leaf scan would read.
+_WORK_REFS = {
+    "distinct": ("status", f"{KIND}.status", f"ClaimType:{STATUS}", f"{KIND}/wi-1"),
+    "shared": (
+        "work_item.status",
+        "ClaimType:work_item.status",
+        f"{KIND}.status",
+        f"ClaimType:{STATUS}",
+        f"{KIND}/wi-1",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("world", "ref"), [(world, ref) for world, refs in _WORK_REFS.items() for ref in refs]
+)
+def test_backlinks_work_does_not_grow_with_the_number_of_claim_types(
+    tmp_path: Path, world: str, ref: str
+) -> None:
+    """Resolving the target (bare, dotted tail, typed, full or a Subject) is indexed, bounded.
+
+    The work of one public read is the same with 4 or 64 other ClaimTypes, also
+    when they all share the target's leaf (a dotted tail is one prefix range of
+    the reversed-name index, not a scan of the leaf).
+    """
+
+    from tests.core_support._support import initialize_local
+    from tests.core_support._write_support import CLAIM_TYPES, _claim_type, seed_write_vocabulary
+    from tests.test_service.test_get_claim_type_tails import named_claim_type
+
+    steps = {}
+    for size in (4, 64):
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _ = initialize_local(root)
+        extras = tuple(
+            _claim_type(f"extra_{i}")
+            if world == "distinct"
+            else named_claim_type(f"other{i}.status")
+            for i in range(size)
+        )
+        seed_write_vocabulary(instance, claim_types=(*CLAIM_TYPES, *extras))
+        propose_document(
+            instance,
+            "guide",
+            DocumentLink(relation="about", target_identity=f"Subject:{KIND}/wi-1"),
+            DocumentLink(relation="guides", target_identity=f"ClaimType:{STATUS}"),
+        )
+        request = BacklinksRequest(ref=ref, limit=1)
+        assert service_playbill_backlinks(instance, request=request).links  # it resolves
+        _vm_steps(instance, request)  # warm caches and indexes
+        steps[size] = _vm_steps(instance, request)
+    # Flat, not merely sublinear: 60 more ClaimTypes may add no work at all.
+    assert steps[64] <= steps[4] * 1.05 + 10, steps
+
+
+def test_get_detail_backlinks_serves_the_backlinks_page(tmp_path: Path) -> None:
+    """D-R32: ``get <ref> detail=backlinks`` answers the backlinks read's pages."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="reader", can_read_body=True)
+
+    def get(ref: str, **fields):
+        return service_playbill_get(
+            instance, request=GetRequest(ref=ref, detail="backlinks", **fields), access=access
+        )
+
+    instance, _ = seed_write_surface(tmp_path)
+    write(instance, about(f"{KIND}/wi-1"), cite("wi-1", "ready"))
+    whole = get(f"{KIND}/wi-1")
+    assert whole.kind == "subject" and whole.detail == "backlinks"
+    assert whole.backlinks is not None
+    assert whole.backlinks.links == links(instance, ref=f"{KIND}/wi-1").links
+    assert not whole.truncated and whole.next_cursor is None
+    first = get(f"{KIND}/wi-1", limit=1)
+    assert first.truncated and first.next_cursor is not None
+    second = get(f"{KIND}/wi-1", limit=1, cursor=first.next_cursor)
+    assert first.backlinks is not None and second.backlinks is not None
+    assert (*first.backlinks.links, *second.backlinks.links) == whole.backlinks.links
+    assert first.coordinate == second.coordinate == whole.coordinate
+    # A ClaimType answers its guidance; a Claim refuses as a get detail.
+    guidance = get(STATUS)
+    assert guidance.kind == "claim_type" and guidance.backlinks is not None
+    with pytest.raises(ReadRefusalError) as refused:
+        get(whole.backlinks.links[1].source)
+    assert refused.value.error_code == "cruxible.get.detail_unsupported"
+
+
+def test_default_mcp_profile_reaches_backlinks_through_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-R32: the default profile's ``cruxible_get`` takes ``detail="backlinks"``."""
+
+    import asyncio
+
+    from cruxible_core.mcp.server import create_server
+
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "default")
+    tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
+    assert "cruxible_backlinks" not in tools
+    detail = tools["cruxible_get"].inputSchema["properties"]["detail"]
+    assert "backlinks" in detail["enum"]
+
+
+# -- guidance and links on the get cards (D-R17: shown as backlinks) ------------
+
+
+def _card(instance, ref: str, surface: str = "mcp"):
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    return service_playbill_get(
+        instance,
+        request=GetRequest(ref=ref, surface=surface),  # type: ignore[arg-type]
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).card
+
+
+def _guides(target: str) -> DocumentLink:
+    return DocumentLink(relation="guides", target_identity=target)
+
+
+#: The backlinks read a cut guidance list names, per surface.
+_MORE_GUIDANCE = {
+    "cli": "cruxible backlinks {ref}",
+    "mcp": 'cruxible_get(ref="{ref}", detail="backlinks")',
+    "sdk": 'cx.backlinks("{ref}")',
+}
+
+
+def _assert_guidance_cut(instance, ref: str, shown: list[str], total: int) -> None:
+    for surface, spelling in _MORE_GUIDANCE.items():
+        card = _card(instance, ref, surface)
+        assert [item.document for item in card.guidance] == shown
+        assert card.guidance_total == total
+        assert spelling.format(ref=ref) in card.next
+
+
+def test_a_claim_type_card_lists_the_documents_that_guide_it_bounded(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS, GetClaimTypeCard
+
+    instance, _ = seed_write_surface(tmp_path)
+    ref = f"ClaimType:{STATUS}"
+    bare = _card(instance, ref)
+    assert isinstance(bare, GetClaimTypeCard)
+    # No guidance: absent from the card, and no next names backlinks.
+    assert bare.guidance == () and bare.guidance_total is None
+    dumped = bare.model_dump(mode="json")
+    assert "guidance" not in dumped and "guidance_total" not in dumped
+    assert not any("backlinks" in step for step in bare.next)
+
+    propose_document(instance, "status-review", _guides(ref))
+    card = _card(instance, ref)
+    assert [(item.document, item.title) for item in card.guidance] == [
+        ("Document:status-review", "Guidance status-review")
+    ]
+    assert card.guidance_total is None and not any("backlinks" in step for step in card.next)
+
+    names = [f"status-review-{index}" for index in range(GET_CARD_LINKS)]
+    for name in names:
+        propose_document(instance, name, _guides(ref))
+    every = sorted(["status-review", *names], key=lambda item: f"document:{item}".encode())
+    _assert_guidance_cut(
+        instance, ref, [f"Document:{name}" for name in every[:GET_CARD_LINKS]], len(every)
+    )
+
+
+def test_a_document_card_lists_its_links_bounded(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS, GetDocumentCard
+
+    instance, _ = seed_write_surface(tmp_path)
+    propose_document(instance, "plain")
+    plain = _card(instance, "Document:plain")
+    assert isinstance(plain, GetDocumentCard)
+    assert plain.links == () and plain.links_total is None
+    dumped = plain.model_dump(mode="json")
+    assert "links" not in dumped and "links_total" not in dumped
+
+    propose_document(
+        instance,
+        "status-review",
+        _guides(f"ClaimType:{STATUS}"),
+        DocumentLink(relation="about", target_identity=f"Subject:{KIND}/wi-1"),
+    )
+    card = _card(instance, "Document:status-review")
+    assert [(link.relation, link.target) for link in card.links] == [
+        ("about", f"Subject:{KIND}/wi-1"),
+        ("guides", f"ClaimType:{STATUS}"),
+    ]
+    assert card.links_total is None and not any('"proof"' in step for step in card.next)
+
+    labels = [
+        DocumentLink(relation="see-also", target_identity=f"document:other-{index}")
+        for index in range(GET_CARD_LINKS + 1)
+    ]
+    propose_document(instance, "many", *labels)
+    many = _card(instance, "Document:many")
+    assert [link.target for link in many.links] == [
+        link.target_identity for link in labels[:GET_CARD_LINKS]
+    ]
+    assert many.links_total == GET_CARD_LINKS + 1
+    assert 'cruxible_get(ref="Document:many", detail="proof")' in many.next
+
+
+def test_a_procedure_card_lists_the_documents_that_guide_it_bounded(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS, GetProcedureCard
+    from tests.test_procedures.test_procedure_run_surface import _world
+
+    instance, _owner, procedure = _world(tmp_path)
+    ref = f"Procedure:{procedure.identity.name}"
+    bare = _card(instance, ref)
+    assert isinstance(bare, GetProcedureCard)
+    assert bare.guidance == () and bare.guidance_total is None
+    assert "guidance" not in bare.model_dump(mode="json")
+
+    propose_document(instance, "run-review", _guides(ref))
+    card = _card(instance, ref)
+    assert [(item.document, item.title) for item in card.guidance] == [
+        ("Document:run-review", "Guidance run-review")
+    ]
+    assert card.guidance_total is None and not any("backlinks" in step for step in card.next)
+
+    names = [f"run-review-{index}" for index in range(GET_CARD_LINKS)]
+    for name in names:
+        propose_document(instance, name, _guides(ref))
+    every = sorted(["run-review", *names], key=lambda item: f"document:{item}".encode())
+    _assert_guidance_cut(
+        instance, ref, [f"Document:{name}" for name in every[:GET_CARD_LINKS]], len(every)
+    )
+
+
+def revise_document(instance, name: str, *links: DocumentLink) -> None:
+    """Accept the next revision of a Document with ``links`` in place of its own."""
+
+    from cruxible_client.contracts.documents import document_digest
+
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        prior = projection.typed.source(f"document:{name}")
+    revised = prior.model_copy(
+        update={
+            "links": tuple(sorted(links, key=lambda item: (item.relation, item.target_identity))),
+            "predecessor_digest": document_digest(prior).tagged,
+            "lifecycle": DocumentLifecycle(revision=prior.lifecycle.revision + 1),
+        }
+    )
+    proposal = service_propose_playbill_document(
+        instance,
+        shell=revised,
+        actor_id="owner",
+        proposal_name=f"revise-{name}-{revised.lifecycle.revision}",
+        timestamp="2026-11-12T12:00:00.000000Z",
+    )
+    assert proposal.proposal.candidate is not None, proposal
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal.proposal.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted", receipt
+
+
+def _read(instance, ref: str, **fields):
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    return service_playbill_get(
+        instance,
+        request=GetRequest(ref=ref, **fields),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    )
+
+
+def test_a_historical_cut_guidance_list_continues_at_its_own_coordinate(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS
+
+    instance, _ = seed_write_surface(tmp_path)
+    ref = f"ClaimType:{STATUS}"
+    names = [f"guide-{index}" for index in range(GET_CARD_LINKS + 1)]
+    for name in names:
+        propose_document(instance, name, _guides(ref))
+    old = instance.accepted_coordinate().git_oid
+    revise_document(instance, "guide-0")  # head: one guide fewer, no longer cut
+
+    card = _read(instance, ref, at=old, surface="mcp").card
+    assert card.guidance_total == GET_CARD_LINKS + 1
+    follow = f'cruxible_get(ref="{ref}", detail="backlinks", at="{old}")'
+    assert follow in card.next
+    cli = _read(instance, ref, at=old, surface="cli").card
+    assert f"cruxible backlinks {ref} --at {old}" in cli.next
+    sdk = _read(instance, ref, at=old, surface="sdk").card
+    assert any(
+        step.startswith("cx.at(AcceptedCoordinate(") and f'"{old}"' in step
+        for step in sdk.next
+        if step.endswith(f'.backlinks("{ref}")')
+    )
+    # Following it (the same read the MCP line names) answers the historical set.
+    page = _read(instance, ref, detail="backlinks", at=old)
+    assert [link.source for link in page.backlinks.links] == [f"document:{n}" for n in names]
+    # At head the card is whole again and names no continuation.
+    head = _read(instance, ref).card
+    assert len(head.guidance) == GET_CARD_LINKS and head.guidance_total is None
+    assert not any("backlinks" in step for step in head.next)
+
+
+def test_a_historical_cut_document_link_list_continues_at_its_own_coordinate(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.get_reads import GET_CARD_LINKS
+
+    instance, _ = seed_write_surface(tmp_path)
+    labels = [
+        DocumentLink(relation="see-also", target_identity=f"document:other-{index}")
+        for index in range(GET_CARD_LINKS + 1)
+    ]
+    propose_document(instance, "many", *labels)
+    old = instance.accepted_coordinate().git_oid
+    revise_document(instance, "many")  # head: no links at all
+
+    card = _read(instance, "Document:many", at=old).card
+    assert card.links_total == GET_CARD_LINKS + 1
+    assert f'cruxible_get(ref="Document:many", detail="proof", at="{old}")' in card.next
+    cli = _read(instance, "Document:many", at=old, surface="cli").card
+    assert f"cruxible get Document:many --detail proof --at {old}" in cli.next
+    proof = _read(instance, "Document:many", detail="proof", at=old).proof
+    (references,) = (
+        fact["value"]
+        for fact in proof["facts"]
+        if fact["schema_id"] == "cruxible.document.references"
+    )
+    assert [link["target_identity"] for link in references["links"]] == [
+        link.target_identity for link in labels
+    ]
+    head = _read(instance, "Document:many").card
+    assert head.links == () and head.links_total is None

@@ -1,0 +1,4975 @@
+"""The write verbs: ``set``, ``retire`` and ``write``, lowered onto one change set.
+
+Every write is resolved against the current accepted head, checked against the
+accepted vocabulary before anything is lowered (R04), and lowered to an ordinary
+authoring change set. That change set goes through the existing coordinator --
+create, preflight, submit -- and, when the approval policy and the caller's tier
+allow it, activation. There is no second write path: a ``set`` is exactly the
+Claim member an author would have written by hand, with the Claim it revises,
+the dispositions the slot law demands and the Subjects it needs filled in.
+
+What the verbs decide for the caller:
+
+- a field resolves by the shared naming rule (``field_names``), so the names
+  ``orient`` advertises are the names a write takes;
+- ``set`` on a single-value field revises the live Claim, and refuses
+  ``cruxible.write.slot_changed`` when the slot moved since the caller's read
+  coordinate (decision a);
+- the default evidence is the writer's ``because`` as self evidence (decision
+  b);
+- a Subject of a known kind that does not exist yet is added to the same change
+  set (decision c); a Subject-valued value never is;
+- a ``create`` change creates a Subject by its kind and key under a label (or
+  lands on the one live Subject holding that key), and the write's other
+  changes name it ``{"created": label}``, in any order. A minted Subject's id
+  comes from the submitted operation, so its Claims name it by its creation
+  member until lowering lands them;
+- ``accept="if_allowed"`` activates in the same call when the approval policy
+  and the caller's tier allow it (decision d); otherwise the outcome names who
+  may approve and the exact call on the caller's surface;
+- ``dry_run`` takes the same path up to the commit and writes nothing (R12).
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import re
+import shlex
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
+from typing import Any, Literal, cast
+
+from pydantic import BaseModel
+
+from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    parse_artifact_identity,
+)
+from cruxible_client.contracts.authoring.models import (
+    AuthoringChangeSetMember,
+    AuthoringClaimStatement,
+    AuthoringExistingClaimDisposition,
+    AuthoringIntent,
+    AuthoringNoneClaimObject,
+    AuthoringReferenceExpectation,
+    AuthoringSlotExpectation,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ClaimRetirementMember,
+    ExistingCaptureCitationSource,
+    NoteAuthoringPayload,
+    PreflightResult,
+    SelfSourceBody,
+    SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
+    authoring_member_identity,
+)
+from cruxible_client.contracts.builtin_claim_types import admits_object_subject
+from cruxible_client.contracts.candidates import (
+    CandidateRecord,
+    canonical_candidate_timestamp,
+)
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
+)
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    DIRECT_SELF_ASSERTED_CONTRACT_ID,
+    FOREIGN_SOURCE_COORDINATE_TYPE,
+    classify_capture_reuse,
+    foreign_source_capture_contract,
+    observed_content,
+)
+from cruxible_client.contracts.claim_type_structure import ClaimRole
+from cruxible_client.contracts.claim_types import (
+    ClaimInverseObjectKey,
+    ClaimInverseObjectKeyPart,
+    ClaimType,
+    effective_canonical_form,
+    effective_evidence_requirement,
+)
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimRetireDependent,
+    LiteralClaimObject,
+    SubjectClaimObject,
+    claim_artifact_digest,
+    claim_path,
+    new_claim_id,
+    parse_claim,
+)
+from cruxible_client.contracts.errors import (
+    CanonicalEncodingError,
+    CruxibleError,
+    ProposalStale,
+    ReadRefusalError,
+    SettlementIntegrityError,
+    WriteRefusalError,
+)
+from cruxible_client.contracts.get_reads import ReadSurface
+from cruxible_client.contracts.notes import note_id, note_path, parse_note
+from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.public_names import public_name, stored_contract_name
+from cruxible_client.contracts.read_values import (
+    ShownObject,
+    TruncatedText,
+    shown_plain,
+    summary_value,
+    whole_value_read,
+)
+from cruxible_client.contracts.recompilation import ProposalRecompiled
+from cruxible_client.contracts.repairs import hand_edit_repair
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import (
+    claim_literal_detail,
+    claim_literal_problem,
+    claim_value_kind,
+    subject_value_kinds,
+)
+from cruxible_client.contracts.source_references import ExternalSourceReference
+from cruxible_client.contracts.subject_kinds import (
+    SubjectEnd,
+    SubjectKeyPart,
+    SubjectKeyValue,
+    SubjectKind,
+    key_predicate,
+    parse_subject_kind,
+    subject_kind_path,
+)
+from cruxible_client.contracts.subjects import (
+    SubjectShell,
+    parse_subject,
+    subject_digest,
+    subject_path,
+)
+from cruxible_client.contracts.temporal import utc_now
+from cruxible_client.contracts.write import (
+    CLAIM_ID_PATTERN,
+    DOCS_ONLY_HINT,
+    MAX_REBIND_FROM_CAPTURE,
+    RATIONALE_TOO_LONG,
+    RATIONALE_TOO_LONG_REPAIR,
+    AboutChange,
+    AddChange,
+    ApprovalNeeded,
+    ApprovalReason,
+    CaptureEvidence,
+    Change,
+    ChangeOutcome,
+    ContractEvidence,
+    CreateChange,
+    CreatedSubject,
+    CreateKeyPart,
+    DocEditObservation,
+    DocOutcome,
+    ExpectedValue,
+    FileEvidence,
+    NewerCaptureNotCitableWarning,
+    NoneValue,
+    RebindChange,
+    RetireChange,
+    SectionEvidence,
+    SelfEvidence,
+    SetChange,
+    SlotRef,
+    VerdictNotSupportedWarning,
+    WriteOutcome,
+    WriteProposalRef,
+    WriteRefusal,
+    WriteRequest,
+    WriteStatus,
+    WriteWarning,
+    capture_handle,
+    change_set_rationale,
+    change_set_rationale_too_long,
+    subject_reference,
+)
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
+from cruxible_core.authoring.preflight import ComputedPreflight
+from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
+from cruxible_core.errors import RequestRefusedError
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import (
+    SubjectRefResolution,
+)
+from cruxible_core.indexes.subject_identity import (
+    SUBJECT_KIND_UNDECLARED,
+    IdentityOverlay,
+    IdentityView,
+    KeyReader,
+    KeyTuple,
+    PendingEnd,
+    PendingKey,
+    SubjectKeyInvalid,
+    canonical_key,
+    canonical_key_value,
+    key_ambiguous_message,
+    key_encoding,
+    subject_kind_of,
+    tree_key_reader,
+    undeclared_kind_repair,
+    write_create_change_shape,
+)
+from cruxible_core.indexes.typed_state import LIVE_SLOT_CLAIM_DIGESTS_SQL, LIVE_SLOT_CLAIMS_SQL
+from cruxible_core.proposals.prepared_evaluation import SettlementHandoff
+from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.phase_timing import timed_operation, timed_phase
+from cruxible_core.runtime.request_scope import projection_request
+from cruxible_core.service.change_preview import compact_coordinate, preview_guards
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.field_names import resolve_field_in
+from cruxible_core.service.discovery.query_values import (
+    read_live_nones,
+    read_live_values,
+    subjects_of_kind,
+)
+from cruxible_core.service.discovery.query_vocabulary import (
+    PredicateInfo,
+    QueryVocabulary,
+    coerce_text_spelling,
+    load_query_vocabulary,
+)
+from cruxible_core.service.identity import require_authoring_principal
+from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
+from cruxible_core.storage.capture_metadata import capture_envelope
+from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import read_request, unpositioned_operation
+
+_AUTHORABLE_ROLES = ("normative", "observation", "environment_binding")
+# The contracts a Claim's own authoring produces; they never satisfy `captured`.
+_OWN_WORDS_CONTRACTS = frozenset(
+    {DIRECT_SELF_ASSERTED_CONTRACT_ID, COORDINATOR_SELF_SOURCE_CONTRACT_ID}
+)
+_MAX_CANDIDATES = 8
+# A Claim rationale is one line of at most this many characters.
+_RATIONALE_MAX = 280
+# How many of a contract's Captures about the Subject, newest first, are tried
+# for the newest one that verifies.
+_MAX_CONTRACT_CAPTURES = 32
+# How many of a contract's Captures one contract lookup reads.
+_CONTRACT_CAPTURE_BUDGET = 16_384
+_CONTRACT_QUALIFIER = "CaptureContract:"
+_CLAIM_ID = re.compile(CLAIM_ID_PATTERN)
+# Decimal text a number field cannot hold: digits with a fraction or an exponent.
+_DECIMAL_TEXT = re.compile(r"-?\d*\.\d+(?:[eE][+-]?\d+)?|-?\d+[eE][+-]?\d+")
+
+
+@dataclass(frozen=True)
+class WriteCaller:
+    """Who is writing, and whether their tier admits approving and activating proposals.
+
+    Both decide how a write result's approve/activate/next calls read: one the
+    caller cannot run is named as someone else's, whatever the approval reason.
+    """
+
+    actor: AuthenticatedActor
+    may_activate: bool
+    may_approve: bool
+
+
+def _refuse(
+    code: str,
+    message: str,
+    *,
+    change: int | None = None,
+    candidates: Sequence[str] = (),
+    repair: str | None = None,
+    field_path: str | None = None,
+) -> WriteRefusalError:
+    return WriteRefusalError(
+        code,
+        message,
+        change=change,
+        candidates=tuple(candidates)[:_MAX_CANDIDATES],
+        repair_line=repair,
+        field_path=field_path,
+    )
+
+
+def _bare(claim: str) -> str:
+    return claim.removeprefix("Claim:")
+
+
+def _full(coordinate: AcceptedProjectionCoordinate | AcceptedCoordinate) -> ClientCoordinate:
+    public = (
+        coordinate
+        if isinstance(coordinate, AcceptedCoordinate)
+        else AcceptedCoordinate.from_internal(coordinate)
+    )
+    return ClientCoordinate.model_validate(public.model_dump(mode="json"))
+
+
+# -- rendering calls on the caller's surface (R07) -------------------------------
+
+
+def _render_proposal_call(
+    surface: ReadSurface,
+    verb: Literal["approve", "activate"],
+    proposal_id: str,
+    *,
+    signer: str | None = None,
+) -> str:
+    if surface == "cli":
+        if verb == "approve":
+            who = signer or "<approver>"
+            return (
+                f"cruxible proposal approve {proposal_id} --signer-id {who} --key <{who}.ed25519>"
+            )
+        return f"cruxible proposal activate {proposal_id}"
+    if surface == "sdk":
+        handle = f"cx.proposal({json.dumps(proposal_id)})"
+        if verb == "approve":
+            who = signer or "approver"
+            return f"{handle}.approve(signer=<{who} signer>, reviewed={handle}.review())"
+        return f"{handle}.activate()"
+    if verb == "approve":
+        arguments = f"proposal_id={json.dumps(proposal_id)}"
+        if signer is not None:
+            arguments += f", signer_id={json.dumps(signer)}"
+        return f"cruxible_proposal_approve({arguments})"
+    return f"cruxible_proposal_activate(proposal_id={json.dumps(proposal_id)})"
+
+
+def _render_get(surface: ReadSurface, ref: str) -> str:
+    if surface == "cli":
+        return f"cruxible get {shlex.quote(ref)}"
+    if surface == "sdk":
+        return f"cx.get({json.dumps(ref)})"
+    return f"cruxible_get(ref={json.dumps(ref)})"
+
+
+def _render_commit(surface: ReadSurface, git_oid: str) -> str:
+    if surface == "cli":
+        return f"Run the same command without --dry-run, adding --at {git_oid}"
+    if surface == "sdk":
+        return f"Call it again with dry_run=False, at={json.dumps(git_oid)}"
+    return f'Call it again with dry_run=false and at="{git_oid}"'
+
+
+def requires_captured_evidence(claim_type: ClaimType) -> bool:
+    """Whether a ClaimType refuses a write backed only by the writer's own words.
+
+    Decision b refuses such a write with ``cruxible.write.evidence_required``: a
+    v7 ClaimType whose ``evidence_requirement`` is ``captured``. Under ``self``
+    (every earlier ClaimType) a policy that merely does not admit self evidence
+    lets the write land ``uncovered``, with a warning (R05); under ``none`` the
+    writer's words are the origin and support the Claim.
+    """
+
+    return effective_evidence_requirement(claim_type) == "captured"
+
+
+def _named(subject: str | None) -> str:
+    """A change's Subject, once the write's default subject has been filled in."""
+
+    assert subject is not None, "the default subject is filled in before planning"
+    return subject
+
+
+def _with_default_subject(request: WriteRequest) -> WriteRequest:
+    """Give every change that names no Subject the write's own ``subject``.
+
+    A change's own subject overrides the default. A change with neither
+    refuses ``cruxible.write.subject_required`` before anything is planned.
+    """
+
+    changes: list[Change] = []
+    for index, change in enumerate(request.changes):
+        if isinstance(change, CreateChange | RebindChange):
+            pass
+        elif isinstance(change, AboutChange):
+            if not change.subjects and not change.unlink:
+                owner = _default_subject(request, index=index, path=f"changes[{index}]")
+                change = change.model_copy(update={"subjects": (owner,)})
+        elif isinstance(change, RetireChange):
+            target = change.target
+            if isinstance(target, SlotRef) and target.subject is None:
+                owner = _default_subject(request, index=index, path=f"changes[{index}].target")
+                change = change.model_copy(
+                    update={"target": target.model_copy(update={"subject": owner})}
+                )
+        elif change.subject is None:
+            owner = _default_subject(request, index=index, path=f"changes[{index}]")
+            change = change.model_copy(update={"subject": owner})
+        changes.append(change)
+    return request.model_copy(update={"changes": tuple(changes)})
+
+
+def _default_subject(request: WriteRequest, *, index: int, path: str) -> str:
+    if request.subject is None:
+        raise _refuse(
+            "cruxible.write.subject_required",
+            f"change {index} names no Subject, and the write has no default subject",
+            change=index,
+            repair=(
+                "Name the Subject on the change as kind/id, or give the write a "
+                "top-level subject for every change that names none"
+            ),
+            field_path=f"{path}.subject",
+        )
+    return request.subject
+
+
+_EXACT_BYTES_REPAIR = (
+    "Cite evidence committed as exact bytes: a span of the record's source as file "
+    "evidence (--evidence-file PATH#ANCHOR), or a Capture a Procedure or Line stored "
+    "with an exact-bytes commitment. The external record reader commits records as "
+    "canonical values, so reading the same record again does not help"
+)
+
+
+def _commitment_kind(item: Any) -> str:
+    return (
+        "a canonical value"
+        if item.envelope.commitment.digest_kind == "canonical_value"
+        else (f"{item.envelope.commitment.digest_kind.replace('_', ' ')}")
+    )
+
+
+def _distinct_handles(digests: Sequence[str], *, at_least: int) -> tuple[str, ...]:
+    """Each digest's shortest handle, at least ``at_least`` hex, that tells them apart."""
+
+    length = max(12, at_least)
+    while length < 64 and len({capture_handle(item, length=length) for item in digests}) < len(
+        digests
+    ):
+        length += 1
+    return tuple(capture_handle(item, length=length) for item in digests)
+
+
+_BRIEF_MAX = 80
+
+
+def _brief(value: object) -> str:
+    """A value as a refusal quotes it: its repr, cut to a readable length."""
+
+    text = repr(value)
+    return text if len(text) <= _BRIEF_MAX else f"{text[: _BRIEF_MAX - 1]}\u2026"
+
+
+def _not_whole(value: object) -> bool:
+    """Whether a shown value is, or holds, something other than the value itself.
+
+    A ``TruncatedText`` preview or ``ShownObject`` summary: neither is a
+    value to expect, so a refusal names the read of the whole value instead.
+    """
+
+    return isinstance(value, TruncatedText) or (
+        isinstance(value, list) and any(_not_whole(item) for item in value)
+    )
+
+
+def _brief_shown(value: object) -> str:
+    """A shown value as a refusal quotes it: a preview by its head and length."""
+
+    if isinstance(value, TruncatedText):
+        return f"{_brief(value.preview)} ({value.length} chars)"
+    if isinstance(value, ShownObject):
+        return repr(value.object)
+    if isinstance(value, list):
+        return "[" + ", ".join(_brief_shown(item) for item in value) + "]"
+    return repr(value)
+
+
+def _value_key(value: object) -> str:
+    """One value's comparison key: ``1``, ``true`` and ``"1"`` stay distinct."""
+
+    return canonical_json(value.model_dump(mode="json") if isinstance(value, BaseModel) else value)
+
+
+# -- planning ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _SlotClaim:
+    claim_id: str
+    digest: str
+    value: object
+    role: str = "normative"
+
+
+@dataclass(frozen=True)
+class _SlotPin:
+    """One slot a change depends on, with its live Claims when it was planned."""
+
+    subject_path: str
+    predicate: str
+    qualifier: str | None
+    live: tuple[str, ...]
+
+
+@dataclass
+class _Bound:
+    """Where one ``create`` change's label lands: a Subject this write makes, or a live one.
+
+    ``path`` is None until shared lowering assigns the complete change set.
+    Sibling Claims name new Subjects by creation member, including keyed ones.
+    """
+
+    index: int
+    label: str
+    kind: str
+    path: str | None
+    resolved: Literal["created", "existing"]
+    member: str | None = None
+    #: The key in key order; a pair's end this write creates is its member
+    #: (``PendingEnd``) until lowering names it.
+    key: PendingKey = ()
+
+    @property
+    def ref(self) -> str | None:
+        return (
+            None if self.path is None else self.path.removeprefix("subjects/").removesuffix(".json")
+        )
+
+    @property
+    def address(self) -> SemanticAddress:
+        if self.path is not None:
+            return SemanticAddress.whole_artifact(self.path)
+        assert self.member is not None
+        return SemanticAddress.subject_creation(self.kind, self.member.rpartition("@")[2])
+
+    @property
+    def slot_path(self) -> str:
+        """The path planning keys this Subject's slots by, before and after its id is known."""
+
+        return self.path if self.path is not None else f"pending:{self.member}"
+
+
+@dataclass
+class _Planned:
+    """One change resolved against accepted state, before its member is built."""
+
+    index: int
+    op: Literal["create", "set", "add", "retire", "rebind", "about"]
+    outcome: dict[str, Any]
+    member: AuthoringChangeSetMember | None = None
+    slot: tuple[str, str] | None = None
+    revises: str | None = None
+    # Live Claims of the slot at the head that the new Claim must disposition.
+    existing: tuple[str, ...] = ()
+    retires: str | None = None
+    change: SetChange | AddChange | None = None
+    claim_type: ClaimType | None = None
+    # The CaptureContract the evidence was captured under, by name, when known
+    # before submit; a cited Capture's contract is read from its envelope.
+    used_contract: str | None = None
+    # The slot this change was planned against, pinned through admission.
+    pin: _SlotPin | None = None
+    # The Capture the evidence cites, by digest, once a handle or contract resolved.
+    capture: str | None = None
+    # An add restating a live value: the outcome it reports, and the live
+    # Claim's digest, when the shared re-observation comparison leaves that
+    # Claim unchanged (the same association on the same content).
+    unchanged_outcome: dict[str, Any] | None = None
+    unchanged_digest: str | None = None
+    # A change about, or valued with, a Subject whose id core assigns at
+    # submission: the label, so the outcome names the id once it is known.
+    pending_subject: str | None = None
+    pending_value: str | None = None
+    # A Subject's retirement: the Claims it retires with the Subject (its own,
+    # under with_claims, and its key Claims, which core retires), and the
+    # retirement members beside the Subject's own.
+    retires_also: tuple[str, ...] = ()
+    extra_members: tuple[AuthoringChangeSetMember, ...] = ()
+
+
+@dataclass
+class _Plan:
+    changes: list[_Planned] = field(default_factory=list)
+    #: The Subjects this write creates, at the paths core assigned them.
+    subjects: dict[str, SubjectShell] = field(default_factory=dict)
+    #: Each ``create`` change's label, and where it lands.
+    labels: dict[str, _Bound] = field(default_factory=dict)
+    #: Creation members awaiting shared assignment, by their first label.
+    pending: dict[str, SubjectCreationAuthoringPayload] = field(default_factory=dict)
+    #: A creation member's identity -> the ``create`` change that asked for it.
+    creation_changes: dict[str, int] = field(default_factory=dict)
+    retire_notes: list[str] = field(default_factory=list)
+    # What planning chose for the writer and says so: see WriteWarning.
+    notes: list[WriteWarning] = field(default_factory=list)
+
+
+class _Planner:
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        *,
+        head: AcceptedProjectionCoordinate,
+        read_at: AcceptedProjectionCoordinate,
+        request: WriteRequest,
+    ) -> None:
+        self.instance = instance
+        self.head = head
+        self.read_at = read_at
+        self.request = request
+        self.vocabulary: QueryVocabulary = load_query_vocabulary(instance, head)
+        self.plan = _Plan()
+        self._subject_exists: dict[str, bool] = {}
+        self._verified: dict[str, bool] = {}
+        # One Capture verification context for the whole write.
+        self.captures = instance.capture_verification_context()
+        self._read_sequence: int | None = None
+        self._refs: dict[tuple[str, str], SubjectRefResolution] = {}
+        self._kinds: dict[str, SubjectKind | None] = {}
+        self._planned_keys: dict[tuple[str, str], _Bound] = {}
+        self._pending_paths: dict[str, _Bound] = {}
+        self._retired_here: dict[str, bool] | None = None
+        self._pending_members: set[str] = set()
+        self._key_reader: KeyReader | None = None
+        # Each re-bind a ``from_capture`` expanded into, by its position in the
+        # expanded changes: the Capture whose citation it replaces.
+        self._rebind_from: dict[int, str] = {}
+
+    # -- accepted state ----------------------------------------------------------
+
+    def subject_exists(self, path: str) -> bool:
+        if path not in self._subject_exists:
+            self._subject_exists[path] = self.instance.blob_at(self.head.git_oid, path) is not None
+        return self._subject_exists[path]
+
+    def slot_claims(
+        self, subject_path_value: str, predicate: str, qualifier: str | None = None
+    ) -> tuple[_SlotClaim, ...]:
+        """The live Claims of one slot at the head, with their shown values."""
+
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            rows = projection.typed.connection.execute(
+                LIVE_SLOT_CLAIM_DIGESTS_SQL, (subject_path_value, predicate, qualifier)
+            ).fetchall()
+        wanted = {str(row[0]): str(row[1]) for row in rows}
+        if not wanted:
+            return ()
+        # A none states no value; it is shown as the none it is ({"none": KEY}).
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            nones = {
+                item.identity: item
+                for item in read_live_nones(
+                    projection.typed.connection,
+                    subject_paths=(subject_path_value,),
+                    predicates=(predicate,),
+                )
+            }
+        values = {
+            item.identity: item
+            for item in read_live_values(
+                self.instance,
+                self.head,
+                subject_paths=(subject_path_value,),
+                predicates=(predicate,),
+            )
+        }
+        found: list[_SlotClaim] = []
+        for identity, digest in sorted(wanted.items()):
+            live = values.get(identity)
+            shown: object = None
+            if live is not None:
+                shown = live.value
+            elif identity in nones:
+                shown = {"none": nones[identity].of}
+            found.append(
+                _SlotClaim(
+                    claim_id=_bare(identity),
+                    digest=digest,
+                    value=shown,
+                    role="normative" if live is None else live.role,
+                )
+            )
+        return tuple(found)
+
+    def slot_pin(
+        self, subject_path_value: str, predicate: str, qualifier: str | None = None
+    ) -> _SlotPin:
+        """The slot's live Claim IDs at the head, however they are qualified or valued."""
+
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            rows = projection.typed.connection.execute(
+                LIVE_SLOT_CLAIMS_SQL, (subject_path_value, predicate, qualifier)
+            ).fetchall()
+        return _SlotPin(
+            subject_path=subject_path_value,
+            predicate=predicate,
+            qualifier=qualifier,
+            live=tuple(
+                sorted({_bare(str(row[0])) for row in rows}, key=lambda item: item.encode("ascii"))
+            ),
+        )
+
+    def slot_history(self, subject_path_value: str, predicate: str) -> tuple[str, ...]:
+        """Every Claim (any lifecycle) the head holds in one slot."""
+
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            rows = projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
+                "AND qualifier IS NULL ORDER BY identity",
+                (subject_path_value, predicate),
+            ).fetchall()
+        return tuple(_bare(str(row[0])) for row in rows)
+
+    def read_sequence(self) -> int:
+        if self._read_sequence is None:
+            with self.instance.accepted_history_reader(
+                at=AcceptedCoordinate.from_internal(self.read_at)
+            ) as history:
+                self._read_sequence = int(history.sequence)
+        return self._read_sequence
+
+    def check_slot_unchanged(
+        self,
+        *,
+        index: int,
+        subject: str,
+        field_name: str,
+        subject_path_value: str,
+        predicate: str,
+        live: tuple[_SlotClaim, ...],
+    ) -> None:
+        """Refuse when the slot moved after the writer's read coordinate (decision a, Q05)."""
+
+        if self.read_at.git_oid == self.head.git_oid:
+            return
+        since = self.read_sequence()
+        moved: list[tuple[str, int, str | None]] = []
+        with self.instance.accepted_history_reader(
+            at=AcceptedCoordinate.from_internal(self.head)
+        ) as history:
+            for claim_id in self.slot_history(subject_path_value, predicate):
+                location = history.latest_member(claim_path(claim_id))
+                if location is None or location.sequence <= since:
+                    continue
+                generation = history.generation(location.sequence)
+                moved.append((claim_id, int(location.sequence), generation.actor_id))
+        if not moved:
+            return
+        live_ids = {item.claim_id: item for item in live}
+        shown = [item for item in moved if item[0] in live_ids] or moved
+        claim_id, generation_number, actor = max(shown, key=lambda item: item[1])
+        value = live_ids[claim_id].value if claim_id in live_ids else None
+        state = f"now holds {value!r} as {claim_id}" if claim_id in live_ids else "was retired"
+        raise _refuse(
+            "cruxible.write.slot_changed",
+            (
+                f"{subject} {field_name} changed after your read: it {state}, "
+                f"accepted in generation {generation_number} by {actor or 'unknown'}"
+            ),
+            change=index,
+            candidates=tuple(item.claim_id for item in live),
+            repair="Re-set it to replace it, or set it with contend: true to contest it",
+        )
+
+    def expected_keys(
+        self,
+        info: PredicateInfo,
+        expect: ExpectedValue,
+        *,
+        index: int,
+        field_name: str,
+        path: str | None = None,
+    ) -> dict[str, object]:
+        """The values ``expect`` names, checked like values and keyed for comparison."""
+
+        path = path or f"changes[{index}].expect"
+        items = expect if isinstance(expect, tuple) else (expect,)
+        found: dict[str, object] = {}
+        for item in items:
+            shown: object
+            if claim_value_kind(info.claim_type.value) == "literal":
+                shown = self.literal(
+                    info, item, index=index, field_name=field_name, path=path
+                ).value
+            elif isinstance(item, str) and item:
+                # A Subject as kind/id (``@kind/id`` names the same one), or exact
+                # content as its text: compared as written, so a value no Claim
+                # holds is simply not what it holds.
+                shown = (
+                    self.expected_subject(str(subject_reference(item)), index=index, path=path)
+                    if claim_value_kind(info.claim_type.value) == "subject"
+                    else item
+                )
+            else:
+                taken = (
+                    "a Subject as kind/id"
+                    if claim_value_kind(info.claim_type.value) == "subject"
+                    else "text"
+                )
+                raise _refuse(
+                    "cruxible.write.value_type_mismatch",
+                    f"{field_name} takes {taken}, so expect {item!r} can never match it",
+                    change=index,
+                    repair=f"Pass expect as {taken}",
+                    field_path=path,
+                )
+            found[_value_key(shown)] = shown
+        return found
+
+    def expected_subject(self, ref: str, *, index: int, path: str) -> str:
+        """An expected Subject value as the Subject it names, through its alias or key.
+
+        Resolved as ``subject_value`` resolves a written value, so a reference that
+        names a Subject by its key spelling matches the id the Claim stores.
+        """
+
+        kind, _, subject_id = ref.partition("/")
+        if not kind or not subject_id:
+            return ref
+        resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
+        return (
+            resolved.ref if resolved.via in {"alias", "key"} and resolved.ref is not None else ref
+        )
+
+    def check_expected(
+        self,
+        *,
+        index: int,
+        label: str,
+        info: PredicateInfo,
+        field_name: str,
+        expect: ExpectedValue | None,
+        live: tuple[_SlotClaim, ...],
+    ) -> None:
+        """Compare-and-set: refuse unless the slot holds exactly the values expected.
+
+        The comparison is by value, at the head the write is planned at. When it
+        holds, the slot expectation the plan already pins carries exactly the
+        live Claim IDs that matched, so a Claim joining or leaving the slot after
+        this check still refuses the write at admission or settlement.
+        """
+
+        if expect is None:
+            return
+        wanted = self.expected_keys(info, expect, index=index, field_name=field_name)
+        holds = {_value_key(item.value): item.value for item in live}
+        if set(wanted) == set(holds):
+            return
+        current = [summary_value(item.value) for item in live]
+        now = (
+            "holds no value"
+            if not current
+            else f"holds {_brief_shown(current[0])}"
+            if len(current) == 1
+            else f"holds {_brief_shown(current)}"
+        )
+        expected = [summary_value(value) for value in wanted.values()]
+        spelled = expected[0] if isinstance(expect, str | int | float | bool) else expected
+        repair_value: object = None if not current else current[0] if len(current) == 1 else current
+        # A preview or a marker is never a value to expect: name the whole read.
+        cut = [
+            item.claim_id for item, shown in zip(live, current, strict=True) if _not_whole(shown)
+        ]
+        raise _refuse(
+            "cruxible.write.slot_changed",
+            f"{label} {now}, not {_brief_shown(spelled)} as expected",
+            change=index,
+            candidates=tuple(item.claim_id for item in live),
+            repair=(
+                "Read it again; to write over what it holds now, expect its whole value, "
+                f'which get({cut[0]}, detail="evidence") reads'
+                if cut
+                else "Read it again; to write over what it holds now, expect "
+                + ("[]" if repair_value is None else json.dumps(shown_plain(repair_value)))
+            ),
+            field_path=f"changes[{index}].expect",
+        )
+
+    # -- vocabulary --------------------------------------------------------------
+
+    @contextmanager
+    def identity_view(self) -> Iterator[IdentityView]:
+        """The shared resolver at the head, overlaid with what this write has planned.
+
+        Key or alias Claims this write retires hold nothing (identity D4).
+        Pending creations are held separately by canonical key and member,
+        without inventing Subject paths before complete lowering.
+        """
+
+        if self._key_reader is None:
+            self._key_reader = tree_key_reader(self.instance.immutable_tree_at(self.head.git_oid))
+        overlay = IdentityOverlay()
+        retiring = self._retiring()
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            connection = projection.typed.connection
+            for claim_id in sorted(retiring):
+                row = connection.execute(
+                    "SELECT subject_path, predicate FROM claims WHERE identity=?",
+                    (f"Claim:{claim_id}",),
+                ).fetchone()
+                if row is None:
+                    continue
+                subject, predicate = str(row[0]), str(row[1])
+                for term in connection.execute(
+                    "SELECT term FROM vocabulary_terms WHERE source_identity=? AND basis='alias'",
+                    (f"Claim:{claim_id}",),
+                ):
+                    overlay.aliases_removed.add((subject, str(term[0])))
+                declared = self.declared_kind(subject_kind_of(subject)[0])
+                if declared is not None and predicate in declared.keys:
+                    overlay.keys[subject] = None
+            yield IdentityView(connection, overlay, key_reader=self._key_reader)
+
+    def resolve_ref(
+        self, kind: str, subject_id: str, *, index: int, path: str
+    ) -> SubjectRefResolution:
+        """One Subject reference at the head, as this write leaves it (the shared resolver).
+
+        The exact live Subject, else one alias, else one holder of the kind's
+        single key, else the exact retired Subject. Several alias or key holders
+        refuse with each of them.
+        """
+
+        with self.identity_view() as view:
+            resolution = view.resolve(kind, subject_id)
+        if resolution.ambiguous and resolution.via == "key":
+            raise _refuse(
+                "cruxible.subject.key_ambiguous",
+                key_ambiguous_message(
+                    kind, [f"subjects/{item}.json" for item in resolution.candidates]
+                ),
+                change=index,
+                candidates=resolution.candidates,
+                repair="Name one of the listed Subjects as kind/id",
+                field_path=path,
+            )
+        if resolution.ambiguous:
+            raise _refuse(
+                "cruxible.write.alias_ambiguous",
+                f"{kind}/{subject_id} names no Subject, and an alias of {kind} names "
+                f"{len(resolution.candidates)} of them",
+                change=index,
+                candidates=resolution.candidates,
+                repair="Name one of the listed Subjects as kind/id",
+                field_path=path,
+            )
+        return resolution
+
+    def declared_kind(self, kind: str) -> SubjectKind | None:
+        """The live SubjectKind declaring ``kind`` at the head, if one is accepted."""
+
+        if kind not in self._kinds:
+            content = self.instance.blob_at(self.head.git_oid, subject_kind_path(kind))
+            declared = (
+                None
+                if content is None
+                else parse_subject_kind(content, path=subject_kind_path(kind))
+            )
+            self._kinds[kind] = (
+                declared if declared is not None and declared.lifecycle.state == "live" else None
+            )
+        return self._kinds[kind]
+
+    def _single_key(self, kind: str) -> SubjectKind | None:
+        """The kind when it has one literal key: ``kind/<text>`` may then read as that key.
+
+        A pair kind is never named by bare key text, even with one part.
+        """
+
+        declared = self.declared_kind(kind)
+        if declared is None or len(declared.keys) != 1:
+            return None
+        info = self.vocabulary.predicates.get(declared.keys[0])
+        if info is not None and claim_value_kind(info.claim_type.value) == "subject":
+            return None
+        return declared
+
+    def _key_value(
+        self, kind: str, declared: SubjectKind, text: str, *, index: int | None, path: str
+    ) -> tuple[str, str]:
+        predicate = declared.keys[0]
+        info = self.vocabulary.predicates.get(predicate)
+        try:
+            if info is None:
+                raise SubjectKeyInvalid(f"key ClaimType {predicate!r} is not accepted")
+            value = canonical_key_value(
+                text, info.claim_type, declared.normalizer(predicate), predicate=predicate
+            )
+        except SubjectKeyInvalid as exc:
+            raise _refuse(
+                "cruxible.subject.key_invalid",
+                f"{kind}/{text}: {exc}",
+                change=index,
+                field_path=path,
+            ) from exc
+        assert isinstance(value, str)
+        return predicate, value
+
+    def create_by_key(self, kind: str, subject_id: str, *, index: int, path: str) -> str:
+        """Plan the Subject ``kind/<text>`` names by key, returning its internal slot key.
+
+        A reference to a Subject that does not exist, by id, alias or key, of a
+        kind with a single key is read as "create by key value <text>": the key
+        value is the text in its key ClaimType's canonical form, the id its
+        rendering, and the key part a Claim backed by the write's ``because``. A
+        write never makes a further holder of a ``hint`` kind's key; any other
+        unresolved reference refuses with the creation shape in its repair.
+        """
+
+        declared = self.declared_kind(kind)
+        if declared is None:
+            raise _refuse(
+                SUBJECT_KIND_UNDECLARED,
+                f"no accepted SubjectKind declares {kind}, so no new {kind} Subject can be "
+                "created; existing ones stay readable, claimable and retirable",
+                change=index,
+                repair=undeclared_kind_repair(kind),
+                field_path=path,
+            )
+        if self._single_key(kind) is None:
+            shape = write_create_change_shape(kind, declared.keys, minted=declared.minted)
+            how = (
+                "is minted: core names its Subjects"
+                if declared.minted
+                else f"is named by its key ({', '.join(declared.keys)}, "
+                f"{getattr(declared.identity_rule, 'uniqueness', '')})"
+            )
+            raise _refuse(
+                "cruxible.write.subject_not_found",
+                f"{kind}/{subject_id} names no Subject, and {kind} {how}, so a write does not "
+                "create one from a reference",
+                change=index,
+                repair=(
+                    f"Create it in this write: add the change {shape}"
+                    + ("" if declared.minted else " with each key value filled in")
+                    + ', and name it {"created": "new"} where this change names '
+                    f"{kind}/{subject_id}"
+                ),
+                field_path=path,
+            )
+        predicate, value = self._key_value(kind, declared, subject_id, index=index, path=path)
+        key: KeyTuple = ((predicate, value),)
+        planned = self._planned_keys.get((kind, key_encoding(key)))
+        if planned is None:
+            planned = self._new_creation(
+                index, f"<implicit:{index}>", kind, key, create_new=False, single_text=subject_id
+            )
+        return planned.slot_path
+
+    def _planned_subject(self, kind: str, text: str, *, index: int, path: str) -> _Bound | None:
+        """A pending ordinary holder by key, after live id/alias resolution."""
+
+        declared = self._single_key(kind)
+        if declared is None:
+            return None
+        predicate, value = self._key_value(kind, declared, text, index=index, path=path)
+        return self._planned_keys.get((kind, key_encoding(((predicate, value),))))
+
+    def _creatable_kind(self, kind: str, *, index: int, path: str) -> SubjectKind:
+        """The live SubjectKind a new ``kind`` Subject is created under, or the refusal."""
+
+        if kind not in self.vocabulary.kinds:
+            raise _refuse(
+                "cruxible.write.unknown_kind",
+                f"no accepted Subject kind is named {kind!r}",
+                change=index,
+                candidates=nearest(kind, self.vocabulary.kinds),
+                repair="Use one of the listed kinds; orient names every kind",
+                field_path=path,
+            )
+        declared = self.declared_kind(kind)
+        if declared is None:
+            raise _refuse(
+                SUBJECT_KIND_UNDECLARED,
+                f"no accepted SubjectKind declares {kind}, so no new {kind} Subject can be "
+                "created; existing ones stay readable, claimable and retirable",
+                change=index,
+                repair=undeclared_kind_repair(kind),
+                field_path=path,
+            )
+        return declared
+
+    def _creation_key(
+        self, declared: SubjectKind, change: CreateChange, *, index: int
+    ) -> tuple[PendingKey, str | None]:
+        """The canonical key a keyed ``create`` names, and a one-key text read as an alias.
+
+        A pair's end is named as ``kind/id`` (an id, alias or single key, the
+        rule set and add use for a Subject value) or ``{"created": label}``. An
+        end this write creates is its creation member until lowering names it
+        (``PendingEnd``): the member is unique in the write, so distinct ends
+        never share a pending key, and one end named twice is one member.
+        """
+
+        kind = declared.subject_kind
+        path = f"changes[{index}].key"
+        if change.key is None:
+            raise _refuse(
+                "cruxible.subject.key_missing",
+                f"{kind} is named by its key ({', '.join(declared.keys)}), so a create gives it",
+                change=index,
+                candidates=declared.keys,
+                repair=(
+                    "Give key: the value for a one-key kind, or each key part as "
+                    '{"predicate", "value"}'
+                ),
+                field_path=path,
+            )
+        given: dict[str, object]
+        pending: dict[str, PendingEnd] = {}
+        if isinstance(change.key, tuple):
+            given = {}
+            for ordinal, part in enumerate(change.key):
+                given[part.predicate] = self._key_part_value(
+                    declared,
+                    part,
+                    pending,
+                    index=index,
+                    path=f"{path}[{ordinal}].value",
+                )
+        elif len(declared.keys) != 1:
+            raise _refuse(
+                "cruxible.subject.key_invalid",
+                f"{kind} is named by {len(declared.keys)} key parts "
+                f"({', '.join(declared.keys)}); a bare key value names only a one-key kind",
+                change=index,
+                candidates=declared.keys,
+                repair='Give each key part as {"predicate", "value"}',
+                field_path=path,
+            )
+        else:
+            given = {
+                declared.keys[0]: self._key_part_value(
+                    declared,
+                    CreateKeyPart(predicate=declared.keys[0], value=change.key),
+                    pending,
+                    index=index,
+                    path=path,
+                )
+            }
+
+        def claim_type_of(predicate: str) -> ClaimType | None:
+            info = self.vocabulary.predicates.get(predicate)
+            return None if info is None else info.claim_type
+
+        try:
+            key = canonical_key(declared, given, claim_type=claim_type_of)
+        except SubjectKeyInvalid as exc:
+            raise _refuse(
+                "cruxible.subject.key_invalid",
+                f"{kind}: {exc}",
+                change=index,
+                candidates=declared.keys,
+                field_path=path,
+            ) from exc
+        raw = (
+            change.key[0].value
+            if isinstance(change.key, tuple) and len(change.key) == 1
+            else change.key
+        )
+        single = raw if len(declared.keys) == 1 and isinstance(raw, str) and not pending else None
+        # An end this write creates holds a stand-in path while the key is
+        # canonicalized (its kind checked); the stand-in is then its member.
+        found: PendingKey = tuple(
+            (predicate, pending.get(predicate, value)) for predicate, value in key
+        )
+        return found, single
+
+    def _key_part_value(
+        self,
+        declared: SubjectKind,
+        part: CreateKeyPart,
+        pending: dict[str, PendingEnd],
+        *,
+        index: int,
+        path: str,
+    ) -> object:
+        """One create key part's raw value; a pair's end lands on its Subject."""
+
+        # An unknown part is refused by ``canonical_key``, naming the kind's keys.
+        predicate = key_predicate(declared, part.predicate) or part.predicate
+        info = self.vocabulary.predicates.get(predicate)
+        if info is None or claim_value_kind(info.claim_type.value) != "subject":
+            if isinstance(part.value, CreatedSubject):
+                raise _refuse(
+                    "cruxible.write.value_type_mismatch",
+                    f"{part.predicate} is a literal key part, so it takes a value, not a "
+                    "created Subject",
+                    change=index,
+                    field_path=path,
+                )
+            return part.value
+        allowed = tuple(subject_value_kinds(info.claim_type.value))
+        if isinstance(part.value, CreatedSubject):
+            bound = self.bound(part.value.created, index=index, path=path)
+            if bound.kind not in allowed:
+                raise _refuse(
+                    "cruxible.write.value_kind_not_admitted",
+                    f"{part.predicate} takes a Subject of kind {', '.join(allowed)}, not "
+                    f"{bound.kind!r}",
+                    change=index,
+                    candidates=allowed,
+                    repair=f"Pass a Subject of kind {' or '.join(allowed)}",
+                    field_path=path,
+                )
+            if bound.path is not None:
+                return SubjectEnd(path=bound.path)
+            assert bound.member is not None
+            pending[predicate] = PendingEnd(member=bound.member)
+            return SubjectEnd(path=f"subjects/{bound.kind}/pending.json")
+        text = subject_reference(part.value) if isinstance(part.value, str) else part.value
+        end_kind, _, end_id = text.partition("/") if isinstance(text, str) else ("", "", "")
+        if not end_kind or not end_id:
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f'{part.predicate} takes a Subject as kind/id or {{"created": label}}, not '
+                f"{part.value!r}",
+                change=index,
+                repair=f"Pass a Subject of kind {' or '.join(allowed)} as kind/id",
+                field_path=path,
+            )
+        if end_kind not in allowed:
+            raise _refuse(
+                "cruxible.write.value_kind_not_admitted",
+                f"{part.predicate} takes a Subject of kind {', '.join(allowed)}, not {end_kind!r}",
+                change=index,
+                candidates=allowed,
+                repair=f"Pass a Subject of kind {' or '.join(allowed)}",
+                field_path=path,
+            )
+        resolved = self.resolve_ref(end_kind, end_id, index=index, path=path)
+        if resolved.path is not None:
+            return SubjectEnd(path=resolved.path)
+        planned = self._planned_subject(end_kind, end_id, index=index, path=path)
+        if planned is not None:
+            if planned.path is not None:
+                return SubjectEnd(path=planned.path)
+            assert planned.member is not None
+            pending[predicate] = PendingEnd(member=planned.member)
+            return SubjectEnd(path=f"subjects/{end_kind}/pending.json")
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            known = subjects_of_kind(projection.typed.connection, end_kind).values()
+        raise _refuse(
+            "cruxible.write.value_subject_not_found",
+            f"{part.predicate} names Subject {text!r}, which does not exist; a key part never "
+            "creates the end it names",
+            change=index,
+            candidates=nearest(str(text), known),
+            repair=(
+                f"Name an existing {end_kind}, or create it in this write and name it "
+                '{"created": "<label>"}'
+            ),
+            field_path=path,
+        )
+
+    def _pending_creation(
+        self,
+        label: str,
+        kind: str,
+        key: PendingKey,
+        *,
+        create_new: bool,
+        single_text: str | None = None,
+    ) -> SubjectCreationAuthoringPayload:
+        """A creation whose id core assigns at submission, distinct from every other one.
+
+        A pair's end is a Subject object: the end itself, or the creation member
+        of this write that creates it (lowering names ends before their pairs).
+        """
+
+        def part_value(value: object) -> SubjectKeyValue | SubjectClaimObject:
+            if isinstance(value, SubjectEnd):
+                return SubjectClaimObject(address=SemanticAddress.whole_artifact(value.path))
+            if isinstance(value, PendingEnd):
+                end_kind, _, digest = value.member.removeprefix("SubjectCreation:").rpartition("@")
+                return SubjectClaimObject(
+                    address=SemanticAddress.subject_creation(end_kind, digest)
+                )
+            return cast(SubjectKeyValue, single_text if single_text is not None else value)
+
+        parts = tuple(
+            SubjectKeyPart(predicate=predicate, value=part_value(value)) for predicate, value in key
+        )
+        rationale = self.request.because
+        payload = SubjectCreationAuthoringPayload(
+            subject_kind=kind, key=parts, rationale=rationale, create_new=create_new
+        )
+        # The members already planned, kept as they are planned: one set
+        # lookup per creation, never a re-digest of every earlier one.
+        if payload.member_identity in self._pending_members:
+            # Two creations alike in every field would be one member: the label
+            # tells them apart, so each lowers to its own Subject (on one line,
+            # within a Claim rationale's length: it backs the key Claims).
+            suffix = f" (creates {label})"
+            room = _RATIONALE_MAX - len(suffix)
+            lead = rationale if len(rationale) <= room else rationale[: room - 1].rstrip() + "…"
+            payload = payload.model_copy(update={"rationale": lead + suffix})
+        return payload
+
+    def create_change(self, index: int, change: CreateChange) -> _Planned:
+        """Create one Subject by its kind and key, or land on the live one holding the key.
+
+        One resolver for every creation route (``IdentityView.resolve_creation``):
+        a one-key text an alias of the kind names, else the key's live holders --
+        none creates, one is that Subject (``existing``), several refuse. A keyed
+        Subject is named by its creation member until lowering assigns the
+        complete change set; minted and further-holder ids also need the
+        submitted operation.
+        """
+
+        prefix = f"changes[{index}]"
+        label = change.label
+        if label in self.plan.labels:
+            raise _refuse(
+                "cruxible.write.label_repeated",
+                f"changes {self.plan.labels[label].index} and {index} both create {label!r}",
+                change=index,
+                repair="Give each create change its own label",
+                field_path=f"{prefix}.label",
+            )
+        kind = change.subject_kind
+        declared = self._creatable_kind(kind, index=index, path=f"{prefix}.subject_kind")
+        bound: _Bound
+        if declared.minted:
+            if change.key is not None or change.create_new:
+                raise _refuse(
+                    "cruxible.subject.key_invalid",
+                    f"{kind} is minted: core names its Subjects, so a create gives no key",
+                    change=index,
+                    repair="Leave key and create_new out",
+                    field_path=f"{prefix}.key",
+                )
+            bound = self._new_creation(index, label, kind, (), create_new=False)
+        else:
+            bound = self._keyed_creation(index, change, declared)
+        self.plan.labels[label] = bound
+        if bound.member is not None:
+            self.plan.creation_changes.setdefault(bound.member, index)
+        return _Planned(
+            index=index,
+            op="create",
+            outcome={"subject": bound.ref, "resolved": bound.resolved},
+            pending_subject=label if bound.path is None else None,
+        )
+
+    def _keyed_creation(self, index: int, change: CreateChange, declared: SubjectKind) -> _Bound:
+        prefix = f"changes[{index}]"
+        label = change.label
+        kind = change.subject_kind
+        key, single = self._creation_key(declared, change, index=index)
+        if change.create_new and declared.unique:
+            raise _refuse(
+                "cruxible.subject.create_new_refused",
+                f"{kind} keys are unique: a key names one Subject, so create_new does not apply",
+                change=index,
+                repair="Drop create_new: the create then lands on the Subject holding the key",
+                field_path=f"{prefix}.create_new",
+            )
+        final = _final_key(key)
+        if final is None:
+            # An end this write creates is new, so the pair is: it lands on a
+            # sibling create of the same ends, else lowering names it.
+            planned_pair = self._planned_keys.get((kind, key_encoding(key)))
+            if planned_pair is not None:
+                return _Bound(
+                    index=index,
+                    label=label,
+                    kind=kind,
+                    path=None,
+                    resolved="created",
+                    member=planned_pair.member,
+                    key=key,
+                )
+            return self._new_creation(index, label, kind, key, create_new=False)
+        with self.identity_view() as view:
+            resolution = view.resolve_creation(
+                kind, final, single_text=single, create_new=change.create_new
+            )
+        refs = tuple(f"{kind}/{subject_kind_of(path)[1]}" for path in resolution.holders)
+        if resolution.ambiguous:
+            raise _refuse(
+                "cruxible.subject.key_ambiguous"
+                if resolution.via == "key"
+                else "cruxible.write.alias_ambiguous",
+                key_ambiguous_message(kind, resolution.holders)
+                if resolution.via == "key"
+                else f"an alias of {kind} spelled as this key names {len(refs)} Subjects",
+                change=index,
+                candidates=refs,
+                repair="Name one of the listed Subjects as kind/id",
+                field_path=f"{prefix}.key",
+            )
+        if resolution.path is not None:
+            held = f"{kind}/{subject_kind_of(resolution.path)[1]}"
+            if change.expect_new:
+                raise _refuse(
+                    "cruxible.write.subject_exists",
+                    f"{held} already holds this key, and the create expected it new",
+                    change=index,
+                    candidates=(held,),
+                    repair=f"Write about {held}, or drop expect_new to land on it",
+                    field_path=f"{prefix}.key",
+                )
+            return _Bound(
+                index=index,
+                label=label,
+                kind=kind,
+                path=resolution.path,
+                resolved="existing",
+                key=key,
+            )
+        planned = None if change.create_new else self._planned_keys.get((kind, key_encoding(key)))
+        if planned is not None:
+            return _Bound(
+                index=index,
+                label=label,
+                kind=kind,
+                path=None,
+                resolved="created",
+                member=planned.member,
+                key=key,
+            )
+        return self._new_creation(
+            index, label, kind, key, create_new=change.create_new, single_text=single
+        )
+
+    def _new_creation(
+        self,
+        index: int,
+        label: str,
+        kind: str,
+        key: PendingKey,
+        *,
+        create_new: bool,
+        single_text: str | None = None,
+    ) -> _Bound:
+        """Keep the member reference; lowering assigns ids over the complete change set."""
+
+        payload = self._pending_creation(
+            label, kind, key, create_new=create_new, single_text=single_text
+        )
+        self.plan.pending[label] = payload
+        member = payload.member_identity
+        self._pending_members.add(member)
+        bound = _Bound(
+            index=index,
+            label=label,
+            kind=kind,
+            path=None,
+            resolved="created",
+            member=member,
+            key=key,
+        )
+        self.plan.labels[label] = bound
+        self._pending_paths[bound.slot_path] = bound
+        if key and not create_new:
+            self._planned_keys[(kind, key_encoding(key))] = bound
+        return bound
+
+    def bound(self, label: str, *, index: int, path: str) -> _Bound:
+        """The Subject a ``{"created": label}`` reference names: a create change of this write."""
+
+        found = self.plan.labels.get(label)
+        if found is None:
+            raise _refuse(
+                "cruxible.write.label_unknown",
+                f"no create change of this write is labelled {label!r}",
+                change=index,
+                candidates=nearest(label, self.plan.labels),
+                repair="Name a label one of this write's create changes gives",
+                field_path=path,
+            )
+        return found
+
+    def resolve_subject(self, subject: str, *, index: int, path: str) -> tuple[str, str, str]:
+        kind, _, subject_id = subject.partition("/")
+        if kind not in self.vocabulary.kinds:
+            raise _refuse(
+                "cruxible.write.unknown_kind",
+                f"no accepted Subject kind is named {kind!r}",
+                change=index,
+                candidates=nearest(kind, self.vocabulary.kinds),
+                repair="Use one of the listed kinds; orient names every kind",
+                field_path=path,
+            )
+        resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
+        if resolved.path is not None:
+            return kind, subject_kind_of(resolved.path)[1], resolved.path
+        planned = self._planned_subject(kind, subject_id, index=index, path=path)
+        if planned is not None:
+            return kind, subject_id, planned.slot_path
+        # Names no Subject: key text as written (any case or spacing) is no id, and
+        # its path names nothing; create_by_key reads the text as the key.
+        return kind, subject_id, f"subjects/{kind}/{subject_id}.json"
+
+    def resolve_field(self, kind: str, name: str, *, index: int, path: str) -> PredicateInfo:
+        descriptor = self.vocabulary.descriptor(name)
+        if descriptor is not None:
+            return descriptor
+        applicable = {kind: {info.predicate: info for info in self.vocabulary.predicates_of(kind)}}
+        found = resolve_field_in(name, applicable)
+        if len(found) == 1:
+            return self.vocabulary.predicates[found[0]]
+        shown = [self.vocabulary.field_name(info, (kind,)) for info in applicable[kind].values()]
+        if found:
+            raise _refuse(
+                "cruxible.write.ambiguous_field",
+                f"{name!r} names more than one field of {kind}",
+                change=index,
+                candidates=found,
+                repair="Name the predicate in full",
+                field_path=path,
+            )
+        message = (
+            f"predicate {name!r} does not apply to {kind}"
+            if name in self.vocabulary.predicates
+            else f"{kind} has no field {name!r}"
+        )
+        raise _refuse(
+            "cruxible.write.unknown_field",
+            message,
+            change=index,
+            candidates=nearest(name, (*shown, *applicable[kind])),
+            repair=f"Use a field of {kind}; orient kind={kind} lists them",
+            field_path=path,
+        )
+
+    def field_name(self, info: PredicateInfo, kind: str) -> str:
+        return self.vocabulary.field_name(info, (kind,))
+
+    def role(
+        self,
+        claim_type: ClaimType,
+        requested: str | None,
+        *,
+        index: int,
+        field_name: str,
+    ) -> ClaimRole:
+        permitted = tuple(role for role in claim_type.permitted_roles if role in _AUTHORABLE_ROLES)
+        if requested is not None:
+            if requested not in permitted:
+                raise _refuse(
+                    "cruxible.write.role_not_permitted",
+                    f"{field_name} does not permit role {requested!r}",
+                    change=index,
+                    candidates=permitted,
+                    repair=f"Use one of: {', '.join(permitted)}",
+                    field_path=f"changes[{index}].role",
+                )
+            return cast(ClaimRole, requested)
+        if claim_type.default_role is not None and claim_type.default_role in permitted:
+            return claim_type.default_role
+        if len(permitted) == 1:
+            return permitted[0]
+        raise _refuse(
+            "cruxible.write.role_required",
+            f"{field_name} permits {len(permitted)} roles and declares no default_role, "
+            "so the role is not implied",
+            change=index,
+            candidates=permitted,
+            repair=(
+                f"Pass role as one of: {', '.join(permitted)}; or declare default_role on "
+                "the ClaimType"
+            ),
+            field_path=f"changes[{index}].role",
+        )
+
+    # -- values ------------------------------------------------------------------
+
+    def literal(
+        self,
+        info: PredicateInfo,
+        value: object,
+        *,
+        index: int,
+        field_name: str,
+        path: str | None = None,
+    ) -> LiteralClaimObject:
+        path = path or f"changes[{index}].value"
+        value = coerce_text_spelling(value, info.value_type)
+        fractional = isinstance(value, float) and not value.is_integer()
+        if fractional or (
+            isinstance(value, str)
+            and info.value_type in ("integer", "decimal")
+            and _DECIMAL_TEXT.fullmatch(value)
+        ):
+            # Accepted values are canonical JSON, which holds integers only: a
+            # number field is integer-valued, whatever its schema spells.
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f"{value!r} is not an integer, and accepted values hold integers only",
+                change=index,
+                repair=(
+                    "Pass an integer: a number field counts in a scaled unit (cents, "
+                    "millimetres), or takes the decimal as text when its schema is a string "
+                    "with a pattern"
+                ),
+                field_path=path,
+            )
+        if isinstance(value, float):
+            value = int(value)
+        form = effective_canonical_form(info.claim_type)
+        if form:
+            # Stored in the declared canonical form, and checked in it: an enum
+            # member is matched after canonicalization.
+            try:
+                value = canonicalize_literal(value, form)
+            except CanonicalFormDidNotConverge as exc:
+                raise _refuse(
+                    "cruxible.write.value_type_mismatch",
+                    str(exc),
+                    change=index,
+                    repair="Pass a value the field's canonical form settles",
+                    field_path=path,
+                ) from exc
+        if info.key_normalizer is not None and isinstance(value, str):
+            # A key part is stored in its SubjectKind's canonical value (R12).
+            try:
+                value = canonical_key_value(
+                    value, info.claim_type, info.key_normalizer, predicate=info.predicate
+                )
+            except SubjectKeyInvalid as exc:
+                raise _refuse(
+                    "cruxible.subject.key_invalid",
+                    str(exc),
+                    change=index,
+                    repair="Pass a value that is a key of this field's kind",
+                    field_path=path,
+                ) from exc
+        if info.members:
+            if value not in info.members:
+                spelled = ", ".join(info.members)
+                raise _refuse(
+                    "cruxible.write.value_not_member",
+                    f"{value!r} is not a member of {field_name}; its members are: {spelled}",
+                    change=index,
+                    candidates=nearest(str(value), info.members) or info.members,
+                    repair=f"Use one of: {spelled}",
+                    field_path=path,
+                )
+        violated = claim_literal_problem(value, info.claim_type.value)
+        if violated is not None:
+            violated = claim_literal_detail(value, info.claim_type.value, violated)
+            expected = info.value_type if info.value_type != "json" else "value"
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f"{_brief(value)} is not a valid {expected} for {field_name}: {violated}",
+                change=index,
+                repair=f"Pass a {expected} that the field's schema admits ({violated})",
+                field_path=path,
+            )
+        try:
+            return LiteralClaimObject(value=value)
+        except (CanonicalEncodingError, ValueError) as exc:
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f"{value!r} cannot be stored: {exc}",
+                change=index,
+                field_path=path,
+            ) from exc
+
+    def subject_value(
+        self,
+        info: PredicateInfo,
+        value: object,
+        *,
+        index: int,
+        field_name: str,
+        added: Mapping[str, SubjectShell],
+    ) -> tuple[SubjectClaimObject, str | None]:
+        path = f"changes[{index}].value"
+        allowed = tuple(subject_value_kinds(info.claim_type.value))
+        if isinstance(value, CreatedSubject):
+            bound = self.bound(value.created, index=index, path=path)
+            if not admits_object_subject(info.claim_type.predicate, allowed, bound.kind):
+                raise _refuse(
+                    "cruxible.write.value_kind_not_admitted",
+                    f"{field_name} takes a Subject of kind {', '.join(allowed)}, not "
+                    f"{bound.kind!r}",
+                    change=index,
+                    candidates=allowed,
+                    repair=f"Pass a Subject of kind {' or '.join(allowed)}",
+                    field_path=path,
+                )
+            return SubjectClaimObject(address=bound.address), bound.ref
+        value = subject_reference(value)
+        kind, _, subject_id = str(value).partition("/") if isinstance(value, str) else ("", "", "")
+        if not kind or not subject_id:
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f"{field_name} takes a Subject as kind/id, not {value!r}",
+                change=index,
+                repair=f"Pass a Subject of kind {' or '.join(allowed)} as kind/id",
+                field_path=path,
+            )
+        if not admits_object_subject(info.claim_type.predicate, allowed, kind):
+            raise _refuse(
+                "cruxible.write.value_kind_not_admitted",
+                f"{field_name} takes a Subject of kind {', '.join(allowed)}, not {kind!r}",
+                change=index,
+                candidates=allowed,
+                repair=f"Pass a Subject of kind {' or '.join(allowed)}",
+                field_path=path,
+            )
+        resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
+        if resolved.via in {"alias", "key"} and resolved.path is not None:
+            assert resolved.ref is not None
+            value, subject_id = resolved.ref, resolved.ref.partition("/")[2]
+        planned = (
+            self._planned_subject(kind, subject_id, index=index, path=path)
+            if resolved.path is None
+            else None
+        )
+        if planned is not None:
+            return SubjectClaimObject(address=planned.address), planned.ref
+        try:
+            target = subject_path(kind, subject_id)
+        except (CruxibleError, ValueError) as exc:
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f"{value!r} is not a Subject reference: {exc}",
+                change=index,
+                field_path=path,
+            ) from exc
+        if not self.subject_exists(target) and target not in added:
+            with self.instance.bind_accepted_projection(self.head) as projection:
+                known = subjects_of_kind(projection.typed.connection, kind).values()
+            raise _refuse(
+                "cruxible.write.value_subject_not_found",
+                f"{field_name} names Subject {value!r}, which does not exist; a value "
+                "never creates the Subject it names",
+                change=index,
+                candidates=nearest(str(value), known),
+                repair=f"Name an existing {kind}, or set a field of {value} first to add it",
+                field_path=path,
+            )
+        return SubjectClaimObject(address=SemanticAddress.whole_artifact(target)), str(value)
+
+    def none_value(
+        self,
+        info: PredicateInfo,
+        value: NoneValue,
+        *,
+        index: int,
+        field_name: str,
+    ) -> AuthoringNoneClaimObject:
+        """The inverse Claim object a none names, in the unit its ClaimType's inverse keys.
+
+        ``{"none": null}`` is a one-valued field's whole slot; ``{"none": KEY}``
+        is a many-valued field's object (``object``) or the key value an
+        object Subject holds (``object_key``).
+        """
+
+        path = f"changes[{index}].value"
+        claim_type = info.claim_type
+        inverse = claim_type.inverse
+        if inverse is None:
+            raise _refuse(
+                "cruxible.write.inverse_undeclared",
+                f"{field_name} ({claim_type.predicate}) declares no inverse, so a write cannot "
+                "state that it holds none",
+                change=index,
+                repair=(
+                    f"Declare `inverse` on ClaimType {claim_type.predicate} (its "
+                    "key and evidence_rules) through claim-type propose; or retire the values "
+                    "that no longer hold"
+                ),
+                field_path=path,
+            )
+        key = inverse.key
+        if isinstance(key, ClaimInverseObjectKey | ClaimInverseObjectKeyPart):
+            if value.none is None:
+                raise _refuse(
+                    "cruxible.write.none_needs_key",
+                    f"{field_name} holds many values, so a none names the one it does not hold",
+                    change=index,
+                    repair=(
+                        'Pass {"none": KEY}: '
+                        + (
+                            f"a value of {key.predicate} the object Subject would hold"
+                            if isinstance(key, ClaimInverseObjectKeyPart)
+                            else "the value (a Subject as kind/id) the field does not hold"
+                        )
+                    ),
+                    field_path=f"{path}.none",
+                )
+            if isinstance(key, ClaimInverseObjectKeyPart):
+                key_info = self.vocabulary.predicates.get(key.predicate)
+                if key_info is None:
+                    raise _refuse(
+                        "cruxible.write.inverse_undeclared",
+                        f"{field_name}'s inverse is keyed by {key.predicate}, which is not a "
+                        "live field",
+                        change=index,
+                        field_path=path,
+                    )
+                return AuthoringNoneClaimObject(
+                    of=self.literal(
+                        key_info,
+                        value.none,
+                        index=index,
+                        field_name=self.field_name(key_info, key_info.subject_kinds[0])
+                        if key_info.subject_kinds
+                        else key.predicate,
+                        path=f"{path}.none",
+                    )
+                )
+            if claim_value_kind(claim_type.value) == "subject":
+                of, _shown = self.subject_value(
+                    info, value.none, index=index, field_name=field_name, added={}
+                )
+                if of.address.selector.scheme != "artifact-v1":
+                    raise _refuse(
+                        "cruxible.write.value_subject_not_found",
+                        f"a none of {field_name} names an existing Subject, not one this "
+                        "write creates",
+                        change=index,
+                        repair="Name an accepted Subject as kind/id",
+                        field_path=f"{path}.none",
+                    )
+                return AuthoringNoneClaimObject(of=of)
+            return AuthoringNoneClaimObject(
+                of=self.literal(
+                    info, value.none, index=index, field_name=field_name, path=f"{path}.none"
+                )
+            )
+        if value.none is not None:
+            raise _refuse(
+                "cruxible.write.none_key_not_admitted",
+                f"{field_name} holds one value, so its none covers the whole field",
+                change=index,
+                repair='Pass {"none": null}',
+                field_path=f"{path}.none",
+            )
+        return AuthoringNoneClaimObject()
+
+    def none_evidence(self, info: PredicateInfo, *, index: int, field_name: str, unit: str) -> None:
+        """Refuse a none backed only by own words, unless an inverse rule admits them.
+
+        Only evidence one of the inverse's ``evidence_rules`` admits establishes
+        that a unit holds nothing; a writer's own words (``because``, self
+        evidence) are admitted only when such a rule names their contract.
+        """
+
+        claim_type = info.claim_type
+        assert claim_type.inverse is not None
+        rules = tuple(
+            rule
+            for rule in claim_type.evidence_admission_policy.rules
+            if rule.rule_id in claim_type.inverse.evidence_rules
+        )
+        restricted = claim_type.model_copy(
+            update={
+                "evidence_admission_policy": claim_type.evidence_admission_policy.model_copy(
+                    update={"rules": rules}
+                )
+            }
+        )
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            admitted = CaptureContractNames(
+                self.instance, self.head, connection=projection.typed.connection
+            ).admitted(restricted)
+        if _OWN_WORDS_CONTRACTS & set(admitted):
+            return
+        shown = tuple(public_name(name) for name in admitted)
+        raise _refuse(
+            "cruxible.write.none_needs_evidence",
+            f"a none says {field_name} holds {unit}, which only evidence can establish; "
+            "your own words cannot back it",
+            change=index,
+            candidates=shown,
+            repair=(
+                f"Cite a Capture under {' or '.join(shown) or 'a contract its inverse rules admit'}"
+                ": contract evidence naming it (--evidence-contract), a Capture handle "
+                "(--capture), or file evidence (--evidence-file PATH#ANCHOR)"
+            ),
+            field_path=f"changes[{index}].evidence",
+        )
+
+    # -- evidence ----------------------------------------------------------------
+
+    def source(
+        self,
+        info: PredicateInfo,
+        change: SetChange | AddChange,
+        *,
+        role: str,
+        index: int,
+        field_name: str,
+        capture: str | None,
+    ) -> tuple[Any, Literal["evidence", "copy"] | None]:
+        """The Claim's source and citation role for this change's evidence."""
+
+        evidence = change.evidence
+        path = f"changes[{index}].evidence"
+        if capture is not None:
+            return ExistingCaptureCitationSource(capture_digest=capture), "evidence"
+        if isinstance(evidence, FileEvidence):
+            if evidence.observation is None:
+                raise _refuse(
+                    "cruxible.write.file_evidence_unobserved",
+                    f"file evidence {evidence.file!r} was not read on the writer's side; "
+                    "the daemon never reads workspace files",
+                    change=index,
+                    repair=(
+                        "Pass it through the CLI (--evidence-file), the SDK or the MCP "
+                        "adapter, which read the file and send what they observed"
+                    ),
+                    field_path=path,
+                )
+            return evidence.observation, "evidence"
+        if isinstance(evidence, SectionEvidence):
+            if evidence.observation is None:
+                raise _refuse(
+                    "cruxible.write.section_evidence_unobserved",
+                    "Section evidence must be read by the writer's adapter.",
+                    change=index,
+                    field_path=path,
+                    repair="Use write through the CLI, MCP or SDK beside the workspace",
+                )
+            if not evidence.own_words:
+                return evidence.observation, "evidence"
+            if requires_captured_evidence(info.claim_type):
+                raise _refuse(
+                    "cruxible.write.evidence_required",
+                    f"{field_name} requires captured evidence; own words cannot back it",
+                    change=index,
+                    field_path=path,
+                    repair="Cite a produced Capture under a ClaimType-admitted contract",
+                )
+            return SelfSourceBody(content_base64=evidence.observation.selected_content_base64), None
+        text = evidence.self if isinstance(evidence, SelfEvidence) else self.request.because
+        body = text.encode("utf-8")
+        if requires_captured_evidence(info.claim_type):
+            with self.instance.bind_accepted_projection(self.head) as projection:
+                admitted = tuple(
+                    name
+                    for name in CaptureContractNames(
+                        self.instance, self.head, connection=projection.typed.connection
+                    ).admitted(info.claim_type)
+                    if name not in _OWN_WORDS_CONTRACTS
+                )
+            shown = tuple(public_name(name) for name in admitted)
+            raise _refuse(
+                "cruxible.write.evidence_required",
+                f"{field_name} declares evidence_requirement 'captured' "
+                f"({', '.join(shown)}); your own words cannot back it",
+                change=index,
+                candidates=shown,
+                repair=(
+                    "Cite a Capture under "
+                    f"{' or '.join(shown) or 'an admitted CaptureContract'}: contract evidence "
+                    "naming it (--evidence-contract), a Capture handle (--capture), or file "
+                    "evidence (--evidence-file PATH#ANCHOR)"
+                ),
+                field_path=path,
+            )
+        return SelfSourceBody(content_base64=base64.b64encode(body).decode("ascii")), None
+
+    # -- Captures by handle or by contract ----------------------------------------
+
+    def cited_capture(
+        self, change: SetChange | AddChange, *, subject: str, subject_path_value: str, index: int
+    ) -> str | None:
+        """The digest of the Capture this change's evidence cites, if it cites one."""
+
+        evidence = change.evidence
+        path = f"changes[{index}].evidence"
+        if isinstance(evidence, CaptureEvidence):
+            if evidence.capture.startswith("sha256:"):
+                return evidence.capture
+            return self.capture_by_handle(evidence.capture, index=index, path=f"{path}.capture")
+        if isinstance(evidence, ContractEvidence):
+            return self.capture_by_contract(
+                evidence.contract,
+                subject=subject,
+                subject_path_value=subject_path_value,
+                index=index,
+                path=f"{path}.contract",
+            )
+        return None
+
+    def _verified_capture(self, digest: str) -> bool:
+        """Whether ``digest`` is a Capture this instance holds that verifies at the head."""
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CaptureReadInvalid,
+            verify_accepted_capture,
+        )
+
+        if digest not in self._verified:
+            try:
+                verified = verify_accepted_capture(
+                    self.instance,
+                    self.head,
+                    digest,
+                    access=_VALUE_READ_ACCESS,
+                    captures=self.captures,
+                )
+            except (CaptureReadInvalid, ReadRefusalError, CruxibleError, ValueError):
+                self._verified[digest] = False
+            else:
+                self._verified[digest] = not isinstance(verified, str)
+        return self._verified[digest]
+
+    def _nearest_captures(self, near: Sequence[str], hex_prefix: str) -> list[str]:
+        """Verified Captures near an unknown handle, at most a few.
+
+        ``near`` is what the bounded scan kept as sharing the longest prefix;
+        with none of those verifying, the accepted Captures on either side of
+        the handle in digest order, which the index answers without a scan.
+        """
+
+        found = [digest for digest in near if self._verified_capture(digest)]
+        if not found:
+            key = "sha256:" + hex_prefix
+            half = _MAX_CANDIDATES // 2
+            with self.instance.bind_accepted_projection(self.head) as projection:
+                connection = projection.typed.connection
+                after = connection.execute(
+                    "SELECT capture_digest FROM captures WHERE capture_digest >= ? "
+                    "ORDER BY capture_digest LIMIT ?",
+                    (key, half),
+                ).fetchall()
+                before = connection.execute(
+                    "SELECT capture_digest FROM captures WHERE capture_digest < ? "
+                    "ORDER BY capture_digest DESC LIMIT ?",
+                    (key, half),
+                ).fetchall()
+            found = sorted(str(row[0]) for row in (*before, *after))
+        return found[:_MAX_CANDIDATES]
+
+    def capture_by_handle(self, handle: str, *, index: int, path: str) -> str:
+        """Resolve ``CAP-<hex>`` to one Capture at the head, as ``get`` and ``read_capture`` do.
+
+        ``resolve_capture_handle`` is the one resolver: a Capture an accepted
+        Claim cites, or one the instance holds that verifies against its
+        contract accepted at the head -- citing one for the first time is the
+        common case. The lookup is bounded: when the store holds more under the
+        prefix than one lookup examines, it refuses rather than call a partial
+        answer unique.
+        """
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CAPTURE_HANDLE_MAX_VERIFIED,
+            CaptureHandleAmbiguous,
+            CaptureHandleExhausted,
+            CaptureHandleResolved,
+            resolve_capture_handle,
+        )
+
+        hex_prefix = handle.removeprefix("CAP-")
+        resolution = resolve_capture_handle(
+            self.instance,
+            self.head,
+            hex_prefix,
+            verified=self._verified_capture,
+            nearest=_MAX_CANDIDATES,
+        )
+        if isinstance(resolution, CaptureHandleResolved):
+            return resolution.digest
+        if isinstance(resolution, CaptureHandleExhausted):
+            # Out of budget, a Capture past the limit could match too: the scan
+            # never calls what it verified so far unique.
+            what = (
+                "objects under it than one lookup examines"
+                if resolution.reason == "scan_budget"
+                else f"more than {CAPTURE_HANDLE_MAX_VERIFIED} Captures under it to verify"
+            )
+            raise _refuse(
+                "cruxible.write.capture_scan_exhausted",
+                f"{handle} was not resolved: the body store holds {what}",
+                change=index,
+                repair="Pass a longer handle, or the full sha256 digest",
+                field_path=path,
+            )
+        if isinstance(resolution, CaptureHandleAmbiguous):
+            raise _refuse(
+                "cruxible.write.capture_ambiguous",
+                f"{handle} is the prefix of more than one Capture",
+                change=index,
+                candidates=_distinct_handles(resolution.candidates, at_least=len(hex_prefix) + 1),
+                repair="Pass a longer handle, or the full sha256 digest",
+                field_path=path,
+            )
+        raise _refuse(
+            "cruxible.write.capture_not_found",
+            f"no Capture this instance holds has the handle {handle}",
+            change=index,
+            candidates=_distinct_handles(
+                self._nearest_captures(resolution.nearest, hex_prefix), at_least=12
+            ),
+            repair=(
+                "Name a Capture by the CAP- handle a run, a capture or get with "
+                "detail=evidence printed, or by its full sha256 digest"
+            ),
+            field_path=path,
+        )
+
+    def capture_by_contract(
+        self,
+        name: str,
+        *,
+        subject: str,
+        subject_path_value: str,
+        index: int,
+        path: str,
+    ) -> str:
+        """The newest verified, citable Capture of one contract about one Subject."""
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CaptureReadInvalid,
+            RetainedCapture,
+            contract_captures,
+            verify_accepted_capture,
+        )
+
+        # Either spelling names a reserved contract: the public name orient
+        # shows, or the stored identity.
+        bare = stored_contract_name(name.removeprefix(_CONTRACT_QUALIFIER))
+        qualified = _CONTRACT_QUALIFIER + bare
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            connection = projection.typed.connection
+            known = [
+                str(row[0]).removeprefix(_CONTRACT_QUALIFIER)
+                for row in connection.execute("SELECT identity FROM capture_contracts")
+            ]
+            if bare not in known:
+                raise _refuse(
+                    "cruxible.write.unknown_contract",
+                    f"no accepted CaptureContract is named {public_name(bare)!r}",
+                    change=index,
+                    candidates=nearest(
+                        public_name(bare), tuple(public_name(item) for item in known)
+                    ),
+                    repair="Name a CaptureContract the field admits; orient lists them",
+                    field_path=path,
+                )
+            versions = CaptureContractNames(self.instance, self.head).lineage(qualified)
+            marks = ",".join("?" for _ in versions)
+            cited = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT u.capture_digest FROM citation_uses u "
+                    "JOIN claims c ON c.identity = u.owner_key "
+                    "JOIN captures p ON p.capture_digest = u.capture_digest "
+                    f"WHERE u.owner_kind = 'Claim' AND c.subject_path = ? "
+                    f"AND p.contract_digest IN ({marks})",
+                    (subject_path_value, *versions),
+                )
+            }
+        # Every retained Capture of the contract counts, cited or not; the body
+        # store indexes each envelope by its contract when it is stored.
+        inventory = contract_captures(
+            self.instance, contract_digests=versions, budget=_CONTRACT_CAPTURE_BUDGET
+        )
+        if not inventory.complete:
+            raise _refuse(
+                "cruxible.write.capture_scan_exhausted",
+                f"the newest Capture of {public_name(bare)} about {subject} was not found: the "
+                "contract has more Captures than one lookup reads",
+                change=index,
+                repair="Cite the Capture by its CAP- handle or its full sha256 digest",
+                field_path=path,
+            )
+        address = SemanticAddress.whole_artifact(subject_path_value).model_dump(mode="json")
+
+        def about_subject(envelope: Any) -> bool:
+            selector = getattr(envelope.source, "selector", None)
+            return isinstance(selector, Mapping) and selector.get("semantic_subject") == address
+
+        bound = sorted(
+            (
+                item
+                for item in inventory.captures
+                if item.digest in cited or about_subject(item.envelope)
+            ),
+            key=lambda item: (item.envelope.observed_at, item.digest),
+            reverse=True,
+        )
+        store = self.instance.body_store()
+        # A Claim maps a byte span onto what it cites, so only an exact-bytes
+        # commitment can back one. A newer Capture committed any other way is
+        # never skipped silently: it is named, as a refusal or as a warning.
+        uncitable: RetainedCapture | None = None
+        for item in bound[:_MAX_CONTRACT_CAPTURES]:
+            try:
+                verified = verify_accepted_capture(
+                    self.instance,
+                    self.head,
+                    item.digest,
+                    access=_VALUE_READ_ACCESS,
+                    captures=self.captures,
+                )
+            except (CaptureReadInvalid, ReadRefusalError):
+                continue
+            if isinstance(verified, str):
+                continue
+            reuse = classify_capture_reuse(
+                verified.envelope, contract=verified.contract, store=store, claim_id=""
+            )
+            if reuse != "shareable":
+                continue
+            if item.envelope.commitment.digest_kind != "exact_bytes":
+                uncitable = uncitable or item
+                continue
+            if uncitable is not None and uncitable.envelope.observed_at > item.envelope.observed_at:
+                self.plan.notes.append(
+                    NewerCaptureNotCitableWarning(
+                        change=index,
+                        capture=capture_handle(uncitable.digest),
+                        message=(
+                            f"{subject}: the newest Capture of {public_name(bare)}, "
+                            f"{capture_handle(uncitable.digest)}, is committed as "
+                            f"{_commitment_kind(uncitable)}, which no Claim can cite; the "
+                            f"write cites the older {capture_handle(item.digest)} instead"
+                        ),
+                        repair=_EXACT_BYTES_REPAIR,
+                    )
+                )
+            return item.digest
+        if uncitable is not None:
+            raise _refuse(
+                "cruxible.write.contract_capture_not_citable",
+                f"the newest Capture of {public_name(bare)} about {subject}, "
+                f"{capture_handle(uncitable.digest)}, is committed as "
+                f"{_commitment_kind(uncitable)}, which no Claim can cite: a Claim maps a "
+                "byte span onto its evidence, and only an exact-bytes commitment has bytes",
+                change=index,
+                candidates=(capture_handle(uncitable.digest),),
+                repair=_EXACT_BYTES_REPAIR,
+                field_path=path,
+            )
+        raise _refuse(
+            "cruxible.write.contract_capture_not_found",
+            f"no verified Capture of {public_name(bare)} is about {subject}",
+            change=index,
+            repair=(
+                f"Capture {subject} under {public_name(bare)} first (a Procedure or Line that "
+                "produces it, or --evidence-file / file evidence from its source), or cite a "
+                "Capture by its CAP- handle or digest"
+            ),
+            field_path=path,
+        )
+
+    # -- changes -----------------------------------------------------------------
+
+    def claim_change(self, index: int, change: SetChange | AddChange) -> _Planned:
+        prefix = f"changes[{index}]"
+        target = change.subject
+        pending: _Bound | None = None
+        creation: SubjectCreationAuthoringPayload | None
+        if isinstance(target, CreatedSubject):
+            bound = self.bound(target.created, index=index, path=f"{prefix}.subject")
+            kind = bound.kind
+            path = bound.slot_path
+            written = f'{{"created": {json.dumps(target.created)}}}'
+            pending = bound if bound.path is None else None
+            creation = self.plan.pending.get(bound.label)
+            if creation is None and bound.member is not None:
+                # Several labels can name the same ordinary creation member.
+                creation = self.plan.pending[self._pending_paths[bound.slot_path].label]
+        else:
+            kind, subject_id, path = self.resolve_subject(
+                _named(target), index=index, path=f"{prefix}.subject"
+            )
+            written = f"{kind}/{subject_id}"
+            pending = self._pending_paths.get(path)
+            if pending is None and not self.subject_exists(path):
+                path = self.create_by_key(kind, subject_id, index=index, path=f"{prefix}.subject")
+                pending = self._pending_paths[path]
+            creation = None if pending is None else self.plan.pending[pending.label]
+        # The outcome names the Subject written, however the change named it (an
+        # id, an alias, a key or a create's label): core reports the id. A
+        # Subject whose id is assigned at submission is named once it is.
+        subject = (
+            f"{kind}/<{pending.label}>"
+            if pending is not None
+            else path.removeprefix("subjects/").removesuffix(".json")
+        )
+        info = self.resolve_field(kind, change.field, index=index, path=f"{prefix}.field")
+        if creation is not None and info.predicate in {part.predicate for part in creation.key}:
+            assert pending is not None
+            subsumed = self._key_restated(
+                info, change, pending, kind=kind, written=written, index=index
+            )
+            if subsumed is not None:
+                return subsumed
+        claim_type = info.claim_type
+        name = self.field_name(info, kind)
+        label = f"{subject} {name}"
+        if isinstance(change, SetChange) and claim_type.cardinality == "many":
+            raise _refuse(
+                "cruxible.write.field_is_many",
+                f"{name} holds many values, so set has nothing to replace",
+                change=index,
+                repair="Use add to add a value, or retire one first",
+                field_path=f"{prefix}.op",
+            )
+        if isinstance(change, AddChange) and claim_type.cardinality == "one":
+            raise _refuse(
+                "cruxible.write.field_is_single",
+                f"{name} holds one value, so add would contend with it",
+                change=index,
+                repair="Use set to replace the value (contend: true to contest it)",
+                field_path=f"{prefix}.op",
+            )
+        role = self.role(claim_type, change.role, index=index, field_name=name)
+        shown_after: object = change.value
+        statement_object: Any
+        if isinstance(change.value, NoneValue):
+            statement_object = self.none_value(info, change.value, index=index, field_name=name)
+            of = statement_object.of
+            shown_after = {
+                "none": None
+                if of is None
+                else of.value
+                if isinstance(of, LiteralClaimObject)
+                else of.address.artifact_path.removeprefix("subjects/").removesuffix(".json")
+            }
+        elif claim_value_kind(claim_type.value) == "subject":
+            statement_object, shown_after = self.subject_value(
+                info,
+                change.value,
+                index=index,
+                field_name=name,
+                added=self.plan.subjects,
+            )
+        elif isinstance(change.value, CreatedSubject):
+            raise _refuse(
+                "cruxible.write.value_type_mismatch",
+                f"{name} takes a {claim_value_kind(claim_type.value)} value, not a Subject",
+                change=index,
+                repair="Pass the value itself",
+                field_path=f"{prefix}.value",
+            )
+        else:
+            statement_object = self.literal(info, change.value, index=index, field_name=name)
+            shown_after = statement_object.value
+        pending_value = None
+        if isinstance(statement_object, SubjectClaimObject):
+            if isinstance(change.value, CreatedSubject):
+                value_bound = self.plan.labels[change.value.created]
+                if value_bound.path is None:
+                    pending_value = value_bound.label
+            elif statement_object.address.selector.scheme == "subject-creation-v1":
+                member_digest = statement_object.address.selector.value
+                value_kind = statement_object.address.artifact_path.removeprefix(
+                    "subject-kinds/"
+                ).removesuffix(".json")
+                pending_bound = self._pending_paths.get(
+                    f"pending:SubjectCreation:{value_kind}@{member_digest}"
+                )
+                if pending_bound is not None:
+                    pending_value = pending_bound.label
+        capture = self.cited_capture(change, subject=subject, subject_path_value=path, index=index)
+        source, citation_role = self.source(
+            info, change, role=role, index=index, field_name=name, capture=capture
+        )
+        if isinstance(change.value, NoneValue) and isinstance(source, SelfSourceBody):
+            unit = "nothing" if change.value.none is None else f"no {_brief(change.value.none)}"
+            self.none_evidence(info, index=index, field_name=name, unit=unit)
+        live = (
+            self.slot_claims(path, info.predicate)
+            if pending is None and self.subject_exists(path)
+            else ()
+        )
+        revises: str | None = None
+        before: object = None
+        contenders: tuple[str, ...] = ()
+        unchanged: dict[str, Any] | None = None
+        unchanged_digest: str | None = None
+        if isinstance(change, SetChange):
+            self.check_expected(
+                index=index,
+                label=label,
+                info=info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
+            if change.contend:
+                contenders = tuple(item.claim_id for item in live)
+            else:
+                self.check_slot_unchanged(
+                    index=index,
+                    subject=subject,
+                    field_name=name,
+                    subject_path_value=path,
+                    predicate=info.predicate,
+                    live=live,
+                )
+                remaining = [item for item in live if item.claim_id not in self._retiring()]
+                if len(remaining) > 1:
+                    raise _refuse(
+                        "cruxible.write.slot_contested",
+                        f"{label} holds {len(remaining)} competing values, so set cannot "
+                        "tell which to replace",
+                        change=index,
+                        candidates=tuple(item.claim_id for item in remaining),
+                        repair=(
+                            "Retire all but one of them in the same write, or set with "
+                            "contend: true to add one more"
+                        ),
+                    )
+                if remaining:
+                    revises = remaining[0].claim_id
+                    before = remaining[0].value
+        else:
+            # A Claim retired in this same write is not live after it, so the
+            # value it holds is stated anew rather than reported as present.
+            retiring = self._retiring()
+            present = next(
+                (
+                    item
+                    for item in live
+                    if item.value == shown_after
+                    and item.role == role
+                    and item.claim_id not in retiring
+                ),
+                None,
+            )
+            if present is not None and change.expect_absent:
+                raise _refuse(
+                    "cruxible.write.value_already_present",
+                    f"{label} already holds {summary_value(present.value)!r} as "
+                    f"{present.claim_id}, and the add expected it absent",
+                    change=index,
+                    candidates=(present.claim_id,),
+                    repair="Leave it out, or drop expect_absent to accept it as already done",
+                    field_path=f"changes[{index}].expect_absent",
+                )
+            if present is not None:
+                # Adding what is already there restates the live Claim: its
+                # lineage is the one revised, and the shared re-observation
+                # comparison in lowering decides. The same association on the
+                # same content changes nothing (already live); new content
+                # refreshes the evidence of that Claim, never a second one.
+                revises = present.claim_id
+                before = present.value
+                unchanged = {
+                    "subject": subject,
+                    "field": name,
+                    "predicate": info.predicate,
+                    "before": summary_value(
+                        present.value,
+                        read_whole=whole_value_read(present.claim_id, self.head.git_oid),
+                    ),
+                    "after": summary_value(present.value),
+                    "claim": present.claim_id,
+                    "already_live": True,
+                }
+                unchanged_digest = present.digest
+        statement = AuthoringClaimStatement(
+            subject=SemanticAddress.whole_artifact(path) if pending is None else pending.address,
+            predicate=info.predicate,
+            qualifier=None,
+            object=statement_object,
+            role=role,
+        )
+        values: dict[str, Any] = {
+            "statement": statement,
+            "rationale": self.request.because,
+            "source": source,
+            "citation_role": citation_role,
+            "revises": revises,
+            "dependency_drafts": ClaimDependencyDrafts(),
+        }
+        if isinstance(change.evidence, SectionEvidence) and change.evidence.own_words:
+            values["located_at"] = change.evidence.observation
+        member = ClaimAuthoringPayload(**values)
+        used_contract = (
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
+            if isinstance(source, SelfSourceBody)
+            else foreign_source_capture_contract(source.source_id).identity.name
+            if isinstance(change.evidence, FileEvidence)
+            else None
+        )
+        return _Planned(
+            change=change,
+            claim_type=claim_type,
+            used_contract=used_contract,
+            index=index,
+            op=change.op,
+            outcome={
+                "subject": subject if pending is None else None,
+                "field": name,
+                "predicate": info.predicate,
+                # before is the revised Claim at the planning head; after is
+                # the value this write sent, so it names no whole read.
+                "before": summary_value(
+                    before,
+                    read_whole=None
+                    if revises is None
+                    else whole_value_read(revises, self.head.git_oid),
+                ),
+                "after": summary_value(shown_after),
+                "revises": revises,
+                "contenders_created": contenders,
+                "capture": None if capture is None else capture_handle(capture),
+            },
+            member=member,
+            capture=capture,
+            slot=(path, info.predicate),
+            revises=revises,
+            existing=tuple(item.claim_id for item in live if item.claim_id != revises),
+            # A Subject whose id is not assigned yet has no slot to pin.
+            pin=None if pending is not None else self.slot_pin(path, info.predicate),
+            unchanged_outcome=unchanged,
+            unchanged_digest=unchanged_digest,
+            pending_subject=None if pending is None else pending.label,
+            pending_value=pending_value,
+        )
+
+    def _key_restated(
+        self,
+        info: PredicateInfo,
+        change: SetChange | AddChange,
+        pending: _Bound,
+        *,
+        kind: str,
+        written: str,
+        index: int,
+    ) -> _Planned | None:
+        """A write of the key a pending creation states: subsumed by it, or refused.
+
+        Creating a keyed Subject writes its key Claim, so a set of that key to
+        the very value (in its canonical form) restates the creation: the
+        outcome is the create, and nothing else is written. Any other value
+        names a second key for one Subject, and refuses.
+        """
+
+        prefix = f"changes[{index}]"
+        key = dict(pending.key)
+        try:
+            restated = self.literal(
+                info, change.value, index=index, field_name=self.field_name(info, kind)
+            ).value
+        except WriteRefusalError:
+            restated = None
+        if (
+            isinstance(change, SetChange)
+            and restated is not None
+            and (key.get(info.predicate) == restated)
+        ):
+            return _Planned(
+                index=index,
+                op="create",
+                outcome={"subject": pending.ref, "resolved": pending.resolved},
+                pending_subject=pending.label if pending.path is None else None,
+            )
+        create = json.dumps(
+            {
+                "op": "create",
+                "label": "new",
+                "subject_kind": kind,
+                "key": shown_plain(summary_value(change.value)),
+            }
+        )
+        raise _refuse(
+            "cruxible.write.key_set_by_creation",
+            f"{info.predicate} is the key {written} is created by, so this write already "
+            f"states it as {_brief(key.get(info.predicate))}",
+            change=index,
+            repair=(
+                f"Leave this change out: creating {written} writes its key. To create the "
+                f"Subject by another key, write a create change: {create}"
+            ),
+            field_path=f"{prefix}.field",
+        )
+
+    def _subjects_retired_here(self) -> dict[str, bool]:
+        """Each Subject a retire change of this write names, by path: whether ``with_claims``.
+
+        Read once per write from its changes (an exact id or the shared
+        resolver's reading); a target that does not resolve is refused by its
+        own change.
+        """
+
+        if self._retired_here is None:
+            found: dict[str, bool] = {}
+            for position, change in enumerate(self.request.changes):
+                if not isinstance(change, RetireChange) or not _names_subject(change):
+                    continue
+                kind, _, subject_id = str(change.target).partition("/")
+                if kind not in self.vocabulary.kinds:
+                    continue
+                try:
+                    resolution = self.resolve_ref(
+                        kind, subject_id, index=position, path=f"changes[{position}].target"
+                    )
+                except WriteRefusalError:
+                    continue
+                if resolution.path is not None and resolution.via != "alias":
+                    found[resolution.path] = found.get(resolution.path, False) or (
+                        change.with_claims
+                    )
+            self._retired_here = found
+        return self._retired_here
+
+    def _is_end_part(self, holder_path: str, predicate: str) -> bool:
+        """Whether ``predicate`` is a Subject-valued key part (a pair end) of the holder kind."""
+
+        kind = subject_kind_of(holder_path)[0]
+        declared = self.declared_kind(kind)
+        if declared is None:
+            # A grandfathered pair kind's ends stay fixed too: its retired
+            # SubjectKind still names them.
+            content = self.instance.blob_at(self.head.git_oid, subject_kind_path(kind))
+            declared = (
+                None
+                if content is None
+                else parse_subject_kind(content, path=subject_kind_path(kind))
+            )
+        if declared is None or declared.minted or predicate not in declared.keys:
+            return False
+        info = self.vocabulary.predicates.get(predicate)
+        return info is not None and claim_value_kind(info.claim_type.value) == "subject"
+
+    def _retiring(self) -> set[str]:
+        retiring = {item.retires for item in self.plan.changes if item.retires is not None}
+        retiring.update(claim for item in self.plan.changes for claim in item.retires_also)
+        return retiring
+
+    def _revising(self) -> set[str]:
+        return {item.revises for item in self.plan.changes if item.revises is not None}
+
+    def _live_claim(self, index: int, claim_id: str, *, path: str) -> ClaimArtifact:
+        """One live Claim by ID at the head, refusing when it moved since the read."""
+
+        content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
+        if content is None:
+            raise _refuse(
+                "cruxible.write.claim_not_found",
+                f"no accepted Claim {claim_id}",
+                change=index,
+                repair="Name a live Claim; get on the Subject lists its Claim IDs",
+                field_path=path,
+            )
+        claim = parse_claim(content, path=claim_path(claim_id))
+        if claim.lifecycle.state != "live":
+            raise _refuse(
+                "cruxible.write.claim_not_live",
+                f"{claim_id} is already {claim.lifecycle.state}",
+                change=index,
+                repair="Leave it out; there is nothing left to change",
+                field_path=path,
+            )
+        if self.read_at.git_oid != self.head.git_oid:
+            with self.instance.accepted_history_reader(
+                at=AcceptedCoordinate.from_internal(self.head)
+            ) as history:
+                location = history.latest_member(claim_path(claim_id))
+                if location is not None and location.sequence > self.read_sequence():
+                    actor = history.generation(location.sequence).actor_id
+                    raise _refuse(
+                        "cruxible.write.slot_changed",
+                        f"{claim_id} changed after your read: revised in generation "
+                        f"{location.sequence} by {actor or 'unknown'}",
+                        change=index,
+                        candidates=(claim_id,),
+                        repair="Read it again, then change it at the new coordinate",
+                    )
+        return claim
+
+    def _capture_contract_identity(self, digest: str) -> str | None:
+        """The CaptureContract identity a Capture names, as accepted state holds it."""
+
+        try:
+            envelope = capture_envelope(
+                self.instance.body_store(), digest, access=_VALUE_READ_ACCESS
+            )
+        except (CruxibleError, ValueError):
+            return None
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            row = projection.typed.connection.execute(
+                "SELECT identity FROM capture_contracts WHERE artifact_digest=?",
+                (envelope.capture_contract_digest,),
+            ).fetchone()
+        return envelope.capture_contract_digest if row is None else str(row[0])
+
+    def _citation_source(self, digest: str) -> str | None:
+        """The workspace file (logical source id) a cited Capture observed, if any."""
+
+        try:
+            envelope = capture_envelope(
+                self.instance.body_store(), digest, access=_VALUE_READ_ACCESS
+            )
+        except (CruxibleError, ValueError):
+            return None
+        source = envelope.source
+        if (
+            isinstance(source, ExternalSourceReference)
+            and source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+        ):
+            return source.source_identity
+        return None
+
+    def _content_of(self, digest: str) -> str | None:
+        try:
+            envelope = capture_envelope(
+                self.instance.body_store(), digest, access=_VALUE_READ_ACCESS
+            )
+        except (CruxibleError, ValueError):
+            return None
+        return observed_content(envelope).digest
+
+    def expanded_changes(self) -> tuple[Change, ...]:
+        """The write's changes, each ``from_capture`` re-bind expanded where it stands.
+
+        A ``from_capture`` re-bind becomes one re-bind per live Claim citing that
+        Capture, in Claim-ID order, each replacing its citation of it with the
+        fresh Capture. The expanded re-binds take its place, so the write's
+        outcomes, and any refusal's change index, count them one by one. Cost:
+        one indexed range of the Capture's citations, capped.
+        """
+
+        changes = self.request.changes
+        if not any(
+            isinstance(item, RebindChange) and item.from_capture is not None for item in changes
+        ):
+            return changes
+        expanded: list[Change] = []
+        for index, change in enumerate(changes):
+            if not isinstance(change, RebindChange) or change.from_capture is None:
+                expanded.append(change)
+                continue
+            path = f"changes[{index}].from_capture"
+            stale = (
+                change.from_capture
+                if change.from_capture.startswith("sha256:")
+                else self.capture_by_handle(change.from_capture, index=index, path=path)
+            )
+            citing = self._live_claims_citing(stale, limit=MAX_REBIND_FROM_CAPTURE + 1)
+            if not citing:
+                raise _refuse(
+                    "cruxible.write.capture_not_cited",
+                    f"no live Claim cites {capture_handle(stale)}, so there is nothing to re-bind",
+                    change=index,
+                    repair="Name the Capture the Claims cite now; get on a Claim lists them",
+                    field_path=path,
+                )
+            if len(citing) > MAX_REBIND_FROM_CAPTURE:
+                raise _refuse(
+                    "cruxible.write.rebind_too_many",
+                    f"more than {MAX_REBIND_FROM_CAPTURE} live Claims cite "
+                    f"{capture_handle(stale)}; one write re-binds at most "
+                    f"{MAX_REBIND_FROM_CAPTURE}",
+                    change=index,
+                    repair="Re-bind them by Claim (target) across several writes",
+                    field_path=path,
+                )
+            for claim_id in citing:
+                self._rebind_from[len(expanded)] = stale
+                expanded.append(RebindChange(target=claim_id, evidence=change.evidence))
+        if len(expanded) > MAX_REBIND_FROM_CAPTURE:
+            raise _refuse(
+                "cruxible.write.rebind_too_many",
+                f"the expanded write holds {len(expanded)} changes; one write holds at most "
+                f"{MAX_REBIND_FROM_CAPTURE}",
+                repair="Split the write: re-bind from the Capture in a write of its own",
+                field_path="changes",
+            )
+        return tuple(expanded)
+
+    def _live_claims_citing(self, capture_digest: str, *, limit: int) -> list[str]:
+        """Live Claims citing the Capture, in ID order: one indexed range, at most ``limit``."""
+
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            rows = projection.typed.connection.execute(
+                "SELECT DISTINCT u.owner_key FROM citation_uses u INDEXED BY citations_by_capture "
+                "JOIN claims c ON c.identity=u.owner_key "
+                "WHERE u.capture_digest=? AND u.owner_kind='Claim' AND c.lifecycle='live' "
+                "ORDER BY u.owner_key LIMIT ?",
+                (capture_digest, limit),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def rebind_change(self, index: int, change: RebindChange) -> _Planned:
+        """Re-cite one live Claim on the text it rests on now; the statement stays.
+
+        Core reads the statement, so the author never restates it. The named
+        citation (by default the Claim's one citation of the evidence's file;
+        for a re-bind expanded from ``from_capture``, its citation of that
+        Capture) is replaced by the new text's: a section that is a located copy
+        also replaces its paired own-words citation (the same bytes). Claim law
+        v2 revision 10 admits the result as a revision of the same Claim. Cost:
+        this Claim and its citations.
+        """
+
+        prefix = f"changes[{index}]"
+        assert change.target is not None, "from_capture re-binds are expanded before planning"
+        claim_id = _bare(change.target)
+        replacing = self._rebind_from.get(index)
+        retire_repair = f"Retire it: {_render_write_call(self.request.surface, 'retire', claim_id)}"
+        claim = self._live_claim(index, claim_id, path=f"{prefix}.target")
+        statement = claim.statement
+        evidence = change.evidence
+        fresh: str | None = None
+        if isinstance(evidence, CaptureEvidence):
+            fresh = (
+                evidence.capture
+                if evidence.capture.startswith("sha256:")
+                else self.capture_by_handle(
+                    evidence.capture, index=index, path=f"{prefix}.evidence.capture"
+                )
+            )
+        elif evidence.observation is None:
+            raise _refuse(
+                "cruxible.write.file_evidence_unobserved",
+                "the new text was not read on the writer's side; the daemon never reads "
+                "workspace files",
+                change=index,
+                repair="Re-bind through the CLI, the SDK or the MCP adapter, which read the file",
+                field_path=f"{prefix}.evidence",
+            )
+        if statement.role == "derivation":
+            raise _refuse(
+                "cruxible.write.rebind_unsupported",
+                f"{claim_id} is "
+                + (
+                    "a derivation, which only its Procedure states"
+                    if statement.role == "derivation"
+                    else "backed by legacy evidence with no citations"
+                ),
+                change=index,
+                repair=retire_repair,
+                field_path=f"{prefix}.target",
+            )
+        citations = claim.backing.citations
+        file_source = (
+            None
+            if isinstance(evidence, CaptureEvidence) or evidence.observation is None
+            else evidence.observation.source_id
+        )
+        if replacing is not None:
+            named = [item for item in citations if item.capture_digest == replacing]
+        elif change.citation is not None:
+            wanted = change.citation.removeprefix("sha256:")
+            named = [
+                item for item in citations if item.citation_id.partition(":")[2].startswith(wanted)
+            ]
+        elif fresh is not None:
+            # The Claim's one evidence citation under the fresh Capture's contract:
+            # Claim law v2 revision 10 replaces a citation within its contract.
+            contract = self._capture_contract_identity(fresh)
+            named = [
+                item
+                for item in citations
+                if item.origin == "independent"
+                and item.role == "evidence"
+                and item.capture_digest != fresh
+                and self._capture_contract_identity(item.capture_digest) == contract
+            ]
+        else:
+            # The Claim's one citation of that file: a file anchor replaces an
+            # evidence citation, a section a located copy or a section citation.
+            named = [
+                item
+                for item in citations
+                if item.origin == "independent"
+                and (isinstance(evidence, SectionEvidence) or item.role == "evidence")
+                and self._citation_source(item.capture_digest) == file_source
+            ]
+        shown = tuple(item.citation_id.partition(":")[2][:12] for item in citations)
+        what = (
+            f"of {capture_handle(replacing)}"
+            if replacing is not None
+            else f"{change.citation}"
+            if change.citation
+            else "under that Capture's contract"
+            if fresh is not None
+            else f"of {file_source}"
+        )
+        if not named:
+            raise _refuse(
+                "cruxible.write.citation_not_held",
+                f"{claim_id} holds no citation " + what,
+                change=index,
+                candidates=shown,
+                repair="Name one of the listed citations with citation (--citation)",
+                field_path=f"{prefix}.citation",
+            )
+        if len(named) > 1:
+            raise _refuse(
+                "cruxible.write.citation_ambiguous",
+                f"{claim_id} holds {len(named)} citations " + what,
+                change=index,
+                candidates=tuple(item.citation_id.partition(":")[2][:12] for item in named),
+                repair="Name one of the listed citations with citation (--citation)",
+                field_path=f"{prefix}.citation",
+            )
+        (replaced,) = named
+        info = self.vocabulary.predicates.get(statement.predicate)
+        if info is None:
+            raise _refuse(
+                "cruxible.write.unknown_field",
+                f"{claim_id} states {statement.predicate}, which no live ClaimType defines",
+                change=index,
+                repair=retire_repair,
+                field_path=f"{prefix}.target",
+            )
+        subject_path_value = statement.subject.artifact_path
+        subject = subject_path_value.removeprefix("subjects/").removesuffix(".json")
+        kind = subject.partition("/")[0]
+        field_name = self.field_name(info, kind)
+        own_words = replaced.role == "copy" and replaced.origin == "independent"
+        replaces = {replaced.citation_id}
+        source: Any
+        citation_role: Literal["evidence", "copy"] | None
+        values: dict[str, Any] = {}
+        if fresh is not None:
+            if replaced.origin != "independent" or replaced.role != "evidence":
+                raise _refuse(
+                    "cruxible.write.rebind_needs_capture_citation",
+                    f"{replaced.citation_id.partition(':')[2][:12]} is not a Capture citation "
+                    "of evidence, so a Capture cannot replace it",
+                    change=index,
+                    repair="Name the Claim's evidence citation with citation (--citation)",
+                    field_path=f"{prefix}.citation",
+                )
+            source = ExistingCaptureCitationSource(capture_digest=fresh)
+            citation_role = "evidence"
+        elif own_words:
+            # A located copy rests on the writer's own words, which cite the
+            # same bytes: both move to the section's text now.
+            if not isinstance(evidence, SectionEvidence):
+                raise _refuse(
+                    "cruxible.write.rebind_needs_section",
+                    f"{replaced.citation_id.partition(':')[2][:12]} locates {claim_id}'s own "
+                    "words in a section, so its new text is a section",
+                    change=index,
+                    repair="Re-bind with section evidence (--section FILE#Heading/Path)",
+                    field_path=f"{prefix}.evidence",
+                )
+            if requires_captured_evidence(info.claim_type):
+                raise _refuse(
+                    "cruxible.write.evidence_required",
+                    f"{field_name} requires captured evidence; own words cannot back it",
+                    change=index,
+                    repair="Cite a Capture under a contract the field admits",
+                    field_path=f"{prefix}.evidence",
+                )
+            content = self._content_of(replaced.capture_digest)
+            replaces.update(
+                item.citation_id
+                for item in citations
+                if item.origin == "self_source"
+                and content is not None
+                and self._content_of(item.capture_digest) == content
+            )
+            assert isinstance(evidence, SectionEvidence) and evidence.observation is not None
+            source = SelfSourceBody(content_base64=evidence.observation.selected_content_base64)
+            values["located_at"] = evidence.observation
+            citation_role = None
+        elif replaced.origin == "independent" and replaced.role == "evidence":
+            assert not isinstance(evidence, CaptureEvidence)
+            source, citation_role = evidence.observation, "evidence"
+        else:
+            raise _refuse(
+                "cruxible.write.rebind_needs_document_text",
+                f"{replaced.citation_id.partition(':')[2][:12]} cites no workspace file text, "
+                "so there is nothing to re-bind it to",
+                change=index,
+                repair=(
+                    "Restate the Claim on new evidence with set, or retire it: "
+                    f"{_render_write_call(self.request.surface, 'retire', claim_id)}"
+                ),
+                field_path=f"{prefix}.citation",
+            )
+        obj = statement.object
+        authored_object: Any = obj
+        authored = AuthoringClaimStatement(
+            subject=statement.subject,
+            predicate=statement.predicate,
+            qualifier=statement.qualifier,
+            object=authored_object,
+            role=statement.role,
+            effective_from=statement.effective_from,
+            effective_until=statement.effective_until,
+        )
+        member = ClaimAuthoringPayload(
+            statement=authored,
+            rationale=self.request.because,
+            source=source,
+            citation_role=citation_role,
+            revises=claim_id,
+            dependency_drafts=ClaimDependencyDrafts(),
+            replaces_citations=tuple(sorted(replaces, key=lambda item: item.encode("ascii"))),
+            **values,
+        )
+        live = self.slot_claims(subject_path_value, statement.predicate, statement.qualifier)
+        value = next((item.value for item in live if item.claim_id == claim_id), None)
+        shown_value = summary_value(value, read_whole=whole_value_read(claim_id, self.head.git_oid))
+        return _Planned(
+            index=index,
+            op="rebind",
+            claim_type=info.claim_type,
+            outcome={
+                "subject": subject,
+                "field": field_name,
+                "predicate": statement.predicate,
+                "before": shown_value,
+                "after": shown_value,
+                "revises": claim_id,
+            },
+            member=member,
+            slot=(subject_path_value, statement.predicate),
+            revises=claim_id,
+            existing=tuple(item.claim_id for item in live if item.claim_id != claim_id),
+            pin=self.slot_pin(subject_path_value, statement.predicate, statement.qualifier),
+        )
+
+    def about_change(self, index: int, change: AboutChange) -> _Planned:
+        """Link (or unlink) one workspace section about Subjects: its note's next version.
+
+        O(the change's Subjects): each resolves like any Subject reference, and
+        the section's note is one path read at the head.
+        """
+
+        path = f"changes[{index}]"
+        observation = change.observation
+        if observation is None and change.subjects:
+            raise _refuse(
+                "cruxible.write.section_evidence_unobserved",
+                "An about link's section must be read by the writer's adapter.",
+                change=index,
+                field_path=path,
+                repair="Use write through the CLI, MCP or SDK beside the workspace",
+            )
+        source_id = observation.source_id if observation is not None else change.file
+        section = change.section
+        try:
+            name = note_id(source_id, section)
+        except ValueError as exc:
+            raise _refuse(
+                "cruxible.write.section_invalid",
+                f"about names no addressable section: {exc}",
+                change=index,
+                field_path=path,
+                repair="Name a catalogued file and a nonempty heading path",
+            ) from exc
+        note_file = note_path(name)
+        content = self.instance.blob_at(self.head.git_oid, note_file)
+        previous = None if content is None else parse_note(content, path=note_file)
+        held = (
+            set()
+            if previous is None or previous.lifecycle.state != "live"
+            else {item.qualified for item in previous.about}
+        )
+
+        def identity_of(ref: str, position: int, field: str) -> str:
+            element = f"{path}.{field}[{position}]"
+            _kind, _id, subject_file = self.resolve_subject(ref, index=index, path=element)
+            created = any(bound.path == subject_file for bound in self.plan.labels.values())
+            # An unlink names a Subject the note holds, live or since retired.
+            if subject_file.startswith("pending:") or not (
+                field == "unlink" or created or self.subject_exists(subject_file)
+            ):
+                raise _refuse(
+                    "cruxible.write.subject_not_found",
+                    f"{ref} names no live Subject a note can link",
+                    change=index,
+                    field_path=element,
+                    repair="Link an existing Subject; create it in an earlier write first",
+                )
+            return "Subject:" + subject_file.removeprefix("subjects/").removesuffix(".json")
+
+        added = {identity_of(ref, i, "subjects") for i, ref in enumerate(change.subjects)}
+        removed = {identity_of(ref, i, "unlink") for i, ref in enumerate(change.unlink)}
+        after = sorted((held | added) - removed, key=lambda item: item.encode("utf-8"))
+        if not after and not held:
+            raise _refuse(
+                "cruxible.write.note_not_found",
+                f"section {section!r} of {source_id!r} has no note to unlink",
+                change=index,
+                field_path=path,
+                repair="Leave the unlink out; nothing links this section",
+            )
+        # Without an observation (a pure unlink of a section that may be gone)
+        # the remaining links stay on the bytes the note already retains.
+        member = NoteAuthoringPayload(
+            source=observation if after else None,
+            note=name if previous is not None else None,
+            about=tuple(parse_artifact_identity(item) for item in after),
+        )
+        return _Planned(
+            index=index,
+            op="about",
+            outcome={
+                "note": name,
+                "file": source_id,
+                "section": section,
+                "about": tuple(item.removeprefix("Subject:") for item in after),
+            },
+            member=member,
+        )
+
+    def subject_retire_change(self, index: int, change: RetireChange) -> _Planned:
+        """Retire one Subject: its shell, its key Claims (core), and its own Claims if asked.
+
+        A Subject's retirement is its own act, never derived from its Claims.
+        Its other live Claims retire only with ``with_claims`` (under the
+        write's reason); otherwise the write refuses, listing them. Claims of
+        other Subjects whose value is this one are never retired here: the
+        write refuses, listing each with its re-point or retire. A pair whose
+        end this is (its key Claim names it) is never re-pointed (its ends are
+        fixed): the repair retires the pair ``with_claims`` (R5, no cascade),
+        and a pair this same write retires no longer holds the end. Cost: this
+        Subject's Claims and the references to it, read from the typed index.
+        """
+
+        prefix = f"changes[{index}].target"
+        ref = str(change.target)
+        kind, _, subject_id = ref.partition("/")
+        if kind not in self.vocabulary.kinds:
+            raise _refuse(
+                "cruxible.write.unknown_kind",
+                f"no accepted Subject kind is named {kind!r}",
+                change=index,
+                candidates=nearest(kind, self.vocabulary.kinds),
+                repair="Use one of the listed kinds; orient names every kind",
+                field_path=prefix,
+            )
+        resolution = self.resolve_ref(kind, subject_id, index=index, path=prefix)
+        if resolution.via == "alias":
+            raise _refuse(
+                "cruxible.write.retire_by_alias",
+                f"{ref} names no live Subject; an alias resolves it to {resolution.ref}, so "
+                "retiring it would retire that Subject",
+                change=index,
+                candidates=() if resolution.ref is None else (resolution.ref,),
+                repair=(
+                    f"Name the Subject to retire by its id; {resolution.ref} is retired only "
+                    "when you name it"
+                ),
+                field_path=prefix,
+            )
+        path = resolution.path
+        content = None if path is None else self.instance.blob_at(self.head.git_oid, path)
+        if path is None or content is None:
+            raise _refuse(
+                "cruxible.write.subject_not_found",
+                f"{ref} names no accepted Subject",
+                change=index,
+                repair="Name a Subject as kind/id; orient and query list them",
+                field_path=prefix,
+            )
+        shell = parse_subject(content, path=path)
+        named = f"{kind}/{shell.subject_id}"
+        if shell.lifecycle.state != "live":
+            raise _refuse(
+                "cruxible.write.subject_not_live",
+                f"{named} is already {shell.lifecycle.state}",
+                change=index,
+                repair="Leave it out; there is nothing left to retire",
+                field_path=prefix,
+            )
+        declared = self.declared_kind(kind)
+        keys = frozenset(() if declared is None else declared.keys)
+        changing = self._retiring() | self._revising()
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            connection = projection.typed.connection
+            own = [
+                (str(row[0]), str(row[1]))
+                for row in connection.execute(
+                    "SELECT identity, predicate FROM claims WHERE subject_path=? "
+                    "AND +lifecycle='live' ORDER BY identity",
+                    (path,),
+                )
+                if _bare(str(row[0])) not in changing
+            ]
+            incoming = [
+                (str(row[0]), str(row[1]), str(row[2]))
+                for row in connection.execute(
+                    "SELECT identity, subject_path, predicate FROM claims "
+                    "WHERE object_kind='subject' AND object_path=? AND subject_path<>? "
+                    "AND +lifecycle='live' ORDER BY identity",
+                    (path, path),
+                )
+                if _bare(str(row[0])) not in changing
+            ]
+        retired_here = self._subjects_retired_here()
+        pairs: list[tuple[str, str, str]] = []
+        others: list[tuple[str, str, str]] = []
+        for item in incoming:
+            _identity, holder_path, predicate = item
+            is_end = self._is_end_part(holder_path, predicate)
+            if holder_path in retired_here and (is_end or retired_here[holder_path]):
+                # Its holder retires in this write: an endpoint with its pair,
+                # any other Claim with its Subject's with_claims.
+                continue
+            (pairs if is_end else others).append(item)
+        incoming = [*pairs, *others]
+        if incoming:
+            with self.identity_view() as view:
+                survivors = tuple(
+                    item for item in view.alias_targets(kind, shell.subject_id) if item != path
+                )
+            survivor = (
+                survivors[0].removeprefix("subjects/").removesuffix(".json")
+                if len(survivors) == 1
+                else None
+            )
+            lines = []
+            repairs = []
+            for identity, holder_path, predicate in incoming:
+                holder = holder_path.removeprefix("subjects/").removesuffix(".json")
+                info = self.vocabulary.predicates.get(predicate)
+                field_name = (
+                    predicate if info is None else self.field_name(info, holder.partition("/")[0])
+                )
+                claim_id = _bare(identity)
+                lines.append(f"{holder} {field_name} = {named} [{claim_id}]")
+                repairs.append(
+                    # A pair's end is fixed for life: the pair retires instead.
+                    _render_subject_retire(self.request.surface, holder)
+                    if (identity, holder_path, predicate) in pairs
+                    else _render_write_call(
+                        self.request.surface, "set", holder, field_name, survivor
+                    )
+                    if survivor is not None
+                    else _render_write_call(self.request.surface, "retire", claim_id)
+                )
+            how = (
+                "Retire the pair(s) with their Claims in this write"
+                if not others
+                else "Retire the pair(s) with their Claims, and re-point the rest"
+                if pairs and survivor is not None
+                else "Retire the pair(s) with their Claims, and retire the rest"
+                if pairs
+                else ("Re-point" if survivor is not None else "Retire") + " each first"
+            )
+            raise _refuse(
+                "cruxible.write.subject_referenced",
+                f"{named} is the value of {len(incoming)} live Claim(s) of other Subjects, "
+                "which a Subject's retirement never ends"
+                + (f", {len(pairs)} of them the end of a live pair" if pairs else "")
+                + ": "
+                + "; ".join(lines[:_MAX_CANDIDATES]),
+                change=index,
+                candidates=tuple(
+                    dict.fromkeys(
+                        item[1].removeprefix("subjects/").removesuffix(".json")
+                        if item in pairs
+                        else _bare(item[0])
+                        for item in incoming
+                    )
+                ),
+                repair=how + ": " + "; ".join(dict.fromkeys(repairs[:_MAX_CANDIDATES])),
+                field_path=prefix,
+            )
+        stated = [(identity, predicate) for identity, predicate in own if predicate not in keys]
+        if stated and not change.with_claims:
+            values = {
+                item.identity: item.value
+                for item in read_live_values(
+                    self.instance, self.head, subject_paths=(path,), predicates=None
+                )
+            }
+            listed = []
+            for identity, predicate in stated:
+                info = self.vocabulary.predicates.get(predicate)
+                field_name = predicate if info is None else self.field_name(info, kind)
+                listed.append(
+                    f"{field_name} = {_brief_shown(summary_value(values.get(identity)))} "
+                    f"[{_bare(identity)}]"
+                )
+            raise _refuse(
+                "cruxible.write.subject_has_claims",
+                f"{named} still holds {len(stated)} live Claim(s), which retire with it only "
+                "when you say so: " + "; ".join(listed[:_MAX_CANDIDATES]),
+                change=index,
+                candidates=tuple(_bare(identity) for identity, _predicate in stated),
+                repair=_render_subject_retire(self.request.surface, named),
+                field_path=prefix,
+            )
+        tree = self.instance.immutable_tree_at(self.head.git_oid)
+        members: list[AuthoringChangeSetMember] = []
+        covered: set[str] = set()
+        for identity, _predicate in stated:
+            claim_id = _bare(identity)
+            if claim_id in covered:
+                continue
+            claim_content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
+            assert claim_content is not None
+            claim = parse_claim(claim_content, path=claim_path(claim_id))
+            try:
+                inventory = claim_retirement_inventory(
+                    self.instance,
+                    tree=tree,
+                    coordinate=AcceptedCoordinate.from_internal(self.head),
+                    claim=claim,
+                )
+            except ClaimRetireError as exc:
+                raise _refuse(
+                    "cruxible.write.retirement_closure_unsupported",
+                    f"{claim_id} of {named} cannot be retired here: {exc}",
+                    change=index,
+                    repair="Retire what depends on it through its own governed change first",
+                ) from exc
+            dependents = tuple(
+                sorted(
+                    (
+                        ClaimRetireDependent(
+                            artifact_identity=item.artifact_identity,
+                            predecessor_digest=item.predecessor_digest,
+                            reason=change.reason,
+                        )
+                        for item in inventory
+                    ),
+                    key=lambda item: item.artifact_identity.qualified.encode("utf-8"),
+                )
+            )
+            covered.add(claim_id)
+            covered.update(item.artifact_identity.name for item in dependents)
+            members.append(
+                ClaimRetirementMember(retires=claim_id, reason=change.reason, dependents=dependents)
+            )
+        retired = shell.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired", predecessor_digest=subject_digest(shell).tagged
+                )
+            }
+        )
+        key_claims = [_bare(identity) for identity, predicate in own if predicate in keys]
+        if change.because is not None:
+            self.plan.retire_notes.append(f"Retire {named}: {change.because.strip()}")
+        return _Planned(
+            index=index,
+            op="retire",
+            outcome={
+                "subject": named,
+                "retired": tuple(
+                    sorted((*covered, *key_claims), key=lambda item: item.encode("ascii"))
+                ),
+            },
+            member=SubjectAuthoringPayload(subject=retired),
+            retires_also=tuple(sorted((*covered, *key_claims))),
+            extra_members=tuple(members),
+        )
+
+    def retire_target(
+        self, index: int, change: RetireChange
+    ) -> tuple[str, str | None, str | None, str | None, object]:
+        """The live Claim a retire names: (claim, subject, field, predicate, value)."""
+
+        prefix = f"changes[{index}].target"
+        target = change.target
+        if isinstance(target, SlotRef):
+            owner = _named(target.subject)
+            kind, _subject_id, path = self.resolve_subject(
+                owner, index=index, path=f"{prefix}.subject"
+            )
+            info = self.resolve_field(kind, target.field, index=index, path=f"{prefix}.field")
+            name = self.field_name(info, kind)
+            live = self.slot_claims(path, info.predicate) if self.subject_exists(path) else ()
+            # A slot that moved since the read is named as moved first, before
+            # what it holds now makes the retire empty or ambiguous.
+            self.check_expected(
+                index=index,
+                label=f"{owner} {name}",
+                info=info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
+            self.check_slot_unchanged(
+                index=index,
+                subject=owner,
+                field_name=name,
+                subject_path_value=path,
+                predicate=info.predicate,
+                live=live,
+            )
+            if not live:
+                raise _refuse(
+                    "cruxible.write.slot_empty",
+                    f"{owner} {name} holds no live value to retire",
+                    change=index,
+                    repair=f"Read it first: {_render_get(self.request.surface, owner)}",
+                    field_path=prefix,
+                )
+            if target.value is not None:
+                # One value of the field, named as it reads: the live Claim
+                # holding it, whether the field holds one value or many.
+                (wanted,) = self.expected_keys(
+                    info, target.value, index=index, field_name=name, path=f"{prefix}.value"
+                )
+                named = [item for item in live if _value_key(item.value) == wanted]
+                if not named:
+                    held = [summary_value(item.value) for item in live]
+                    raise _refuse(
+                        "cruxible.write.value_not_present",
+                        f"{owner} {name} does not hold {_brief_shown(target.value)}; "
+                        f"it holds {_brief_shown(held[0] if len(held) == 1 else held)}",
+                        change=index,
+                        candidates=tuple(item.claim_id for item in live),
+                        repair="Name one of the values it holds, or retire a listed Claim by ID",
+                        field_path=f"{prefix}.value",
+                    )
+                live = tuple(named)
+            if len(live) > 1:
+                raise _refuse(
+                    "cruxible.write.slot_ambiguous",
+                    f"{owner} {name} holds {len(live)} values; name the one to retire",
+                    change=index,
+                    candidates=tuple(item.claim_id for item in live),
+                    repair="Name the value to retire, or retire one of the listed Claims by ID",
+                    field_path=prefix,
+                )
+            return live[0].claim_id, owner, name, info.predicate, live[0].value
+        claim_id = _bare(target)
+        content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
+        if content is None:
+            raise _refuse(
+                "cruxible.write.claim_not_found",
+                f"no accepted Claim {claim_id}",
+                change=index,
+                repair="Name a live Claim; get on the Subject lists its Claim IDs",
+                field_path=prefix,
+            )
+        claim = parse_claim(content, path=claim_path(claim_id))
+        if claim.lifecycle.state != "live":
+            raise _refuse(
+                "cruxible.write.claim_not_live",
+                f"{claim_id} is already {claim.lifecycle.state}",
+                change=index,
+                repair="Leave it out; there is nothing left to retire",
+                field_path=prefix,
+            )
+        subject = claim.statement.subject.artifact_path.removeprefix("subjects/").removesuffix(
+            ".json"
+        )
+        kind = subject.split("/", 1)[0]
+        retired_info = self.vocabulary.predicates.get(claim.statement.predicate)
+        name = (
+            claim.statement.predicate
+            if retired_info is None
+            else self.field_name(retired_info, kind)
+        )
+        if self.read_at.git_oid != self.head.git_oid:
+            with self.instance.accepted_history_reader(
+                at=AcceptedCoordinate.from_internal(self.head)
+            ) as history:
+                location = history.latest_member(claim_path(claim_id))
+                if location is not None and location.sequence > self.read_sequence():
+                    actor = history.generation(location.sequence).actor_id
+                    raise _refuse(
+                        "cruxible.write.slot_changed",
+                        f"{claim_id} changed after your read: revised in generation "
+                        f"{location.sequence} by {actor or 'unknown'}",
+                        change=index,
+                        candidates=(claim_id,),
+                        repair="Read it again, then retire it at the new coordinate",
+                    )
+        live = self.slot_claims(
+            claim.statement.subject.artifact_path,
+            claim.statement.predicate,
+            claim.statement.qualifier,
+        )
+        if change.expect is not None:
+            if retired_info is None:
+                raise _refuse(
+                    "cruxible.write.unknown_field",
+                    f"{claim_id} states {claim.statement.predicate}, which no live ClaimType "
+                    "defines, so its values cannot be compared",
+                    change=index,
+                    repair="Retire it without expect",
+                    field_path=f"changes[{index}].expect",
+                )
+            self.check_expected(
+                index=index,
+                label=f"{subject} {name}",
+                info=retired_info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
+        value = next((item.value for item in live if item.claim_id == claim_id), None)
+        return claim_id, subject, name, claim.statement.predicate, value
+
+    def retire_change(self, index: int, change: RetireChange) -> _Planned:
+        if _names_subject(change):
+            return self.subject_retire_change(index, change)
+        claim_id, subject, name, predicate, value = self.retire_target(index, change)
+        content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
+        assert content is not None
+        claim = parse_claim(content, path=claim_path(claim_id))
+        tree = self.instance.immutable_tree_at(self.head.git_oid)
+        try:
+            inventory = claim_retirement_inventory(
+                self.instance,
+                tree=tree,
+                coordinate=AcceptedCoordinate.from_internal(self.head),
+                claim=claim,
+            )
+        except ClaimRetireError as exc:
+            raise _refuse(
+                "cruxible.write.retirement_closure_unsupported",
+                f"{claim_id} cannot be retired here: {exc}",
+                change=index,
+                repair="Retire what depends on it through its own governed change first",
+            ) from exc
+        dependents = tuple(
+            sorted(
+                (
+                    ClaimRetireDependent(
+                        artifact_identity=item.artifact_identity,
+                        predecessor_digest=item.predecessor_digest,
+                        reason=change.reason,
+                    )
+                    for item in inventory
+                ),
+                key=lambda item: item.artifact_identity.qualified.encode("utf-8"),
+            )
+        )
+        if change.because is not None:
+            self.plan.retire_notes.append(f"Retire {claim_id}: {change.because.strip()}")
+        return _Planned(
+            index=index,
+            op="retire",
+            outcome={
+                "subject": subject,
+                "field": name,
+                "predicate": predicate,
+                "before": summary_value(
+                    value, read_whole=whole_value_read(claim_id, self.head.git_oid)
+                ),
+                "after": None,
+                "claim": claim_id,
+                "retired": tuple(item.artifact_identity.name for item in dependents),
+            },
+            member=ClaimRetirementMember(
+                retires=claim_id, reason=change.reason, dependents=dependents
+            ),
+            retires=claim_id,
+            pin=self.slot_pin(
+                claim.statement.subject.artifact_path,
+                claim.statement.predicate,
+                claim.statement.qualifier,
+            ),
+        )
+
+    @timed_phase("plan")
+    def build(self) -> _Plan:
+        # Retirements first, so a set in the same write sees what it leaves;
+        # then creations, so a change names a created Subject in any order --
+        # a pair's ends before the pair (``_creates_in_key_order``). A Subject's
+        # retirement is planned last: what the write's other changes retire or
+        # revise no longer references it.
+        order = sorted(
+            enumerate(self.expanded_changes()),
+            key=lambda item: (
+                3
+                if isinstance(item[1], RetireChange) and _names_subject(item[1])
+                else 0
+                if isinstance(item[1], RetireChange)
+                else 1
+                if isinstance(item[1], CreateChange)
+                else 2,
+                item[0],
+            ),
+        )
+        order = _creates_in_key_order(order)
+        touched: dict[str, int] = {}
+        slots: dict[tuple[str, str], int] = {}
+        for index, change in order:
+            if isinstance(change, CreateChange):
+                self.plan.changes.append(self.create_change(index, change))
+                continue
+            if isinstance(change, RetireChange):
+                planned = self.retire_change(index, change)
+            elif isinstance(change, RebindChange):
+                planned = self.rebind_change(index, change)
+            elif isinstance(change, AboutChange):
+                planned = self.about_change(index, change)
+            else:
+                planned = self.claim_change(index, change)
+            for claim in (planned.retires, planned.revises, *planned.retires_also):
+                if claim is None:
+                    continue
+                if claim in touched:
+                    raise _refuse(
+                        "cruxible.write.claim_changed_twice",
+                        f"changes {touched[claim]} and {index} both change {claim}",
+                        change=index,
+                        repair="Keep one change per Claim in a write",
+                    )
+                touched[claim] = index
+            if isinstance(change, SetChange) and planned.slot is not None:
+                if planned.slot in slots:
+                    raise _refuse(
+                        "cruxible.write.slot_set_twice",
+                        f"changes {slots[planned.slot]} and {index} both set "
+                        f"{planned.outcome['subject']} {planned.outcome['field']}",
+                        change=index,
+                        repair="Keep one set per field in a write",
+                    )
+                slots[planned.slot] = index
+            self.plan.changes.append(planned)
+        self.plan.changes.sort(key=lambda item: item.index)
+        return self.plan
+
+
+# -- lowering the plan onto one change set ----------------------------------------
+
+
+@dataclass(frozen=True)
+class _Lowered:
+    payload: ChangeSetAuthoringPayload
+    claim_ids: tuple[str, ...]
+    identity_by_change: dict[int, str]
+    # Every accepted Claim the write revises, retires or dispositions, pinned to
+    # the version planning read: admission refuses when one has moved since.
+    expectations: tuple[AuthoringReferenceExpectation | AuthoringSlotExpectation, ...] = ()
+
+
+def _with_dispositions(
+    member: ClaimAuthoringPayload, claim_ids: Sequence[str]
+) -> ClaimAuthoringPayload:
+    return member.model_copy(
+        update={
+            "existing_claim_dispositions": tuple(
+                AuthoringExistingClaimDisposition(claim_id=claim_id, disposition="not_tested")
+                for claim_id in sorted(set(claim_ids), key=lambda item: item.encode("ascii"))
+            )
+        }
+    )
+
+
+@timed_phase("lower")
+def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinate) -> _Lowered:
+    """Fold the plan into one change set, filling every disposition the slot law demands.
+
+    A new Claim must disposition every live Claim of its slot when it is staged.
+    Lowering stages Claim members in their canonical (identity) order, so a
+    sibling added earlier in the same set is live by then: two ``add`` changes
+    on one many-valued field need the second to disposition the first. The
+    sibling has no ID until the coordinator mints it, so the IDs are minted
+    here, in the coordinator's own order, and handed to it.
+    """
+
+    drafts: list[tuple[int | None, AuthoringChangeSetMember]] = [
+        (plan.creation_changes.get(creation.member_identity), creation)
+        for creation in plan.pending.values()
+    ]
+    for item in plan.changes:
+        if item.member is not None:
+            drafts.append((item.index, item.member))
+        # A Subject retirement's Claim retirements: members of no one change's.
+        drafts.extend((None, member) for member in item.extra_members)
+    by_identity: dict[str, tuple[int | None, AuthoringChangeSetMember]] = {}
+    for index, member in drafts:
+        identity = authoring_member_identity(member)
+        if identity in by_identity:
+            raise _refuse(
+                "cruxible.write.duplicate_change",
+                f"change {index} repeats change {by_identity[identity][0]}",
+                change=index,
+                repair="Leave the repeated change out",
+            )
+        by_identity[identity] = (index, member)
+    ordered = sorted(by_identity, key=lambda item: item.encode("utf-8"))
+    planned_by_index = {item.index: item for item in plan.changes}
+    claim_ids: list[str] = []
+    minted: dict[str, str] = {}
+    for identity in ordered:
+        index, member = by_identity[identity]
+        if isinstance(member, ClaimAuthoringPayload) and member.revises is None:
+            minted[identity] = new_claim_id()
+            claim_ids.append(minted[identity])
+    siblings: dict[tuple[str, str], list[str]] = {}
+    members: list[AuthoringChangeSetMember] = []
+    identity_by_change: dict[int, str] = {}
+    pins: dict[int, _SlotPin] = {}
+    for identity in ordered:
+        index, member = by_identity[identity]
+        if index is not None:
+            identity_by_change[index] = identity
+            pin = planned_by_index[index].pin
+            if pin is not None:
+                pins[len(members)] = pin
+        if isinstance(member, ClaimAuthoringPayload) and index is not None:
+            planned = planned_by_index[index]
+            assert planned.slot is not None
+            earlier = siblings.setdefault(planned.slot, [])
+            member = _with_dispositions(member, (*planned.existing, *earlier))
+            if identity in minted:
+                earlier.append(minted[identity])
+        members.append(member)
+    rationale = change_set_rationale(because, tuple(plan.retire_notes))
+    # The request held because alone to the limit; the retire notes resolved
+    # here can carry the whole over it.
+    if (message := change_set_rationale_too_long(rationale)) is not None:
+        raise RequestRefusedError(
+            RATIONALE_TOO_LONG,
+            message.removeprefix(f"{RATIONALE_TOO_LONG}: "),
+            repair=hand_edit_repair(RATIONALE_TOO_LONG, required_change=RATIONALE_TOO_LONG_REPAIR),
+        )
+    return _Lowered(
+        payload=ChangeSetAuthoringPayload(members=tuple(members), rationale=rationale),
+        claim_ids=tuple(claim_ids),
+        identity_by_change=identity_by_change,
+        expectations=_pinned_claims(
+            members, minted=set(claim_ids), planned_at=planned_at, slots=pins
+        ),
+    )
+
+
+def _pinned_claims(
+    members: Sequence[AuthoringChangeSetMember],
+    *,
+    minted: set[str],
+    planned_at: AcceptedProjectionCoordinate,
+    slots: Mapping[int, _SlotPin],
+) -> tuple[AuthoringReferenceExpectation | AuthoringSlotExpectation, ...]:
+    """Pin what the plan read: each slot's live membership, and each Claim's version.
+
+    The plan chose what to revise, retire and disposition from each slot as it
+    stood at ``planned_at``. Preflight checks every slot's exact live
+    membership at the head the candidate is evaluated at, and settlement
+    refuses any other head, so a Claim that joined or left a slot refuses the
+    write before it becomes a proposal anyone could activate. The Claim pins
+    add that each named Claim is still the version the plan read.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(planned_at)
+    pins: list[tuple[str, str]] = []
+    for position, member in enumerate(members):
+        prefix = f"members[{position}]"
+        if isinstance(member, ClaimRetirementMember):
+            pins.append((f"{prefix}.retires", member.retires))
+        elif isinstance(member, ClaimAuthoringPayload):
+            if member.revises is not None:
+                pins.append((f"{prefix}.revises", member.revises))
+            for ordinal, item in enumerate(member.existing_claim_dispositions):
+                if item.claim_id not in minted:
+                    pins.append(
+                        (f"{prefix}.existing_claim_dispositions[{ordinal}].claim_id", item.claim_id)
+                    )
+    expectations: list[AuthoringReferenceExpectation | AuthoringSlotExpectation] = [
+        AuthoringReferenceExpectation(
+            payload_path=path,
+            artifact_kind="Claim",
+            address=claim_id,
+            minted_coordinate=coordinate,
+        )
+        for path, claim_id in pins
+    ]
+    expectations.extend(
+        AuthoringSlotExpectation(
+            payload_path=f"members[{position}]",
+            subject_path=pin.subject_path,
+            predicate=pin.predicate,
+            qualifier=pin.qualifier,
+            live_claims=pin.live,
+            minted_coordinate=coordinate,
+        )
+        for position, pin in slots.items()
+    )
+    return tuple(
+        sorted(
+            expectations,
+            key=lambda item: (
+                item.payload_path.encode("utf-8"),
+                item.artifact_kind.encode("ascii"),
+                item.address.encode("utf-8"),
+            ),
+        )
+    )
+
+
+def _bind_pending(
+    instance: PlaybillInstance,
+    plan: _Plan,
+    lowered: _Lowered,
+    *,
+    head: AcceptedProjectionCoordinate,
+    operation: str,
+    preview: bool = False,
+) -> None:
+    """Populate outcomes from lowering's complete assignment, including previews.
+
+    A preview omits ids derived from its operation (minted and further holders).
+    Every sibling Claim retains its creation-member reference until lowering.
+    Work grows with this change set and indexed identity probes, never the instance.
+    """
+
+    if not plan.pending:
+        return
+    paths = subject_creation_paths(
+        instance,
+        operation=operation,
+        base=head,
+        base_tree=instance.immutable_tree_at(head.git_oid),
+        members=lowered.payload.members,
+        include_operation_dependent=not preview,
+    )
+    created_paths = {path for path, reused in paths.values() if not reused}
+    refs: dict[str, str | None] = {}
+    plan.subjects.clear()
+    for label, bound in plan.labels.items():
+        if bound.member is None:
+            continue
+        assigned = paths.get(bound.member)
+        if assigned is None:
+            refs[label] = None
+            continue
+        path, reused = assigned
+        bound.path = path
+        bound.resolved = "created" if path in created_paths else "existing"
+        kind, subject_id = subject_kind_of(path)
+        assigned_ref = f"{kind}/{subject_id}"
+        refs[label] = assigned_ref
+        if not reused:
+            plan.subjects[path] = SubjectShell(
+                identity=ArtifactIdentity(kind="Subject", name=assigned_ref),
+                subject_kind=kind,
+                subject_id=subject_id,
+            )
+    for item in plan.changes:
+        if item.pending_subject is not None:
+            ref = refs[item.pending_subject]
+            item.outcome["subject"] = ref
+            if item.op == "create":
+                item.outcome["resolved"] = plan.labels[item.pending_subject].resolved
+            if item.slot is not None and ref is not None:
+                item.slot = (subject_path(*ref.split("/", 1)), item.slot[1])
+        if item.pending_value is not None:
+            item.outcome["after"] = summary_value(refs[item.pending_value])
+
+
+def _subjects_added(plan: _Plan) -> tuple[str, ...]:
+    return tuple(f"{shell.subject_kind}/{shell.subject_id}" for shell in plan.subjects.values())
+
+
+def _minted_claims(intent: AuthoringIntent) -> dict[str, str]:
+    return {item.member_identity: item.claim_id for item in intent.change_set_claim_identities}
+
+
+def _change_outcomes(
+    plan: _Plan,
+    lowered: _Lowered,
+    intent: AuthoringIntent | None,
+    *,
+    unchanged: Callable[[_Planned], bool] = lambda _item: False,
+) -> tuple[ChangeOutcome, ...]:
+    """Each change's outcome; ``unchanged`` names the restating adds lowering left alone."""
+
+    minted = {} if intent is None else _minted_claims(intent)
+    outcomes: list[ChangeOutcome] = []
+    for item in plan.changes:
+        if item.unchanged_outcome is not None and unchanged(item):
+            outcomes.append(ChangeOutcome(op=item.op, **item.unchanged_outcome))
+            continue
+        values = dict(item.outcome)
+        if item.op not in ("retire", "about") and item.member is not None:
+            identity = lowered.identity_by_change[item.index]
+            values["claim"] = item.revises or minted.get(identity)
+        outcomes.append(ChangeOutcome(op=item.op, **values))
+    return tuple(outcomes)
+
+
+# -- verdicts (R05: a write that lands uncovered is never silent) -------------------
+
+
+_VALUE_READ_ACCESS = BodyAccessContext(principal_id="playbill-write-verdict", can_read_body=True)
+
+
+def _claim_id_of_path(path: str) -> str:
+    return path.rsplit("/", 1)[-1].removesuffix(".json")
+
+
+def _candidate_verdicts(candidate: object) -> dict[str, str]:
+    """Each written Claim's verdict as the candidate evaluation found it."""
+
+    found: dict[str, str] = {}
+    for evaluation in getattr(candidate, "law_evidence", ()):
+        evidence = evaluation.result.get("claim_evidence")
+        if not evaluation.path.startswith("claims/") or not isinstance(evidence, Mapping):
+            continue
+        verdict = evidence.get("initial_verdict")
+        if isinstance(verdict, str):
+            found[_claim_id_of_path(evaluation.path)] = verdict
+    return found
+
+
+def _accepted_verdicts(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, plan: _Plan
+) -> dict[str, str]:
+    """Each written Claim's verdict at the accepted coordinate, by the read machinery."""
+
+    from cruxible_client.contracts.claim_reads import ClaimValuesRequest
+    from cruxible_core.service.claims.claim_reads import service_read_claim_values
+
+    slots = [item.slot for item in plan.changes if item.slot is not None and item.op != "retire"]
+    if not slots:
+        return {}
+    result = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(
+            at=_full(coordinate),
+            subject_paths=tuple(sorted({slot[0] for slot in slots})),
+            predicates=tuple(sorted({slot[1] for slot in slots})),
+        ),
+    )
+    return {_bare(row.claim_id): row.verdict for row in result.values}
+
+
+def _committed_verdicts(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    candidate: CandidateRecord | None,
+) -> dict[str, str]:
+    """Each written Claim's verdict at the generation this write was accepted as.
+
+    Admission evaluated the candidate against the head it landed on -- after
+    rebasing it onto that head when the head had moved past preflight (the
+    two-delta admission), so a merged-in change is already in that evaluation --
+    and activation publishes exactly that candidate on exactly that head. When
+    the accepted generation's record names this candidate, its law evidence is
+    therefore every written Claim's verdict there, and only the Claims it did
+    not write (already-live changes) are read at the accepted coordinate. Any
+    other generation (none should occur) is read whole, as before.
+    """
+
+    if candidate is None or (
+        instance.accepted_candidate_digest(coordinate.git_oid) != candidate.candidate_digest
+    ):
+        return _accepted_verdicts(instance, coordinate, plan)
+    return _pending_verdicts(instance, coordinate, plan, _candidate_verdicts(candidate))
+
+
+def _pending_verdicts(
+    instance: PlaybillInstance,
+    head: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    candidate: Mapping[str, str],
+) -> dict[str, str]:
+    """Verdicts for a write not yet accepted: the candidate's, and the head's for no-ops.
+
+    An already-live add submits nothing, so the candidate evaluation never sees
+    its Claim; its verdict is the one it holds at the head.
+    """
+
+    present = [
+        item
+        for item in plan.changes
+        if (item.member is None or item.unchanged_outcome is not None) and item.op != "retire"
+    ]
+    found = _accepted_verdicts(instance, head, _Plan(changes=present)) if present else {}
+    return {**found, **candidate}
+
+
+def _used_contract(
+    instance: PlaybillInstance, planned: _Planned, names: CaptureContractNames
+) -> str | None:
+    if planned.used_contract is not None:
+        return planned.used_contract
+    if planned.capture is None:
+        return None
+    try:
+        envelope = capture_envelope(
+            instance.body_store(), planned.capture, access=_VALUE_READ_ACCESS
+        )
+    except (CruxibleError, ValueError):
+        return None
+    return names.name(envelope.capture_contract_digest)
+
+
+def _render_evidence_repair(
+    surface: ReadSurface,
+    change: SetChange | AddChange,
+    *,
+    subject: str,
+    because: str,
+    contracts: Sequence[str],
+) -> str:
+    """The same write again, citing a Capture: ``subject`` is the id the outcome names."""
+
+    placeholder = (
+        f"<CAP- handle of a Capture under {' or '.join(contracts) or 'an admitted contract'}>"
+    )
+    value = change.value
+    if surface == "cli":
+        verb = "set" if isinstance(change, SetChange) else "add"
+        role = "" if change.role is None else f" --role {change.role}"
+        contend = " --contend" if isinstance(change, SetChange) and change.contend else ""
+        return (
+            f"cruxible {verb} {shlex.quote(subject)} "
+            f"{shlex.quote(change.field)} {shlex.quote(str(value))} "
+            f"--because {shlex.quote(because)} --capture {placeholder}{role}{contend}"
+        )
+    if surface == "sdk":
+        # Rendered against the builder signatures: ``cx.set`` takes ``because``;
+        # a batch ``add`` does not, so it goes on ``cx.changes`` instead.
+        arguments = [json.dumps(subject), json.dumps(change.field), json.dumps(value)]
+        options = [f"evidence=CaptureEvidence(capture={json.dumps(placeholder)})"]
+        if change.role is not None:
+            options.append(f"role={json.dumps(change.role)}")
+        if isinstance(change, SetChange):
+            if change.contend:
+                options.append("contend=True")
+            return (
+                f"cx.set({', '.join(arguments)}, because={json.dumps(because)}, "
+                f"{', '.join(options)})"
+            )
+        return (
+            f"cx.changes(because={json.dumps(because)})"
+            f".add({', '.join([*arguments, *options])}).write()"
+        )
+    evidence = json.dumps({"kind": "capture", "capture": placeholder})
+    if isinstance(change, SetChange):
+        return (
+            f"cruxible_set(subject={json.dumps(subject)}, "
+            f"field={json.dumps(change.field)}, value={json.dumps(value)}, "
+            f"because={json.dumps(because)}, evidence={evidence})"
+        )
+    item = {
+        "op": "add",
+        "subject": subject,
+        "field": change.field,
+        "value": value,
+        "evidence": {"kind": "capture", "capture": placeholder},
+    }
+    return f"cruxible_write(changes=[{json.dumps(item)}], because={json.dumps(because)})"
+
+
+def _with_verdicts(
+    instance: PlaybillInstance,
+    *,
+    head: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    changes: tuple[ChangeOutcome, ...],
+    verdicts: Mapping[str, str],
+    surface: ReadSurface,
+    because: str,
+) -> tuple[tuple[ChangeOutcome, ...], tuple[WriteWarning, ...]]:
+    """Attach each written Claim's verdict, and warn plainly when it is not supported."""
+
+    planned_by_index = {item.index: item for item in plan.changes}
+    updated: list[ChangeOutcome] = []
+    warnings: list[WriteWarning] = list(plan.notes)
+    names: CaptureContractNames | None = None
+    for position, outcome in enumerate(changes):
+        planned = plan.changes[position]
+        verdict = (
+            None if outcome.op == "retire" or outcome.claim is None else verdicts.get(outcome.claim)
+        )
+        updated.append(outcome.model_copy(update={"verdict": verdict}))
+        if verdict is None or verdict == "supported":
+            continue
+        planned = planned_by_index[planned.index]
+        change = planned.change
+        claim_type = planned.claim_type
+        role = _planned_role(planned)
+        if names is None:
+            with instance.bind_accepted_projection(head) as projection:
+                names = CaptureContractNames(instance, head, connection=projection.typed.connection)
+                admitted = names.admitted(claim_type, role=role) if claim_type is not None else ()
+        else:
+            admitted = names.admitted(claim_type, role=role) if claim_type is not None else ()
+        used = _used_contract(instance, planned, names)
+        label = f"{outcome.subject} {outcome.field}"
+        # Which roles the field's rules admit at all: a Claim in a role no rule
+        # admits stays uncovered whatever it cites, so no capture repair helps.
+        rule_roles = _admitted_roles(claim_type)
+        role_unadmitted = role is not None and bool(rule_roles) and role not in rule_roles
+        shown = ", ".join(public_name(item) for item in admitted)
+        if verdict == "uncovered" and role_unadmitted:
+            message = (
+                f"{label} was written, but its verdict is uncovered: it is a {role} Claim, "
+                f"and the field's evidence rules admit only {', '.join(rule_roles)}. "
+                "Write it in an admitted role, or change the ClaimType's evidence rules."
+            )
+        elif verdict == "uncovered" and used is not None and used not in admitted:
+            message = (
+                f"{label} was written, but its verdict is uncovered: evidence not admitted. "
+                f"The ClaimType admits {shown or 'no CaptureContract'}"
+                f"{'' if role is None else f' in the {role} role'}; "
+                f"your evidence used {public_name(used)}."
+            )
+        elif verdict == "uncovered":
+            message = (
+                f"{label} was written, but its verdict is uncovered: no admitted evidence backs it."
+            )
+        else:
+            message = f"{label} was written, but its verdict is {verdict}."
+        repair = (
+            _render_evidence_repair(
+                surface,
+                change,
+                subject=outcome.subject,
+                because=because,
+                contracts=tuple(public_name(item) for item in admitted),
+            )
+            if change is not None
+            and verdict == "uncovered"
+            and not role_unadmitted
+            and outcome.subject is not None
+            and not isinstance(change.value, CreatedSubject | NoneValue)
+            else None
+        )
+        warnings.append(
+            VerdictNotSupportedWarning(
+                change=planned.index,
+                claim=outcome.claim,
+                verdict=verdict,
+                message=message,
+                admitted_contracts=admitted,
+                used_contract=used,
+                repair=repair,
+            )
+        )
+    return tuple(updated), tuple(warnings)
+
+
+def _planned_role(planned: _Planned) -> str | None:
+    """The role of the Claim a set or add writes, from its member."""
+
+    member = planned.member
+    return member.statement.role if isinstance(member, ClaimAuthoringPayload) else None
+
+
+def _admitted_roles(claim_type: ClaimType | None) -> tuple[str, ...]:
+    """The roles a ClaimType's evidence rules admit, in rule order, once each."""
+
+    if claim_type is None:
+        return ()
+    roles: list[str] = []
+    for rule in claim_type.evidence_admission_policy.rules:
+        roles.extend(role for role in rule.claim_roles if role not in roles)
+    return tuple(roles)
+
+
+def _first_repair(warnings: Sequence[WriteWarning]) -> str | None:
+    return next(
+        (
+            item.repair
+            for item in warnings
+            if isinstance(item, VerdictNotSupportedWarning) and item.repair is not None
+        ),
+        None,
+    )
+
+
+def _created_in_key(change: CreateChange) -> tuple[str, ...]:
+    """The labels of this write's creates that ``change`` names as a pair's ends."""
+
+    if not isinstance(change.key, tuple):
+        return ()
+    return tuple(
+        part.value.created for part in change.key if isinstance(part.value, CreatedSubject)
+    )
+
+
+def _creates_in_key_order(
+    order: list[tuple[int, Change]],
+) -> list[tuple[int, Change]]:
+    """``order`` with each create after the creates its key names (a pair after its ends).
+
+    A stable topological order over the ``{"created": label}`` key parts; every
+    other change keeps its place. A create naming itself, directly or through
+    other creates, is refused ``key_part_self`` (the kinds' DAG forbids it).
+    Linear in the creates and their key parts.
+    """
+
+    creates = [(index, change) for index, change in order if isinstance(change, CreateChange)]
+    if not any(_created_in_key(change) for _index, change in creates):
+        return order
+    by_label: dict[str, tuple[int, CreateChange]] = {}
+    for index, change in creates:
+        by_label.setdefault(change.label, (index, change))
+    placed: set[int] = set()
+    ordered: list[tuple[int, Change]] = []
+
+    def place(item: tuple[int, CreateChange], chain: tuple[str, ...]) -> None:
+        index, change = item
+        if index in placed:
+            return
+        for label in _created_in_key(change):
+            if label == change.label or label in chain:
+                raise _refuse(
+                    "cruxible.write.key_part_self",
+                    f"create {change.label!r} names "
+                    + (
+                        "itself as its own end"
+                        if label == change.label
+                        else f"{label!r}, whose key names it in turn"
+                    ),
+                    change=index,
+                    repair="Name another Subject, or another create change of this write",
+                    field_path=f"changes[{index}].key",
+                )
+            target = by_label.get(label)
+            if target is not None:
+                place(target, (*chain, change.label))
+        placed.add(index)
+        ordered.append(item)
+
+    for item in creates:
+        place(item, ())
+    position = iter(ordered)
+    return [
+        next(position) if isinstance(change, CreateChange) else (index, change)
+        for index, change in order
+    ]
+
+
+def _final_key(key: PendingKey) -> KeyTuple | None:
+    """``key`` when every end is named, None while one is a pending creation."""
+
+    if any(isinstance(value, PendingEnd) for _predicate, value in key):
+        return None
+    return cast(KeyTuple, key)
+
+
+# -- refusals as outcomes -------------------------------------------------------------
+
+
+def _names_subject(change: RetireChange) -> bool:
+    """Whether a retire names a Subject (kind/id) rather than a Claim or a slot."""
+
+    return isinstance(change.target, str) and not _CLAIM_ID.fullmatch(change.target)
+
+
+def _render_write_call(surface: ReadSurface, verb: Literal["set", "retire"], *operands: str) -> str:
+    """One set or retire on the caller's surface; ``because`` is the operand left to add."""
+
+    if surface == "cli":
+        return " ".join(("cruxible", verb, *(shlex.quote(item) for item in operands)))
+    if surface == "sdk":
+        return f"cx.{verb}({', '.join(json.dumps(item) for item in operands)})"
+    if verb == "retire":
+        return f"cruxible_retire(target={json.dumps(operands[0])})"
+    subject, field_name, value = operands
+    return (
+        f"cruxible_set(subject={json.dumps(subject)}, field={json.dumps(field_name)}, "
+        f"value={json.dumps(value)})"
+    )
+
+
+def _render_subject_retire(surface: ReadSurface, subject: str) -> str:
+    """The Subject's retirement with its Claims; the reason and ``because`` are the caller's."""
+
+    if surface == "cli":
+        return f"cruxible retire {shlex.quote(subject)} --with-claims --reason superseded"
+    if surface == "sdk":
+        return f'cx.retire({json.dumps(subject)}, with_claims=True, reason="superseded")'
+    return f'cruxible_retire(target={json.dumps(subject)}, with_claims=true, reason="superseded")'
+
+
+def _refusal(error: WriteRefusalError | ReadRefusalError) -> WriteRefusal:
+    if isinstance(error, WriteRefusalError):
+        return WriteRefusal(
+            code=error.error_code,
+            message=error.detail,
+            change=error.change,
+            field_path=error.field_path,
+            candidates=error.candidates,
+            repair=error.repair_line,
+        )
+    return WriteRefusal(
+        code=error.error_code,
+        message=str(error).split(": ", 1)[-1],
+        field_path=error.field_path or "at",
+        candidates=error.candidates,
+        repair=error.repair_line,
+    )
+
+
+def _preflight_refusal(result: PreflightResult, lowered: _Lowered | None = None) -> WriteRefusal:
+    diagnostics = result.frontier.diagnostics
+    if not diagnostics:
+        blocked = result.frontier.blocked_checks
+        code = blocked[0].blocked_by[0] if blocked and blocked[0].blocked_by else "refused"
+        return WriteRefusal(code=code, message="The change set did not pass preflight.")
+    first = diagnostics[0]
+    change: int | None = None
+    element = first.offending_element or ""
+    if lowered is not None and element.startswith("members["):
+        position = element[len("members[") :].split("]", 1)[0]
+        if position.isdigit():
+            identity = authoring_member_identity(lowered.payload.members[int(position)])
+            change = next(
+                (index for index, value in lowered.identity_by_change.items() if value == identity),
+                None,
+            )
+    repair = first.repairs[0].description if first.repairs else None
+    return WriteRefusal(
+        code=first.code,
+        message=first.message,
+        change=change,
+        field_path=element or None,
+        repair=repair,
+    )
+
+
+# -- approval -------------------------------------------------------------------------
+
+
+def _eligible_approvers(
+    instance: PlaybillInstance, head: AcceptedProjectionCoordinate, *, creator: str
+) -> tuple[str, ...]:
+    generation = instance.generation_for_semantic_root(head.semantic_root)
+    return tuple(
+        record.principal_id
+        for record in generation.principals.principals
+        if record.kind == "ordinary"
+        and record.status == "active"
+        and record.principal_id != creator
+    )
+
+
+def _approval(
+    instance: PlaybillInstance,
+    head: AcceptedProjectionCoordinate,
+    *,
+    reason: ApprovalReason,
+    minimum: int,
+    caller: WriteCaller,
+    surface: ReadSurface,
+    proposal_id: str,
+) -> ApprovalNeeded:
+    approvers = (
+        _eligible_approvers(instance, head, creator=caller.actor.actor_id)
+        if reason == "independent_approval_required"
+        else ()
+    )
+    return ApprovalNeeded(
+        reason=reason,
+        minimum_approvals=minimum,
+        eligible_approvers=approvers,
+        approve=(
+            _for_caller(
+                _render_proposal_call(
+                    surface,
+                    "approve",
+                    proposal_id,
+                    signer=approvers[0] if approvers else None,
+                ),
+                permitted=caller.may_approve,
+            )
+            if reason == "independent_approval_required"
+            else None
+        ),
+        activate=_for_caller(
+            _render_proposal_call(surface, "activate", proposal_id),
+            permitted=caller.may_activate,
+        ),
+    )
+
+
+def _for_caller(call: str, *, permitted: bool) -> str:
+    """``call`` as this caller can act on it: run it, or hand it to someone who can.
+
+    Gated on the caller's own tier, never on the approval reason: a caller
+    stopped for independent approval or ``accept="never"`` may still lack the
+    tier the call needs.
+    """
+
+    return call if permitted else f"someone who can runs {call}"
+
+
+def _approval_reason(
+    *, requires_approval: bool, caller: WriteCaller, accept: str
+) -> ApprovalReason | None:
+    if requires_approval:
+        return "independent_approval_required"
+    if accept == "never":
+        return "accept_never"
+    if not caller.may_activate:
+        return "activation_not_permitted"
+    return None
+
+
+# -- the verb -------------------------------------------------------------------------
+
+
+def _coordinator(
+    instance: PlaybillInstance,
+    claim_ids: Sequence[str],
+    *,
+    admitted: list[CandidateRecord] | None = None,
+) -> AuthoringIntentCoordinator:
+    pending: Iterator[str] = iter(tuple(claim_ids))
+
+    def mint() -> str:
+        # The coordinator mints change-set Claim IDs in member order; the plan
+        # already minted them in that order so sibling dispositions could name them.
+        return next(pending, None) or new_claim_id()
+
+    return AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentCoordinator.for_instance(instance).store,
+        claim_id_factory=mint,
+        on_admitted=None if admitted is None else admitted.append,
+    )
+
+
+@timed_operation("write")
+@unpositioned_operation
+@projection_request
+def service_playbill_write(
+    instance: PlaybillInstance,
+    *,
+    request: WriteRequest,
+    caller: WriteCaller,
+) -> WriteOutcome:
+    """Resolve, check and lower one write, then preview it or carry it to acceptance.
+
+    Every outcome is pinned to one accepted coordinate: the new generation once
+    accepted, otherwise the head the write was checked against. A caller that
+    asks for ``full_coordinate`` (the SDK, to pin its reads) gets it whole.
+    """
+
+    instance.require_writable()
+    # The caller must be able to author here before anything is resolved or
+    # planned, dry run included: a dry run never reports a write that the real
+    # one would refuse, and an already-live value never answers "accepted" to a
+    # caller who could not have written it.
+    require_authoring_principal(instance, caller.actor.actor_id)
+    # A dry run writes nothing, derived indexes included: it runs behind the
+    # shared preview guards (R12), so every history read it makes, from planning
+    # to the verdicts, is served without touching the index, and no write door
+    # opens.
+    # One Capture verification context for the whole write: planning, lowering,
+    # preflight, admission and an activation in the same call.
+    with (
+        preview_guards(request.dry_run),
+        read_request(instance) if request.dry_run else nullcontext(),
+        instance.capture_verification_request(),
+    ):
+        confirmations: dict[int, str] = {}
+        if request.doc_confirmations:
+            from cruxible_core.service.authoring.doc_writes import confirm_doc_edits
+
+            try:
+                outcome = confirm_doc_edits(
+                    instance, tokens=request.doc_confirmations, actor=caller.actor
+                )
+            except WriteRefusalError as error:
+                outcome = WriteOutcome(
+                    status="refused",
+                    coordinate=compact_coordinate(instance, instance.accepted_coordinate()),
+                    refusal=_refusal(error),
+                )
+        else:
+            outcome = _service_write(instance, request=request, caller=caller)
+            if not request.dry_run and outcome.status in ("accepted", "awaiting_approval"):
+                from cruxible_core.service.authoring.doc_writes import prepare_doc_edits
+
+                confirmations = prepare_doc_edits(
+                    instance, request=request, outcome=outcome, actor=caller.actor
+                )
+        if request.docs:
+            outcome = outcome.model_copy(
+                update={
+                    "hint": DOCS_ONLY_HINT if not request.changes and not outcome.refused else None,
+                    "docs": tuple(
+                        DocOutcome(
+                            source_id=edit.source_id,
+                            section=edit.section,
+                            before_digest=edit.before_digest,
+                            after_digest=edit.after_digest,
+                            confirmation=confirmations.get(index),
+                        )
+                        for index, edit in enumerate(request.docs)
+                        if isinstance(edit, DocEditObservation)
+                    ),
+                }
+            )
+        if request.full_coordinate and outcome.accepted_coordinate is None:
+            pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
+            outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
+    return outcome
+
+
+def _service_write(
+    instance: PlaybillInstance,
+    *,
+    request: WriteRequest,
+    caller: WriteCaller,
+) -> WriteOutcome:
+    head = instance.accepted_coordinate()
+    refused: WriteStatus = "would_refuse" if request.dry_run else "refused"
+
+    def refuse(refusal: WriteRefusal) -> WriteOutcome:
+        return WriteOutcome(
+            status=refused,
+            coordinate=compact_coordinate(instance, head),
+            refusal=refusal,
+        )
+
+    try:
+        from cruxible_core.service.authoring.doc_writes import validate_doc_edits
+
+        validate_doc_edits(instance, request.docs)
+        request = _with_default_subject(request)
+        read_at = resolve_read_coordinate(instance, request.at) if request.at is not None else head
+        plan = _Planner(instance, head=head, read_at=read_at, request=request).build()
+        if all(item.member is None for item in plan.changes) and not plan.pending:
+            return _already_done(instance, head=head, plan=plan, request=request)
+        lowered = _lower(plan, because=request.because, planned_at=head)
+    except (WriteRefusalError, ReadRefusalError) as error:
+        return refuse(_refusal(error))
+    # The candidate admission evaluated, kept so an accepted write reports the
+    # verdicts that evaluation computed instead of re-deriving them.
+    admitted: list[CandidateRecord] = []
+    coordinator = _coordinator(instance, lowered.claim_ids, admitted=admitted)
+    timestamp = canonical_candidate_timestamp(utc_now())
+    if request.dry_run:
+        # A minted id is assigned from the submitted operation, which a dry run
+        # never makes: it reports the Subjects whose ids are known now.
+        return _dry_run(
+            instance,
+            head=head,
+            coordinator=coordinator,
+            caller=caller,
+            request=request,
+            plan=plan,
+            lowered=lowered,
+            timestamp=timestamp,
+        )
+    view = coordinator.create(
+        actor=caller.actor,
+        payload=lowered.payload,
+        canonical_timestamp=timestamp,
+        reference_expectations=lowered.expectations or None,
+    )
+    # This write activates what it admits, in this request: its submission is
+    # handed to that activation instead of read back.
+    handoff = SettlementHandoff(instance.prepared_evaluations)
+    submitted = coordinator.submit(view.intent.intent_id, actor=caller.actor, settlement=handoff)
+    intent = submitted.intent
+    try:
+        _bind_pending(
+            instance,
+            plan,
+            lowered,
+            head=_evaluated_head(instance, intent, head),
+            operation=intent.intent_id,
+        )
+    except AuthoringLoweringError:
+        # Preflight reports the structured lowering refusal below.
+        pass
+    subjects_added = _subjects_added(plan)
+    changes = _change_outcomes(plan, lowered, intent)
+    status = submitted.status
+    if status.state in {"preflight_refused", "conflicted_after_rebase"} or (
+        status.proposal_id is None and status.state != "accepted"
+    ):
+        refusal = _slot_moved(instance, planned_at=head, read_at=read_at, request=request) or (
+            _preflight_refusal(intent.last_preflight, lowered)
+            if status.state == "preflight_refused" and intent.last_preflight is not None
+            else WriteRefusal(
+                code="cruxible.write.head_moved",
+                message="Accepted state moved while this write was being submitted.",
+                repair="Run the same write again; it is checked against the new head",
+            )
+        )
+        return WriteOutcome(
+            status="refused",
+            changes=changes,
+            subjects_added=subjects_added,
+            coordinate=compact_coordinate(instance, head),
+            refusal=refusal,
+        )
+    if status.state == "accepted":
+        return _accepted(
+            instance,
+            plan=plan,
+            head=head,
+            accepted=status.accepted_generation,
+            request=request,
+            changes=changes,
+            subjects_added=subjects_added,
+            proposal=None,
+            candidate=admitted[-1] if admitted else None,
+        )
+    assert status.proposal_id is not None
+    proposal_id = status.proposal_id
+    evaluated_at = _evaluated_head(instance, intent, head)
+    reason = _approval_reason(
+        requires_approval=status.state == "awaiting_external_approval",
+        caller=caller,
+        accept=request.accept,
+    )
+    if reason is None and status.state == "ready_to_activate":
+        from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+        try:
+            receipt = service_activate_playbill_proposal(
+                instance,
+                proposal_id=proposal_id,
+                activated_by=caller.actor.actor_id,
+                handoff=handoff,
+            )
+        except (SettlementIntegrityError, ProposalStale):
+            # A lost-head write may recompile once. A pin/lowering refusal
+            # still reports the write's existing slot/head repair below.
+            if instance.accepted_coordinate().git_oid == evaluated_at.git_oid:
+                raise
+            receipt = None
+        if isinstance(receipt, ProposalRecompiled):
+            # Only a Procedure's proposal recompiles to already-live; a write's names one.
+            assert receipt.proposal_id is not None
+            checked_at = instance.coordinate_for_oid(receipt.accepted_coordinate.git_oid)
+            approval = _approval(
+                instance,
+                checked_at,
+                reason="independent_approval_required",
+                minimum=1,
+                caller=caller,
+                surface=request.surface,
+                proposal_id=receipt.proposal_id,
+            )
+            return WriteOutcome(
+                status="awaiting_approval",
+                changes=changes,
+                subjects_added=subjects_added,
+                proposal=WriteProposalRef(
+                    proposal_id=receipt.proposal_id, state="awaiting_external_approval"
+                ),
+                coordinate=compact_coordinate(instance, checked_at),
+                approval=approval,
+                next=approval.approve or approval.activate,
+            )
+        if (
+            receipt is not None
+            and receipt.proposal_id != proposal_id
+            and receipt.status == "accepted"
+        ):
+            from cruxible_core.service.proposals.proposals import _proposal_result
+
+            successor = _proposal_result(instance, receipt.proposal_id)
+            evaluated_at = instance.coordinate_for_oid(successor.evaluation.evaluated_base_oid)
+            if successor.candidate is not None:
+                admitted.append(successor.candidate)
+        if (
+            receipt is not None
+            and receipt.status == "accepted"
+            and receipt.accepted_coordinate is not None
+        ):
+            return _accepted(
+                instance,
+                plan=plan,
+                head=evaluated_at,
+                accepted=AcceptedCoordinate.model_validate(
+                    receipt.accepted_coordinate.model_dump(mode="json")
+                ),
+                request=request,
+                changes=changes,
+                subjects_added=subjects_added,
+                proposal=WriteProposalRef(proposal_id=receipt.proposal_id, state="accepted"),
+                candidate=admitted[-1] if admitted else None,
+            )
+        return WriteOutcome(
+            status="refused",
+            changes=changes,
+            subjects_added=subjects_added,
+            proposal=WriteProposalRef(proposal_id=proposal_id, state="conflicted_after_rebase"),
+            coordinate=compact_coordinate(instance, instance.accepted_coordinate()),
+            refusal=_slot_moved(instance, planned_at=head, read_at=read_at, request=request)
+            or WriteRefusal(
+                code="cruxible.write.head_moved",
+                message="Another change was accepted first, so this one was not activated.",
+                repair="Run the same write again; it is checked against the new head",
+            ),
+        )
+    approval = _approval(
+        instance,
+        evaluated_at,
+        reason=reason or "independent_approval_required",
+        minimum=1 if status.state == "awaiting_external_approval" else 0,
+        caller=caller,
+        surface=request.surface,
+        proposal_id=proposal_id,
+    )
+    candidate = (
+        None
+        if status.candidate_digest is None
+        else instance.proposal_evidence().read_candidate(status.candidate_digest)
+    )
+    if candidate is not None:
+        written = {member.path for member in getattr(candidate, "members", ())}
+        changes = _change_outcomes(
+            plan,
+            lowered,
+            intent,
+            unchanged=lambda item: (
+                item.revises is not None and claim_path(item.revises) not in written
+            ),
+        )
+    changes, warnings = _with_verdicts(
+        instance,
+        head=evaluated_at,
+        plan=plan,
+        changes=changes,
+        verdicts=_pending_verdicts(
+            instance,
+            evaluated_at,
+            plan,
+            {} if candidate is None else _candidate_verdicts(candidate),
+        ),
+        surface=request.surface,
+        because=request.because,
+    )
+    return WriteOutcome(
+        status="awaiting_approval",
+        changes=changes,
+        subjects_added=subjects_added,
+        proposal=WriteProposalRef(proposal_id=proposal_id, state=status.state),
+        coordinate=compact_coordinate(instance, evaluated_at),
+        approval=approval,
+        warnings=warnings,
+        next=approval.approve or approval.activate,
+    )
+
+
+def _already_done(
+    instance: PlaybillInstance,
+    *,
+    head: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    request: WriteRequest,
+) -> WriteOutcome:
+    """Every change is already live: accepted, with no change set submitted."""
+
+    changes = tuple(ChangeOutcome(op=item.op, **item.outcome) for item in plan.changes)
+    changes, warnings = _with_verdicts(
+        instance,
+        head=head,
+        plan=plan,
+        changes=changes,
+        verdicts=_accepted_verdicts(instance, head, plan),
+        surface=request.surface,
+        because=request.because,
+    )
+    first = next((item.subject for item in changes if item.subject is not None), None)
+    return WriteOutcome(
+        status="would_accept" if request.dry_run else "accepted",
+        changes=changes,
+        coordinate=compact_coordinate(instance, head),
+        base=None if request.dry_run else compact_coordinate(instance, head),
+        warnings=warnings,
+        next=None if first is None else _render_get(request.surface, first),
+    )
+
+
+def _slot_moved(
+    instance: PlaybillInstance,
+    *,
+    planned_at: AcceptedProjectionCoordinate,
+    read_at: AcceptedProjectionCoordinate,
+    request: WriteRequest,
+    at: AcceptedProjectionCoordinate | None = None,
+) -> WriteRefusal | None:
+    """Why the plan no longer holds at ``at`` (the head by default), if it moved.
+
+    Only for reporting: admission and settlement are what refuse the write.
+
+    The write was planned at ``planned_at`` against the read coordinate
+    ``read_at`` (the planned head itself when the caller named none). Planning
+    again at the later head against that same read coordinate names the slot
+    that changed, in the terms of the write rather than of the change set.
+    """
+
+    later = instance.accepted_coordinate() if at is None else at
+    if later.git_oid == planned_at.git_oid:
+        return None
+    try:
+        _Planner(instance, head=later, read_at=read_at, request=request).build()
+    except (WriteRefusalError, ReadRefusalError) as error:
+        return _refusal(error)
+    return None
+
+
+def _evaluated_head(
+    instance: PlaybillInstance,
+    intent: AuthoringIntent,
+    fallback: AcceptedProjectionCoordinate,
+) -> AcceptedProjectionCoordinate:
+    """The head the submitted candidate was evaluated at: its preflight's coordinate."""
+
+    preflight = intent.last_preflight
+    if preflight is None:
+        return fallback
+    at = preflight.certificate.accepted_coordinate
+    if at.git_oid == fallback.git_oid:
+        return fallback
+    return instance.resolve_accepted_coordinate(
+        git_oid=at.git_oid,
+        semantic_root=at.semantic_root,
+        generation_root=at.generation_root,
+        compiler_digest=at.compiler_digest,
+    )
+
+
+def _accepted(
+    instance: PlaybillInstance,
+    *,
+    plan: _Plan,
+    head: AcceptedProjectionCoordinate,
+    accepted: AcceptedCoordinate | None,
+    request: WriteRequest,
+    changes: tuple[ChangeOutcome, ...],
+    subjects_added: tuple[str, ...],
+    proposal: WriteProposalRef | None,
+    candidate: CandidateRecord | None = None,
+) -> WriteOutcome:
+    coordinate = (
+        instance.accepted_coordinate()
+        if accepted is None
+        else instance.resolve_accepted_coordinate(
+            git_oid=accepted.git_oid,
+            semantic_root=accepted.semantic_root,
+            generation_root=accepted.generation_root,
+            compiler_digest=accepted.compiler_digest,
+        )
+    )
+    changes = _unchanged_at(instance, coordinate, plan, changes)
+    changes, warnings = _with_verdicts(
+        instance,
+        head=coordinate,
+        plan=plan,
+        changes=changes,
+        verdicts=_committed_verdicts(instance, coordinate, plan, candidate),
+        surface=request.surface,
+        because=request.because,
+    )
+    first = next((item.subject for item in changes if item.subject is not None), None)
+    return WriteOutcome(
+        status="accepted",
+        changes=changes,
+        subjects_added=subjects_added,
+        proposal=proposal,
+        coordinate=compact_coordinate(instance, coordinate),
+        base=compact_coordinate(instance, head),
+        accepted_coordinate=_full(coordinate) if request.full_coordinate else None,
+        warnings=warnings,
+        next=_first_repair(warnings)
+        or (None if first is None else _render_get(request.surface, first)),
+    )
+
+
+def _unchanged_at(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    changes: tuple[ChangeOutcome, ...],
+) -> tuple[ChangeOutcome, ...]:
+    """Report a restating add whose Claim the accepted write left as it was as already live."""
+
+    marked = list(changes)
+    for position, item in enumerate(plan.changes):
+        if item.unchanged_outcome is None or item.revises is None:
+            continue
+        content = instance.blob_at(coordinate.git_oid, claim_path(item.revises))
+        if content is None:
+            continue
+        if claim_artifact_digest(parse_claim(content, path=claim_path(item.revises))).tagged == (
+            item.unchanged_digest
+        ):
+            marked[position] = ChangeOutcome(op=item.op, **item.unchanged_outcome)
+    return tuple(marked)
+
+
+def _dry_run(
+    instance: PlaybillInstance,
+    *,
+    head: AcceptedProjectionCoordinate,
+    coordinator: AuthoringIntentCoordinator,
+    caller: WriteCaller,
+    request: WriteRequest,
+    plan: _Plan,
+    lowered: _Lowered,
+    timestamp: str,
+) -> WriteOutcome:
+    """Preview the write on its own path: preflight and evaluation, then stop (R12)."""
+
+    intent, computed = coordinator.preview(
+        actor=caller.actor, payload=lowered.payload, canonical_timestamp=timestamp
+    )
+    if computed.lowered is not None:
+        _bind_pending(instance, plan, lowered, head=head, operation=intent.intent_id, preview=True)
+    subjects_added = _subjects_added(plan)
+    changed = (
+        set()
+        if computed.lowered is None
+        else {path for path, _content in computed.lowered.changed_members}
+    )
+    changes = _change_outcomes(
+        plan,
+        lowered,
+        intent,
+        unchanged=lambda item: item.revises is not None and claim_path(item.revises) not in changed,
+    )
+    compact = compact_coordinate(instance, head)
+    if computed.result.verdict != "passed":
+        return WriteOutcome(
+            status="would_refuse",
+            changes=changes,
+            subjects_added=subjects_added,
+            coordinate=compact,
+            refusal=_preflight_refusal(computed.result, lowered),
+        )
+    changes, warnings = _with_verdicts(
+        instance,
+        head=head,
+        plan=plan,
+        changes=changes,
+        verdicts=_pending_verdicts(
+            instance,
+            head,
+            plan,
+            {}
+            if computed.evaluation is None or computed.evaluation.candidate is None
+            else _candidate_verdicts(computed.evaluation.candidate),
+        ),
+        surface=request.surface,
+        because=request.because,
+    )
+    requires_approval = _requires_approval(computed)
+    reason = _approval_reason(
+        requires_approval=requires_approval, caller=caller, accept=request.accept
+    )
+    commit = _render_commit(request.surface, compact.git_oid)
+    if reason is None:
+        return WriteOutcome(
+            status="would_accept",
+            changes=changes,
+            subjects_added=subjects_added,
+            coordinate=compact,
+            accepted_coordinate=_full(head) if request.full_coordinate else None,
+            warnings=warnings,
+            next=commit,
+        )
+    approvers = (
+        _eligible_approvers(instance, head, creator=caller.actor.actor_id)
+        if reason == "independent_approval_required"
+        else ()
+    )
+    return WriteOutcome(
+        status="would_await_approval",
+        changes=changes,
+        subjects_added=subjects_added,
+        coordinate=compact,
+        accepted_coordinate=_full(head) if request.full_coordinate else None,
+        approval=ApprovalNeeded(
+            reason=reason,
+            minimum_approvals=1 if requires_approval else 0,
+            eligible_approvers=approvers,
+            activate="Submit it first; the outcome then names the activate call",
+        ),
+        warnings=warnings,
+        next=commit,
+    )
+
+
+def _requires_approval(computed: ComputedPreflight) -> bool:
+    evaluation = computed.evaluation
+    if evaluation is None or evaluation.candidate is None:
+        return False
+    return bool(cast(Any, evaluation.candidate).approval_requirements)
+
+
+__all__ = ["WriteCaller", "requires_captured_evidence", "service_playbill_write"]

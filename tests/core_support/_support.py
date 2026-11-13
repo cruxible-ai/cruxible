@@ -1,0 +1,236 @@
+"""Small custody-safe test helpers for Cruxible bootstrap."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from cruxible_client.contracts.types import GitObjectFormat, TrustRoot
+from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
+from cruxible_core.runtime.instance import PlaybillInstance
+from tests.core_support._world_templates import TEMPLATES, Template, copy_template
+
+FIXED_TIMESTAMP = "2026-08-10T12:00:00+00:00"
+
+
+def generate_client(
+    tmp_path: Path,
+    *,
+    managed_root: Path,
+    principal_id: str,
+    roles: tuple[str, ...],
+) -> GeneratedKeyMaterial:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    return generate_client_principal_key(
+        tmp_path / f"client-custody-{principal_id}",
+        principal_id=principal_id,
+        kind="recovery" if roles == ("recovery",) else "ordinary",
+        forbidden_roots=(workspace, managed_root),
+    )
+
+
+def initialize_local(
+    tmp_path: Path,
+    *,
+    object_format: GitObjectFormat = "sha256",
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """Return a fresh genesis instance and its owner key under ``tmp_path``.
+
+    The world is a copy of a session template when one applies (see
+    `tests/core_support/_world_templates.py`); it is indistinguishable from a
+    fresh `initialize_fresh` except that it shares keys with the same-ordinal
+    world of other tests.
+    """
+
+    template = TEMPLATES.template(
+        ("genesis", object_format, build_inputs()),
+        lambda root: TemplateWorld.capture(*initialize_fresh(root, object_format=object_format)),
+    )
+    if template is not None:
+        opened = template_world(template, tmp_path)
+        if opened is not None:
+            return opened
+    return initialize_fresh(tmp_path, object_format=object_format)
+
+
+def build_inputs() -> tuple[str, ...]:
+    """Every immutable input a world build reads besides its own arguments.
+
+    Templates are keyed by these values as they stand at request time, so a
+    constant reassigned without patch machinery gets a world built from it.
+    """
+
+    import cruxible_core
+    import cruxible_core.ledger.bootstrap as bootstrap_module
+    import cruxible_core.runtime.instance as instance_module
+
+    return (
+        cruxible_core.__version__,
+        FIXED_TIMESTAMP,
+        repr(instance_module.current_compiler_coordinate()),
+        repr(instance_module.seeded_procedure_runtime_policy()),
+        repr(bootstrap_module.GENESIS_SEEDS),
+        repr(bootstrap_module.seeded_procedure_runtime_policy()),
+        repr(instance_module.initial_authority_matrix()),
+    )
+
+
+def initialize_fresh(
+    tmp_path: Path,
+    *,
+    object_format: GitObjectFormat = "sha256",
+    instance_id: str = "inst_playbill_test",
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """Build a genesis instance from nothing: new keys, a new signed ledger."""
+
+    managed_root = tmp_path / f"managed-{object_format}"
+    owner = generate_client(
+        tmp_path,
+        managed_root=managed_root,
+        principal_id="owner",
+        roles=("owner",),
+    )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed_root,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
+    instance = PlaybillInstance.initialize(
+        managed_root,
+        instance_id=instance_id,
+        client_principals=(owner.principal, reviewer.principal),
+        workspace_roots=(tmp_path / "workspace",),
+        git_object_format=object_format,
+        timestamp=FIXED_TIMESTAMP,
+    )
+    return instance, owner
+
+
+@dataclass(frozen=True)
+class TemplateWorld:
+    """What a copy needs to reopen a templated instance and name its owner key."""
+
+    managed: Path
+    trust_root: TrustRoot
+    owner: GeneratedKeyMaterial
+    owner_private: Path
+    owner_public: Path
+
+    @classmethod
+    def capture(cls, instance: PlaybillInstance, owner: GeneratedKeyMaterial) -> TemplateWorld:
+        root = instance.root.parent
+        return cls(
+            managed=instance.root.relative_to(root),
+            trust_root=instance.trust_root,
+            owner=owner,
+            owner_private=owner.private_key_path.relative_to(root),
+            owner_public=owner.public_key_path.relative_to(root),
+        )
+
+
+def template_world(
+    template: Template[TemplateWorld], tmp_path: Path, *, warm: bool = False
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial] | None:
+    """Copy ``template`` under ``tmp_path`` and reopen it, or ``None`` if it cannot.
+
+    A genesis build hands back a freshly opened instance, and so does its copy.
+    A build that went on writing (``warm``) hands back an instance whose
+    history index and head projection it already synced and verified in this
+    process; the copy does the same reads before it is returned, so counted
+    verifications start from the same place.
+    """
+
+    copied = copy_template(template, tmp_path)
+    if copied is None:
+        return None
+    TEMPLATES.copies += 1
+    world = template.value
+    instance = PlaybillInstance.open(copied / world.managed, trust_root=world.trust_root)
+    restamp_proposal_index(instance)
+    if warm:
+        with instance.accepted_history_reader():
+            pass
+        with instance.bind_accepted_projection(instance.accepted_coordinate()):
+            pass
+    owner = GeneratedKeyMaterial(
+        principal=world.owner.principal,
+        private_key_path=tmp_path / world.owner_private,
+        public_key_path=tmp_path / world.owner_public,
+    )
+    return instance, owner
+
+
+def restamp_proposal_index(instance: PlaybillInstance) -> None:
+    """Re-sync the proposal index checkpoint a copy invalidated.
+
+    The checkpoint pins the device, inode and times of the directories it
+    indexes, which no copy can keep. One read re-verifies the evidence and
+    writes the copy's own checkpoint, leaving the state a fresh build leaves.
+    """
+
+    evidence = instance.proposal_evidence()
+    if evidence.index is None or not (evidence.root / ".proposal-source.json").exists():
+        return
+    with evidence.index.read(evidence):
+        pass
+
+
+def client_material(
+    tmp_path: Path,
+    instance: PlaybillInstance,
+    *,
+    principal_id: str = "reviewer",
+) -> GeneratedKeyMaterial:
+    """Recover test-only custody metadata for a bootstrap client key."""
+
+    key_directory = tmp_path / f"client-custody-{principal_id}"
+    return GeneratedKeyMaterial(
+        principal=instance._recovered.head.principals.require_active(principal_id),
+        private_key_path=key_directory / f"{principal_id}.ed25519",
+        public_key_path=key_directory / f"{principal_id}.ed25519.pub",
+    )
+
+
+def restamp_state_root(state_root: Path) -> None:
+    """Restamp every instance a copied daemon state root registers.
+
+    The daemon opens these itself; this throwaway open only rewrites each
+    copy's proposal index checkpoint (see `restamp_proposal_index`).
+    """
+
+    trust_directory = state_root / "trust"
+    for trust_path in sorted(trust_directory.glob("*.json")):
+        managed = state_root / "instances" / trust_path.stem
+        if not managed.is_dir():
+            continue
+        trust_root = TrustRoot.model_validate_json(trust_path.read_bytes())
+        restamp_proposal_index(PlaybillInstance.open(managed, trust_root=trust_root))
+
+
+def every_moved_base_overlaps(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Treat every proposal whose base moved as stale, whatever the head changed.
+
+    For tests of the readmission machinery (links, supersession, refusals), whose
+    worlds move the head with unrelated changes: they exercise what happens to a
+    stale proposal, not which proposals are stale. The overlap rule itself is
+    tested in ``tests/test_service/test_stale_overlap.py``.
+    """
+
+    from contextlib import contextmanager
+
+    import cruxible_core.service.proposals.staleness as staleness
+
+    real = staleness.overlap_check
+
+    @contextmanager
+    def overlapping(instance, coordinate):  # type: ignore[no-untyped-def]
+        with real(instance, coordinate) as check:
+
+            def moved(**values):  # type: ignore[no-untyped-def]
+                return check(**values) or ("<moved base>",)
+
+            yield moved
+
+    monkeypatch.setattr(staleness, "overlap_check", overlapping)

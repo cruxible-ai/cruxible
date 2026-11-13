@@ -6,238 +6,91 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from cruxible_client._error_base import (
-    ConcurrentStateDriftError as ConcurrentStateDriftError,
+from cruxible_client._error_base import CoreError as CoreError
+from cruxible_client.contracts.errors import (
+    InstanceDecommissioned,
+    ObjectFormatConflict,
+    ProposalActivationRequestInvalid,
+    ProposalNotFoundError,
+    ProposalReviewOptionsInvalid,
+    ProposalSelectorAmbiguousError,
+    ReadRefusalError,
+    SinceRequestInvalid,
 )
-from cruxible_client._error_base import (
-    CoreError as CoreError,
-)
-from cruxible_client._error_base import (
-    InvalidContinuationError as InvalidContinuationError,
-)
-from cruxible_client._error_base import (
-    StaleContinuationError as StaleContinuationError,
-)
+from cruxible_client.contracts.repairs import ServedRepair
 
 _MAX_DISPLAY_ERRORS = 10
 
 
-class SchemaError(CoreError):
-    """Base for errors in public schema/config definitions."""
-
-
-class ConfigError(SchemaError):
+class ConfigError(CoreError):
     """Client-side config or validation error."""
 
     def __init__(
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ) -> None:
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         shown = self.errors[:_MAX_DISPLAY_ERRORS]
         detail = "; ".join(shown)
         suffix = ""
         if len(self.errors) > _MAX_DISPLAY_ERRORS:
             suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}{suffix}"
 
 
-class EntityTypeNotFoundError(SchemaError):
-    def __init__(self, entity_type: str, *, known_entity_types: list[str] | None = None):
-        self.entity_type = entity_type
-        self.known_entity_types = sorted(known_entity_types or [])
-        message = f"Entity type '{entity_type}' not found in schema"
-        if self.known_entity_types:
-            message += f". Known entity types: {', '.join(self.known_entity_types)}"
-        super().__init__(message)
-
-
-class RelationshipNotFoundError(SchemaError):
-    def __init__(self, relationship_name: str):
-        self.relationship_name = relationship_name
-        super().__init__(f"Relationship '{relationship_name}' not found in schema")
-
-
-class QueryNotFoundError(SchemaError):
-    def __init__(self, query_name: str):
-        self.query_name = query_name
-        super().__init__(f"Named query '{query_name}' not found in schema")
-
-
-class GraphError(CoreError):
-    """Base for errors in graph data visible to the client."""
-
-
-class EntityNotFoundError(GraphError):
-    def __init__(self, entity_type: str, entity_id: str):
-        self.entity_type = entity_type
-        self.entity_id = entity_id
-        super().__init__(f"{entity_type} '{entity_id}' not found in graph")
-
-
-class DataValidationError(GraphError):
+class DataValidationError(CoreError):
     def __init__(
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ) -> None:
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         shown = self.errors[:_MAX_DISPLAY_ERRORS]
         detail = "; ".join(shown)
         suffix = ""
         if len(self.errors) > _MAX_DISPLAY_ERRORS:
             suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}{suffix}"
 
 
-class RelationshipAmbiguityError(GraphError):
-    def __init__(
-        self,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-        relationship_type: str,
-    ) -> None:
-        self.from_type = from_type
-        self.from_id = from_id
-        self.to_type = to_type
-        self.to_id = to_id
-        self.relationship_type = relationship_type
-        super().__init__(
-            "Ambiguous edge target for "
-            f"{from_type}:{from_id}:{relationship_type}:{to_type}:{to_id}; "
-            "specify edge_key to target a single edge"
-        )
-
-
-class ConstraintViolationError(GraphError):
-    def __init__(
-        self,
-        message: str,
-        violations: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
-    ) -> None:
-        self.summary = message
-        self.violations = violations or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
-
-    def __str__(self) -> str:
-        if not self.violations:
-            return self.summary + self._receipt_suffix()
-        detail = "; ".join(self.violations)
-        return f"{self.summary}: {detail}" + self._receipt_suffix()
-
-
-class ExecutionError(CoreError):
-    """Base for operation failures visible to the client."""
-
-
-class IngestionError(ExecutionError):
-    pass
-
-
-class MutationError(ExecutionError):
-    pass
-
-
-class QueryExecutionError(ExecutionError):
-    pass
-
-
-class CustomerCodeExecutionUnsupportedError(ExecutionError):
+class CustomerCodeExecutionUnsupportedError(CoreError):
     error_code = "customer_code_execution_unsupported"
 
-    def __init__(self) -> None:
-        super().__init__("Customer code execution is not supported in this hosted runtime profile.")
+    def __init__(self, detail: str | None = None) -> None:
+        self.detail = detail
+        message = "Customer code execution is not supported in this hosted runtime profile."
+        super().__init__(message if detail is None else f"{message} ({detail})")
 
 
-class OwnershipError(CoreError):
-    def __init__(self, message: str, *, blocked_types: list[str] | None = None) -> None:
-        self.blocked_types = blocked_types or []
-        super().__init__(message)
+class HostedProfileUnknownError(CoreError):
+    error_code = "hosted_profile_unknown"
 
-
-class ReceiptNotFoundError(CoreError):
-    def __init__(self, receipt_id: str):
-        self.receipt_id = receipt_id
-        super().__init__(f"Receipt '{receipt_id}' not found")
-
-
-class TraceNotFoundError(CoreError):
-    def __init__(self, trace_id: str):
-        self.trace_id = trace_id
-        super().__init__(f"Trace '{trace_id}' not found")
-
-
-class OutcomeNotFoundError(CoreError):
-    def __init__(self, receipt_id: str):
-        self.receipt_id = receipt_id
-        super().__init__(f"No outcome found for receipt '{receipt_id}'")
+    def __init__(self, profile: str) -> None:
+        self.profile = profile
+        super().__init__(
+            f"Hosted server profile {profile!r} is unknown to this build, so its execution "
+            "policy cannot be established; repair: unset CRUXIBLE_HOSTED_SERVER_PROFILE, or "
+            "set it to a profile this build declares."
+        )
 
 
 class InstanceNotFoundError(CoreError):
     def __init__(self, instance_id: str):
         self.instance_id = instance_id
         super().__init__(f"Instance '{instance_id}' not found")
-
-
-class GroupNotFoundError(CoreError):
-    def __init__(self, group_id: str):
-        self.group_id = group_id
-        super().__init__(f"Group '{group_id}' not found")
-
-
-class ProcedureNotFoundError(CoreError):
-    def __init__(self, procedure_id: str):
-        self.procedure_id = procedure_id
-        super().__init__(f"Procedure '{procedure_id}' not found")
-
-
-class SourceArtifactNotFoundError(CoreError):
-    def __init__(self, source_artifact_id: str):
-        self.source_artifact_id = source_artifact_id
-        super().__init__(f"Source artifact '{source_artifact_id}' not found")
-
-
-class CitationHandleResolutionError(CoreError):
-    """A source-evidence citation handle could not be resolved safely."""
-
-    error_code = "citation_handle_resolution_failed"
-
-    def __init__(
-        self,
-        handle: str,
-        failure_kind: str,
-        *,
-        detail: str,
-        message: str | None = None,
-    ) -> None:
-        self.handle = handle
-        self.failure_kind = failure_kind
-        self.detail = detail
-        super().__init__(
-            message
-            or f"Citation handle resolution failed ({failure_kind}) for '{handle}': {detail}"
-        )
 
 
 class RuntimeCredentialNotFoundError(CoreError):
@@ -257,7 +110,10 @@ class ServerUnreachableError(CoreError):
     def __init__(self, target: str, reason: str) -> None:
         self.target = target
         self.reason = reason
-        super().__init__(f"could not reach Cruxible server at {target}: {reason}")
+        super().__init__(
+            f"could not reach Cruxible server at {target}: {reason}. "
+            "Repair: run `cruxible server start`"
+        )
 
 
 class AuthenticationError(CoreError):
@@ -274,6 +130,85 @@ class InstanceScopeError(CoreError):
         )
 
 
+class DaemonOperationScopeError(InstanceScopeError):
+    """An instance-scoped credential reached for one daemon-wide operation."""
+
+    def __init__(self, operation: str, credential_scope: str, message: str | None = None):
+        self.operation = operation
+        self.instance_id = credential_scope
+        self.credential_scope = credential_scope
+        CoreError.__init__(
+            self,
+            message
+            or (
+                f"Credential scoped to instance {credential_scope!r} cannot perform "
+                f"daemon-wide operation {operation!r}"
+            ),
+        )
+
+
+# What each cumulative permission tier allows, and what it still does not.
+PERMISSION_TIER_SUMMARIES: dict[str, str] = {
+    "read_only": "reads state and writes nothing",
+    "governed_write": ("reads, proposes and authors, but cannot submit approvals or activate"),
+    "graph_write": (
+        "does everything governed_write does, plus submitting approvals and activating"
+    ),
+    "admin": (
+        "does everything graph_write does, plus operator actions: credentials, host "
+        "and init, principal changes, compiler upgrades, provider installs, ledger "
+        "mirrors and daemon stop/restart"
+    ),
+}
+
+
+def permission_tier_summary(mode: str) -> str:
+    """What ``mode`` allows, as ``<mode> mode <predicate>``."""
+    summary = PERMISSION_TIER_SUMMARIES.get(mode.strip().lower())
+    return f"{mode} mode {summary}" if summary is not None else f"{mode} mode"
+
+
+def permission_denied_message(
+    tool_name: str,
+    current_mode: str,
+    required_mode: str,
+    ceiling_mode: str | None,
+    *,
+    label: str | None = None,
+) -> str:
+    """Say which tier an operation needs and which one the caller has.
+
+    ``label`` names the operation as the caller invoked it (the CLI passes
+    ``cruxible proposal approve``); without it the message names the MCP tool.
+    """
+    if label is not None:
+        required, current = required_mode.lower(), current_mode.lower()
+        if ceiling_mode is not None:
+            denial = (
+                f"{label} needs the {required} tier, but the daemon capability ceiling is "
+                f"{ceiling_mode.lower()} (this request: {current})"
+            )
+        else:
+            denial = f"{label} needs the {required} tier; this credential is {current}"
+        return f"{denial}. {permission_tier_summary(required)}."
+    if ceiling_mode is not None:
+        denial = (
+            f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
+            f"capability ceiling is {ceiling_mode} mode "
+            f"(effective request mode: {current_mode})"
+        )
+    else:
+        # No ceiling shortfall: the daemon itself can run this tool. What is
+        # short is the calling credential, which a request narrowed below the
+        # ceiling -- say so, not "the server", or an operator reading this
+        # reaches for the wrong fix (restarting the daemon in a higher mode).
+        denial = (
+            f"Tool '{tool_name}' requires {required_mode} mode, "
+            f"but your credential is scoped to {current_mode} mode"
+        )
+    return f"{denial}. {permission_tier_summary(required_mode)}."
+
+
 class PermissionDeniedError(CoreError):
     def __init__(
         self,
@@ -287,104 +222,8 @@ class PermissionDeniedError(CoreError):
         self.current_mode = current_mode
         self.required_mode = required_mode
         self.ceiling_mode = ceiling_mode
-        if ceiling_mode is not None:
-            super().__init__(
-                f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
-                f"capability ceiling is {ceiling_mode} mode "
-                f"(effective request mode: {current_mode})"
-            )
-            return
         super().__init__(
-            f"Tool '{tool_name}' requires {required_mode} mode, "
-            f"but server is running in {current_mode} mode"
-        )
-
-
-class DirectWriteRefusedError(CoreError):
-    """Direct graph write refused because the target is governed proposal_only."""
-
-    error_code = "direct_write_refused"
-
-    def __init__(self, kind: str, type_name: str, source: str, message: str | None = None):
-        self.kind = kind
-        self.type_name = type_name
-        self.source = source
-        super().__init__(
-            message
-            or (f"Direct write to {kind} '{type_name}' is refused (write_policy=proposal_only).")
-        )
-
-
-class TerminalLifecycleWriteRefusedError(CoreError):
-    """A terminal lifecycle status was refused on a free-form add/update."""
-
-    error_code = "terminal_lifecycle_write_refused"
-
-    def __init__(self, kind: str, status: str, writable: str, message: str | None = None):
-        self.kind = kind
-        self.status = status
-        self.writable = writable
-        super().__init__(
-            message
-            or (
-                f"Refusing to write terminal {kind} lifecycle status '{status}' through "
-                "a plain add/update."
-            )
-        )
-
-
-class ProcedureWithdrawalRefusedError(CoreError):
-    """Withdraw refused: the actor is neither the proposal's author nor a reviewer."""
-
-    error_code = "procedure_withdrawal_refused"
-
-    def __init__(
-        self,
-        procedure_id: str,
-        *,
-        current_mode: str,
-        required_mode: str,
-        message: str | None = None,
-    ):
-        self.procedure_id = procedure_id
-        self.current_mode = current_mode
-        self.required_mode = required_mode
-        super().__init__(
-            message
-            or (
-                f"procedure '{procedure_id}' may be withdrawn only by its proposing author "
-                f"at their own tier, or by a reviewer holding {required_mode}; "
-                f"the current actor is neither (current mode {current_mode})"
-            )
-        )
-
-
-class PendingEdgeWriteRefusedError(CoreError):
-    """A non-pending write was refused because the target edge is still PENDING."""
-
-    error_code = "pending_edge_write_refused"
-
-    def __init__(
-        self,
-        relationship_type: str,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-        message: str | None = None,
-    ):
-        self.relationship_type = relationship_type
-        self.from_type = from_type
-        self.from_id = from_id
-        self.to_type = to_type
-        self.to_id = to_id
-        super().__init__(
-            message
-            or (
-                f"Write to relationship '{relationship_type}' "
-                f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: the edge is a "
-                "PENDING proposal awaiting review."
-            )
+            permission_denied_message(tool_name, current_mode, required_mode, ceiling_mode)
         )
 
 
@@ -396,10 +235,14 @@ class ErrorResponse(BaseModel):
     error_code: str | None = None
     errors: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
-    mutation_receipt_id: str | None = None
+    # The daemon always fills this in (server.errors.error_to_response). It stays
+    # optional on the parsing side so a client never invents a repair the server
+    # did not send: a null repair is the truthful reading of an envelope that
+    # carried none.
+    repair: ServedRepair | None = None
 
 
-def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
+def response_to_error(status: int, body: ErrorResponse) -> CoreError:
     """Reconstruct a client-side error from an HTTP error response."""
     context = body.context
 
@@ -411,10 +254,26 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         # Server-side FastAPI request validation; field-level details ride in
         # errors just like data validation failures.
         exc = DataValidationError(body.message, errors=body.errors)
-    elif body.error_type == "ConstraintViolationError":
-        exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
-    elif body.error_type == "OwnershipError":
-        exc = OwnershipError(body.message, blocked_types=context.get("blocked_types", []))
+    elif body.error_type == "SinceRequestInvalid":
+        exc = SinceRequestInvalid(
+            field_path=str(context.get("field_path", "$")),
+            message=body.message,
+        )
+    elif body.error_type == "ProposalActivationRequestInvalid":
+        exc = ProposalActivationRequestInvalid(body.message)
+    elif body.error_type == "ProposalReviewOptionsInvalid":
+        exc = ProposalReviewOptionsInvalid(body.message)
+    elif body.error_type == "ProposalNotFoundError":
+        exc = ProposalNotFoundError(
+            str(context.get("selector", "unknown")),
+            message=body.message,
+        )
+    elif body.error_type == "ProposalSelectorAmbiguousError":
+        exc = ProposalSelectorAmbiguousError(
+            str(context.get("selector", "unknown")),
+            tuple(str(item) for item in context.get("candidates", [])),
+            message=body.message,
+        )
     elif body.error_type == "PermissionDeniedError":
         exc = PermissionDeniedError(
             context.get("tool_name", "unknown"),
@@ -422,111 +281,49 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("required_mode", "unknown"),
             ceiling_mode=context.get("ceiling_mode"),
         )
-    elif body.error_type == "DirectWriteRefusedError":
-        exc = DirectWriteRefusedError(
-            context.get("kind", "unknown"),
-            context.get("type_name", "unknown"),
-            context.get("source", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "TerminalLifecycleWriteRefusedError":
-        exc = TerminalLifecycleWriteRefusedError(
-            context.get("kind", "unknown"),
-            context.get("status", "unknown"),
-            context.get("writable", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "PendingEdgeWriteRefusedError":
-        exc = PendingEdgeWriteRefusedError(
-            context.get("relationship_type", "unknown"),
-            context.get("from_type", "unknown"),
-            context.get("from_id", "unknown"),
-            context.get("to_type", "unknown"),
-            context.get("to_id", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "EntityTypeNotFoundError":
-        exc = EntityTypeNotFoundError(
-            context.get("entity_type", body.message),
-            known_entity_types=context.get("known_entity_types", []),
-        )
-    elif body.error_type == "RelationshipNotFoundError":
-        exc = RelationshipNotFoundError(context.get("relationship_name", body.message))
-    elif body.error_type == "QueryNotFoundError":
-        exc = QueryNotFoundError(context.get("query_name", body.message))
-    elif body.error_type == "EntityNotFoundError":
-        exc = EntityNotFoundError(
-            context.get("entity_type", "unknown"),
-            context.get("entity_id", "unknown"),
-        )
-    elif body.error_type == "RelationshipAmbiguityError":
-        exc = RelationshipAmbiguityError(
-            from_type=context.get("from_type", "unknown"),
-            from_id=context.get("from_id", "unknown"),
-            to_type=context.get("to_type", "unknown"),
-            to_id=context.get("to_id", "unknown"),
-            relationship_type=context.get("relationship_type", "unknown"),
-        )
-    elif body.error_type == "ReceiptNotFoundError":
-        exc = ReceiptNotFoundError(context.get("receipt_id", "unknown"))
-    elif body.error_type == "TraceNotFoundError":
-        exc = TraceNotFoundError(context.get("trace_id", "unknown"))
-    elif body.error_type == "OutcomeNotFoundError":
-        exc = OutcomeNotFoundError(context.get("receipt_id", "unknown"))
     elif body.error_type == "InstanceNotFoundError":
         exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
-    elif body.error_type == "GroupNotFoundError":
-        exc = GroupNotFoundError(context.get("group_id", "unknown"))
-    elif body.error_type == "ProcedureNotFoundError":
-        exc = ProcedureNotFoundError(context.get("procedure_id", "unknown"))
-    elif body.error_type == "ProcedureWithdrawalRefusedError":
-        exc = ProcedureWithdrawalRefusedError(
-            context.get("procedure_id", "unknown"),
-            current_mode=context.get("current_mode", "unknown"),
-            required_mode=context.get("required_mode", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "SourceArtifactNotFoundError":
-        exc = SourceArtifactNotFoundError(context.get("source_artifact_id", "unknown"))
-    elif body.error_type == "CitationHandleResolutionError":
-        exc = CitationHandleResolutionError(
-            context.get("handle", "unknown"),
-            context.get("failure_kind", "unknown"),
-            detail=context.get("detail", body.message),
-            message=body.message,
-        )
     elif body.error_type == "RuntimeCredentialNotFoundError":
         exc = RuntimeCredentialNotFoundError(context.get("credential_id", "unknown"))
-    elif body.error_type == "AuthenticationError":
+    elif body.error_type in {"AuthenticationError", "BootstrapClaimRefusedError"}:
         exc = AuthenticationError(body.message)
+    elif body.error_type == "DaemonOperationScopeError":
+        exc = DaemonOperationScopeError(
+            str(context.get("operation", "unknown")),
+            str(context.get("credential_scope", "unknown")),
+            message=body.message,
+        )
     elif body.error_type == "InstanceScopeError":
         exc = InstanceScopeError(
             context.get("instance_id", "unknown"),
             context.get("credential_scope", "unknown"),
         )
-    elif body.error_type == "QueryExecutionError":
-        exc = QueryExecutionError(body.message)
     elif body.error_type == "CustomerCodeExecutionUnsupportedError":
-        exc = CustomerCodeExecutionUnsupportedError()
-    elif body.error_type == "IngestionError":
-        exc = IngestionError(body.message)
-    elif body.error_type == "InvalidContinuationError":
-        exc = InvalidContinuationError(context.get("reason", body.message))
-    elif body.error_type == "StaleContinuationError":
-        exc = StaleContinuationError(
-            token_read_revision=context.get("token_read_revision"),
-            current_read_revision=context.get("current_read_revision"),
-            reason=context.get("reason"),
+        exc = CustomerCodeExecutionUnsupportedError(context.get("detail"))
+    elif body.error_type == "HostedProfileUnknownError":
+        exc = HostedProfileUnknownError(str(context.get("profile", "unknown")))
+    elif body.error_type == "ObjectFormatConflict":
+        exc = ObjectFormatConflict(
+            body.message,
+            workspace_format=context.get("workspace_format"),
         )
-    elif body.error_type == "ConcurrentStateDriftError":
-        exc = ConcurrentStateDriftError(
-            int(context.get("opening_revision") or 0),
-            int(context.get("closing_revision") or 0),
+    elif body.error_type == "ReadRefusalError":
+        # A read verb's coded refusal keeps its code, candidates and repair line.
+        exc = ReadRefusalError.from_served(
+            code=body.error_code or "cruxible.read.refused",
+            message=body.message,
+            http_status=status,
+            context=context,
         )
-    elif body.error_type == "MutationError":
-        exc = MutationError(body.message)
+    elif body.error_type == "InstanceDecommissioned":
+        exc = InstanceDecommissioned(
+            instance_id=context.get("instance_id", "unknown"),
+            reason=context.get("reason", "unknown"),
+            decommissioned_at=context.get("decommissioned_at", "unknown"),
+        )
     else:
         exc = CoreError(body.message)
-
-    exc.mutation_receipt_id = body.mutation_receipt_id
+    if body.error_code is not None:
+        setattr(exc, "error_code", body.error_code)
+    setattr(exc, "repair", body.repair)
     return exc

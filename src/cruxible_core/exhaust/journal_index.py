@@ -1,0 +1,1680 @@
+"""Disposable record locations and metadata, backed by the retained journal.
+
+Dirty partitions are named before append. Catch-up verifies their suffixes after
+an interrupted write; deleting SQLite rebuilds locations without executing work.
+No trigger policy or consumer completion is part of this storage index.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sqlite3
+import threading
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime
+from functools import wraps
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
+from uuid import uuid4
+
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.content_memo import ValueMemo
+from cruxible_client.contracts.errors import CruxibleError, JournalIntegrityError
+from cruxible_client.contracts.temporal import format_datetime
+from cruxible_core.exhaust.capture_selectors import landing_logical_source
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.records import (
+    JournalPartitionHeadV1,
+    JournalStreamIdentityV1,
+    StoredProcedureJournalRecordV1,
+    journal_genesis_digest,
+    journal_stream_key,
+    journal_stream_strings,
+)
+from cruxible_core.indexes.keyset import rows_before
+from cruxible_core.indexes.resident import ResidentConnections
+from cruxible_core.indexes.sql_batch import insert_rows
+from cruxible_core.storage.read_positions import unpositioned_operation
+
+if TYPE_CHECKING:
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+#: Stream JSON is repeated on every selected row. It contains only validated
+#: frozen scalar fields; its exact bytes, not the row or a file identity, key it.
+_STREAM_IDENTITIES: ValueMemo[JournalStreamIdentityV1] = ValueMemo(capacity=4096)
+
+
+_LOCK = threading.RLock()
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+#: Bumped whenever a table or index changes shape: an index file written under
+#: another version is migrated or rebuilt from the retained journal, which is
+#: the authority (this file is a disposable cache).
+_SCHEMA_VERSION = 10
+_TABLES = (
+    "capture_source_tallies",
+    "capture_unattributed",
+    "capture_contract_names",
+    "capture_name_progress",
+    "capture_selectors",
+    "capture_progress",
+    "invocation_locators",
+    "invocation_pending",
+    "proof_locators",
+    "proof_pending",
+    "open_runs",
+    "run_tallies",
+    "records",
+    "partitions",
+    "index_identity",
+    "initialized",
+)
+#: The proof records a Capture citation reads, by the locators each one names.
+PROOF_LOCATOR_KINDS = frozenset(
+    {
+        "provider_invocation_completed",
+        "terminal_egress",
+        "produced_capture",
+        "source_request_derived",
+        "source_read",
+    }
+)
+_PROOF_SCHEMA = """
+-- The receipt, Capture and Source occurrence each proof record of a run names
+-- (proof_locator), keyed under its stream and run so one citation's lookup is
+-- a range of its own run whatever other runs name the same locator. The
+-- writer that appends a proof record notes its locators (note_proof_locators);
+-- a record indexed without a note (a rebuilt index, a crash between append and
+-- note, an append by another writer) waits in proof_pending until a lookup of
+-- its run projects it from its payload. One that cannot be projected (its
+-- frame or payload unreadable) stays pending, deferred at the body landing
+-- head it was tried under, and is tried again once that head moves or a
+-- lookup of its run misses.
+CREATE TABLE IF NOT EXISTS proof_locators (
+ record_id INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL, run_id TEXT NOT NULL, locator TEXT NOT NULL,
+ PRIMARY KEY(record_id, locator));
+CREATE INDEX IF NOT EXISTS proof_by_locator
+ ON proof_locators(stream, run_id, locator, record_id);
+CREATE TABLE IF NOT EXISTS proof_pending (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL, run_id TEXT NOT NULL, deferred_at TEXT);
+CREATE INDEX IF NOT EXISTS proof_pending_run
+ ON proof_pending(stream, run_id, deferred_at, record_id);
+"""
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def proof_locators(event_kind: str, payload: object) -> tuple[str, ...]:
+    """The locators a proof record names, read leniently: a malformed field names none.
+
+    ``receipt:`` a producer receipt digest, ``capture:`` a produced Capture's
+    digest, ``occurrence:`` the Source occurrence path a Provider completion and
+    its derived request and Source read share (scoped by the record's run).
+    The resolver re-checks every record it reads, so a locator only says where
+    to look; a record that names none is never a citation's proof.
+    """
+
+    if not isinstance(payload, dict):
+        return ()
+    found: list[str | None] = []
+    if event_kind == "provider_invocation_completed":
+        receipt = payload.get("receipt")
+        if digest := _text(payload.get("receipt_digest")):
+            found.append("receipt:" + digest)
+        if isinstance(receipt, dict) and (path := _text(receipt.get("occurrence_path"))):
+            found.append("occurrence:" + path)
+    elif event_kind == "source_request_derived":
+        if path := _text(payload.get("occurrence_path")):
+            found.append("occurrence:" + path)
+    elif event_kind == "source_read":
+        receipt = payload.get("receipt")
+        if isinstance(receipt, dict) and (path := _text(receipt.get("occurrence_path"))):
+            found.append("occurrence:" + path)
+    elif event_kind == "produced_capture":
+        if capture := _text(payload.get("capture_digest")):
+            found.append("capture:" + capture)
+    elif event_kind == "terminal_egress":
+        receipt = payload.get("receipt")
+        if (
+            payload.get("verdict") == "delivered"
+            and payload.get("kind") == "emit_capture"
+            and isinstance(receipt, dict)
+        ):
+            if digest := _text(receipt.get("producer_receipt_digest")):
+                found.append("receipt:" + digest)
+            children = receipt.get("children")
+            for child in children if isinstance(children, list) else ():
+                if isinstance(child, dict) and (capture := _text(child.get("egress_digest"))):
+                    found.append("capture:" + capture)
+    return tuple(sorted({item for item in found if item}))
+
+
+_LANDING_SCHEMA = """
+-- Landings by logical source. Each projected produced_capture record keeps one
+-- capture_selectors row (its stream, landing instant and whether its envelope
+-- could be read); a landing whose payload is lost keeps a capture_unattributed
+-- row instead. Triggers keep capture_source_tallies -- landings per (stream,
+-- logical source, contract digest), and under ('', '') per stream the landings
+-- no source can be read for -- on every insert and delete, so a count never
+-- visits the landings it counts and a partition rebuilt after replacement
+-- (whose rows cascade away and are projected again) stays exact. A row is
+-- written once and never rewritten: an UPDATE of a tallied column and an
+-- INSERT that would replace a row (whose implicit delete runs no trigger) are
+-- refused, so no write can leave a tally behind its rows.
+CREATE TABLE IF NOT EXISTS capture_unattributed (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS capture_source_tallies (
+ stream TEXT NOT NULL, logical_source TEXT NOT NULL, contract_digest TEXT NOT NULL,
+ landings INTEGER NOT NULL CHECK(landings >= 0),
+ PRIMARY KEY(stream, logical_source, contract_digest)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS capture_source_latest
+ ON capture_selectors(stream, logical_source, landed_at, record_id)
+ WHERE logical_source IS NOT NULL;
+CREATE TRIGGER IF NOT EXISTS capture_landing_attributed AFTER INSERT ON capture_selectors
+ WHEN new.stream IS NOT NULL AND (new.logical_source IS NOT NULL OR new.source_lost=1) BEGIN
+ INSERT INTO capture_source_tallies VALUES(new.stream, coalesce(new.logical_source, ''),
+  CASE WHEN new.logical_source IS NULL THEN '' ELSE new.contract_digest END, 1)
+  ON CONFLICT(stream, logical_source, contract_digest) DO UPDATE SET landings=landings+1;
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_unattributed AFTER DELETE ON capture_selectors
+ WHEN old.stream IS NOT NULL AND (old.logical_source IS NOT NULL OR old.source_lost=1) BEGIN
+ UPDATE capture_source_tallies SET landings=landings-1 WHERE stream=old.stream
+  AND logical_source=coalesce(old.logical_source, '')
+  AND contract_digest=CASE WHEN old.logical_source IS NULL THEN '' ELSE old.contract_digest END;
+ DELETE FROM capture_source_tallies WHERE landings=0 AND stream=old.stream
+  AND logical_source=coalesce(old.logical_source, '')
+  AND contract_digest=CASE WHEN old.logical_source IS NULL THEN '' ELSE old.contract_digest END;
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_lost AFTER INSERT ON capture_unattributed BEGIN
+ INSERT INTO capture_source_tallies VALUES(new.stream, '', '', 1)
+  ON CONFLICT(stream, logical_source, contract_digest) DO UPDATE SET landings=landings+1;
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_found AFTER DELETE ON capture_unattributed BEGIN
+ UPDATE capture_source_tallies SET landings=landings-1
+  WHERE stream=old.stream AND logical_source='' AND contract_digest='';
+ DELETE FROM capture_source_tallies WHERE landings=0
+  AND stream=old.stream AND logical_source='' AND contract_digest='';
+END;
+"""
+#: The landing rows' immutability guards: every open installs them (idempotently),
+#: so an index file written before a guard existed gains it without a schema move.
+#: A guard whose definition changed is renamed, and the old name is dropped. An
+#: UPDATE guard is unrestricted (no ``UPDATE OF`` column list): a column list
+#: does not fire for writes through the rowid, _rowid_ and oid aliases of an
+#: INTEGER PRIMARY KEY.
+_LANDING_GUARDS = """
+CREATE TRIGGER IF NOT EXISTS capture_landing_once BEFORE INSERT ON capture_selectors
+ WHEN EXISTS(SELECT 1 FROM capture_selectors WHERE record_id=new.record_id) BEGIN
+ SELECT RAISE(ABORT, 'a projected landing is never replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_sealed BEFORE UPDATE ON capture_selectors
+ WHEN old.record_id IS NOT new.record_id
+ OR old.logical_source IS NOT new.logical_source OR old.contract_digest IS NOT new.contract_digest
+ OR old.stream IS NOT new.stream OR old.source_lost IS NOT new.source_lost BEGIN
+ SELECT RAISE(ABORT, 'a projected landing keeps its record, source, contract and stream');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_unattributed_once BEFORE INSERT ON capture_unattributed
+ WHEN EXISTS(SELECT 1 FROM capture_unattributed WHERE record_id=new.record_id) BEGIN
+ SELECT RAISE(ABORT, 'an unattributed landing is never replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_unattributed_fixed BEFORE UPDATE ON capture_unattributed
+ WHEN old.record_id IS NOT new.record_id OR old.stream IS NOT new.stream BEGIN
+ SELECT RAISE(ABORT, 'an unattributed landing keeps its stream');
+END;
+"""
+_RETIRED_LANDING_GUARDS = ("capture_landing_fixed", "capture_landing_frozen")
+_LANDING_SCHEMA += _LANDING_GUARDS
+_SCHEMA = (
+    """
+CREATE TABLE IF NOT EXISTS initialized (singleton INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS index_identity (singleton INTEGER PRIMARY KEY, identity TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS partitions (
+ stream TEXT NOT NULL, partition_id TEXT NOT NULL, end_offset INTEGER NOT NULL,
+ sequence INTEGER NOT NULL, digest TEXT NOT NULL, signature TEXT NOT NULL,
+ PRIMARY KEY(stream, partition_id));
+CREATE TABLE IF NOT EXISTS records (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, stream TEXT NOT NULL, partition_id TEXT NOT NULL,
+ sequence INTEGER NOT NULL, offset INTEGER NOT NULL, size INTEGER NOT NULL,
+ digest TEXT NOT NULL, previous TEXT NOT NULL, event_kind TEXT NOT NULL,
+ run_id TEXT, occurrence_id TEXT, payload_digest TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ UNIQUE(stream, partition_id, sequence));
+CREATE INDEX IF NOT EXISTS records_payload ON records(stream,event_kind,payload_digest);
+CREATE INDEX IF NOT EXISTS records_run ON records(stream, run_id, sequence);
+CREATE INDEX IF NOT EXISTS records_run_kind ON records(stream, run_id, event_kind, sequence);
+CREATE INDEX IF NOT EXISTS records_event
+ ON records(stream, event_kind, recorded_at, partition_id, sequence);
+CREATE INDEX IF NOT EXISTS records_occurrence
+ ON records(stream, partition_id, occurrence_id, event_kind, sequence);
+CREATE TABLE IF NOT EXISTS capture_selectors (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ contract_digest TEXT NOT NULL, logical_source TEXT, contract_identity TEXT,
+ stream TEXT, landed_at TEXT, source_lost INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS capture_contract_names (digest TEXT PRIMARY KEY, identity TEXT);
+CREATE TABLE IF NOT EXISTS capture_name_progress
+ (stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS capture_name
+ ON capture_selectors(contract_identity,logical_source,record_id);
+CREATE INDEX IF NOT EXISTS capture_contract ON capture_selectors(contract_digest, record_id);
+CREATE INDEX IF NOT EXISTS capture_contract_source
+ ON capture_selectors(contract_digest, logical_source, record_id) WHERE logical_source IS NOT NULL;
+CREATE INDEX IF NOT EXISTS records_kind_position ON records(stream,event_kind,id);
+CREATE INDEX IF NOT EXISTS records_stream_position ON records(stream,id);
+CREATE INDEX IF NOT EXISTS records_partition_position
+ ON records(stream,partition_id,event_kind,id);
+CREATE TABLE IF NOT EXISTS capture_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
+"""
+    + _LANDING_SCHEMA
+    + """-- The Provider invocation each provider_invocation_started record names. The
+-- writer that appends a start records its locator (note_invocation); a start
+-- indexed without one (a rebuilt index, a crash between append and note) waits
+-- in invocation_pending until a lookup projects it from its payload.
+CREATE TABLE IF NOT EXISTS invocation_locators (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ invocation_id TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS invocation_by_id ON invocation_locators(invocation_id, record_id);
+CREATE TABLE IF NOT EXISTS invocation_pending (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS invocation_pending_stream ON invocation_pending(stream, record_id);
+"""
+    + _PROOF_SCHEMA
+    + """-- Admissions whose run has no attempt_finalized record yet, keyed by the
+-- admission row: running runs are read without visiting finished ones.
+CREATE TABLE IF NOT EXISTS open_runs (
+ row_id INTEGER PRIMARY KEY, stream TEXT NOT NULL, partition_id TEXT NOT NULL,
+ run_id TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS open_runs_run ON open_runs(stream, run_id);
+CREATE INDEX IF NOT EXISTS open_runs_stream ON open_runs(stream, row_id);
+CREATE INDEX IF NOT EXISTS open_runs_partition ON open_runs(stream, partition_id, row_id);
+-- Admission counts per partition and, under the partition id '' (never a valid
+-- partition id), per stream: a count never visits the admissions it counts.
+CREATE TABLE IF NOT EXISTS run_tallies (
+ stream TEXT NOT NULL, partition_id TEXT NOT NULL, admitted INTEGER NOT NULL,
+ PRIMARY KEY(stream, partition_id));
+-- Triggers keep both current on every insert and delete of an indexed record,
+-- including a partition rebuilt after replacement. One trigger per event serves
+-- every kind (each statement guarded by its kind), so an insert runs one
+-- trigger program, not one per kind it might be.
+CREATE TRIGGER IF NOT EXISTS records_inserted AFTER INSERT ON records
+ WHEN new.event_kind IN ('provider_invocation_started','admission_bound','attempt_finalized',
+  'provider_invocation_completed','terminal_egress','produced_capture','source_request_derived',
+  'source_read')
+ BEGIN
+ INSERT INTO invocation_pending SELECT new.id, new.stream
+  WHERE new.event_kind='provider_invocation_started';
+ INSERT INTO proof_pending SELECT new.id, new.stream, new.run_id, NULL
+  WHERE new.run_id IS NOT NULL AND new.event_kind IN ('provider_invocation_completed',
+  'terminal_egress','produced_capture','source_request_derived','source_read');
+ INSERT INTO run_tallies SELECT new.stream,new.partition_id,1
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
+  ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
+ INSERT INTO run_tallies SELECT new.stream,'',1
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
+  ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
+ INSERT INTO open_runs SELECT new.id,new.stream,new.partition_id,new.run_id
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
+  AND NOT EXISTS(SELECT 1 FROM records f WHERE f.stream=new.stream
+  AND f.run_id=new.run_id AND f.event_kind='attempt_finalized');
+ DELETE FROM open_runs WHERE new.event_kind='attempt_finalized' AND new.run_id IS NOT NULL
+  AND stream=new.stream AND run_id=new.run_id;
+END;
+CREATE TRIGGER IF NOT EXISTS records_unadmitted AFTER DELETE ON records
+ WHEN old.event_kind='admission_bound' AND old.run_id IS NOT NULL BEGIN
+ UPDATE run_tallies SET admitted=admitted-1
+  WHERE stream=old.stream AND partition_id IN (old.partition_id,'');
+ DELETE FROM open_runs WHERE row_id=old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS records_unfinalized AFTER DELETE ON records
+ WHEN old.event_kind='attempt_finalized' AND old.run_id IS NOT NULL BEGIN
+ INSERT OR IGNORE INTO open_runs SELECT a.id,a.stream,a.partition_id,a.run_id
+  FROM records a WHERE a.stream=old.stream AND a.run_id=old.run_id
+  AND a.event_kind='admission_bound' AND NOT EXISTS(SELECT 1 FROM records f
+  WHERE f.stream=old.stream AND f.run_id=old.run_id AND f.event_kind='attempt_finalized');
+END;
+"""
+)
+
+
+def journal_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(function)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with _LOCK:
+            return function(*args, **kwargs)
+
+    return locked
+
+
+def _statements(conn: sqlite3.Connection, script: str) -> None:
+    """Run a schema script statement by statement, inside the caller's transaction."""
+
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            conn.execute(statement)
+            statement = ""
+
+
+def _install_landing_guards(conn: sqlite3.Connection) -> None:
+    """Install the landing rows' guards if missing; a no-op (no schema change) when present.
+
+    Every statement is idempotent on its own (DROP ... IF EXISTS, CREATE ... IF
+    NOT EXISTS), so processes opening the same file at once never act on what
+    another has already changed.
+    """
+
+    for name in _RETIRED_LANDING_GUARDS:
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+    _statements(conn, _LANDING_GUARDS)
+
+
+def _cited_rows(
+    conn: sqlite3.Connection, key: str, run_id: str, locators: tuple[str, ...]
+) -> list[sqlite3.Row]:
+    """The run's records a citation of these locators reads, in journal order.
+
+    Every range is under the run's own ``(stream, run_id)`` prefix: the cited
+    records, the Source occurrences they name (by record), the run's records
+    naming those occurrences, and the run's admissions. Other runs naming the
+    same receipt, Capture or occurrence are never visited.
+    """
+
+    marks = ",".join("?" for _ in locators)
+    return conn.execute(
+        "WITH cited(record_id) AS (SELECT record_id FROM proof_locators "
+        "INDEXED BY proof_by_locator "
+        f"WHERE stream=? AND run_id=? AND locator IN ({marks})), "
+        "occurrences(locator) AS (SELECT l.locator FROM cited c "
+        "JOIN proof_locators l ON l.record_id=c.record_id "
+        "AND l.locator >= 'occurrence:' AND l.locator < 'occurrence;') "
+        "SELECT r.* FROM records r WHERE r.id IN ("
+        "SELECT record_id FROM cited "
+        "UNION SELECT o.record_id FROM proof_locators o INDEXED BY proof_by_locator "
+        "WHERE o.stream=? AND o.run_id=? AND o.locator IN (SELECT locator FROM occurrences) "
+        "UNION SELECT a.id FROM records a INDEXED BY records_run_kind "
+        "WHERE a.stream=? AND a.run_id=? AND a.event_kind='admission_bound') "
+        "ORDER BY r.partition_id, r.sequence",
+        (key, run_id, *locators, key, run_id, key, run_id),
+    ).fetchall()
+
+
+def _pending_rows(
+    conn: sqlite3.Connection, key: str, run_id: str, *, head: str | None
+) -> list[sqlite3.Row]:
+    """The run's pending proof records to project now.
+
+    With a landing ``head``: those never tried, and those deferred under
+    another head (each a range of the index, so records deferred under the
+    current head are not visited). Without one (a retry): every pending record.
+    """
+
+    if head is None:
+        return conn.execute(
+            "SELECT r.* FROM proof_pending p INDEXED BY proof_pending_run "
+            "JOIN records r ON r.id=p.record_id WHERE p.stream=? AND p.run_id=? "
+            "ORDER BY p.record_id",
+            (key, run_id),
+        ).fetchall()
+    due = (
+        "SELECT record_id FROM proof_pending INDEXED BY proof_pending_run "
+        "WHERE stream=? AND run_id=? AND deferred_at "
+    )
+    return conn.execute(
+        "SELECT r.* FROM records r WHERE r.id IN ("
+        + due
+        + "IS NULL UNION ALL "
+        + due
+        + "< ? UNION ALL "
+        + due
+        + "> ?) ORDER BY r.id",
+        (key, run_id, key, run_id, head, key, run_id, head),
+    ).fetchall()
+
+
+def _landing_head(bodies: Any) -> str | None:
+    """The body store's landing head as one token, or None when it cannot be read."""
+
+    try:
+        head = bodies.landings.head()
+        return f"{head.identity}:{head.sequence}"
+    except Exception:  # noqa: BLE001 -- no head: every deferred record is retried
+        return None
+
+
+def _rebuild_schema(conn: sqlite3.Connection) -> None:
+    """Rebuild an index file of any other schema version from the retained journal.
+
+    The index is derived: its tables are dropped and recreated, and the
+    journal refills them. One immediate transaction re-checks the version, so
+    concurrent openers rebuild once. A rebuild changes the index identity and
+    so invalidates existing page keys.
+    """
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version != _SCHEMA_VERSION:
+            for table in _TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
+            _statements(conn, _SCHEMA)
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _key(stream: JournalStreamIdentityV1) -> str:
+    return journal_stream_key(stream)
+
+
+#: A partition's dirty marker (file name, bytes), by the identity's strings.
+_DIRTY_MARKERS: ValueMemo[tuple[str, bytes]] = ValueMemo(capacity=4096)
+
+
+def _dirty_marker(stream: JournalStreamIdentityV1, partition_id: str) -> tuple[str, bytes]:
+    def derive() -> tuple[str, bytes]:
+        value = canonical_bytes(
+            {"stream": stream.model_dump(mode="json"), "partition_id": partition_id}
+        )
+        return hashlib.sha256(value).hexdigest(), value
+
+    return _DIRTY_MARKERS.derive((*journal_stream_strings(stream), partition_id), derive)
+
+
+#: Where a run page stopped: (the index's identity, the admission row's position).
+RunLocatorKey = tuple[str, int]
+
+
+class RunPageInvalidated(Exception):
+    """A run page key minted before the index was rebuilt: continue from page one."""
+
+
+@dataclass(frozen=True)
+class RunLocator:
+    """One admitted run as the index locates it, without reading any payload."""
+
+    run_id: str
+    admitted_at: str
+    partition_id: str
+    admission_payload_digest: str
+    #: The ``attempt_finalized`` payload; ``None`` while the run is running.
+    final_payload_digest: str | None
+    nodes_done: int
+    index_identity: str
+    #: The admission record's position in the index: immutable once written.
+    row_id: int
+
+    @property
+    def finished(self) -> bool:
+        return self.final_payload_digest is not None
+
+    @property
+    def key(self) -> RunLocatorKey:
+        return (self.index_identity, self.row_id)
+
+
+@dataclass(frozen=True)
+class EventLocator:
+    """One indexed record as a newest-first event read locates it, without its payload.
+
+    ``position`` is the record's sequence in its partition.
+    """
+
+    record_id: int
+    recorded_at: str
+    partition_id: str
+    position: int
+    run_id: str | None
+    payload_digest: str
+
+
+#: Landings projected per transaction.
+_LANDING_CHUNK = 1024
+
+
+@dataclass(frozen=True)
+class SourceLandings:
+    """One logical source: its landings per contract digest and its newest landing's record."""
+
+    source: str
+    counts: tuple[tuple[str, int], ...]
+    latest: EventLocator
+
+
+@dataclass(frozen=True)
+class SourceLandingPage:
+    """A page of sources, the last one when more follow, and the stream's unattributed landings."""
+
+    sources: tuple[SourceLandings, ...]
+    stop: str | None
+    unattributed: int
+
+
+def source_landing_page(
+    conn: sqlite3.Connection, stream: str, *, limit: int, after: str | None
+) -> SourceLandingPage:
+    """Up to ``limit`` sources after ``after``, from the tallies and one seek per source.
+
+    One walk of ``capture_source_tallies`` in key order, stopped at the first
+    row of the source after the page; one ``capture_source_latest`` seek per
+    source for its newest landing (latest landing instant, ties to the later
+    record); one key read of the stream's unattributed tally.
+    """
+
+    page: list[tuple[str, list[tuple[str, int]]]] = []
+    more = False
+    cursor = conn.execute(
+        "SELECT logical_source, contract_digest, landings FROM capture_source_tallies "
+        "WHERE stream=? AND logical_source>? ORDER BY logical_source, contract_digest",
+        (stream, "" if after is None else after),
+    )
+    try:
+        for source, contract, count in cursor:
+            if not page or page[-1][0] != source:
+                if len(page) == limit:
+                    more = True
+                    break
+                page.append((str(source), []))
+            page[-1][1].append((str(contract), int(count)))
+    finally:
+        cursor.close()
+    sources: list[SourceLandings] = []
+    for source, counts in page:
+        row = conn.execute(
+            "SELECT r.id,r.recorded_at,r.partition_id,r.sequence,r.run_id,r.payload_digest "
+            "FROM capture_selectors c INDEXED BY capture_source_latest "
+            "JOIN records r ON r.id=c.record_id "
+            "WHERE c.stream=? AND c.logical_source=? "
+            "ORDER BY c.landed_at DESC, c.record_id DESC LIMIT 1",
+            (stream, source),
+        ).fetchone()
+        sources.append(
+            SourceLandings(
+                source=source,
+                counts=tuple(counts),
+                latest=EventLocator(
+                    record_id=int(row[0]),
+                    recorded_at=str(row[1]),
+                    partition_id=str(row[2]),
+                    position=int(row[3]),
+                    run_id=None if row[4] is None else str(row[4]),
+                    payload_digest=str(row[5]),
+                ),
+            )
+        )
+    lost = conn.execute(
+        "SELECT landings FROM capture_source_tallies "
+        "WHERE stream=? AND logical_source='' AND contract_digest=''",
+        (stream,),
+    ).fetchone()
+    return SourceLandingPage(
+        sources=tuple(sources),
+        stop=sources[-1].source if more and sources else None,
+        unattributed=0 if lost is None else int(lost[0]),
+    )
+
+
+#: This process's resident connection to each journal index file (setup once per
+#: open; see ``indexes.resident``), used under ``_LOCK``.
+_RESIDENT = ResidentConnections(lock=lambda: _LOCK)
+
+
+def _after_fork_in_child() -> None:
+    # A lock held by another thread at fork time is never released in the child.
+    global _LOCK
+    _LOCK = threading.RLock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
+class JournalIndex:
+    def __init__(self, backend: LocalJournalBackend) -> None:
+        self.backend = backend
+        self.path = backend.root / "event-index.sqlite3"
+        self.dirty = backend.root / "index-dirty"
+
+    def _open(self) -> sqlite3.Connection:
+        """Connect, migrate and initialize the index file once for this process."""
+
+        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                _rebuild_schema(conn)
+            _install_landing_guards(conn)
+            conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
+            if not conn.execute("SELECT 1 FROM initialized").fetchone():
+                for identity in self.backend._streams_root.glob("*/*/identity.json"):
+                    raw = json.loads(identity.read_bytes())
+                    self._sync(
+                        conn,
+                        JournalStreamIdentityV1.model_validate(raw["stream"]),
+                        raw["partition_id"],
+                    )
+                conn.execute("INSERT INTO initialized VALUES (1)")
+            conn.commit()
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """This process's resident index connection, in one transaction per operation.
+
+        The operation's writes commit when the block exits and roll back when it
+        raises; a nested block shares the outer block's transaction. Dirty
+        partitions are caught up first, as on every open before.
+        """
+
+        with _RESIDENT.transaction(
+            self.path,
+            self._open,
+            not_regular=lambda: JournalIntegrityError("journal index must be a regular file"),
+        ) as (conn, outermost):
+            if outermost and self.dirty.exists():
+                for marker in self.dirty.iterdir():
+                    raw = json.loads(marker.read_bytes())
+                    self._sync(
+                        conn,
+                        JournalStreamIdentityV1.model_validate(raw["stream"]),
+                        raw["partition_id"],
+                    )
+                    conn.commit()
+                    marker.unlink()
+            yield conn
+
+    def mark_dirty(self, stream: JournalStreamIdentityV1, partition_id: str) -> None:
+        from cruxible_core.exhaust.backends import _atomic_write
+
+        with _LOCK:
+            self.dirty.mkdir(mode=0o700, exist_ok=True)
+            name, value = _dirty_marker(stream, partition_id)
+            _atomic_write(self.dirty / name, value)
+
+    def clear_dirty(self, stream: JournalStreamIdentityV1, partition_id: str) -> None:
+        name, _ = _dirty_marker(stream, partition_id)
+        (self.dirty / name).unlink(missing_ok=True)
+
+    def sync_appended(
+        self,
+        conn: sqlite3.Connection,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+        frames: list[tuple[int, int, StoredProcedureJournalRecordV1]],
+        *,
+        before: tuple[int, ...] | None,
+        after: tuple[int, ...] | None,
+        directory: Path,
+    ) -> None:
+        """Index the just-bound group, only if the log proves the exact extension."""
+        first, _, _ = frames[0]
+        end = frames[-1][0] + frames[-1][1]
+        prior = conn.execute(
+            "SELECT end_offset,sequence,digest FROM partitions WHERE stream=? AND partition_id=?",
+            (_key(stream), partition_id),
+        ).fetchone()
+        record = frames[0][2].record
+        if (
+            after is None
+            or after[2] != end
+            or (before is not None and before[:2] != after[:2])
+            or (prior is None and (first != 0 or record.sequence != 1))
+            or (
+                prior is not None
+                and (
+                    prior[0] != first
+                    or prior[1] != record.sequence - 1
+                    or prior[2] != record.previous_record_digest
+                )
+            )
+        ):
+            self._sync(conn, stream, partition_id, directory=directory)
+            raise JournalIntegrityError("journal changed during fenced append")
+        rows = []
+        for offset, size, stored in frames:
+            item = stored.record
+            rows.append(
+                (
+                    _key(stream),
+                    partition_id,
+                    item.sequence,
+                    offset,
+                    size,
+                    stored.record_digest,
+                    item.previous_record_digest,
+                    item.event_kind,
+                    item.run_id,
+                    item.occurrence_id,
+                    item.payload_digest,
+                    format_datetime(item.recorded_at),
+                )
+            )
+        insert_rows(
+            conn,
+            "records(stream,partition_id,sequence,offset,size,digest,previous,"
+            "event_kind,run_id,occurrence_id,payload_digest,recorded_at)",
+            rows,
+        )
+        last = frames[-1][2]
+        conn.execute(
+            "INSERT OR REPLACE INTO partitions VALUES(?,?,?,?,?,?)",
+            (
+                _key(stream),
+                partition_id,
+                end,
+                last.record.sequence,
+                last.record_digest,
+                ":".join(map(str, after)),
+            ),
+        )
+
+    def _sync(
+        self,
+        conn: sqlite3.Connection,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+        *,
+        recover_tail: bool = False,
+        directory: Path | None = None,
+    ) -> None:
+        """Index complete frames; only a locked writer may discard a crash tail."""
+
+        if directory is None:
+            directory = self.backend._partition_directory(stream, partition_id, create=False)
+        log = directory / "records.log"
+        if not log.exists():
+            return
+        stat = log.stat()
+        signature = (
+            f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
+        )
+        prior = conn.execute(
+            "SELECT * FROM partitions WHERE stream=? AND partition_id=?",
+            (_key(stream), partition_id),
+        ).fetchone()
+        if (
+            prior is not None
+            and prior["signature"] == signature
+            and (not recover_tail or prior["end_offset"] == stat.st_size)
+        ):
+            return
+        offset, sequence, previous = 0, 0, journal_genesis_digest(stream, partition_id)
+        # Only a strict append can reuse the verified prefix. Replacement or an
+        # in-place edit rebuilds the partition through the same frame verifier.
+        if (
+            prior is not None
+            and stat.st_size > prior["end_offset"]
+            and prior["signature"].split(":")[:2] == signature.split(":")[:2]
+        ):
+            offset, sequence, previous = prior["end_offset"], prior["sequence"], prior["digest"]
+        else:
+            conn.execute(
+                "DELETE FROM records WHERE stream=? AND partition_id=?",
+                (_key(stream), partition_id),
+            )
+        for start, size, stored in self.backend._read_frames(
+            directory,
+            stream=stream,
+            partition_id=partition_id,
+            recover_tail=recover_tail,
+            tolerate_tail=not recover_tail,
+            offset=offset,
+            sequence=sequence,
+            previous=previous,
+        ):
+            record = stored.record
+            conn.execute(
+                "INSERT INTO records(stream,partition_id,sequence,offset,size,digest,previous,"
+                "event_kind,run_id,occurrence_id,payload_digest,recorded_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    _key(stream),
+                    partition_id,
+                    record.sequence,
+                    start,
+                    size,
+                    stored.record_digest,
+                    record.previous_record_digest,
+                    record.event_kind,
+                    record.run_id,
+                    record.occurrence_id,
+                    record.payload_digest,
+                    format_datetime(record.recorded_at),
+                ),
+            )
+            offset, sequence, previous = start + size, record.sequence, stored.record_digest
+        stat = log.stat()
+        signature = (
+            f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO partitions VALUES(?,?,?,?,?,?)",
+            (_key(stream), partition_id, offset, sequence, previous, signature),
+        )
+
+    def sync(
+        self,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+        *,
+        recover_tail: bool = False,
+    ) -> None:
+        with self.connection() as conn:
+            self._sync(conn, stream, partition_id, recover_tail=recover_tail)
+
+    def catch_up(self, stream: JournalStreamIdentityV1, partition_ids: Iterable[str]) -> None:
+        """Index every record appended to these partitions since their last sync.
+
+        Each partition's sync compares the log's signature first and, on a strict
+        append, verifies and indexes only the frames past its last indexed
+        offset: an unchanged partition costs one stat, a grown one its new
+        records, never the whole journal.
+        """
+
+        with self.connection() as conn:
+            for partition_id in partition_ids:
+                self._sync(conn, stream, partition_id)
+
+    def head(self, stream: JournalStreamIdentityV1, partition_id: str) -> JournalPartitionHeadV1:
+        with self.connection() as conn:
+            self._sync(conn, stream, partition_id)
+            row = conn.execute(
+                "SELECT sequence,digest FROM partitions WHERE stream=? AND partition_id=?",
+                (_key(stream), partition_id),
+            ).fetchone()
+            return JournalPartitionHeadV1(
+                stream=stream,
+                partition_id=partition_id,
+                sequence=row[0] if row else 0,
+                record_digest=row[1] if row else journal_genesis_digest(stream, partition_id),
+            )
+
+    def read_row(self, row: sqlite3.Row) -> StoredProcedureJournalRecordV1:
+        encoded_stream = row["stream"]
+        stream = _STREAM_IDENTITIES.derive(
+            encoded_stream, lambda: JournalStreamIdentityV1.model_validate_json(encoded_stream)
+        )
+        directory = self.backend._partition_directory(stream, row["partition_id"], create=False)
+        frames = self.backend._read_frames(
+            directory,
+            stream=stream,
+            partition_id=row["partition_id"],
+            recover_tail=False,
+            offset=row["offset"],
+            sequence=row["sequence"] - 1,
+            previous=row["previous"],
+        )
+        try:
+            _, size, stored = next(frames)
+            if size != row["size"] or stored.record_digest != row["digest"]:
+                raise JournalIntegrityError("indexed journal record differs from retained bytes")
+            return stored
+        except StopIteration as exc:
+            raise JournalIntegrityError("indexed journal record is missing") from exc
+        finally:
+            frames.close()
+
+    def select(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        partition_id: str | None = None,
+        run_id: str | None = None,
+        event_kind: str | None = None,
+        occurrence_id: str | None = None,
+        payload_digest: str | None = None,
+        first_sequence: int | None = None,
+        last_sequence: int | None = None,
+        descending: bool = False,
+        limit: int | None = None,
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        with self.connection() as conn:
+            if partition_id is not None:
+                self._sync(conn, stream, partition_id)
+            where = ["stream=?"]
+            args: list[Any] = [_key(stream)]
+            for name, value in (
+                ("partition_id", partition_id),
+                ("run_id", run_id),
+                ("event_kind", event_kind),
+                ("occurrence_id", occurrence_id),
+                ("payload_digest", payload_digest),
+            ):
+                if value is not None:
+                    where.append(f"{name}=?")
+                    args.append(value)
+            for op, bound in ((">=", first_sequence), ("<=", last_sequence)):
+                if bound is not None:
+                    where.append(f"sequence{op}?")
+                    args.append(bound)
+            order = "DESC" if descending else "ASC"
+            # An exact payload, occurrence or run is one short index range; without the
+            # hint the planner may prefer an index that only serves the order.
+            hint = (
+                " INDEXED BY records_occurrence"
+                if occurrence_id is not None and partition_id is not None
+                else " INDEXED BY records_run_kind"
+                if run_id is not None and event_kind is not None
+                else " INDEXED BY records_payload"
+                if payload_digest is not None and event_kind is not None
+                else ""
+            )
+            sql = (
+                f"SELECT * FROM records{hint} WHERE "
+                + " AND ".join(where)
+                + f" ORDER BY sequence {order}, partition_id {order}"
+            )
+            if limit is not None:
+                sql += " LIMIT ?"
+                args.append(limit)
+            return tuple(self.read_row(row) for row in conn.execute(sql, args).fetchall())
+
+    def run_locators(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        limit: int,
+        partition_id: str | None = None,
+        run_id: str | None = None,
+        running_only: bool = False,
+        after: RunLocatorKey | None = None,
+    ) -> tuple[tuple[RunLocator, ...], bool]:
+        """Admitted runs, newest admission first: a locator read.
+
+        Index rows only: no payload is read. The order is the admission
+        record's position in this index, which never changes once written, so
+        a page continues by key and a run that finishes between pages is never
+        repeated or skipped. A run's status is a displayed field, never part of
+        the order; ``running_only`` filters to runs whose ``attempt_finalized``
+        record has not landed. A key minted before the index was rebuilt names
+        positions that no longer exist, so it refuses rather than guess.
+        """
+
+        where = ["a.stream=?", "a.event_kind='admission_bound'", "a.run_id IS NOT NULL"]
+        args: list[Any] = [_key(stream)]
+        if partition_id is not None:
+            where.append("a.partition_id=?")
+            args.append(partition_id)
+        if run_id is not None:
+            where.append("a.run_id=?")
+            args.append(run_id)
+        # Each shape names the index whose range holds exactly its candidates.
+        source = "records a INDEXED BY " + (
+            "records_run_kind"
+            if run_id is not None
+            else "records_partition_position"
+            if partition_id is not None
+            else "records_kind_position"
+        )
+        if running_only:
+            # Only open admissions are visited: finished history is never scanned.
+            source = (
+                "open_runs o INDEXED BY "
+                + ("open_runs_partition" if partition_id is not None else "open_runs_stream")
+                + " JOIN records a ON a.id=o.row_id"
+            )
+            where.append("o.stream=?")
+            args.append(_key(stream))
+            if partition_id is not None:
+                where.append("o.partition_id=?")
+                args.append(partition_id)
+        final = (
+            "(SELECT f.payload_digest FROM records f INDEXED BY records_run_kind "
+            "WHERE f.stream=a.stream AND f.run_id=a.run_id AND f.event_kind='attempt_finalized' "
+            "ORDER BY f.sequence DESC LIMIT 1)"
+        )
+        with self.connection() as conn:
+            identity = conn.execute(
+                "SELECT identity FROM index_identity WHERE singleton=1"
+            ).fetchone()[0]
+            if after is not None:
+                if after[0] != identity:
+                    raise RunPageInvalidated(
+                        "the run index was rebuilt since this page's first read"
+                    )
+            order = "o.row_id" if running_only else "a.id"
+            if after is not None:
+                where.append(f"{order}<?")
+                args.append(after[1])
+            rows = conn.execute(
+                f"SELECT a.id AS row_id, a.run_id AS run_id, a.recorded_at AS admitted_at, "
+                f"a.partition_id AS partition_id, a.payload_digest AS payload_digest, "
+                f"{final} AS final_digest, "
+                "(SELECT count(*) FROM records n INDEXED BY records_run_kind "
+                "WHERE n.stream=a.stream AND n.run_id=a.run_id AND n.event_kind='node_fired') "
+                f"AS nodes FROM {source} WHERE "
+                + " AND ".join(where)
+                + f" ORDER BY {order} DESC LIMIT ?",
+                (*args, limit + 1),
+            ).fetchall()
+        return (
+            tuple(
+                RunLocator(
+                    run_id=row["run_id"],
+                    admitted_at=row["admitted_at"],
+                    partition_id=row["partition_id"],
+                    admission_payload_digest=row["payload_digest"],
+                    final_payload_digest=row["final_digest"],
+                    nodes_done=int(row["nodes"]),
+                    index_identity=str(identity),
+                    row_id=int(row["row_id"]),
+                )
+                for row in rows[:limit]
+            ),
+            len(rows) > limit,
+        )
+
+    def newest_events(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        event_kind: str,
+        limit: int,
+        before: tuple[str, str, int] | None = None,
+    ) -> tuple[EventLocator, ...]:
+        """One kind's records, newest record instant first: a locator read.
+
+        One range of ``records_event`` in its own order (instant, partition,
+        sequence), starting strictly ``before`` that key when one is given, so a
+        page costs its rows and never the records newer or older than it. The
+        key is the journal's own (it survives an index rebuild), and a record
+        appended later with a newer instant never lands behind it. No payload
+        is read.
+        """
+
+        with self.connection() as conn:
+            rows = rows_before(
+                conn,
+                select="id,recorded_at,partition_id,sequence,run_id,payload_digest",
+                source="records INDEXED BY records_event",
+                where="stream=? AND event_kind=?",
+                args=(_key(stream), event_kind),
+                columns=("recorded_at", "partition_id", "sequence"),
+                bound=before,
+                limit=limit,
+            )
+        return tuple(
+            EventLocator(
+                record_id=int(row[0]),
+                recorded_at=str(row[1]),
+                partition_id=str(row[2]),
+                position=int(row[3]),
+                run_id=None if row[4] is None else str(row[4]),
+                payload_digest=str(row[5]),
+            )
+            for row in rows
+        )
+
+    def run_admission_digest(self, stream: JournalStreamIdentityV1, run_id: str) -> str | None:
+        """The payload digest of one run's ``admission_bound`` record: one index seek."""
+
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT payload_digest FROM records INDEXED BY records_run_kind "
+                "WHERE stream=? AND run_id=? AND event_kind='admission_bound' "
+                "ORDER BY sequence LIMIT 1",
+                (_key(stream), run_id),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def running(
+        self, stream: JournalStreamIdentityV1, *, page_size: int = 256
+    ) -> Iterator[RunLocator]:
+        """Every run still running, newest admission first, paged from the open-run set.
+
+        A run that finishes while the caller works through a page (recovery
+        finalizing it) never moves the keyset, so nothing repeats or is skipped.
+        """
+
+        after: RunLocatorKey | None = None
+        while True:
+            page, more = self.run_locators(stream, limit=page_size, running_only=True, after=after)
+            yield from page
+            if not more or not page:
+                return
+            after = page[-1].key
+
+    def run_ids_with_prefix(
+        self, stream: JournalStreamIdentityV1, prefix: str, *, limit: int
+    ) -> tuple[str, ...]:
+        """Admitted run ids starting with ``prefix``, in id order: a locator read."""
+
+        with self.connection() as conn:
+            return tuple(
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT run_id FROM records WHERE stream=? "
+                    "AND event_kind='admission_bound' AND run_id>=? AND run_id<? "
+                    "ORDER BY run_id LIMIT ?",
+                    (_key(stream), prefix, prefix + "\uffff", limit),
+                )
+            )
+
+    def run_counts(
+        self, stream: JournalStreamIdentityV1, *, partition_id: str | None = None
+    ) -> tuple[int, int]:
+        """How many runs were admitted, and how many of them are still running.
+
+        Read from the admission tallies and the open-run set the index keeps as
+        it indexes records, so the cost follows the runs still running, never
+        the runs ever admitted.
+        """
+
+        scope = partition_id if partition_id is not None else ""
+        with self.connection() as conn:
+            admitted = conn.execute(
+                "SELECT admitted FROM run_tallies WHERE stream=? AND partition_id=?",
+                (_key(stream), scope),
+            ).fetchone()
+            running = (
+                conn.execute(
+                    "SELECT count(*) FROM open_runs WHERE stream=? AND partition_id=?",
+                    (_key(stream), partition_id),
+                )
+                if partition_id is not None
+                else conn.execute("SELECT count(*) FROM open_runs WHERE stream=?", (_key(stream),))
+            ).fetchone()
+        row = (0 if admitted is None else admitted[0], running[0])
+        return int(row[0]), int(row[1])
+
+    def payload_digests(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        event_kind: str,
+        after: int,
+        through: int,
+    ) -> tuple[str, ...]:
+        """The payload digests of one kind's records in one live-reader range, by position."""
+
+        with self.connection() as conn:
+            return tuple(
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT payload_digest FROM records "
+                    "INDEXED BY records_kind_position "
+                    "WHERE stream=? AND event_kind=? AND id>? AND id<=?",
+                    (_key(stream), event_kind, after, through),
+                )
+            )
+
+    def kind_after(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        event_kind: str,
+        after: int,
+        limit: int,
+    ) -> tuple[str, tuple[tuple[int, StoredProcedureJournalRecordV1], ...]]:
+        """One kind's records after a cache position, in append order: a keyed page.
+
+        Returns the index identity with the page. A position is only meaningful
+        under the identity it was read with: after a rebuild the caller starts
+        again from zero (its own work must be idempotent per record).
+        """
+
+        with self.connection() as conn:
+            identity = str(
+                conn.execute("SELECT identity FROM index_identity WHERE singleton=1").fetchone()[0]
+            )
+            rows = conn.execute(
+                "SELECT * FROM records INDEXED BY records_kind_position "
+                "WHERE stream=? AND event_kind=? AND id>? ORDER BY id LIMIT ?",
+                (_key(stream), event_kind, after, limit),
+            ).fetchall()
+            return identity, tuple((int(row["id"]), self.read_row(row)) for row in rows)
+
+    def positions(
+        self, stream: JournalStreamIdentityV1, *, event_kind: str | None = None
+    ) -> dict[str, Any]:
+        """A disposable live-reader position, never a work-completion authority.
+
+        A new cache identity invalidates live positions after a rebuild. Pending
+        work still rebuilds from retained transitions; listeners open a new
+        forward range instead of guessing which old cache ordinal was observed.
+        With an event kind, the position is that kind's latest record, so a
+        reader of one kind does not move for every other record.
+        """
+        with self.connection() as conn:
+            identity = conn.execute(
+                "SELECT identity FROM index_identity WHERE singleton=1"
+            ).fetchone()[0]
+            ordinal = (
+                conn.execute(
+                    "SELECT coalesce(max(id),0) FROM records WHERE stream=?", (_key(stream),)
+                )
+                if event_kind is None
+                else conn.execute(
+                    "SELECT coalesce(max(id),0) FROM records WHERE stream=? AND event_kind=?",
+                    (_key(stream), event_kind),
+                )
+            ).fetchone()[0]
+            return {"generation": identity, "ordinal": ordinal}
+
+    def appended_partitions(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        after: dict[str, Any],
+        through: dict[str, Any],
+        limit: int,
+    ) -> tuple[tuple[str, ...], dict[str, Any] | None]:
+        """The partitions that gained a record in one live-reader range, in append order.
+
+        A locator read only: the caller re-reads each partition through its
+        verified log. Returns where the page stopped, or None once the range is
+        exhausted.
+        """
+        with self.connection() as conn:
+            generation = conn.execute(
+                "SELECT identity FROM index_identity WHERE singleton=1"
+            ).fetchone()[0]
+            if after["generation"] != generation or through["generation"] != generation:
+                raise JournalIntegrityError(
+                    "live event reader position was invalidated by an index rebuild"
+                )
+            rows = conn.execute(
+                "SELECT id,partition_id FROM records WHERE stream=? AND id>? AND id<=? "
+                "ORDER BY id LIMIT ?",
+                (_key(stream), after["ordinal"], through["ordinal"], limit + 1),
+            ).fetchall()
+        partitions = tuple(dict.fromkeys(row["partition_id"] for row in rows[:limit]))
+        if len(rows) > limit:
+            return partitions, {"generation": generation, "ordinal": rows[limit - 1]["id"]}
+        return partitions, None
+
+    def note_invocation(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        partition_id: str,
+        sequence: int,
+        invocation_id: str,
+    ) -> None:
+        """Record the invocation a just-appended start names: the writer's own locator.
+
+        The writer holds the payload it appended, so no body is read. A start
+        never noted stays pending, and a lookup projects it from its payload.
+        """
+
+        with self.connection() as conn:
+            self._sync(conn, stream, partition_id)
+            row = conn.execute(
+                "SELECT id,event_kind FROM records WHERE stream=? AND partition_id=? "
+                "AND sequence=?",
+                (_key(stream), partition_id, sequence),
+            ).fetchone()
+            if row is None or row["event_kind"] != "provider_invocation_started":
+                raise JournalIntegrityError("noted invocation start is not indexed")
+            conn.execute(
+                "INSERT OR REPLACE INTO invocation_locators VALUES (?,?)",
+                (row["id"], invocation_id),
+            )
+            conn.execute("DELETE FROM invocation_pending WHERE record_id=?", (row["id"],))
+
+    def note_proof_locators(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        partition_id: str,
+        sequence: int,
+        locators: tuple[str, ...],
+    ) -> None:
+        """Record the locators a just-appended proof record names: the writer's own.
+
+        The writer holds the payload it appended, so no body is read. A record
+        never noted stays pending, and a lookup of its run projects it.
+        """
+
+        with self.connection() as conn:
+            self._sync(conn, stream, partition_id)
+            row = conn.execute(
+                "SELECT id,event_kind,stream,run_id FROM records WHERE stream=? "
+                "AND partition_id=? AND sequence=?",
+                (_key(stream), partition_id, sequence),
+            ).fetchone()
+            if row is None or row["event_kind"] not in PROOF_LOCATOR_KINDS:
+                raise JournalIntegrityError("noted proof record is not indexed")
+            self._locate(conn, row, locators)
+
+    @staticmethod
+    def _locate(conn: sqlite3.Connection, row: sqlite3.Row, locators: tuple[str, ...]) -> None:
+        if locators and row["run_id"] is not None:
+            insert_rows(
+                conn,
+                "proof_locators(record_id,stream,run_id,locator)",
+                [(row["id"], row["stream"], row["run_id"], locator) for locator in locators],
+                verb="INSERT OR IGNORE",
+            )
+        conn.execute("DELETE FROM proof_pending WHERE record_id=?", (row["id"],))
+
+    def located_records(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        run_id: str,
+        locators: tuple[str, ...],
+        bodies: Any,
+        access: Any,
+        retry: bool = False,
+    ) -> tuple[tuple[StoredProcedureJournalRecordV1, ...], bool]:
+        """The records of one run a citation of these locators reads, and whether any are held back.
+
+        The records are every record naming one of the locators, the records
+        sharing a Source occurrence with them (its derived request and Source
+        read), and the run's admissions: never another record of the run, nor
+        of another run. The run's proof records indexed without a note are
+        projected first, once each, from their payloads. A record that cannot be
+        projected -- its frame or payload unreadable, or not a journal payload
+        -- is left pending, deferred under the current body landing head, and
+        never fails the lookup: it is tried again once that head moves, or with
+        ``retry`` (a lookup that missed). The second value says whether the run
+        still holds such a record, so the caller knows a miss may rest on it.
+        """
+
+        key = _key(stream)
+        head = _landing_head(bodies)
+        with self.connection() as conn:
+            for row in _pending_rows(conn, key, run_id, head=None if retry else head):
+                try:
+                    stored = self.read_row(row)
+                    payload = read_payload(bodies, stored.record.payload_digest, access=access)
+                    if isinstance(payload, UnavailablePayload):
+                        raise LookupError("proof payload unavailable")
+                    found = proof_locators(row["event_kind"], payload)
+                except (LookupError, OSError, TypeError, CruxibleError, ValueError):
+                    conn.execute(
+                        "UPDATE proof_pending SET deferred_at=? WHERE record_id=?",
+                        (head or "", row["id"]),
+                    )
+                    continue
+                self._locate(conn, row, found)
+            held = (
+                conn.execute(
+                    "SELECT 1 FROM proof_pending INDEXED BY proof_pending_run "
+                    "WHERE stream=? AND run_id=? LIMIT 1",
+                    (key, run_id),
+                ).fetchone()
+                is not None
+            )
+            rows = _cited_rows(conn, key, run_id, locators)
+            return tuple(self.read_row(row) for row in rows), held
+
+    def invocation_runs(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        bodies: Any,
+        invocation_ids: tuple[str, ...],
+    ) -> dict[str, tuple[str, str]]:
+        """invocation id -> (run id, partition) of the run that started it, for the named ids.
+
+        Writers note each start as they append it, so a lookup is one index
+        range per id. Only starts indexed without a note (an index rebuilt from
+        the journal, or a crash between an append and its note) are projected
+        here, once each, from their payloads. An id no retained start names is
+        absent from the answer.
+        """
+        from cruxible_core.storage.cas import BodyAccessContext
+
+        access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
+        with self.connection() as conn:
+            while True:
+                pending = conn.execute(
+                    # Driven by the pending rows of this stream: when none are
+                    # pending, nothing else is visited.
+                    "SELECT r.* FROM invocation_pending p INDEXED BY invocation_pending_stream "
+                    "JOIN records r ON r.id=p.record_id "
+                    "WHERE p.stream=? ORDER BY p.record_id LIMIT 1024",
+                    (_key(stream),),
+                ).fetchall()
+                if not pending:
+                    break
+                for row in pending:
+                    stored = self.read_row(row)
+                    payload = read_payload(bodies, stored.record.payload_digest, access=access)
+                    if isinstance(payload, UnavailablePayload):
+                        conn.execute(
+                            "DELETE FROM invocation_pending WHERE record_id=?", (row["id"],)
+                        )
+                        continue
+                    if not isinstance(payload, dict) or not isinstance(
+                        payload.get("invocation_id"), str
+                    ):
+                        raise JournalIntegrityError(
+                            "Provider invocation start payload names no invocation"
+                        )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO invocation_locators VALUES (?,?)",
+                        (row["id"], payload["invocation_id"]),
+                    )
+                    conn.execute("DELETE FROM invocation_pending WHERE record_id=?", (row["id"],))
+            found: dict[str, tuple[str, str]] = {}
+            for invocation_id in invocation_ids:
+                row = conn.execute(
+                    "SELECT r.run_id,r.partition_id FROM invocation_locators l "
+                    "JOIN records r ON r.id=l.record_id "
+                    "WHERE l.invocation_id=? AND r.stream=? ORDER BY l.record_id LIMIT 1",
+                    (invocation_id, _key(stream)),
+                ).fetchone()
+                if row is not None and row[0] is not None:
+                    found[invocation_id] = (str(row[0]), str(row[1]))
+            return found
+
+    @unpositioned_operation
+    def _project_landings(
+        self, conn: sqlite3.Connection, stream: JournalStreamIdentityV1, bodies: Any
+    ) -> bool:
+        """Project up to one chunk of new landings; whether the projection is caught up.
+
+        Each produced_capture record is read once, after the high-water mark:
+        its contract, its logical source (from its Capture's envelope), its
+        landing instant and stream. A lost payload records the landing as
+        unattributed; a lost envelope keeps it, with no source, marked lost.
+
+        What it writes is kept for good, so it reads the store as it is now,
+        never at the positions of a read it runs inside: a landing appended
+        after that read pinned the body store's landing log has an envelope
+        the pinned read cannot see, and recording it lost would misattribute
+        it permanently.
+        """
+
+        from cruxible_core.storage.cas import BodyAccessContext
+
+        access = BodyAccessContext(principal_id="trigger-discovery", can_read_body=True)
+        progress = conn.execute(
+            "SELECT record_id FROM capture_progress WHERE stream=?", (_key(stream),)
+        ).fetchone()
+        fresh = conn.execute(
+            "SELECT * FROM records WHERE stream=? AND event_kind='produced_capture' "
+            "AND id>? ORDER BY id LIMIT ?",
+            (_key(stream), progress[0] if progress else 0, _LANDING_CHUNK + 1),
+        ).fetchall()
+        for row in fresh[:_LANDING_CHUNK]:
+            stored = self.read_row(row)
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                conn.execute(
+                    "INSERT INTO capture_unattributed SELECT ?,? WHERE NOT EXISTS("
+                    "SELECT 1 FROM capture_unattributed WHERE record_id=?)",
+                    (row["id"], _key(stream), row["id"]),
+                )
+                continue
+            if (
+                not isinstance(payload, dict)
+                or payload.get("tag") != "playbill-procedure-produced-capture-v1"
+                or not isinstance(payload.get("capture_contract_digest"), str)
+            ):
+                raise JournalIntegrityError("produced Capture payload lacks its typed contract")
+            source = landing_logical_source(bodies, payload, access=access)
+            lost = isinstance(source, UnavailablePayload)
+            if lost:
+                # Preserve unrestricted event discovery when its envelope
+                # is lost; a sourced selector cannot establish a match.
+                source = None
+            conn.execute(
+                "INSERT INTO capture_selectors(record_id,contract_digest,logical_source,"
+                "stream,landed_at,source_lost) VALUES (?,?,?,?,?,?)",
+                (
+                    row["id"],
+                    payload["capture_contract_digest"],
+                    source,
+                    _key(stream),
+                    row["recorded_at"],
+                    int(lost),
+                ),
+            )
+        if fresh:
+            conn.execute(
+                "INSERT OR REPLACE INTO capture_progress VALUES(?,?)",
+                (_key(stream), fresh[min(len(fresh), _LANDING_CHUNK) - 1]["id"]),
+            )
+        return len(fresh) <= _LANDING_CHUNK
+
+    def source_landings(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        bodies: Any,
+        limit: int,
+        after: str | None,
+    ) -> SourceLandingPage:
+        """One page of logical sources by name, each with its landings: tallies and one seek.
+
+        New landings are projected first, a chunk per transaction, each read
+        once whatever reads it next (Capture-landing Triggers project the same
+        rows). The page then walks the per-source tallies and seeks each
+        source's newest landing: it costs its sources and their contracts,
+        never their landings.
+        """
+
+        while True:
+            with self.connection() as conn:
+                if self._project_landings(conn, stream, bodies):
+                    return source_landing_page(conn, _key(stream), limit=limit, after=after)
+
+    def captures(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        bodies: Any,
+        contract_digest: str | None = None,
+        contract_identity: str | None = None,
+        resolve_contract: Callable[[str], str | None] | None = None,
+        logical_sources: tuple[str, ...] = (),
+        since: datetime | None,
+        until: datetime,
+        limit: int,
+        cursor: tuple[str, str, int] | None = None,
+        after: dict[str, Any] | None = None,
+        through: dict[str, Any] | None = None,
+    ) -> tuple[tuple[StoredProcedureJournalRecordV1, ...], tuple[str, str, int] | None, bool]:
+        """Project new capture selectors once, then verify only selected bodies.
+
+        Metadata catch-up is bounded independently of the result page. A caller
+        must not report absence while selector coverage is incomplete.
+        """
+        with self.connection() as conn:
+            if not self._project_landings(conn, stream, bodies):
+                return (), None, False
+            if contract_identity is not None:
+                if resolve_contract is None:
+                    raise ValueError(
+                        "named Capture discovery requires an accepted-history resolver"
+                    )
+                progress = conn.execute(
+                    "SELECT record_id FROM capture_name_progress WHERE stream=?", (_key(stream),)
+                ).fetchone()
+                pending = conn.execute(
+                    "SELECT c.record_id,c.contract_digest FROM capture_selectors c "
+                    "JOIN records r ON r.id=c.record_id "
+                    "WHERE r.stream=? AND c.record_id>? ORDER BY c.record_id LIMIT 1025",
+                    (_key(stream), 0 if progress is None else progress[0]),
+                ).fetchall()
+                for record_id, digest in pending[:1024]:
+                    known = conn.execute(
+                        "SELECT identity FROM capture_contract_names WHERE digest=?", (digest,)
+                    ).fetchone()
+                    if known is None:
+                        identity = resolve_contract(digest)
+                        conn.execute(
+                            "INSERT INTO capture_contract_names VALUES(?,?)", (digest, identity)
+                        )
+                    else:
+                        identity = known[0]
+                    conn.execute(
+                        "UPDATE capture_selectors SET contract_identity=? WHERE record_id=?",
+                        (identity, record_id),
+                    )
+                if pending:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO capture_name_progress VALUES(?,?)",
+                        (_key(stream), pending[min(len(pending), 1024) - 1][0]),
+                    )
+                if len(pending) > 1024:
+                    return (), None, False
+            args: list[Any]
+            where, args = (
+                [
+                    "r.stream=?",
+                    "c.contract_identity=?"
+                    if contract_identity is not None
+                    else "c.contract_digest=?",
+                ],
+                [
+                    _key(stream),
+                    contract_identity if contract_identity is not None else contract_digest,
+                ],
+            )
+            if logical_sources:
+                where.append("c.logical_source IN (" + ",".join("?" for _ in logical_sources) + ")")
+                args.extend(logical_sources)
+            if through is not None:
+                generation = conn.execute(
+                    "SELECT identity FROM index_identity WHERE singleton=1"
+                ).fetchone()[0]
+                if (
+                    through["generation"] != generation
+                    or after is None
+                    or after["generation"] != generation
+                ):
+                    raise JournalIntegrityError(
+                        "live event reader position was invalidated by an index rebuild"
+                    )
+                where.extend(("r.id>?", "r.id<=?"))
+                args.extend((after["ordinal"], through["ordinal"]))
+            if through is None:
+                where.append("r.recorded_at<?")
+                args.append(format_datetime(until))
+            if since is not None and through is None:
+                where.append("r.recorded_at>=?")
+                args.append(format_datetime(since))
+            if cursor is not None:
+                where.append("(r.recorded_at,r.partition_id,r.sequence)<(?,?,?)")
+                args.extend(cursor)
+            rows = conn.execute(
+                "SELECT r.* FROM capture_selectors c JOIN records r ON r.id=c.record_id WHERE "
+                + " AND ".join(where)
+                + " ORDER BY r.recorded_at DESC,r.partition_id DESC,r.sequence DESC LIMIT ?",
+                (*args, limit + 1),
+            ).fetchall()
+            selected = tuple(self.read_row(row) for row in rows[:limit])
+            next_cursor = None
+            if len(rows) > limit:
+                row = rows[limit - 1]
+                next_cursor = (row["recorded_at"], row["partition_id"], row["sequence"])
+            return selected, next_cursor, True

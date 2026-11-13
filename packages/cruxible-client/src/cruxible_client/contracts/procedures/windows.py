@@ -1,0 +1,204 @@
+"""Shared observation windows for contracts and Line trigger eligibility."""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timedelta
+from typing import Annotated, Literal
+
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import ArtifactDigest, Sha256Value
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+
+
+class _WindowModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
+
+def _logical_sources(value: tuple[str, ...]) -> tuple[str, ...]:
+    if value != tuple(sorted(set(value))):
+        raise ValueError("logical_sources must be sorted and unique")
+    if any(not re.fullmatch(r"[a-z][a-z0-9_.-]{0,255}", item) for item in value):
+        raise ValueError("logical_sources must be canonical identifiers")
+    return value
+
+
+LogicalSources = Annotated[tuple[str, ...], AfterValidator(_logical_sources)]
+
+
+class CaptureEventSelector(_WindowModel):
+    """Match a durable produced-capture event, never an accepted-head change."""
+
+    capture_contract_identity: ArtifactIdentity
+    capture_contract_digest: str
+    # Omit the unrestricted default so historical artifacts retain exact bytes/digests.
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _kind(self) -> CaptureEventSelector:
+        if self.capture_contract_identity.kind != "CaptureContract":
+            raise ValueError("capture event selector must name a CaptureContract")
+        return self
+
+    @field_validator("capture_contract_digest", check_fields=False)
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
+
+
+class CaptureEventNameSelector(_WindowModel):
+    """An authored CaptureContract name and optional logical-source restriction."""
+
+    capture_contract_identity: ArtifactIdentity
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _kind(self) -> CaptureEventNameSelector:
+        if self.capture_contract_identity.kind != "CaptureContract":
+            raise ValueError("capture event selector must name a CaptureContract")
+        return self
+
+
+class TriggerEventReference(_WindowModel):
+    run_id: str = Field(min_length=1)
+    partition_id: str = Field(min_length=1)
+    sequence: int = Field(ge=1, description="Reads SETTLEMENT ORDER.")
+    record_digest: str
+
+    @field_validator("record_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class FixedWindow(_WindowModel):
+    kind: Literal["fixed"] = "fixed"
+    starts_at: datetime = Field(description="Reads VALIDITY WINDOW.")
+    duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
+
+    @field_validator("starts_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("starts_at", when_used="json")
+    def _serialize(self, value: datetime) -> str:
+        rendered = format_datetime(value)
+        assert rendered is not None
+        return rendered
+
+
+class CaptureEventWindow(_WindowModel):
+    kind: Literal["capture_event"] = "capture_event"
+    event: CaptureEventSelector
+    duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
+
+
+class CaptureEventNameWindow(_WindowModel):
+    """An authored window anchored on the named Capture event."""
+
+    kind: Literal["capture_event"] = "capture_event"
+    event: CaptureEventNameSelector
+    duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
+
+
+ObservationWindow = Annotated[FixedWindow | CaptureEventWindow, Field(discriminator="kind")]
+
+
+class BoundObservationWindow(_WindowModel):
+    """Exact boundaries retained at admission, including the verified event anchor."""
+
+    starts_at: datetime = Field(description="Reads VALIDITY WINDOW.")
+    ends_at: datetime = Field(description="Reads VALIDITY WINDOW.")
+    event: TriggerEventReference | None = None
+
+    @field_validator("starts_at", "ends_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("starts_at", "ends_at", when_used="json")
+    def _serialize(self, value: datetime) -> str:
+        rendered = format_datetime(value)
+        assert rendered is not None
+        return rendered
+
+    @model_validator(mode="after")
+    def _ordered(self) -> BoundObservationWindow:
+        if self.ends_at <= self.starts_at:
+            raise ValueError("observation window must be finite and increasing")
+        return self
+
+
+def bind_observation_window(
+    policy: ObservationWindow | CaptureEventNameWindow,
+    *,
+    event: TriggerEventReference | None = None,
+    event_time: datetime | None = None,
+) -> BoundObservationWindow:
+    """The caller authenticates the event and selector before supplying its time."""
+    if isinstance(policy, FixedWindow):
+        if event is not None or event_time is not None:
+            raise ValueError("fixed window cannot accept an event anchor")
+        start = policy.starts_at
+    else:
+        if event is None or event_time is None:
+            raise ValueError("event window is waiting for its exact retained event")
+        start = ensure_utc(event_time)
+    return BoundObservationWindow(
+        starts_at=start,
+        ends_at=start + timedelta(seconds=policy.duration_seconds),
+        event=event,
+    )
+
+
+#: Binding kinds whose occurrence is a tick of time rather than an event or window.
+TIMED_BINDING_KINDS = frozenset({"cadence", "cron"})
+
+
+class LineTriggerBinding(_WindowModel):
+    """Semantic cause of one occurrence, independent of its dispatch instant.
+
+    ``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds
+    no event or window: its instant is the occurrence's own evaluation instant.
+    """
+
+    kind: Literal["cadence", "cron", "capture_landing", "window_close", "generation_accepted"]
+    trigger: ArtifactIdentity
+    generation: int | None = Field(default=None, ge=0)
+    event: TriggerEventReference | None = None
+    window: BoundObservationWindow | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> LineTriggerBinding:
+        if self.trigger.kind != "Trigger":
+            raise ValueError("a trigger binding names the Trigger that fired")
+        if (self.kind == "generation_accepted") != (self.generation is not None):
+            raise ValueError("only a generation trigger binds an accepted generation")
+        if self.kind == "generation_accepted":
+            if self.event is not None or self.window is not None:
+                raise ValueError("a generation trigger binds no Capture or window")
+        elif self.kind in TIMED_BINDING_KINDS:
+            if self.event is not None or self.window is not None:
+                raise ValueError("a cadence or cron tick binds no event or window")
+        elif self.kind == "capture_landing":
+            if self.event is None or self.window is not None:
+                raise ValueError("capture trigger must bind exactly one retained event")
+        elif self.kind == "window_close":
+            if self.window is None or self.event != self.window.event:
+                raise ValueError("window trigger must reproduce its event anchor")
+        else:
+            raise ValueError(f"unsupported trigger binding kind {self.kind!r}")
+        return self

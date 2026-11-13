@@ -1,0 +1,804 @@
+"""Persistent loader for opt-in Cruxible substrates attached to governed instances."""
+
+from __future__ import annotations
+
+import os
+import threading
+from pathlib import Path
+
+import structlog
+from pydantic import ValidationError
+
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import (
+    BootstrapError,
+    FormatError,
+    ObjectFormatConflict,
+    ReseedRequired,
+)
+from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.temporal import utc_now
+from cruxible_client.contracts.types import (
+    GitObjectFormat,
+    OperatingProfile,
+    PrincipalRecord,
+    TrustRoot,
+)
+from cruxible_core.documents.workspace_file import WorkspaceFileReader
+from cruxible_core.errors import (
+    ChangeRefusedError,
+    InstanceLocationRefusedError,
+    InstanceNotFoundError,
+)
+from cruxible_core.floor.workspace_advertisement import (
+    advertise_workspace_refs,
+    not_git_advertisement,
+    workspace_git_object_format,
+)
+from cruxible_core.providers.provider_process_leases import ProviderProcessRecoveryResultV1
+from cruxible_core.runtime.instance import DEFAULT_GIT_OBJECT_FORMAT, PlaybillInstance
+from cruxible_core.runtime.provider_runtime import (
+    ProviderRecoveryFoldDisposition,
+    ProviderRuntimeOperator,
+)
+from cruxible_core.server.config import get_server_state_root
+from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+from cruxible_core.service.procedures.procedure_runs import (
+    ProcedureRunOperationalConfigV1,
+    load_procedure_run_config,
+)
+from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
+from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
+from cruxible_core.storage import fsync_directory as _fsync_directory
+from cruxible_core.storage.preview_fence import PreviewWriteRefused
+
+_log = structlog.get_logger("cruxible.provider_runtime")
+
+
+def _plain_folder(workspace: Path) -> bool:
+    """Whether an attached workspace has no ``.git`` entry (a broken one is still Git)."""
+
+    try:
+        return workspace_git_object_format(workspace) is None
+    except (OSError, ValueError):
+        return False
+
+
+class PlaybillInstanceManager:
+    """Open Cruxible only from a registry-owned root and pinned trust-root file."""
+
+    def __init__(self) -> None:
+        self._instances: dict[str, PlaybillInstance] = {}
+        self._provider_runtime_operators: dict[Path, ProviderRuntimeOperator] = {}
+        self._lock = threading.RLock()
+        # Set by the daemon: summarize the head once acceptances go quiet, so a
+        # restart need not replay them. Embedded managers keep the stride only.
+        self.quiet_checkpoint_seconds: float | None = None
+        from cruxible_core.consumers.runner import ConsumerRunner
+
+        self.consumer_runner = ConsumerRunner(self)
+
+    def _paths(self, instance_id: str) -> tuple[Path, Path, tuple[Path, ...]]:
+        registry = get_registry()
+        record = registry.get(instance_id)
+        if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
+            raise InstanceNotFoundError(instance_id)
+        # A row outside this state root names another root's instance (a copied
+        # state root still carries the original's registry): refused, never served.
+        managed_root = registry.instance_root(record)
+        legacy_root = managed_root / ".cruxible"
+        for legacy in (legacy_root / "playbill-v1", legacy_root / "playbill-trust-root-v1.json"):
+            if legacy.exists():
+                raise ReseedRequired(found=str(legacy))
+        trust_root = registry.state_root / "trust" / f"{instance_id}.json"
+        if managed_root.exists() != trust_root.exists():
+            raise ReseedRequired()
+        workspaces = (
+            (Path(record.workspace_root).resolve(strict=False),)
+            if record.workspace_root is not None
+            else ()
+        )
+        return managed_root, trust_root, workspaces
+
+    @staticmethod
+    def _bind_workspace(
+        instance: PlaybillInstance,
+        workspaces: tuple[Path, ...],
+    ) -> None:
+        """Bind the advisory ledger mirror into the attached folder, if it is Git.
+
+        Whether the folder is a Git repository is decided here, when the host
+        opens or is (re)attached, never on a later write: running ``git init``
+        in an attached folder turns the mirror on at the next ``workspace
+        attach``, not by surprise.
+        """
+
+        workspace = workspaces[0] if workspaces else None
+        if workspace is not None and _plain_folder(workspace):
+            plain = workspace
+            instance.bind_workspace_advertiser(
+                lambda: not_git_advertisement(plain), workspace_path=workspace
+            )
+            return
+        instance.bind_workspace_advertiser(
+            lambda: advertise_workspace_refs(
+                workspace_root=workspace,
+                ledger_path=instance.root / instance.descriptor.storage.ledger,
+                ledger_object_format=instance.descriptor.git_object_format,
+            ),
+            workspace_path=workspace,
+        )
+
+    def initialize(
+        self,
+        instance_id: str,
+        *,
+        client_principals: tuple[PrincipalRecord, ...],
+        operating_profile: OperatingProfile = "local",
+        require_independent_approval: bool = False,
+        git_object_format: GitObjectFormat | None = None,
+    ) -> PlaybillInstance:
+        managed_root, trust_path, workspaces = self._paths(instance_id)
+        with self._lock:
+            if managed_root.exists() or trust_path.exists():
+                instance = self.get(instance_id)
+                actual_clients = tuple(
+                    sorted(
+                        (
+                            principal
+                            for principal in instance.trust_root.principals
+                            if principal.kind != "daemon"
+                        ),
+                        key=lambda item: item.principal_id.encode("utf-8"),
+                    )
+                )
+                requested_clients = tuple(
+                    sorted(
+                        client_principals,
+                        key=lambda item: item.principal_id.encode("utf-8"),
+                    )
+                )
+                expected_policy = (
+                    "independent_approval_required"
+                    if require_independent_approval
+                    else "self_approval_allowed"
+                )
+                if (
+                    actual_clients != requested_clients
+                    or instance.descriptor.operating_profile != operating_profile
+                    or instance.inspect().approval_policy_mode != expected_policy
+                ):
+                    raise BootstrapError(
+                        "Cruxible is already initialized with a different principal set, "
+                        "operating profile, or bootstrap approval policy"
+                    )
+                return instance
+            try:
+                workspace_format = (
+                    workspace_git_object_format(workspaces[0]) if workspaces else None
+                )
+            except ValueError as exc:
+                raise BootstrapError(
+                    "attached workspace must be a folder, or one exact local Git worktree"
+                ) from exc
+            # An attached Git workspace's own format wins, because the advisory
+            # remote refuses across formats. With no workspace, or a plain
+            # folder, the ledger is SHA-1: common Git viewers do not recognize a
+            # SHA-256 repository, and a ledger nobody can open is not evidence
+            # anyone can read (maintainer ruling, 2026-09-03).
+            if (
+                git_object_format is not None
+                and workspace_format is not None
+                and git_object_format != workspace_format
+            ):
+                raise ObjectFormatConflict(
+                    f"{ObjectFormatConflict.error_code}: the requested Git object "
+                    f"format differs from the attached workspace's {workspace_format!r}; "
+                    "repair: omit --object-format to inherit the workspace, or attach a "
+                    "workspace in the requested format",
+                    workspace_format=workspace_format,
+                )
+            object_format: GitObjectFormat = (
+                workspace_format
+                if workspace_format is not None
+                else (git_object_format or DEFAULT_GIT_OBJECT_FORMAT)
+            )
+            instance = PlaybillInstance.initialize(
+                managed_root,
+                instance_id=instance_id,
+                client_principals=client_principals,
+                workspace_roots=workspaces,
+                git_object_format=object_format,
+                operating_profile=operating_profile,
+                require_independent_approval=require_independent_approval,
+            )
+            trust_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(trust_path.parent, 0o700)
+            payload = canonical_bytes(instance.trust_root.model_dump(mode="json")) + b"\n"
+            descriptor: int | None = None
+            try:
+                descriptor = os.open(
+                    trust_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                view = memoryview(payload)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:  # pragma: no cover - defensive OS contract
+                        raise BootstrapError("trust-root write made no progress")
+                    view = view[written:]
+                os.fsync(descriptor)
+            except OSError as exc:
+                raise BootstrapError("failed to persist Cruxible trust root") from exc
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+            os.chmod(trust_path, 0o600)
+            _fsync_directory(trust_path.parent)
+            self._bind_workspace(instance, workspaces)
+            self._keep(instance_id, instance)
+            return instance
+
+    def get(self, instance_id: str) -> PlaybillInstance:
+        with self._lock:
+            known = self._instances.get(instance_id)
+            if known is not None:
+                return known
+            managed_root, trust_path, _workspaces = self._paths(instance_id)
+            if trust_path.is_symlink() or not trust_path.is_file() or not managed_root.is_dir():
+                raise BootstrapError("Cruxible is not initialized for this instance")
+            try:
+                raw = trust_path.read_bytes()
+                trust = TrustRoot.model_validate_json(raw)
+            except (OSError, ValidationError, ValueError) as exc:
+                raise FormatError("persisted Cruxible trust root is malformed") from exc
+            if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
+                raise FormatError("persisted Cruxible trust root is not canonical")
+            instance = self._open(instance_id, managed_root, trust)
+            instance.bind_receive_limits(
+                load_proposal_receive_config(get_server_state_root()).limits()
+            )
+            self._bind_workspace(instance, _workspaces)
+            self._keep(instance_id, instance)
+            return instance
+
+    @staticmethod
+    def _open(instance_id: str, managed_root: Path, trust: TrustRoot) -> PlaybillInstance:
+        """Open one instance; inside a preview, refuse rather than repair on disk.
+
+        Reopening replays accepted history and repairs derived files a crash
+        or an operator left behind (a projection, the serving pointer, replay
+        checkpoints, generation notes). An open that needs none of that writes
+        nothing and a preview may use it; one that does would write, so inside
+        a preview it is refused by name. An ordinary read repairs it, and the
+        preview then runs.
+        """
+
+        try:
+            return PlaybillInstance.open(managed_root, trust_root=trust)
+        except PreviewWriteRefused as exc:
+            raise ChangeRefusedError(
+                "cruxible.preview.recovery_pending",
+                f"previewing first needs instance {instance_id} reopened, and reopening it "
+                f"would repair derived files on disk ({exc.door}), which a preview may not "
+                "write; run an ordinary read (`cruxible orient`) to reopen it, then "
+                "preview again",
+                operation="cruxible.orient",
+                repair=RepairOperation(operation="cruxible.orient", arguments={}),
+            ) from exc
+
+    def initialized(self, instance_id: str) -> PlaybillInstance | None:
+        """The instance, or None while Cruxible is not initialized under the host."""
+
+        try:
+            return self.get(instance_id)
+        except (BootstrapError, InstanceNotFoundError):
+            return None
+
+    def rebind_workspace(self, instance_id: str) -> None:
+        """Bind an open instance's workspace advertiser to its current registration."""
+
+        with self._lock:
+            known = self._instances.get(instance_id)
+            if known is None:
+                return
+            _managed_root, _trust_path, workspaces = self._paths(instance_id)
+            self._bind_workspace(known, workspaces)
+        # The worktree learns the accepted ref now, not at the next write.
+        known.advertise_workspace()
+
+    def open_instances(self) -> tuple[tuple[str, PlaybillInstance], ...]:
+        """The instances this daemon already holds open, without opening any more."""
+        with self._lock:
+            return tuple(sorted(self._instances.items()))
+
+    def _keep(self, instance_id: str, instance: PlaybillInstance) -> None:
+        if self.quiet_checkpoint_seconds is not None:
+            instance.defer_replay_checkpoints(quiet_seconds=self.quiet_checkpoint_seconds)
+        self._instances[instance_id] = instance
+
+    def flush_replay_checkpoints(self) -> None:
+        """Write every pending head summary now (graceful daemon shutdown)."""
+
+        with self._lock:
+            instances = tuple(self._instances.values())
+        for instance in instances:
+            instance.flush_replay_checkpoint()
+
+    def register(self, instance_id: str, instance: PlaybillInstance) -> None:
+        """Testing/embedded seam; production instances load through pinned storage."""
+
+        with self._lock:
+            self._instances[instance_id] = instance
+
+    def clear(self) -> None:
+        with self._lock:
+            self._instances.clear()
+            self._provider_runtime_operators.clear()
+
+    def provider_runtime_operator(self) -> ProviderRuntimeOperator:
+        """Return the daemon-local Provider operator for the active state root."""
+
+        state_root = get_server_state_root()
+        with self._lock:
+            known = self._provider_runtime_operators.get(state_root)
+            if known is None:
+                try:
+                    known = ProviderRuntimeOperator(state_root)
+                except Exception as exc:
+                    known = ProviderRuntimeOperator.degraded(
+                        state_root,
+                        message=f"Provider runtime construction failed: {exc}",
+                    )
+                self._bind_provider_runtime_recovery_fold(known)
+                self._provider_runtime_operators[state_root] = known
+            return known
+
+    def workspace_file_reader(self, instance_id: str) -> WorkspaceFileReader:
+        """Bind workspace reads to registry attachment plus daemon operational config."""
+
+        managed_root, trust_path, attached_roots = self._paths(instance_id)
+        instance = self.get(instance_id)
+        operator = self.provider_runtime_operator()
+        return WorkspaceFileReader(
+            instance_id=instance_id,
+            operating_profile=instance.descriptor.operating_profile,
+            attached_roots=attached_roots,
+            operational_allowed_roots=tuple(
+                Path(item) for item in operator.config.workspace_allowed_roots
+            ),
+            # The state root contains every daemon config, trust, custody, and
+            # instance substrate. Explicit roots cover restored layouts too.
+            managed_roots=(
+                get_server_state_root(),
+                get_registry().state_root,
+                managed_root,
+                trust_path.parent,
+            ),
+        )
+
+    def upload_store(self, instance_id: str) -> CaptureUploadStore:
+        """This instance's Capture upload sessions under the operator's upload root.
+
+        The root is daemon-owned and must sit outside every managed root (the
+        state root, the registry, the instance's own directory), because the
+        upload reader is the one workspace reader a cloud profile allows.
+        """
+
+        managed_root, trust_path, _attached = self._paths(instance_id)
+        config = self.provider_runtime_operator().config
+        if config.upload_root is None:
+            raise CaptureUploadRefused(
+                "not_configured",
+                "This daemon takes no uploads: the operator sets upload_root in "
+                "daemon/provider-runtime.json (a directory outside the state root).",
+                http_status=409,
+            )
+        root = Path(config.upload_root)
+        resolved = root.resolve()
+        for managed in (
+            get_server_state_root(),
+            get_registry().state_root,
+            managed_root,
+            trust_path.parent,
+        ):
+            held = managed.resolve()
+            if resolved.is_relative_to(held) or held.is_relative_to(resolved):
+                raise CaptureUploadRefused(
+                    "not_configured",
+                    "The configured upload_root overlaps a Cruxible managed root; the operator "
+                    "must move it outside the state root.",
+                    http_status=409,
+                )
+        return CaptureUploadStore(
+            resolved,
+            instance_id,
+            UploadLimits(
+                max_bytes=config.upload_max_bytes,
+                session_seconds=config.upload_session_seconds,
+                max_open_sessions=config.upload_max_open_sessions,
+            ),
+        )
+
+    def upload_file_reader(self, instance_id: str, staging_root: Path) -> WorkspaceFileReader:
+        """The workspace reader for one upload's run: its staging root is the only root."""
+
+        managed_root, trust_path, _attached = self._paths(instance_id)
+        instance = self.get(instance_id)
+        return WorkspaceFileReader(
+            instance_id=instance_id,
+            operating_profile=instance.descriptor.operating_profile,
+            attached_roots=(staging_root,),
+            managed_roots=(
+                get_server_state_root(),
+                get_registry().state_root,
+                managed_root,
+                trust_path.parent,
+            ),
+            daemon_owned=True,
+        )
+
+    def procedure_run_config(self) -> ProcedureRunOperationalConfigV1:
+        """Return the daemon-local served-run bounds for the active state root.
+
+        Read per call rather than cached: the file is small, and an operator who
+        widens a bound should not have to restart the daemon to mean it.
+        """
+
+        return load_procedure_run_config(get_server_state_root())
+
+    def cached_provider_runtime_operator(self) -> ProviderRuntimeOperator:
+        """Return the already-cached operator without retrying construction."""
+
+        state_root = get_server_state_root()
+        with self._lock:
+            known = self._provider_runtime_operators.get(state_root)
+            if known is None:
+                known = ProviderRuntimeOperator.degraded(
+                    state_root,
+                    message="Provider runtime construction failed before caching",
+                )
+                self._bind_provider_runtime_recovery_fold(known)
+                self._provider_runtime_operators[state_root] = known
+            return known
+
+    def _bind_provider_runtime_recovery_fold(
+        self,
+        operator: ProviderRuntimeOperator,
+    ) -> None:
+        """Give one operator the manager-owned governed-journal fold."""
+
+        def fold(
+            result: ProviderProcessRecoveryResultV1,
+        ) -> dict[str, ProviderRecoveryFoldDisposition]:
+            return self._fold_provider_recovery(operator, result)
+
+        operator.bind_recovery_fold(fold)
+
+    def recover_provider_runtime(self) -> ProviderProcessRecoveryResultV1:
+        """Recover process fences before the daemon accepts requests."""
+
+        operator = self.provider_runtime_operator()
+        try:
+            result = operator.recover_all_with_bound_fold()
+        except Exception as exc:
+            operator.mark_unavailable(
+                "provider_runtime_recovery_failed",
+                f"Provider process recovery failed: {exc}",
+                retryable=True,
+            )
+            return ProviderProcessRecoveryResultV1(
+                recovered=(),
+                removed=(),
+                could_not_clean=(),
+            )
+        return result
+
+    def recover_in_process_provider_invocations(self) -> dict[str, tuple[str, ...]]:
+        """Close core built-in invocations a crash left started but not completed.
+
+        A built-in runs inside the daemon with no process lease, so lease
+        recovery never names it. Before the daemon serves, nothing in-process
+        can be live: every unmatched built-in start is closed as interrupted and
+        its attempt finalized failed, so no run stays recovery-required. Logs
+        and continues per instance; it never keeps the daemon from starting.
+
+        Single-owner assumption: this daemon is the only one serving each
+        instance it enumerates. The state-root lock (``server/state_lock.py``)
+        makes that true for one state root; two state roots whose registries
+        name the same instance directory are not a supported arrangement, and
+        under one a live built-in invocation of the other daemon could be
+        closed here. The lease-recovery fold and
+        proposal-egress recovery assume the same single owner. A per-instance
+        lock spanning journal start to completion would lift it, but that span
+        lives in the Procedure executor and was judged disproportionate for v1.
+        """
+
+        from cruxible_core.service.procedures.procedure_runs import (
+            service_recover_provider_invocations,
+        )
+
+        closed: dict[str, tuple[str, ...]] = {}
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("in_process_provider_recovery_enumeration_failed", reason=str(exc))
+            return closed
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                instance = self.get(record.instance_id)
+            except (
+                BootstrapError,
+                ReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
+                _log.warning(
+                    "in_process_provider_recovery_instance_skipped",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            try:
+                recovered = service_recover_provider_invocations(
+                    instance,
+                    invocation_ids=(),
+                    recorded_at=utc_now(),
+                    close_in_process_starts=True,
+                )
+            except Exception as exc:
+                _log.warning(
+                    "in_process_provider_recovery_failed",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            if recovered:
+                closed[record.instance_id] = recovered
+                _log.info(
+                    "in_process_provider_invocations_closed",
+                    instance_id=record.instance_id,
+                    invocations=list(recovered),
+                )
+        return closed
+
+    def compact_ledgers_at_start(self) -> tuple[str, ...]:
+        """Compact and prune each served instance's ledger before the daemon serves.
+
+        Pruning unreachable objects is safe only while no writer can be
+        creating objects a ref does not reach yet; before the daemon serves,
+        none can (the state-root lock makes this daemon the instances' only
+        owner). Ledgers with few loose objects are left alone. Logs and
+        continues per instance; it never keeps the daemon from starting.
+        """
+
+        compacted: list[str] = []
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("ledger_start_compaction_enumeration_failed", reason=str(exc))
+            return ()
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                instance = self.get(record.instance_id)
+                if instance.compact_ledger_at_start():
+                    compacted.append(record.instance_id)
+            except Exception as exc:
+                _log.warning(
+                    "ledger_start_compaction_failed",
+                    instance_id=record.instance_id,
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+        return tuple(compacted)
+
+    def recover_proposal_egress(self) -> dict[str, dict[str, str]]:
+        """Resolve prepared-but-unresolved proposal terminals before serving requests.
+
+        A run that died between preparing its `claims` egress and
+        journaling the door's receipt is driven through the same idempotent
+        door again: an existing proposal under the operation's ref is
+        recovered, an absent one is submitted once, and the attempt is
+        finalized. Nothing here activates a proposal.
+        """
+
+        from cruxible_core.service.proposals.proposal_egress import (
+            service_recover_proposal_egress,
+        )
+
+        recovered: dict[str, dict[str, str]] = {}
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("proposal_egress_recovery_enumeration_failed", reason=str(exc))
+            return recovered
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                instance = self.get(record.instance_id)
+            except (
+                BootstrapError,
+                ReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
+                _log.warning(
+                    "proposal_egress_recovery_instance_skipped",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            try:
+                resolved = service_recover_proposal_egress(instance, recorded_at=utc_now())
+            except Exception as exc:
+                _log.warning(
+                    "proposal_egress_recovery_failed",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            if resolved:
+                recovered[record.instance_id] = dict(resolved)
+                _log.info(
+                    "proposal_egress_recovered",
+                    instance_id=record.instance_id,
+                    runs=sorted(resolved),
+                )
+        return recovered
+
+    def resume_pending_kits(self) -> dict[str, tuple[str, ...]]:
+        """Resume each recorded kit add whose provider installs already activated.
+
+        Before serving requests; reads only the pending kit-resume rows of each
+        instance, logs and continues per instance, never keeps the daemon from
+        starting.
+        """
+
+        from cruxible_core.service.kit_resume import resume_pending_kits
+
+        resumed: dict[str, tuple[str, ...]] = {}
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("kit_resume_enumeration_failed", reason=str(exc))
+            return resumed
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                done = resume_pending_kits(self.get(record.instance_id))
+            except Exception as exc:
+                _log.warning("kit_resume_failed", instance_id=record.instance_id, reason=str(exc))
+                continue
+            if done:
+                resumed[record.instance_id] = done
+                _log.info("kits_resumed", instance_id=record.instance_id, kits=list(done))
+        return resumed
+
+    def _fold_provider_recovery(
+        self,
+        operator: ProviderRuntimeOperator,
+        result: ProviderProcessRecoveryResultV1,
+    ) -> dict[str, ProviderRecoveryFoldDisposition]:
+        """Fold and acknowledge each recovered invocation independently."""
+
+        invocation_ids = result.completion_invocation_ids
+        recovery_failures = {
+            item.invocation_id: item.code
+            for item in result.could_not_clean
+            if item.invocation_id is not None
+        }
+        if not invocation_ids and not recovery_failures:
+            return {}
+        from cruxible_core.service.procedures.procedure_runs import (
+            ProcedureRunRecoveryRequired,
+            service_recover_provider_invocations,
+        )
+
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            operator.mark_unavailable(
+                "provider_runtime_recovery_failed",
+                f"Provider instance enumeration failed: {exc}",
+                retryable=True,
+            )
+            return {
+                invocation_id: "fold_failed"
+                for invocation_id in sorted({*invocation_ids, *recovery_failures}, key=str.encode)
+            }
+        handled_invocation_ids: set[str] = set()
+        initialized_fold_failed = False
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                instance = self.get(record.instance_id)
+            except (
+                BootstrapError,
+                ReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
+                _log.warning(
+                    "provider_recovery_instance_skipped",
+                    instance_id=record.instance_id,
+                    reason=str(exc),
+                )
+                continue
+            except Exception as exc:
+                initialized_fold_failed = True
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    f"Provider instance load failed for {record.instance_id}: {exc}",
+                    retryable=True,
+                )
+                continue
+            try:
+                handled_invocation_ids.update(
+                    service_recover_provider_invocations(
+                        instance,
+                        invocation_ids=invocation_ids,
+                        recovery_failure_codes=recovery_failures,
+                        recorded_at=utc_now(),
+                    )
+                )
+            except ProcedureRunRecoveryRequired as exc:
+                initialized_fold_failed = True
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    str(exc),
+                    retryable=True,
+                )
+            except Exception as exc:
+                initialized_fold_failed = True
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    f"Provider journal recovery failed for {record.instance_id}: {exc}",
+                    retryable=True,
+                )
+        dispositions: dict[str, ProviderRecoveryFoldDisposition] = {}
+        for invocation_id in sorted({*invocation_ids, *recovery_failures}, key=str.encode):
+            if invocation_id in recovery_failures:
+                dispositions[invocation_id] = "fold_failed"
+            elif invocation_id in handled_invocation_ids:
+                dispositions[invocation_id] = "handled"
+            elif initialized_fold_failed:
+                dispositions[invocation_id] = "fold_failed"
+            else:
+                dispositions[invocation_id] = "unclaimed"
+
+        for invocation_id, disposition in tuple(dispositions.items()):
+            if disposition == "fold_failed":
+                continue
+            if disposition == "unclaimed":
+                _log.warning(
+                    "provider_recovery_unclaimed",
+                    invocation_id=invocation_id,
+                    terminal=True,
+                )
+            try:
+                operator.acknowledge_recovery({invocation_id: disposition})
+            except Exception as exc:
+                dispositions[invocation_id] = "fold_failed"
+                operator.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    f"Provider recovery acknowledgement failed for {invocation_id}: {exc}",
+                    retryable=True,
+                )
+        return dispositions
+
+
+_manager = PlaybillInstanceManager()
+
+
+def get_playbill_manager() -> PlaybillInstanceManager:
+    return _manager
+
+
+__all__ = ["PlaybillInstanceManager", "get_playbill_manager"]

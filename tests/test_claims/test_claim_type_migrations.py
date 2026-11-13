@@ -1,0 +1,1211 @@
+"""PC-G3b composed ClaimType migration laws."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.authoring.inputs import (
+    ClaimInput,
+    LiteralObjectInput,
+    SelfSourceInput,
+)
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+)
+from cruxible_client.contracts.claim_types import (
+    CLAIM_TYPE_FORMAT,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
+    ClaimType,
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+    render_claim_type,
+)
+from cruxible_client.contracts.claim_verdicts import (
+    claim_adjudication_rule,
+    claim_adjudication_rule_digest,
+)
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    claim_artifact_digest,
+    claim_path,
+    parse_claim,
+    render_claim,
+)
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, lower_claim_type_input
+from cruxible_core.claims.claim_type_migrations import (
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationDependentInvalid,
+    ClaimTypeMigrationError,
+    ClaimTypeMigrationIncomplete,
+    ClaimTypeMigrationPreflightV1,
+    ClaimTypeMigrationRequest,
+    ClaimTypeMigrationResult,
+    _canonical_successor_bytes,
+    service_migrate_claim_type,
+)
+from cruxible_core.claims.closure import parse_dependency_artifact
+from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.procedures.reference_binding import authored_procedure
+from cruxible_core.proposals.proposals import (
+    AuthenticatedActor,
+)
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.claims.claims import _claim_law_evidence
+from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
+from tests.core_support._subject_kind_support import declare_created_kinds
+from tests.core_support._support import client_material, initialize_local
+from tests.support.claim_types import claim_type_changes
+from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
+from tests.test_claims.test_claims import _claim_type, _subject
+from tests.test_indexes.test_projection_next import _accepted_procedure
+from tests.test_indexes.test_resolution_contracts import _accept_tree
+from tests.test_ledger.test_activation import _sign
+
+
+def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create_input(
+        actor=actor,
+        input=ClaimInput(
+            kind="claim",
+            subject="project.work_item/wi-42",
+            predicate=_claim_type().predicate,
+            object=LiteralObjectInput(kind="literal", value="ready"),
+            role="observation",
+            rationale="The work item is ready.",
+            source=SelfSourceInput(kind="self_source", body="status: ready\n"),
+        ),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None, submitted.status.model_dump(mode="json")
+    assert submitted.status.candidate_digest is not None, submitted.status.model_dump(mode="json")
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        submitted.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    return instance, intent.semantic_identity, owner
+
+
+def _accepted_affects_package_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    predicate = "sec.vuln.affects_package"
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    template_path = claim_type_path(_claim_type().predicate)
+    template = parse_claim_type(tree[template_path], path=template_path)
+    claim_type = template.model_copy(
+        update=claim_type_changes(
+            predicate=predicate,
+            value_type={"type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name=predicate),
+        )
+    )
+    package = _subject().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Subject", name="package/demo-package"),
+            "subject_kind": "package",
+            "subject_id": "demo-package",
+        }
+    )
+    tree[claim_type_path(predicate)] = render_claim_type(claim_type)
+    tree[subject_path(package.subject_kind, package.subject_id)] = render_subject(package)
+    declare_created_kinds(
+        instance.tree_at(instance.accepted_coordinate().git_oid), tree, instance=instance
+    )
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="seed-affects-package",
+    )
+
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create_input(
+        actor=actor,
+        input=ClaimInput(
+            kind="claim",
+            subject="project.work_item/wi-42",
+            predicate=predicate,
+            object=LiteralObjectInput(kind="literal", value="demo-package"),
+            role="observation",
+            rationale="The vulnerability affects this package.",
+            source=SelfSourceInput(kind="self_source", body="package: demo-package\n"),
+        ),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None, submitted.status.model_dump(mode="json")
+    assert submitted.status.candidate_digest is not None, submitted.status.model_dump(mode="json")
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        submitted.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    return instance, intent.semantic_identity, owner
+
+
+def _decision_only_input(current: ClaimType) -> ClaimTypeInputRecord:
+    """Explicitly author the successor under current, producer-independent policy."""
+
+    values = current.model_dump(mode="json")
+    for mechanical in ("artifact_format", "identity", "lifecycle"):
+        values.pop(mechanical, None)
+    values["evidence_admission_policy"] = {
+        "rules": [
+            rule.model_dump(mode="json", exclude={"tag"})
+            for rule in current.evidence_admission_policy.rules
+        ]
+    }
+    return ClaimTypeInputRecord.model_validate(values)
+
+
+def _subject_valued_affects_package_successor(instance):  # type: ignore[no-untyped-def]
+    predicate = "sec.vuln.affects_package"
+    path = claim_type_path(predicate)
+    current = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path],
+        path=path,
+    )
+    values = _decision_only_input(current).model_dump(mode="json")
+    values.update(claim_type_changes(value_type=("package",)))
+    return ClaimTypeInputRecord.model_validate(values)
+
+
+def _successor(instance):  # type: ignore[no-untyped-def]
+    path = claim_type_path(_claim_type().predicate)
+    current = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path],
+        path=path,
+    )
+    return current.model_copy(
+        update=claim_type_changes(
+            value_type={"type": "string", "enum": ["blocked", "ready"]},
+            lifecycle=ArtifactLifecycle(predecessor_digest=claim_type_digest(current).tagged),
+        )
+    )
+
+
+def test_migration_updates_type_and_dependent_in_one_idempotent_candidate(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    request = ClaimTypeMigrationRequest(
+        mode="submit",
+        successor=_successor(instance),
+        dependents=(
+            ClaimTypeDependentDisposition(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                disposition="successor",
+            ),
+        ),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+
+    first = service_migrate_claim_type(instance, request=request, actor=actor)
+    target_ref = first.proposal.proposal.admission.target_ref
+    first_tip = instance.proposal_ref_target(target_ref)
+    second = service_migrate_claim_type(instance, request=request, actor=actor)
+
+    # An identical resubmission is idempotent in its OPERATION and in its candidate
+    # BYTES, not in its admission event: `admitted_at` and `candidate_commit_oid`
+    # are part of the proposal-id preimage, and a resubmission now extends the
+    # ref's lineage instead of recreating the first commit from the accepted base,
+    # so each submission carries its own proposal id over one identical tree.
+    assert first.operation_digest == second.operation_digest
+    assert (
+        second.proposal.proposal.admission.candidate_tree_oid
+        == first.proposal.proposal.admission.candidate_tree_oid
+    )
+    assert (
+        second.proposal.proposal.evaluation.evaluated_tree_oid
+        == first.proposal.proposal.evaluation.evaluated_tree_oid
+    )
+
+    # The resubmission EXTENDS the ref linearly over the first submission's tip and
+    # orphans nothing: `parent_of` refuses merge commits, so walking the ref back to
+    # that tip is itself the linearity proof.
+    ledger = instance._ledger
+    second_tip = instance.proposal_ref_target(target_ref)
+    assert second_tip == second.proposal.proposal.admission.candidate_commit_oid
+    lineage: list[str] = []
+    walker: str | None = second_tip
+    while walker is not None and walker != first_tip:
+        lineage.append(walker)
+        walker = ledger.parent_of(walker)
+    assert walker == first_tip
+    assert first_tip == first.proposal.proposal.admission.candidate_commit_oid
+    assert len(lineage) == len(set(lineage))
+    assert ledger.unreachable_commits() == ()
+
+    assert first.proposal.proposal.candidate is not None
+    tree_oid = first.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    claim = parse_claim(candidate_tree[claim_path(claim_id)], path=claim_path(claim_id))
+    assert claim.statement.object.value == "ready"  # type: ignore[union-attr]
+    assert claim.statement.claim_type_digest == claim_type_digest(_successor(instance)).tagged
+    assert claim.lifecycle.predecessor_digest is not None
+
+
+@pytest.mark.parametrize("successor_state", ["live", "retired"])
+def test_migration_claim_successor_bytes_use_successor_claim_type_digest(
+    tmp_path: Path,
+    successor_state: str,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    if successor_state == "retired":
+        _activate_migration(
+            instance,
+            owner,
+            _decision_only_successor(instance, enum=["blocked", "ready"]),
+            (
+                ClaimTypeDependentDisposition(
+                    identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                    disposition="retire",
+                ),
+            ),
+        )
+    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    current_claim = parse_claim(
+        accepted_tree[claim_path(claim_id)],
+        path=claim_path(claim_id),
+    )
+    assert current_claim.lifecycle.state == successor_state
+    base_successor = _successor(instance)
+    successor = base_successor.model_copy(update={})
+    actor = AuthenticatedActor(actor_id="owner")
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
+            successor=successor,
+            dependents=(
+                ClaimTypeDependentDisposition(
+                    identity=current_claim.identity,
+                    disposition="successor",
+                ),
+            ),
+        ),
+        actor=actor,
+    )
+
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    type_path = claim_type_path(_claim_type().predicate)
+    successor_type = parse_claim_type(candidate_tree[type_path], path=type_path)
+    successor_digest = claim_type_digest(successor_type).tagged
+    expected_pins = tuple(
+        sorted(
+            (
+                pin.model_copy(update={"artifact_digest": successor_digest})
+                if pin.role == "claim-type" and pin.target == successor_type.identity
+                else pin
+                for pin in current_claim.pins
+            ),
+            key=lambda pin: (pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")),
+        )
+    )
+    expected = current_claim.model_copy(
+        update={
+            "statement": current_claim.statement.model_copy(
+                update={"claim_type_digest": successor_digest}
+            ),
+            "pins": expected_pins,
+            "lifecycle": ArtifactLifecycle(
+                state=successor_state,  # type: ignore[arg-type]
+                predecessor_digest=claim_artifact_digest(current_claim).tagged,
+            ),
+        }
+    )
+
+    assert candidate_tree[claim_path(claim_id)] == render_claim(expected)
+
+
+def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+
+    with pytest.raises(ClaimTypeMigrationError, match=claim_id):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequest(
+                mode="submit",
+                successor=_successor(instance),
+                dependents=(),
+            ),
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+
+
+@pytest.mark.parametrize(
+    "model, values",
+    [
+        (ClaimTypeDependentDisposition, {"identity": {"kind": "Claim", "name": "claim"}}),
+    ],
+)
+def test_unshipped_invalidation_input_is_rejected(model, values) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="disposition"):
+        model.model_validate({**values, "disposition": "invalidation"})
+
+
+def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombstone(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_affects_package_world(tmp_path)
+    successor = _subject_valued_affects_package_successor(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    dependent = ClaimTypeDependentDisposition(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+        claim_retirement_reason="was-rescinded",
+    )
+    preflight = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="preflight",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+    assert isinstance(preflight, ClaimTypeMigrationPreflightV1)
+    assert [item.identity for item in preflight.dependents] == [
+        ArtifactIdentity(kind="Claim", name=claim_id)
+    ]
+
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+    assert isinstance(result, ClaimTypeMigrationResult)
+    assert result.dependents[0].disposition == "retire"
+    assert result.warnings == ()
+    proposal = result.proposal.proposal
+    assert proposal.candidate is not None
+    tree_oid = proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    type_path = claim_type_path("sec.vuln.affects_package")
+    migrated_type = parse_claim_type(candidate_tree[type_path], path=type_path)
+    migrated_claim = parse_claim(
+        candidate_tree[claim_path(claim_id)],
+        path=claim_path(claim_id),
+    )
+    assert isinstance(migrated_claim, ClaimArtifact)
+    assert migrated_claim.lifecycle.state == "retired"
+    assert migrated_claim.statement.object.kind == "literal"
+    assert migrated_claim.statement.claim_type_digest == claim_type_digest(migrated_type).tagged
+    assert any(
+        pin.role == "claim-type" and pin.artifact_digest == claim_type_digest(migrated_type).tagged
+        for pin in migrated_claim.pins
+    )
+
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        proposal.candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    reopened_claim = parse_claim(
+        reopened.tree_at(reopened.accepted_coordinate().git_oid)[claim_path(claim_id)],
+        path=claim_path(claim_id),
+    )
+    assert reopened_claim == migrated_claim
+
+
+def test_shape_changing_migration_does_not_exempt_a_live_successor(tmp_path: Path) -> None:
+    instance, _claim_id, _owner = _accepted_affects_package_world(tmp_path)
+    with pytest.raises(
+        ClaimTypeMigrationIncomplete,
+        match="cruxible.claim.object_kind_mismatch",
+    ):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequest(
+                mode="preflight",
+                successor=_subject_valued_affects_package_successor(instance),
+            ),
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+
+
+def test_a_migration_cannot_retire_a_live_claim_without_attribution(tmp_path: Path) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    request = ClaimTypeMigrationRequest(
+        mode="submit",
+        successor=_successor(instance),
+        dependents=(
+            ClaimTypeDependentDisposition(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                disposition="retire",
+            ),
+        ),
+    )
+    with pytest.raises(ClaimTypeMigrationError, match="retirement_reason_required"):
+        service_migrate_claim_type(
+            instance,
+            request=request,
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+
+
+def _decision_only_successor(instance, *, enum: list[str]):  # type: ignore[no-untyped-def]
+    path = claim_type_path(_claim_type().predicate)
+    current = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path],
+        path=path,
+    )
+    return _decision_only_input(current).model_copy(
+        update=claim_type_changes(value_type={"type": "string", "enum": enum})
+    )
+
+
+def _activate_migration(instance, owner, successor, dependents):  # type: ignore[no-untyped-def]
+    v3_dependents = tuple(
+        ClaimTypeDependentDisposition(
+            identity=item.identity,
+            disposition=item.disposition,
+            successor=item.successor,
+            claim_retirement_reason=(
+                "was-rescinded"
+                if item.identity.kind == "Claim" and item.disposition in {"retire", "invalidation"}
+                else None
+            ),
+        )
+        for item in dependents
+    )
+    request = ClaimTypeMigrationRequest(
+        mode="submit", successor=successor, dependents=v3_dependents
+    )
+    result = service_migrate_claim_type(
+        instance,
+        request=request,
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert isinstance(result, ClaimTypeMigrationResult)
+    candidate = result.proposal.proposal.candidate
+    assert candidate is not None
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.proposal.proposal.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    return result
+
+
+def _accept_claim_type_only(
+    instance,
+    owner,
+    successor: ClaimTypeInputRecord,
+    *,
+    proposal_name: str,
+):  # type: ignore[no-untyped-def]
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    lowered = lower_claim_type_input(successor, tree=tree)
+    tree[claim_type_path(lowered.predicate)] = render_claim_type(lowered)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name=proposal_name,
+    )
+    return lowered
+
+
+def _next(instance):  # type: ignore[no-untyped-def]
+    return service_playbill_next(
+        instance,
+        request=NextRequest(
+            evaluation_time=datetime(2026, 8, 26, 12, tzinfo=UTC),
+            access_profile=CoverageAccessProfile(
+                profile_id="migration-test",
+                permitted_access_classes=("instance", "public"),
+            ),
+        ),
+    )
+
+
+def _policy(threshold: int) -> ClaimAttestationConsequencePolicy:
+    return ClaimAttestationConsequencePolicy(
+        rules=(
+            ClaimAttestationConsequenceRule(
+                rule_id="independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=threshold,
+            ),
+        )
+    )
+
+
+def _assert_current_adjudication_evidence(instance, claim_id: str) -> None:  # type: ignore[no-untyped-def]
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    path = claim_type_path(_claim_type().predicate)
+    claim_type = parse_claim_type(tree[path], path=path)
+    evidence = _claim_law_evidence(instance, path=claim_path(claim_id), at=coordinate)
+    rule = claim_adjudication_rule(
+        claim_type,
+        claim_type_digest=claim_type_digest(claim_type).tagged,
+    )
+    assert evidence.adjudication_rule_digest == claim_adjudication_rule_digest(rule)
+
+
+def test_migration_refuses_hand_authored_predecessor_artifact_pins(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    path = claim_type_path(_claim_type().predicate)
+    predecessor = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path],
+        path=path,
+    )
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={
+            "pins": (
+                {
+                    "role": "predecessor",
+                    "target": predecessor.identity.model_dump(mode="json"),
+                    "artifact_digest": claim_type_digest(predecessor).tagged,
+                },
+            )
+        }
+    )
+
+    with pytest.raises(ClaimTypeMigrationError, match="predecessor.*machine-owned"):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequest(mode="preflight", successor=successor),
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+
+
+@pytest.mark.parametrize("mode", ["preflight", "submit"])
+def test_preflight_and_submit_refuse_the_same_unresolved_successor_pin(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    predecessor = _successor(instance)
+    successor = predecessor.model_copy(
+        update={
+            "pins": (
+                ArtifactPin(
+                    role="other-dependency",
+                    target=predecessor.identity,
+                    artifact_digest=predecessor.lifecycle.predecessor_digest,
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(ClaimTypeMigrationIncomplete, match="unresolved_pin"):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequest(mode=mode, successor=successor),  # type: ignore[arg-type]
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+
+
+def test_decision_only_claim_type_completes_two_successions_without_predecessor_pins(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    actor = AuthenticatedActor(actor_id="owner")
+    path = claim_type_path(_claim_type().predicate)
+
+    for enum in (["blocked", "ready"], ["blocked", "closed", "ready"]):
+        predecessor = parse_claim_type(
+            instance.tree_at(instance.accepted_coordinate().git_oid)[path],
+            path=path,
+        )
+        successor = _decision_only_successor(instance, enum=enum)
+        assert successor.pins == ()
+        preflight = service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequest(mode="preflight", successor=successor),
+            actor=actor,
+        )
+        result = service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequest(mode="submit", successor=successor),
+            actor=actor,
+        )
+        assert isinstance(result, ClaimTypeMigrationResult)
+        candidate = result.proposal.proposal.candidate
+        assert candidate is not None
+        approval = _sign(
+            client_material(instance.root.parent, instance),
+            candidate.candidate_digest,
+            instance.accepted_coordinate().semantic_root,
+        )
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=result.proposal.proposal.admission.proposal_id,
+            attestation=approval.attestation,
+            authenticated_submitter="owner",
+        )
+        assert (
+            service_activate_playbill_proposal(
+                instance,
+                proposal_id=result.proposal.proposal.admission.proposal_id,
+                activated_by="owner",
+            ).status
+            == "accepted"
+        )
+        accepted = parse_claim_type(
+            instance.tree_at(instance.accepted_coordinate().git_oid)[path],
+            path=path,
+        )
+        assert accepted.lifecycle.predecessor_digest == claim_type_digest(predecessor).tagged
+        assert preflight.successor_artifact_digest == claim_type_digest(accepted).tagged  # type: ignore[union-attr]
+
+
+def test_decision_only_successor_migrates_freshness_and_its_live_claim(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
+    )
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={"evidence_freshness": freshness}
+    )
+    dependent = ClaimTypeDependentDisposition(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="successor",
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+
+    preflight = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="preflight",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+
+    assert isinstance(result, ClaimTypeMigrationResult)
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    path = claim_type_path(_claim_type().predicate)
+    governed = parse_claim_type(instance.proposal_tree(tree_oid)[path], path=path)
+    assert governed.artifact_format == CLAIM_TYPE_FORMAT
+    assert governed.evidence_freshness == freshness
+    assert preflight.successor_artifact_digest == claim_type_digest(governed).tagged  # type: ignore[union-attr]
+
+
+def test_current_successions_preserve_freshness_and_accept_policy(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    actor = AuthenticatedActor(actor_id="owner")
+    path = claim_type_path(_claim_type().predicate)
+
+    freshness_input = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={
+            "evidence_freshness": ClaimEvidenceFreshness(
+                stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
+            )
+        }
+    )
+    freshness_result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(mode="submit", successor=freshness_input),
+        actor=actor,
+    )
+    assert isinstance(freshness_result, ClaimTypeMigrationResult)
+    freshness_candidate = freshness_result.proposal.proposal.candidate
+    assert freshness_candidate is not None
+    freshness_approval = _sign(
+        client_material(instance.root.parent, instance),
+        freshness_candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=freshness_result.proposal.proposal.admission.proposal_id,
+        attestation=freshness_approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=freshness_result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    accepted_freshness = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    assert accepted_freshness.artifact_format == CLAIM_TYPE_FORMAT
+
+    policy = ClaimAttestationConsequencePolicy(
+        rules=(
+            ClaimAttestationConsequenceRule(
+                rule_id="two-independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=2,
+            ),
+        )
+    )
+    policy_input = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={"attestation_consequence_policy": policy}
+    )
+    policy_result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(mode="submit", successor=policy_input),
+        actor=actor,
+    )
+    assert isinstance(policy_result, ClaimTypeMigrationResult)
+    policy_candidate = policy_result.proposal.proposal.candidate
+    assert policy_candidate is not None
+    policy_approval = _sign(
+        client_material(instance.root.parent, instance),
+        policy_candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=policy_result.proposal.proposal.admission.proposal_id,
+        attestation=policy_approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=policy_result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    accepted_policy = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    assert accepted_policy.artifact_format == CLAIM_TYPE_FORMAT
+    assert accepted_policy.evidence_freshness == accepted_freshness.evidence_freshness
+    assert accepted_policy.attestation_consequence_policy == policy
+    assert (
+        accepted_policy.lifecycle.predecessor_digest == claim_type_digest(accepted_freshness).tagged
+    )
+
+
+def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    identity = ArtifactIdentity(kind="Claim", name=claim_id)
+    retire = ClaimTypeDependentDisposition(identity=identity, disposition="retire")
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+            update={"evidence_freshness": freshness}
+        ),
+        (retire,),
+    )
+    before_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    before = parse_claim(before_tree[claim_path(claim_id)], path=claim_path(claim_id))
+    assert isinstance(before, ClaimArtifact)
+    assert before.lifecycle.state == "retired"
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={"attestation_consequence_policy": _policy(2)}
+    )
+    dependent = ClaimTypeDependentDisposition(identity=identity, disposition="successor")
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert isinstance(result, ClaimTypeMigrationResult)
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    type_path = claim_type_path(_claim_type().predicate)
+    successor_type = parse_claim_type(candidate_tree[type_path], path=type_path)
+    successor_digest = claim_type_digest(successor_type).tagged
+    expected_pins = tuple(
+        pin.model_copy(update={"artifact_digest": successor_digest})
+        if pin.role == "claim-type" and pin.target == successor_type.identity
+        else pin
+        for pin in before.pins
+    )
+    expected = before.model_copy(
+        update={
+            "statement": before.statement.model_copy(
+                update={"claim_type_digest": successor_digest}
+            ),
+            "pins": expected_pins,
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=claim_artifact_digest(before).tagged,
+            ),
+        }
+    )
+    assert candidate_tree[claim_path(claim_id)] == render_claim(expected)
+    candidate = result.proposal.proposal.candidate
+    assert candidate is not None
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.proposal.proposal.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    _assert_current_adjudication_evidence(instance, claim_id)
+    _next(instance)
+
+
+def test_already_broken_retired_claim_walks_two_policy_only_predecessors(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDisposition(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    for threshold in (2, 3):
+        _accept_claim_type_only(
+            instance,
+            owner,
+            _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+                update={"attestation_consequence_policy": _policy(threshold)}
+            ),
+            proposal_name=f"policy-only-{threshold}",
+        )
+    _next(instance)
+
+
+def test_retired_claim_rederives_on_freshness_migration(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    identity = ArtifactIdentity(kind="Claim", name=claim_id)
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (ClaimTypeDependentDisposition(identity=identity, disposition="retire"),),
+    )
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+            update={"evidence_freshness": freshness}
+        ),
+        (ClaimTypeDependentDisposition(identity=identity, disposition="successor"),),
+    )
+    _assert_current_adjudication_evidence(instance, claim_id)
+    _next(instance)
+
+
+def test_already_broken_retired_claim_accepts_policy_plus_approval_widen(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDisposition(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+            update={
+                "attestation_consequence_policy": _policy(2),
+            }
+        ),
+        proposal_name="policy-plus-approval-widen",
+    )
+    _next(instance)
+
+
+def test_already_broken_retired_claim_refuses_schema_divergence(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDisposition(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "closed", "ready"]),
+        proposal_name="schema-divergence",
+    )
+    with pytest.raises(ProposalIntegrityError, match="adjudication rule does not reproduce"):
+        _next(instance)
+
+
+def test_already_broken_retired_claim_refuses_schema_change_then_revert(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDisposition(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "closed", "ready"]),
+        proposal_name="schema-change",
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        proposal_name="schema-revert",
+    )
+
+    with pytest.raises(ProposalIntegrityError, match="adjudication rule does not reproduce"):
+        _next(instance)
+
+
+@pytest.mark.parametrize("mode", ["preflight", "submit"])
+def test_migration_surfaces_nonblocking_policy_and_source_lint(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={
+            "evidence_admission_policy": {"rules": []},
+            "anticipated_source_ids": ("corpus.runbook",),
+        }
+    )
+
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(mode=mode, successor=successor),  # type: ignore[arg-type]
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+
+    assert result.lint is not None
+    assert {warning.code for warning in result.lint.warnings} == {
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.anticipated_source_contract_omitted",
+        "cruxible.claim_type.description_missing",
+    }
+
+
+def test_automatic_migration_never_rewrites_a_procedure_dependent() -> None:
+    accepted = _accepted_procedure()
+    content = render_procedure(authored_procedure(accepted))
+    current = parse_dependency_artifact(accepted.path, content)
+    assert current is not None
+
+    with pytest.raises(
+        ClaimTypeMigrationDependentInvalid,
+        match="automatic migration of Procedure dependent .* supply an explicit successor",
+    ):
+        _canonical_successor_bytes(
+            current=current,
+            content=content,
+            disposition="successor",
+            replacements={},
+            supplied=None,
+            successor_type=_claim_type(),
+        )
+
+
+def test_a_migration_whose_head_moves_before_publication_refuses_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent acceptance between a migration's evaluation and its publication:
+    the submit refuses ``state_moved`` (409) with the migration itself as its repair,
+    publishes nothing, and the same request run again is admitted at the new head."""
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.proposals.proposals import ProposalService
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = ClaimTypeMigrationRequest(
+        mode="submit",
+        successor=_successor(instance),
+        dependents=(
+            ClaimTypeDependentDisposition(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                disposition="successor",
+            ),
+        ),
+    )
+    original = ProposalService._evaluate_admission
+    moved: list[str] = []
+
+    def evaluate_then_move(self: ProposalService, **kwargs: object) -> object:
+        evaluated = original(self, **kwargs)  # type: ignore[arg-type]
+        target_ref = kwargs["request"].target_ref  # type: ignore[attr-defined]
+        if not moved and "/claim-type-migration-" in target_ref:
+            moved.append(target_ref)
+            tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+            other = _subject().model_copy(
+                update={
+                    "identity": ArtifactIdentity(kind="Subject", name="project.work_item/wi-7"),
+                    "subject_id": "wi-7",
+                }
+            )
+            tree[subject_path(other.subject_kind, other.subject_id)] = render_subject(other)
+            _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="mover")
+        return evaluated
+
+    monkeypatch.setattr(ProposalService, "_evaluate_admission", evaluate_then_move)
+    actor = AuthenticatedActor(actor_id="owner")
+    with pytest.raises(ChangeRefusedError) as refused:
+        service_migrate_claim_type(instance, request=request, actor=actor)
+
+    assert len(moved) == 1
+    assert refused.value.error_code == "cruxible.preview.state_moved"
+    assert refused.value.http_status == 409
+    assert refused.value.repair == RepairOperation(operation="cruxible.claim-type.migrate")
+    assert "nothing was published, so run it again" in str(refused.value)
+    assert instance.proposal_ref_target(moved[0]) is None
+    retried = service_migrate_claim_type(instance, request=request, actor=actor)
+    assert retried.proposal.proposal.candidate is not None

@@ -1,0 +1,40 @@
+{
+  "about": "web.fetch replay exchanges for tests/test_e2e/test_skeleton_kev_epss.py, recorded once with curl on 2026-11-02 (20:22 UTC). Each exchange is the origin's status, a subset of its real response headers and its body file; the replay transport answers web.fetch with exactly these.",
+  "exchanges": [
+    {
+      "id": "kev-catalog",
+      "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "etag": "\"1bdfc3-65f11c3dc2438\"",
+        "last-modified": "Fri, 30 Oct 2026 17:02:45 GMT"
+      },
+      "body": "kev-catalog.json",
+      "note": "The CISA KEV catalog (catalogVersion 2026.10.30). Envelope fields unchanged, including count (1766, the full catalog); vulnerabilities trimmed to 12 records, each byte-identical to the origin's (the first three plus nine watched in the test)."
+    },
+    {
+      "id": "kev-catalog-delisted",
+      "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "etag": "\"1bdfc3-65f11c3dc2438\"",
+        "last-modified": "Fri, 30 Oct 2026 17:02:45 GMT"
+      },
+      "body": "kev-catalog-delisted.json",
+      "note": "kev-catalog.json with the CVE-2018-13379 record removed: the second run's delisting. Every other byte is the recorded catalog's."
+    },
+    {
+      "id": "epss-api",
+      "url": "https://api.first.org/data/v1/epss?cve=CVE-2021-44228,CVE-2023-4863,CVE-2014-0160,CVE-2017-0144,CVE-2019-0708,CVE-2023-44487,CVE-2022-22965,CVE-2021-26855,CVE-2018-13379,CVE-2024-3094",
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "1036"
+      },
+      "body": "epss-api.json",
+      "note": "The FIRST EPSS API answer for the ten watched CVEs, verbatim and untrimmed."
+    }
+  ]
+}

@@ -1,0 +1,1480 @@
+"""The ``extract`` runtime: decode one Capture and read its records, typed.
+
+An ``extract`` node turns a Capture's exact bytes into ``result`` values (one
+per record) by its accepted CaptureContract's ``decoding`` and the node's own
+declarations: the record selector, the key, the row Contract's fields and the
+header. Format conversion yields located values: each present value carries
+the locator it was read at, and a field that cannot be read is ``absent`` or
+``invalid``, never a guess.
+
+Work is cached in three layers, each keyed by every declaration that affects
+it, so a run pays for a declaration it has not evaluated before and nothing
+else:
+
+- D, decode and record index: ``(capture digest, extractor, decoding,
+  record selector, key spec)`` -> record locators, canonical keys, and
+  duplicate and key problems;
+- E, evaluation: ``(D key, complete_when, header spec)`` -> completeness and
+  the header's field results;
+- F, field: ``(D key, field typing, locator)`` -> one field result, filled
+  lazily. The field typing is the field's name, declaration, effective row
+  type and requiredness, with every enum membership and nested Contract the
+  type resolves to.
+
+Key and header specs are keyed the same way, by their types as resolved. A
+runtime ``only_keys`` is selected after layer D through its key index and the
+record positions D holds, at ``O(|only_keys|)``, and is never part of a cache
+key.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import json
+import re
+import unicodedata
+import zlib
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any, Literal
+
+from cruxible_client.contracts.artifacts import ArtifactNameRef
+from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
+from cruxible_client.contracts.captures import CaptureDecoding, capture_contract_digest
+from cruxible_client.contracts.claim_evidence import CompleteWhenResult
+from cruxible_client.contracts.content_memo import seal, sealed_derive
+from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.procedures.extract import (
+    EXTRACTOR_VERSIONS,
+    ExtractField,
+    ExtractNode,
+    extract_spec_digest,
+)
+from cruxible_client.contracts.procedures.layout_extract import (
+    LayoutExtractNode,
+    resolve_layout_extract,
+)
+from cruxible_client.contracts.shapes import (
+    BoolType,
+    Contract,
+    ContractRef,
+    DateType,
+    DuplicateArm,
+    EnumOfType,
+    EnumResolver,
+    EnumType,
+    FieldAbsent,
+    FieldInvalid,
+    FieldPresent,
+    FieldResultType,
+    FieldType,
+    IntType,
+    InvalidRecordArm,
+    KeyCanonicalizer,
+    KeyPartOutOfBounds,
+    KeyPartType,
+    KeyType,
+    KeyValueRefused,
+    ListType,
+    NestedType,
+    Problem,
+    RecordArm,
+    RecordType,
+    RecordValue,
+    RefusalType,
+    ResultType,
+    ResultValue,
+    StringType,
+    VariantType,
+    check_key_value,
+    check_value,
+)
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+
+FieldResult = FieldPresent | FieldAbsent | FieldInvalid
+
+#: A path that names no value in the decoded document.
+_MISSING = object()
+
+
+class ExtractRefused(ExecutionError):
+    """The node refuses: a decode limit, a header problem, or a duplicate under ``refuse_run``."""
+
+    def __init__(self, code: str, message: str, *, details: Mapping[str, object] | None = None):
+        self.code = code
+        self.details = dict(details or {})
+        super().__init__(f"{code}: {message}")
+
+
+# -- resolution: the one place a stored extract node becomes the engine's spec ---------
+
+#: A Procedure's capture reference (a call's ``captures[field]``) to the kind it names.
+KindLookup = Callable[[ArtifactNameRef], Any]
+#: An extract's pinned row (``name@N`` at its digest) to the accepted Contract.
+RowLookup = Callable[[ContractRef], Contract | None]
+
+
+#: The key of a sealed node's one resolution slot (see :func:`extract_spec`).
+_SPEC_SLOT_KEY = ("cruxible.procedures.extract_spec",)
+
+
+class _ResolvedSpecSlot:
+    """A sealed node's one remembered resolution: the kind digest and the spec it gave."""
+
+    __slots__ = ("entry",)
+
+    def __init__(self) -> None:
+        self.entry: tuple[str | None, ExtractNode] | None = None
+
+
+def extract_spec(node: LayoutExtractNode, kind: Any, row: Contract | None = None) -> ExtractNode:
+    """The full extract spec the stored ``node`` reads: the one resolution every reader
+    goes through (the engine, Claims typing, receipts, absence and delivery).
+
+    ``kind`` is the accepted CaptureKind the node's capture field is committed
+    as; ``row`` is the Contract the node's pinned row names (ruling L1): the spec
+    reads that row and only its fields, with paths and rules from ``kind``'s
+    layout. A node reads one capture field, so a sealed node (part of a sealed
+    accepted Procedure) remembers exactly one resolution: the spec for the kind
+    digest it last read. Runs of an unchanged Procedure over an unchanged kind
+    never resolve again; a successor kind replaces the entry, so the memo holds
+    at most one spec per node and lives as long as the node. An unsealed node
+    resolves on every call. A layout refusal raises ``LayoutExtractRefused`` (a
+    ``ValueError`` carrying its ``code``) and is never remembered.
+    """
+
+    kind_digest = None if kind is None else capture_contract_digest(kind).tagged
+    slot = sealed_derive(node, _SPEC_SLOT_KEY, _ResolvedSpecSlot)
+    entry = slot.entry
+    if entry is not None and entry[0] == kind_digest:
+        return entry[1]
+    resolved = resolve_layout_extract(node, getattr(kind, "layout", None), pinned_row=row)
+    # Sealed, so its receipt digest is also computed once.
+    seal(resolved)
+    # One tuple assignment: a concurrent reader sees the old entry or the new one.
+    slot.entry = (kind_digest, resolved)
+    return resolved
+
+
+def extract_capture_ref(
+    node: LayoutExtractNode, aliases: Mapping[str | None, object]
+) -> ArtifactNameRef | None:
+    """The CaptureKind reference of the call field ``node`` reads, or ``None``."""
+
+    captures = getattr(aliases.get(node.capture_alias), "captures", None)
+    if not isinstance(captures, Mapping):
+        return None
+    found = captures.get(node.capture_field)
+    return found if isinstance(found, ArtifactNameRef) else None
+
+
+def extract_specs(
+    nodes: Iterable[object], kind_of: KindLookup, row_of: RowLookup | None = None
+) -> Callable[[LayoutExtractNode], ExtractNode]:
+    """Resolve one Procedure's extract nodes against the kinds ``kind_of`` reads and the
+    rows they pin (``row_of``).
+
+    ``kind_of`` is asked once per node and call. A capture field no call
+    commits resolves with no kind, which refuses (``extract_layout_undeclared``).
+    """
+
+    aliases = {getattr(item, "as_", None): item for item in nodes}
+
+    def spec(node: LayoutExtractNode) -> ExtractNode:
+        reference = extract_capture_ref(node, aliases)
+        row = None if node.row is None or row_of is None else row_of(node.row)
+        return extract_spec(node, None if reference is None else kind_of(reference), row)
+
+    return spec
+
+
+def plan_kind_lookup(plan: Any, kinds: Mapping[str, Any]) -> KindLookup:
+    """At run, a capture reference's kind is the one the admitted plan pinned.
+
+    ``kinds`` holds the run's accepted CaptureKinds by digest. A reference the
+    plan did not resolve has no kind.
+    """
+
+    def kind_of(reference: ArtifactNameRef) -> Any:
+        if plan is None or reference.target.qualified not in plan.resolved:
+            return None
+        return kinds.get(plan.pin(reference).artifact_digest)
+
+    return kind_of
+
+
+# -- decoding -------------------------------------------------------------------------
+
+
+def _decoded_bytes(content: bytes, decoding: CaptureDecoding) -> bytes:
+    limit = decoding.limits.decoded_bytes
+    if decoding.encoding == "identity":
+        if len(content) > limit:
+            raise ExtractRefused(
+                "decoded_limit_exceeded",
+                f"the Capture holds {len(content)} bytes, over its {limit}-byte decode limit",
+                details={"limit": limit},
+            )
+        return content
+    stream = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+    out = bytearray()
+    view = memoryview(content)
+    step = 64 * 1024
+    try:
+        for start in range(0, len(view), step):
+            out += stream.decompress(view[start : start + step], limit + 1 - len(out))
+            if len(out) > limit:
+                break
+            while stream.unconsumed_tail and len(out) <= limit:
+                out += stream.decompress(stream.unconsumed_tail, limit + 1 - len(out))
+            if len(out) > limit:
+                break
+        if len(out) <= limit:
+            out += stream.flush(limit + 1 - len(out))
+    except zlib.error as exc:
+        raise ExtractRefused("decode_invalid", f"the gzip stream does not decode: {exc}") from exc
+    if len(out) > limit:
+        raise ExtractRefused(
+            "decoded_limit_exceeded",
+            f"the gzip stream decodes past its {limit}-byte decode limit",
+            details={"limit": limit},
+        )
+    if not stream.eof:
+        raise ExtractRefused("decode_invalid", "the gzip stream is truncated")
+    return bytes(out)
+
+
+def _depth(value: object, limit: int) -> None:
+    pending: list[tuple[object, int]] = [(value, 1)]
+    while pending:
+        item, level = pending.pop()
+        if isinstance(item, dict | list):
+            if level > limit:
+                raise ExtractRefused(
+                    "decoded_limit_exceeded",
+                    f"the decoded document nests deeper than its {limit}-level limit",
+                    details={"limit": limit, "dimension": "depth"},
+                )
+            members = item.values() if isinstance(item, dict) else item
+            pending.extend((member, level + 1) for member in members)
+
+
+@dataclass(frozen=True)
+class _CsvTable:
+    header: tuple[str, ...] | None
+    rows: tuple[tuple[str, ...], ...]
+    #: Data rows read to the end of the bytes, the header present when declared.
+    complete: bool
+
+
+def _decode(content: bytes, decoding: CaptureDecoding) -> object:
+    raw = _decoded_bytes(content, decoding)
+    if decoding.format == "bytes":
+        return raw
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ExtractRefused("decode_invalid", "the Capture is not UTF-8 text") from exc
+    if decoding.format == "text":
+        return text
+    if decoding.format == "json":
+        try:
+            document = json.loads(text, parse_float=Decimal, parse_constant=_no_constant)
+        except ValueError as exc:
+            raise ExtractRefused("decode_invalid", f"the Capture is not JSON: {exc}") from exc
+        _depth(document, decoding.limits.depth)
+        return document
+    dialect = decoding.csv
+    assert dialect is not None  # the decoding law pairs csv with its dialect
+    reader = csv.reader(io.StringIO(text, newline=""), strict=True)
+    rows: list[tuple[str, ...]] = []
+    header: tuple[str, ...] | None = None
+    try:
+        for line in reader:
+            if (
+                dialect.comment_prefix is not None
+                and line
+                and line[0].startswith(dialect.comment_prefix)
+            ):
+                continue
+            if dialect.header and header is None:
+                header = tuple(line)
+                continue
+            rows.append(tuple(line))
+            if len(rows) > decoding.limits.records:
+                raise ExtractRefused(
+                    "decoded_limit_exceeded",
+                    f"the CSV holds more than its {decoding.limits.records}-record limit",
+                    details={"limit": decoding.limits.records, "dimension": "records"},
+                )
+    except csv.Error as exc:
+        raise ExtractRefused("decode_invalid", f"the Capture is not CSV: {exc}") from exc
+    return _CsvTable(
+        header=header,
+        rows=tuple(rows),
+        complete=not dialect.header or header is not None,
+    )
+
+
+def _no_constant(name: str) -> object:
+    raise ValueError(f"JSON constant {name} is not a value")
+
+
+# -- locating values ------------------------------------------------------------------
+
+
+def _pointer(path: str) -> tuple[str, ...]:
+    """A JSON Pointer as its unescaped segments; a relative path reads the same way."""
+
+    text = path[1:] if path.startswith("/") else path
+    if not text:
+        return ()
+    return tuple(part.replace("~1", "/").replace("~0", "~") for part in text.split("/"))
+
+
+def _escape(segment: str) -> str:
+    return segment.replace("~", "~0").replace("/", "~1")
+
+
+def _at(document: object, segments: Sequence[str]) -> object:
+    current = document
+    for segment in segments:
+        if isinstance(current, dict):
+            if segment not in current:
+                return _MISSING
+            current = current[segment]
+        elif isinstance(current, list):
+            if not segment.isdigit() or (len(segment) > 1 and segment[0] == "0"):
+                return _MISSING
+            index = int(segment)
+            if index >= len(current):
+                return _MISSING
+            current = current[index]
+        else:
+            return _MISSING
+    return current
+
+
+def _enumerate_json(document: object, selector: str) -> list[tuple[str, object]] | None:
+    """``(locator, record)`` for every record the selector matches; ``None`` when none can."""
+
+    segments = _pointer(selector)
+    if "*" not in segments:
+        record = _at(document, segments)
+        if record is _MISSING:
+            return None
+        return [("".join("/" + _escape(part) for part in segments) or "/", record)]
+    if segments.count("*") != 1:
+        raise ExecutionError("a json-pointer-v1 record selector has at most one '*'")
+    star = segments.index("*")
+    container = _at(document, segments[:star])
+    rest = segments[star + 1 :]
+    prefix = "".join("/" + _escape(part) for part in segments[:star])
+    if isinstance(container, list):
+        members: Iterable[tuple[str, object]] = (
+            (str(index), item) for index, item in enumerate(container)
+        )
+    elif isinstance(container, dict):
+        members = ((str(key), item) for key, item in container.items())
+    else:
+        return None
+    found: list[tuple[str, object]] = []
+    for name, item in members:
+        record = _at(item, rest)
+        if record is _MISSING:
+            continue
+        locator = prefix + "/" + _escape(name) + "".join("/" + _escape(part) for part in rest)
+        found.append((locator, record))
+    return found
+
+
+def _drop_nulls(value: object) -> object:
+    """``json-pointer-v1`` reads a JSON null as absence, at every depth."""
+
+    if isinstance(value, dict):
+        return {key: _drop_nulls(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_drop_nulls(item) for item in value]
+    return value
+
+
+# -- typing one lexeme ----------------------------------------------------------------
+
+
+def _parsed(lexeme: object, parse: str | None) -> object:
+    if parse is None or not isinstance(lexeme, str):
+        return lexeme
+    text = lexeme.strip()
+    if parse == "date":
+        try:
+            return date.fromisoformat(text).isoformat()
+        except ValueError:
+            return _UNPARSEABLE
+    if parse == "datetime":
+        try:
+            return format_datetime(parse_datetime(text))
+        except ValueError:
+            return _UNPARSEABLE
+    if parse == "int":
+        try:
+            return int(text, 10)
+        except ValueError:
+            return _UNPARSEABLE
+    if parse == "decimal":
+        try:
+            number = Decimal(text)
+        except InvalidOperation:
+            return _UNPARSEABLE
+        return number if number.is_finite() else _UNPARSEABLE
+    if parse == "bool":
+        return {"true": True, "false": False}.get(text, _UNPARSEABLE)
+    raise ExecutionError(f"unknown parse {parse!r}")  # pragma: no cover - the model is closed
+
+
+_UNPARSEABLE = object()
+
+
+def _canonicalized(
+    value: object, field_type: FieldType, canonicalize: str | None, enums: EnumResolver | None
+) -> object:
+    if canonicalize != "claim_type" or not isinstance(value, str):
+        return value
+    members: tuple[str, ...] | None = None
+    if isinstance(field_type, EnumType):
+        members = field_type.members
+    elif isinstance(field_type, EnumOfType) and enums is not None:
+        members = enums(field_type.claim_type)
+    if not members:
+        return value
+    folded = value.strip().casefold()
+    matches = [member for member in members if member.casefold() == folded]
+    return matches[0] if len(matches) == 1 else value
+
+
+#: A field result as the extractor holds it: ``("present", value, at)``,
+#: ``("absent",)`` or ``("invalid", code, field, lexeme)``. Models are built
+#: only for a caller that asks for them (``ExtractOutcome.records``), so a
+#: record costs no model construction on the run path.
+Held = tuple[Any, ...]
+_ABSENT: Held = ("absent",)
+
+
+def _lexeme(value: object) -> str | None:
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return text[:256]
+
+
+def _bad(code: str, field: str | None, lexeme: object = None) -> Held:
+    return ("invalid", code, field, _lexeme(lexeme))
+
+
+def _in_range(value: Any, low: Any, high: Any) -> bool:
+    return (low is None or value >= low) and (high is None or value <= high)
+
+
+def _check(
+    value: object,
+    field_type: FieldType,
+    *,
+    at: str,
+    field: str | None,
+    resolve: Callable[[ContractRef], Contract | None] | None,
+    enums: EnumResolver | None,
+    keys: KeyCanonicalizer | None = None,
+) -> Held:
+    """``check_value`` without model construction, for the types records carry.
+
+    It agrees with :func:`check_value` type for type; any other type is checked
+    by ``check_value`` itself.
+    """
+
+    if isinstance(field_type, StringType):
+        if not isinstance(value, str):
+            return _bad("type_mismatch", field, value)
+        if unicodedata.normalize("NFC", value) != value:
+            return _bad("canonical_form_failed", field, value)
+        if not _in_range(len(value), field_type.min_len, field_type.max_len):
+            return _bad("out_of_range", field, value)
+        if field_type.pattern is not None and re.fullmatch(field_type.pattern, value) is None:
+            return _bad("pattern_mismatch", field, value)
+        return ("present", value, at)
+    if isinstance(field_type, IntType):
+        if isinstance(value, bool) or not isinstance(value, int):
+            return _bad("type_mismatch", field, value)
+        if not _in_range(value, field_type.min, field_type.max):
+            return _bad("out_of_range", field, value)
+        return ("present", value, at)
+    if isinstance(field_type, BoolType):
+        return (
+            ("present", value, at)
+            if isinstance(value, bool)
+            else _bad("type_mismatch", field, value)
+        )
+    if isinstance(field_type, EnumType | EnumOfType):
+        if not isinstance(value, str):
+            return _bad("type_mismatch", field, value)
+        members = (
+            field_type.members
+            if isinstance(field_type, EnumType)
+            else None
+            if enums is None
+            else enums(field_type.claim_type)
+        )
+        if members is None or value not in members:
+            return _bad("not_in_enum", field, value)
+        return ("present", value, at)
+    if isinstance(field_type, DateType):
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return ("present", value, at)
+        if not isinstance(value, str):
+            return _bad("type_mismatch", field, value)
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            return _bad("type_mismatch", field, value)
+        if parsed.isoformat() != value:
+            return _bad("canonical_form_failed", field, value)
+        return ("present", parsed, at)
+    if isinstance(field_type, ListType):
+        if not isinstance(value, list | tuple):
+            return _bad("type_mismatch", field, value)
+        if len(value) > field_type.max_items:
+            return _bad("out_of_range", field, len(value))
+        items = []
+        for index, member in enumerate(value):
+            checked = _check(
+                member,
+                field_type.item,
+                at=f"{at}/{index}",
+                field=f"{field or ''}[{index}]",
+                resolve=resolve,
+                enums=enums,
+                keys=keys,
+            )
+            if checked[0] == "invalid":
+                return checked
+            items.append(checked[1])
+        return ("present", items, at)
+    if isinstance(field_type, NestedType):
+        if not isinstance(value, Mapping):
+            return _bad("type_mismatch", field, value)
+        target = None if resolve is None else resolve(field_type.contract)
+        if target is None:
+            return _bad("type_mismatch", field, value)
+        # The nested record is built from its checked values (a key canonicalized,
+        # a date parsed), in the nested Contract's own fields: what a later
+        # Contract boundary reads is the typed value, never the raw lexeme. A
+        # Contract is closed (the empty record holds only ``{}``), so an
+        # undeclared member is not carried.
+        nested: dict[str, object] = {}
+        for name, declared in target.fields.items():
+            if name not in value:
+                if not declared.optional:
+                    return _bad("absent_required", f"{field or ''}.{name}")
+                continue
+            checked = _check(
+                value[name],
+                declared.type,
+                at=f"{at}/{name}",
+                field=name,
+                resolve=resolve,
+                enums=enums,
+                keys=keys,
+            )
+            if checked[0] == "invalid":
+                return ("invalid", checked[1], f"{field or ''}.{checked[2] or name}", checked[3])
+            nested[name] = checked[1]
+        return ("present", nested, at)
+    if isinstance(field_type, KeyType | KeyPartType):
+        # Two raw keys that canonicalize to one key are one key.
+        if keys is None:
+            return _bad("key_unparseable", field, value)
+        part = field_type.part if isinstance(field_type, KeyPartType) else None
+        try:
+            # Extraction already builds its own compact result. Avoid allocating
+            # a public FieldPresent merely to unpack its canonical value.
+            canonical = keys.canonical(field_type.subject_kind, part, value)
+        except KeyPartOutOfBounds:
+            return _bad("key_part_out_of_bounds", field, value)
+        except KeyValueRefused:
+            return _bad("key_unparseable", field, value)
+        return ("present", canonical, at)
+    result = check_value(
+        value, field_type, at=at, field=field, resolve=resolve, enum_members=enums, keys=keys
+    )
+    if isinstance(result, FieldPresent):
+        return ("present", result.value, result.at)
+    problem = result.problem
+    return ("invalid", problem.code, problem.field, problem.lexeme)
+
+
+def _type_value(
+    lexeme: object,
+    declared: ExtractField,
+    field_type: FieldType,
+    *,
+    name: str,
+    at: str,
+    required: bool,
+    enums: EnumResolver | None,
+    resolve: Callable[[ContractRef], Contract | None] | None,
+    keys: KeyCanonicalizer | None = None,
+) -> Held:
+    if lexeme is _MISSING or lexeme is None or lexeme == "" and declared.parse is not None:
+        return _bad("absent_required", name) if required else _ABSENT
+    value = _parsed(lexeme, declared.parse)
+    if declared.project == "utc_date" and value is not _UNPARSEABLE:
+        # _parsed(datetime) returns canonical UTC text, not a datetime object.
+        parsed_time = parse_datetime(str(value))
+        if parsed_time is None:
+            return _bad("type_mismatch", name, lexeme)
+        value = parsed_time.date()
+    elif declared.project == "utc_start_of_day" and value is not _UNPARSEABLE:
+        # _parsed(date) returns the canonical ISO day; the moment that day begins in UTC.
+        if not isinstance(value, str):
+            return _bad("type_mismatch", name, lexeme)
+        day = date.fromisoformat(value)
+        value = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    if value is _UNPARSEABLE:
+        return _bad("type_mismatch", name, lexeme)
+    value = _canonicalized(_drop_nulls(value), field_type, declared.canonicalize, enums)
+    return _check(value, field_type, at=at, field=name, resolve=resolve, enums=enums, keys=keys)
+
+
+def held_result(held: Held) -> FieldResult:
+    """The model form of one held field result."""
+
+    if held[0] == "present":
+        return FieldPresent(value=held[1], at=held[2])
+    if held[0] == "absent":
+        return FieldAbsent()
+    return FieldInvalid(problem=Problem(code=held[1], field=held[2], lexeme=held[3]))
+
+
+def wire_value(value: object) -> object:
+    """A typed value as canonical JSON: dates and moments as text, decimals as text."""
+
+    if isinstance(value, datetime):
+        return format_datetime(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        text = format(value.normalize(), "f")
+        return "0" if text in {"-0", ""} else text
+    if isinstance(value, dict):
+        return {key: wire_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [wire_value(item) for item in value]
+    return value
+
+
+def held_wire(held: Held) -> dict[str, object]:
+    """One held field result as canonical JSON, the shape ``field_result`` values take."""
+
+    if held[0] == "present":
+        return {"tag": "present", "value": wire_value(held[1]), "at": held[2]}
+    if held[0] == "absent":
+        return {"tag": "absent"}
+    problem: dict[str, object] = {"code": held[1]}
+    if held[2] is not None:
+        problem["field"] = held[2]
+    if held[3] is not None:
+        problem["lexeme"] = held[3]
+    return {"tag": "invalid", "problem": problem}
+
+
+# -- the cache ------------------------------------------------------------------------
+
+
+@dataclass
+class ExtractCacheStats:
+    """What the cache did, for the tests that hold it to its cost.
+
+    ``selected`` counts the records a run visits after layer D: every record
+    without ``only_keys``, and only the watched keys' records with it, so a
+    warm watch-set run's work is ``O(|only_keys|)`` whatever the Capture holds.
+    """
+
+    decodes: int = 0
+    d_hits: int = 0
+    evaluations: int = 0
+    e_hits: int = 0
+    field_reads: int = 0
+    f_hits: int = 0
+    selected: int = 0
+
+    def reset(self) -> None:
+        for name in self.__dataclass_fields__:
+            setattr(self, name, 0)
+
+
+STATS = ExtractCacheStats()
+
+
+@dataclass
+class _Index:
+    """Layer D: one decoded Capture's records under one selector and key spec."""
+
+    records: list[tuple[str, object]]
+    #: Each record's position in document order, and the record by its locator,
+    #: built once with the index so a watch-set run never scans the records.
+    positions: dict[str, int]
+    by_locator: dict[str, object]
+    keys: dict[str, dict[str, object]]
+    key_problems: dict[str, tuple[Problem, ...]]
+    duplicate_of: dict[str, str]
+    by_key: dict[bytes, list[str]]
+    header_source: object
+    csv_complete: bool
+    selector_matched: bool
+
+
+@dataclass
+class _Evaluation:
+    """Layer E: completeness and header results."""
+
+    complete_when_held: bool
+    complete_when_result: CompleteWhenResult | None
+    header: dict[str, Held]
+
+
+class _Lru(OrderedDict[Any, Any]):
+    def __init__(self, capacity: int) -> None:
+        super().__init__()
+        self.capacity = capacity
+
+    def lookup(self, key: Any) -> Any:
+        value = self.get(key, _MISSING)
+        if value is not _MISSING:
+            self.move_to_end(key)
+        return value
+
+    def remember(self, key: Any, value: Any) -> Any:
+        self[key] = value
+        self.move_to_end(key)
+        while len(self) > self.capacity:
+            self.popitem(last=False)
+        return value
+
+
+_D: _Lru = _Lru(64)
+_E: _Lru = _Lru(256)
+_F: _Lru = _Lru(1 << 18)
+
+
+def clear_extract_cache() -> None:
+    _D.clear()
+    _E.clear()
+    _F.clear()
+
+
+def _key_of(values: Mapping[str, object]) -> bytes:
+    return canonical_bytes(normalize_canonical({k: wire_value(v) for k, v in values.items()}))
+
+
+def _index(
+    node: ExtractNode,
+    *,
+    capture_digest: str,
+    content: bytes,
+    decoding: CaptureDecoding,
+    key_types: Mapping[str, FieldType],
+    enums: EnumResolver | None,
+    typing: _Typing,
+) -> tuple[tuple[object, ...], _Index]:
+    extractor = EXTRACTOR_VERSIONS[decoding.format]
+    d_key = (
+        capture_digest,
+        extractor,
+        canonical_bytes(decoding.model_dump(mode="json")),
+        node.records,
+        extract_spec_digest(
+            {
+                "key": node.key,
+                "types": {name: typing.of(key_types[name]) for name in node.key},
+            }
+        ),
+    )
+    cached = _D.lookup(d_key)
+    if cached is not _MISSING:
+        STATS.d_hits += 1
+        return d_key, cached
+    STATS.decodes += 1
+    document = _decode(content, decoding)
+    csv_complete = True
+    header_source: object = document
+    columns: dict[str, int] = {}
+    selector_matched = True
+    if isinstance(document, _CsvTable):
+        csv_complete = document.complete
+        header_source = {}
+        if document.header is not None:
+            columns = {name: index for index, name in enumerate(document.header)}
+        records: list[tuple[str, object]] = []
+        width = None if document.header is None else len(document.header)
+        for index, row in enumerate(document.rows):
+            locator = f"/rows/{index}"
+            if width is not None and len(row) != width:
+                records.append((locator, _RaggedRow(len(row), width)))
+                continue
+            records.append(
+                (locator, {name: row[i] for name, i in columns.items()} if columns else list(row))
+            )
+    elif isinstance(document, dict | list):
+        found = _enumerate_json(document, node.records)
+        selector_matched = found is not None
+        records = [] if found is None else found
+        if len(records) > decoding.limits.records:
+            raise ExtractRefused(
+                "decoded_limit_exceeded",
+                f"the selector matches more than its {decoding.limits.records}-record limit",
+                details={"limit": decoding.limits.records, "dimension": "records"},
+            )
+    else:
+        raise ExtractRefused(
+            "extract_format_unsupported",
+            f"core extracts records from json and csv, not {decoding.format}",
+        )
+    keys: dict[str, dict[str, object]] = {}
+    problems: dict[str, tuple[Problem, ...]] = {}
+    json_records = not isinstance(document, _CsvTable)
+    for locator, record in records:
+        if json_records and not isinstance(record, dict):
+            # A JSON record is an object (D-R40): anything else is refused alone,
+            # its siblings still read, and the extract is incomplete.
+            problems[locator] = (
+                Problem(code="not_an_object", field=None, lexeme=_json_kind(record)),
+            )
+            continue
+        if isinstance(record, _RaggedRow):
+            problems[locator] = (
+                Problem(
+                    code="type_mismatch",
+                    field=None,
+                    lexeme=f"{record.cells} cells in a {record.width}-column row",
+                ),
+            )
+            continue
+        values: dict[str, object] = {}
+        found_problems: list[Problem] = []
+        for name, declared in node.key.items():
+            lexeme = _read(record, declared.at)
+            result = _type_value(
+                lexeme,
+                declared,
+                key_types[name],
+                name=name,
+                at=locator + "/" + declared.at.lstrip("/"),
+                required=True,
+                enums=enums,
+                resolve=None,
+                keys=typing.keys,
+            )
+            if result[0] == "present":
+                values[name] = result[1]
+            else:
+                absent = lexeme is _MISSING or lexeme is None
+                found_problems.append(
+                    Problem(
+                        code="key_absent"
+                        if absent
+                        else "key_part_out_of_bounds"
+                        if result[1] == "key_part_out_of_bounds"
+                        else "key_unparseable",
+                        field=name,
+                        lexeme=result[3] if result[0] == "invalid" else None,
+                    )
+                )
+        if found_problems:
+            problems[locator] = tuple(found_problems)
+        else:
+            keys[locator] = values
+    by_key: dict[bytes, list[str]] = {}
+    if node.key:
+        # Without a declared key, records have no identity to share.
+        for locator, values in keys.items():
+            by_key.setdefault(_key_of(values), []).append(locator)
+    duplicate_of = {
+        locator: locators[0]
+        for locators in by_key.values()
+        if len(locators) > 1
+        for locator in locators
+    }
+    built = _Index(
+        records=records,
+        positions={locator: position for position, (locator, _r) in enumerate(records)},
+        by_locator=dict(records),
+        keys=keys,
+        key_problems=problems,
+        duplicate_of=duplicate_of,
+        by_key=by_key,
+        header_source=header_source,
+        csv_complete=csv_complete,
+        selector_matched=selector_matched,
+    )
+    return d_key, _D.remember(d_key, built)
+
+
+def _json_kind(value: object) -> str:
+    """The JSON kind of a non-object record, as its refusal names it."""
+
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, bool):
+        return "boolean"
+    if value is None:
+        return "null"
+    return "number"
+
+
+@dataclass(frozen=True)
+class _RaggedRow:
+    cells: int
+    width: int
+
+
+def _read(record: object, at: str) -> object:
+    if isinstance(record, dict) and at in record and "/" not in at:
+        return record[at]
+    if isinstance(record, list):
+        return record[int(at)] if at.isdigit() and int(at) < len(record) else _MISSING
+    return _at(record, _pointer(at))
+
+
+def _evaluate(
+    node: ExtractNode,
+    d_key: tuple[object, ...],
+    index: _Index,
+    *,
+    header_types: Mapping[str, FieldType],
+    enums: EnumResolver | None,
+    typing: _Typing,
+) -> _Evaluation:
+    e_key = (
+        d_key,
+        extract_spec_digest(node.complete_when),
+        extract_spec_digest(
+            {
+                "header": node.header,
+                "types": {name: typing.of(header_types[name]) for name in node.header},
+            }
+        ),
+    )
+    cached = _E.lookup(e_key)
+    if cached is not _MISSING:
+        STATS.e_hits += 1
+        return cached  # type: ignore[no-any-return]
+    STATS.evaluations += 1
+    header: dict[str, Held] = {}
+    for name, declared in node.header.items():
+        header[name] = _type_value(
+            _read(index.header_source, declared.at),
+            declared,
+            header_types[name],
+            name=name,
+            at="/" + declared.at.lstrip("/"),
+            required=declared.presence == "required",
+            enums=enums,
+            resolve=None,
+            keys=typing.keys,
+        )
+    held = index.csv_complete and index.selector_matched
+    result = None
+    if node.complete_when is not None:
+        stated = _read(index.header_source, node.complete_when.count_at)
+        held = (
+            held
+            and isinstance(stated, int | Decimal)
+            and not isinstance(stated, bool)
+            and stated == len(index.records)
+        )
+        expected = (
+            int(stated)
+            if isinstance(stated, int | Decimal)
+            and not isinstance(stated, bool)
+            and stated == int(stated)
+            else None
+        )
+        result = CompleteWhenResult(
+            count_at=node.complete_when.count_at,
+            expected=expected,
+            observed=len(index.records),
+            held=held,
+        )
+    return _E.remember(  # type: ignore[no-any-return]
+        e_key, _Evaluation(complete_when_held=held, complete_when_result=result, header=header)
+    )
+
+
+@dataclass(frozen=True)
+class _Record:
+    locator: str
+    key: dict[str, object]
+    fields: dict[str, Held]
+
+
+@dataclass
+class ExtractOutcome:
+    """One extract node's results and what its completeness rests on.
+
+    ``held`` keeps each result as the extractor read it: a ``_Record``, an
+    ``InvalidRecordArm`` or a ``DuplicateArm``. ``results`` and ``records``
+    build the ``result`` and ``record`` models on demand.
+    """
+
+    held: list[_Record | InvalidRecordArm | DuplicateArm]
+    held_header: dict[str, Held]
+    complete_when_held: bool
+    invalid_records: int
+    duplicates: int
+    complete_when_result: CompleteWhenResult | None = None
+    invalid_fields: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def results(self) -> list[ResultValue]:
+        return [_result_model(item) for item in self.held]
+
+    @property
+    def records(self) -> list[RecordValue]:
+        return [_record_model(item) for item in self.held if isinstance(item, _Record)]
+
+    @property
+    def header(self) -> dict[str, FieldResult]:
+        return {name: held_result(value) for name, value in self.held_header.items()}
+
+    @property
+    def complete(self) -> bool:
+        """``complete_when`` held, and no record was invalid or a refused duplicate."""
+
+        return self.complete_when_held and self.invalid_records == 0 and self.duplicates == 0
+
+    def dropped_rows(self) -> dict[int, frozenset[str]]:
+        """Each ``rows`` entry that leaves out an invalid field: index -> those fields.
+
+        ``rows`` holds present values only, so the completeness law needs to
+        know which reads through it would meet an invalid field as absence.
+        """
+
+        if not self.invalid_fields:
+            return {}
+        records = (item for item in self.held if isinstance(item, _Record))
+        return {
+            index: frozenset(name for name, result in item.fields.items() if result[0] == "invalid")
+            for index, item in enumerate(records)
+            if any(result[0] == "invalid" for result in item.fields.values())
+        }
+
+    def value(self) -> dict[str, object]:
+        """The node's value: results, their record arms, rows, header and completeness."""
+
+        records = [item for item in self.held if isinstance(item, _Record)]
+        return {
+            "results": [_result_wire(item) for item in self.held],
+            "records": [_record_wire(item) for item in records],
+            "rows": [
+                {
+                    name: wire_value(result[1])
+                    for name, result in item.fields.items()
+                    if result[0] == "present"
+                }
+                for item in records
+            ],
+            "header": {name: held_wire(value) for name, value in self.held_header.items()},
+            "complete": self.complete,
+            "count": len(records),
+        }
+
+
+def _record_model(item: _Record) -> RecordValue:
+    return RecordValue(
+        record=item.locator,
+        key=item.key,
+        fields={name: held_result(value) for name, value in item.fields.items()},
+    )
+
+
+def _result_model(item: _Record | InvalidRecordArm | DuplicateArm) -> ResultValue:
+    return RecordArm(record=_record_model(item)) if isinstance(item, _Record) else item
+
+
+def _record_wire(item: _Record) -> dict[str, object]:
+    return {
+        "record": item.locator,
+        "key": {name: wire_value(value) for name, value in item.key.items()},
+        "fields": {name: held_wire(value) for name, value in item.fields.items()},
+    }
+
+
+def _result_wire(item: _Record | InvalidRecordArm | DuplicateArm) -> dict[str, object]:
+    if isinstance(item, _Record):
+        return {"tag": "record", "record": _record_wire(item)}
+    if isinstance(item, DuplicateArm):
+        return {
+            "tag": "duplicate",
+            "record": item.record,
+            "key": {name: wire_value(value) for name, value in item.key.items()},
+            "first": item.first,
+        }
+    return item.model_dump(mode="json")
+
+
+class _Typing:
+    """Every typing declaration one field's result depends on, resolved once per run.
+
+    A field result is read under its effective type, and that type may name
+    an enum whose members a ClaimType declares (``enum_of``), a Contract it
+    nests (``contract``, ``variant``, ``record``...) or a SubjectKind whose
+    identity rules canonicalize a key (``key``, ``key_part``). Each cache key carries
+    the type together with what those names resolve to *now*, so a changed
+    enum membership or nested Contract version is a different key, never a
+    stale hit.
+    """
+
+    def __init__(
+        self,
+        resolve: Callable[[ContractRef], Contract | None] | None,
+        enums: EnumResolver | None,
+        keys: KeyCanonicalizer | None = None,
+    ) -> None:
+        self._resolve = resolve
+        self._enums = enums
+        self.keys = keys
+        self._memo: dict[bytes, object] = {}
+
+    def of(self, field_type: FieldType) -> object:
+        dumped = field_type.model_dump(mode="json")
+        spelling = canonical_bytes(dumped)
+        found = self._memo.get(spelling)
+        if found is None:
+            found = {"type": dumped, "resolved": self._dependencies(field_type)}
+            self._memo[spelling] = found
+        return found
+
+    def _dependencies(self, field_type: FieldType) -> list[object]:
+        found: list[object] = []
+        seen: set[bytes] = set()
+        pending: list[FieldType] = [field_type]
+        while pending:
+            item = pending.pop()
+            if isinstance(item, EnumOfType):
+                members = None if self._enums is None else self._enums(item.claim_type)
+                found.append(
+                    {
+                        "enum_of": item.claim_type,
+                        "members": None if members is None else list(members),
+                    }
+                )
+                continue
+            if isinstance(item, KeyType | KeyPartType):
+                # A key reads under its kind's identity rules as they are now: a
+                # successor SubjectKind (a changed normalizer) is a new key.
+                found.append(
+                    {
+                        "key_rules": item.subject_kind,
+                        "resolved": None
+                        if self.keys is None
+                        else self.keys.rule_token(item.subject_kind),
+                    }
+                )
+                continue
+            if isinstance(item, ListType):
+                pending.append(item.item)
+                continue
+            if isinstance(item, FieldResultType):
+                pending.append(item.value)
+                continue
+            refs: list[ContractRef] = []
+            if isinstance(item, NestedType | RecordType | ResultType | RefusalType):
+                refs = [item.contract]
+            elif isinstance(item, VariantType):
+                refs = list(item.arms.values())
+            for ref in refs:
+                pinned = canonical_bytes(ref.model_dump(mode="json"))
+                if pinned in seen:
+                    continue
+                seen.add(pinned)
+                target = None if self._resolve is None else self._resolve(ref)
+                found.append(
+                    {
+                        "contract": ref.model_dump(mode="json"),
+                        "resolved": None if target is None else target.model_dump(mode="json"),
+                    }
+                )
+                if target is not None:
+                    pending.extend(declared.type for declared in target.fields.values())
+        return found
+
+
+def _canonical_only_key(
+    key: Mapping[str, object], *, keys_typed: Mapping[str, FieldType], typing: _Typing
+) -> Mapping[str, object] | None:
+    """A watched key as the record index holds keys: each ``key<K>`` part canonicalized.
+
+    A watched value that is not a key of its kind can name no record (every
+    indexed key is canonical), so it selects nothing.
+    """
+
+    canonical: dict[str, object] = {}
+    for name, value in key.items():
+        field_type = keys_typed.get(name)
+        if isinstance(field_type, KeyType | KeyPartType):
+            checked = check_key_value(
+                value, field_type, at="", field=name, keys=typing.keys, convert=True
+            )
+            if not isinstance(checked, FieldPresent):
+                return None
+            value = checked.value
+        canonical[name] = value
+    return canonical
+
+
+def run_extract(
+    node: ExtractNode,
+    *,
+    capture_digest: str,
+    content: bytes,
+    decoding: CaptureDecoding | None,
+    row: Contract,
+    resolve: Callable[[ContractRef], Contract | None] | None = None,
+    enums: EnumResolver | None = None,
+    only_keys: Sequence[Mapping[str, object]] | None = None,
+    header_types: Mapping[str, FieldType] | None = None,
+    key_types: Mapping[str, FieldType] | None = None,
+    keys: KeyCanonicalizer | None = None,
+) -> ExtractOutcome:
+    """Decode (or reuse) one Capture's record index and read the node's fields.
+
+    ``keys`` is core's SubjectKind identity rules at the run's coordinate: a
+    ``key<K>`` / ``key_part<K:p>`` key or field reads through them (without
+    them, it fails closed ``key_unparseable``). A runtime ``only_keys`` entry
+    is canonicalized the same way before it selects.
+    """
+
+    if decoding is None:
+        raise ExtractRefused(
+            "extract_decoding_undeclared",
+            "the Capture's CaptureContract declares no decoding",
+        )
+    typing = _Typing(resolve, enums, keys)
+    types = {name: row.fields[name].type for name in node.fields}
+    keys_by_name = dict(
+        key_types or {name: declared.field_type() for name, declared in node.key.items()}
+    )
+    headers = dict(
+        header_types or {name: declared.field_type() for name, declared in node.header.items()}
+    )
+    d_key, index = _index(
+        node,
+        capture_digest=capture_digest,
+        content=content,
+        decoding=decoding,
+        key_types=keys_by_name,
+        enums=enums,
+        typing=typing,
+    )
+    evaluation = _evaluate(node, d_key, index, header_types=headers, enums=enums, typing=typing)
+    for name, declared in node.header.items():
+        result = evaluation.header[name]
+        if declared.presence == "required" and result[0] != "present":
+            code = "absent_required" if result[0] == "absent" else result[1]
+            lexeme = result[3] if result[0] == "invalid" else None
+            raise ExtractRefused(
+                "extract.header_invalid@1",
+                f"required header field {name!r} is {code}",
+                details={
+                    "field": name,
+                    "code": code,
+                    **({"lexeme": lexeme} if lexeme is not None else {}),
+                },
+            )
+    selected: Iterable[str]
+    if only_keys is None:
+        selected = index.positions
+    else:
+        # O(|only_keys|): the key index names each watched key's records and
+        # the position map orders them; no record outside the watch set is read.
+        wanted: dict[str, None] = {}
+        for key in only_keys:
+            canonical = _canonical_only_key(key, keys_typed=keys_by_name, typing=typing)
+            if canonical is None:
+                continue
+            for locator in index.by_key.get(_key_of(canonical), ()):
+                wanted[locator] = None
+        selected = sorted(wanted, key=index.positions.__getitem__)
+    held: list[_Record | InvalidRecordArm | DuplicateArm] = []
+    invalid_records = 0
+    duplicates = 0
+    invalid_fields: dict[str, int] = {}
+    required = {
+        name: declared.presence == "required"
+        or (declared.presence is None and not row.fields[name].optional)
+        for name, declared in node.fields.items()
+    }
+    # A field result is keyed by everything that types it: the field's name
+    # (it appears in its problems), its declaration, its effective row type
+    # with what that type resolves to, and whether it is required.
+    field_digests = {
+        name: extract_spec_digest(
+            {
+                "name": name,
+                "declared": declared,
+                "type": typing.of(types[name]),
+                "required": required[name],
+            }
+        )
+        for name, declared in node.fields.items()
+    }
+    for locator in selected:
+        STATS.selected += 1
+        problems = index.key_problems.get(locator)
+        if problems is not None:
+            invalid_records += 1
+            held.append(InvalidRecordArm(record=locator, problems=problems))
+            continue
+        key = index.keys[locator]
+        first = index.duplicate_of.get(locator)
+        if first is not None and (node.duplicates != "first" or first != locator):
+            if node.duplicates == "refuse_run":
+                raise ExtractRefused(
+                    "extract_duplicate_key",
+                    f"records {first} and {locator} share one key",
+                    details={"first": first, "record": locator},
+                )
+            if node.duplicates == "refuse_key":
+                duplicates += 1
+            held.append(DuplicateArm(record=locator, key=key, first=first))
+            continue
+        record = index.by_locator[locator]
+        fields: dict[str, Held] = {}
+        for name, declared in node.fields.items():
+            f_key = (d_key, field_digests[name], locator)
+            cached = _F.lookup(f_key)
+            if cached is _MISSING:
+                STATS.field_reads += 1
+                cached = _F.remember(
+                    f_key,
+                    _type_value(
+                        _read(record, declared.at),
+                        declared,
+                        types[name],
+                        name=name,
+                        at=locator + "/" + declared.at.lstrip("/"),
+                        required=required[name],
+                        enums=enums,
+                        resolve=resolve,
+                        keys=typing.keys,
+                    ),
+                )
+            else:
+                STATS.f_hits += 1
+            if cached[0] == "invalid":
+                invalid_fields[name] = invalid_fields.get(name, 0) + 1
+            fields[name] = cached
+        held.append(_Record(locator=locator, key=key, fields=fields))
+    return ExtractOutcome(
+        held=held,
+        held_header=evaluation.header,
+        complete_when_held=evaluation.complete_when_held,
+        complete_when_result=evaluation.complete_when_result,
+        invalid_records=invalid_records,
+        duplicates=duplicates,
+        invalid_fields=invalid_fields,
+    )
+
+
+def merge_outcomes(
+    outcomes: Sequence[ExtractOutcome],
+    *,
+    duplicates: Literal["refuse_run", "refuse_key", "first"],
+    keyed: bool,
+) -> tuple[ExtractOutcome, tuple[int, ...]]:
+    """One extract's results over a list of Captures, and each record's member (D-R37 a5).
+
+    Records merge in member order, each keeping its member-local locator (its
+    receipt names that member's Capture). A key held in two members is a
+    duplicate wherever it appears: nothing is written for it, and the merged
+    result is incomplete, as for a refused duplicate key within one Capture;
+    ``refuse_run`` refuses. Completeness is every member's. Returns the merged
+    outcome and, per entry of its ``records``, the index of the member it came
+    from.
+    """
+
+    def key_of(key: Mapping[str, object]) -> bytes:
+        return canonical_bytes({name: wire_value(value) for name, value in key.items()})
+
+    first_seen: dict[bytes, tuple[int, str]] = {}
+    shared: set[bytes] = set()
+    if keyed:
+        for member, outcome in enumerate(outcomes):
+            for item in outcome.held:
+                if isinstance(item, InvalidRecordArm):
+                    continue
+                key = key_of(item.key)
+                seen = first_seen.setdefault(
+                    key, (member, item.record if isinstance(item, DuplicateArm) else item.locator)
+                )
+                if seen[0] != member:
+                    shared.add(key)
+    held: list[_Record | InvalidRecordArm | DuplicateArm] = []
+    members: list[int] = []
+    across = 0
+    invalid_fields: dict[str, int] = {}
+    for member, outcome in enumerate(outcomes):
+        for name, count in outcome.invalid_fields.items():
+            invalid_fields[name] = invalid_fields.get(name, 0) + count
+        for item in outcome.held:
+            if isinstance(item, _Record) and keyed and key_of(item.key) in shared:
+                first_member, first = first_seen[key_of(item.key)]
+                if duplicates == "refuse_run":
+                    raise ExtractRefused(
+                        "extract_duplicate_key",
+                        f"records {first} (member {first_member}) and {item.locator} "
+                        f"(member {member}) share one key",
+                        details={"first": first, "record": item.locator},
+                    )
+                across += 1
+                held.append(DuplicateArm(record=item.locator, key=item.key, first=first))
+                continue
+            held.append(item)
+            if isinstance(item, _Record):
+                members.append(member)
+    merged = ExtractOutcome(
+        held=held,
+        held_header={},
+        complete_when_held=all(outcome.complete_when_held for outcome in outcomes),
+        invalid_records=sum(outcome.invalid_records for outcome in outcomes),
+        duplicates=sum(outcome.duplicates for outcome in outcomes) + across,
+        invalid_fields=invalid_fields,
+    )
+    return merged, tuple(members)
+
+
+Extractor = Literal["json-pointer-v1", "csv-cell-v1"]
+
+__all__ = [
+    "STATS",
+    "ExtractCacheStats",
+    "ExtractOutcome",
+    "ExtractRefused",
+    "Extractor",
+    "KindLookup",
+    "RowLookup",
+    "clear_extract_cache",
+    "extract_capture_ref",
+    "extract_spec",
+    "extract_specs",
+    "plan_kind_lookup",
+    "held_result",
+    "held_wire",
+    "merge_outcomes",
+    "run_extract",
+    "wire_value",
+]

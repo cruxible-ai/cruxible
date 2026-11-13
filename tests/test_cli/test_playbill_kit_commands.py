@@ -1,0 +1,770 @@
+"""CLI kit commands: no public push; add carries the upgrade decisions; status checks updates."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from click.testing import CliRunner
+
+from cruxible_client.contracts import CasObjectResult
+from cruxible_client.contracts.kits import (
+    InstalledKit,
+    KitAddRequest,
+    KitBuildRequest,
+    KitBuildResult,
+    KitBundle,
+    KitChangeResult,
+    KitOwnershipConflictRefusal,
+    KitPathPlan,
+    KitProvider,
+    KitProviderFile,
+    KitProviderFileBytes,
+    KitProviderStatus,
+    KitProviderStep,
+    KitRequirementStatus,
+    KitStatus,
+)
+from cruxible_core.cli.main import cli
+from tests.test_client.test_artifacts import _bundle
+
+BASE = ["--server-url", "https://kits.example.test", "--instance-id", "inst", "kit"]
+
+
+def test_kit_push_is_not_a_public_command() -> None:
+    result = CliRunner().invoke(cli, [*BASE, "push", "acme", "acme:1.0.0"])
+    assert result.exit_code == 2
+
+
+def test_kit_add_sends_the_upgrade_decisions_and_groups_the_plan_by_kind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    sent: list[KitAddRequest] = []
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            sent.append(request)
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.1.0",
+                status="would_propose",
+                transition="upgrade",
+                installed_version="1.0.0",
+                plan=(
+                    KitPathPlan(
+                        path="claim-types/acme.account/plan.json",
+                        action="replace",
+                        identity="ClaimType:acme.account.plan",
+                        consequence="overwrites_your_edit",
+                        dependent_count=3,
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme-1.1.0")
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            *BASE,
+            "add",
+            "acme-1.1.0",
+            "--keep",
+            "ClaimType:acme.account.seats",
+            "--retire-dependents",
+            "ClaimType:acme.account.old",
+            "--allow-downgrade",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    (request,) = sent
+    assert request.keep == ("ClaimType:acme.account.seats",)
+    assert request.retire_dependents == ("ClaimType:acme.account.old",)
+    assert request.allow_downgrade is True
+    assert "acme 1.1.0: would_propose (upgrade from 1.0.0)" in result.output
+    assert "ClaimType:" in result.output
+    assert (
+        "  replace: ClaimType:acme.account.plan (overwrites your edit; 3 dependent(s))"
+        in result.output
+    )
+
+
+def test_kit_lines_say_what_a_kept_divergence_keeps_and_use_public_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.kits import KitKeptDivergence
+
+    kept = KitKeptDivergence(
+        path="claim-types/acme.account/title.json",
+        identity="ClaimType:acme.account.title",
+        consequence="overwrites_your_edit",
+        release_digest="sha256:" + "3" * 64,
+    )
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.1.0",
+                status="would_propose",
+                plan=(
+                    KitPathPlan(
+                        path=kept.path,
+                        action="keep",
+                        identity=kept.identity,
+                        consequence="overwrites_your_edit",
+                    ),
+                    KitPathPlan(
+                        path="capture-contracts/playbill.coordinator-self-source-v1.json",
+                        action="add",
+                        identity="CaptureContract:playbill.coordinator-self-source-v1",
+                    ),
+                ),
+            )
+
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="acme",
+                        version="1.1.0",
+                        content_digest="sha256:" + "1" * 64,
+                        kept=(kept,),
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme-1.1.0")
+    )
+
+    added = CliRunner().invoke(cli, [*BASE, "add", "acme-1.1.0"])
+    assert added.exit_code == 0, added.output
+    assert "  keep: ClaimType:acme.account.title (keeps your edit)" in added.output
+    assert "  add: CaptureContract:cruxible.coordinator-self-source-v1" in added.output
+    assert "overwrites your edit" not in added.output and "playbill." not in added.output
+    status = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+    assert status.exit_code == 0, status.output
+    assert "  kept: ClaimType:acme.account.title (your edit)" in status.output
+
+
+def test_kit_status_offline_skips_the_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="acme",
+                        version="1.0.0",
+                        content_digest="sha256:" + "1" * 64,
+                        source="ghcr.io/cruxible-ai/kits/acme@sha256:" + "2" * 64,
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert "acme 1.0.0" in result.output
+    assert "update check offline" in result.output
+
+
+def test_kit_collision_exposes_the_shared_refusal_and_next_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refusal = KitOwnershipConflictRefusal(
+        our_prefixes=("acme.account.",),
+        owning_kit_id="acme",
+        owning_prefix="acme.",
+        detail="acme.account. overlaps acme., owned by kit acme",
+        repair="Remove the owning kit first: cruxible kit remove acme; or install "
+        "a release that does not own the overlapping prefix.",
+    )
+    answer = KitChangeResult(
+        kit_id="extra", version="1.0.0", status="would_block", refusals=(refusal,)
+    )
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return answer
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "extra")
+    )
+    result = CliRunner().invoke(cli, [*BASE, "add", "extra"])
+    assert result.exit_code == 0, result.output
+    assert refusal.code in result.output
+    assert f"Next: {refusal.repair}" in result.output
+
+    result = CliRunner().invoke(cli, [*BASE, "add", "extra", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["refusals"] == [refusal.model_dump(mode="json")]
+
+
+def test_kit_takeover_points_to_keep(monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status="would_propose",
+                plan=(
+                    KitPathPlan(
+                        path="claim-types/acme.account/seats.json",
+                        identity="ClaimType:acme.account.seats",
+                        action="replace",
+                        consequence="takes_over_outside_definition",
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme")
+    )
+    result = CliRunner().invoke(cli, [*BASE, "add", "acme"])
+    assert result.exit_code == 0, result.output
+    assert "Next: rerun cruxible kit add with --keep ClaimType:acme.account.seats" in result.output
+
+
+def _provider_files() -> dict[str, bytes]:
+    return {
+        "kit_call-0.2.0-py3-none-any.whl": b"wheel",
+        "kit-call-0.2.0.uv.lock": b"lock",
+        "cruxible_provider_runtime-0.2.0-py3-none-any.whl": b"runtime",
+    }
+
+
+def _provider_bundle() -> KitBundle:
+    files = _provider_files()
+
+    def file(name: str) -> KitProviderFile:
+        return KitProviderFile(
+            filename=name, sha256="sha256:" + hashlib.sha256(files[name]).hexdigest()
+        )
+
+    base = _bundle()
+    provider = KitProvider(
+        provider_id="kit-call",
+        package="kit-call",
+        version="0.2.0",
+        wheel=file("kit_call-0.2.0-py3-none-any.whl"),
+        lock=file("kit-call-0.2.0.uv.lock"),
+        dependencies=(file("cruxible_provider_runtime-0.2.0-py3-none-any.whl"),),
+        operations=("local.increment",),
+    )
+    return KitBundle(
+        manifest=base.manifest.model_copy(update={"providers": (provider,)}),
+        artifacts=base.artifacts,
+        provider_files=tuple(KitProviderFileBytes.of(name, files[name]) for name in sorted(files)),
+    )
+
+
+class _StagingClient:
+    def __init__(self) -> None:
+        self.stored: list[bytes] = []
+        self.sent: list[Any] = []
+
+    def install_provider(self, *args: Any, **kwargs: Any) -> None:
+        pytest.fail("Adapter staging must not install or execute provider packages")
+
+    def store_body(self, instance_id: str, content: bytes) -> CasObjectResult:
+        self.stored.append(content)
+        return CasObjectResult(
+            digest="sha256:" + hashlib.sha256(content).hexdigest(),
+            present=True,
+            byte_length=len(content),
+            redacted=False,
+        )
+
+
+def test_kit_build_bundles_a_provider_directory_as_staged_wheels_and_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = tmp_path / "kit-call"
+    (project / "dist").mkdir(parents=True)
+    (project / "pyproject.toml").write_text('[project]\nname = "kit-call"\nversion = "0.2.0"\n')
+    files = _provider_files()
+    (project / "uv.lock").write_bytes(files["kit-call-0.2.0.uv.lock"])
+    for name in (
+        "kit_call-0.2.0-py3-none-any.whl",
+        "cruxible_provider_runtime-0.2.0-py3-none-any.whl",
+    ):
+        (project / "dist" / name).write_bytes(files[name])
+
+    class StubClient(_StagingClient):
+        def build_kit(self, instance_id: str, request: KitBuildRequest) -> KitBuildResult:
+            self.sent.append(request)
+            return KitBuildResult(bundle=_provider_bundle())
+
+    client = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+
+    out = tmp_path / "kit"
+    result = CliRunner().invoke(
+        cli,
+        [
+            *BASE,
+            "build",
+            "--id",
+            "acme",
+            "--version",
+            "1.0.0",
+            "--owns",
+            "acme.",
+            "--out",
+            str(out),
+            "--provider",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    (request,) = client.sent
+    (provider,) = request.providers
+    assert (request.kit_id, request.version, request.owns) == ("acme", "1.0.0", ("acme.",))
+    assert provider.delivery == "bundled"
+    assert (
+        provider.lock_digest
+        == "sha256:" + hashlib.sha256(files["kit-call-0.2.0.uv.lock"]).hexdigest()
+    )
+    assert (
+        provider.wheel.digest
+        == "sha256:" + hashlib.sha256(files["kit_call-0.2.0-py3-none-any.whl"]).hexdigest()
+    )
+    assert provider.wheel.filename == "kit_call-0.2.0-py3-none-any.whl"
+    assert [item.filename for item in provider.dependencies] == [
+        "cruxible_provider_runtime-0.2.0-py3-none-any.whl"
+    ]
+    assert sorted(client.stored) == sorted(files.values())
+    assert "1 provider package(s)" in result.output
+    assert (out / "providers" / "kit_call-0.2.0-py3-none-any.whl").read_bytes() == b"wheel"
+
+
+def test_kit_add_stages_bundled_providers_only_when_it_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient(_StagingClient):
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            self.sent.append(request)
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status="awaiting_providers",
+                providers=(
+                    KitProviderStep(
+                        provider_id="kit-call",
+                        package="kit-call",
+                        version="0.2.0",
+                        action="awaiting_approval",
+                        proposal_id="prop-1",
+                    ),
+                ),
+            )
+
+    client = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_provider_bundle(), "acme")
+    )
+
+    preview = CliRunner().invoke(cli, [*BASE, "add", "acme"])
+    assert preview.exit_code == 0, preview.output
+    assert client.stored == []
+    committed = CliRunner().invoke(cli, [*BASE, "add", "acme", "--commit"])
+    assert committed.exit_code == 0, committed.output
+    assert sorted(client.stored) == sorted(_provider_files().values())
+    assert all(not request.bundle.provider_files for request in client.sent)
+    assert [request.dry_run for request in client.sent] == [None, False]
+    assert [request.source for request in client.sent] == ["acme", "acme"]
+    assert "acme 1.0.0: awaiting_providers" in committed.output
+    assert "provider kit-call (kit-call 0.2.0): awaiting approval, proposal prop-1" in (
+        committed.output
+    )
+
+    from pydantic import ValidationError
+
+    invalid = _provider_bundle().model_dump(mode="json")
+    invalid["manifest"]["providers"][0]["interfaces"] = ["local.increment"]
+
+    def invalid_source(_reference):
+        return KitBundle.model_validate(invalid), "invalid"
+
+    client.stored.clear()
+    client.sent.clear()
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill.resolve_kit", invalid_source)
+    refused = CliRunner().invoke(cli, [*BASE, "add", "invalid", "--commit"])
+    assert refused.exit_code != 0 and "interfaces" in refused.output
+    assert client.stored == [] and client.sent == []
+    with pytest.raises(ValidationError) as typed:
+        KitBundle.model_validate(invalid)
+    assert typed.value.errors()[0]["loc"] == ("manifest", "providers", 0, "interfaces")
+
+
+def test_kit_status_lists_bundled_providers_and_their_install_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="acme",
+                        version="1.0.0",
+                        content_digest="sha256:" + "1" * 64,
+                        source="acme",
+                        providers=(
+                            KitProviderStatus(
+                                provider_id="kit-call",
+                                package="kit-call",
+                                version="0.2.0",
+                                wheel_sha256="sha256:" + "3" * 64,
+                                state="differs",
+                                installed_version="0.1.0",
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert "provider kit-call (kit-call 0.2.0): differs (installed: 0.1.0)" in result.output
+
+
+def test_kit_status_shows_each_required_kit_and_whether_it_is_met(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="acme",
+                        version="1.0.0",
+                        content_digest="sha256:" + "1" * 64,
+                        requires=(
+                            KitRequirementStatus(
+                                kit_id="base",
+                                min_version="1.0.0",
+                                installed_version="1.2.0",
+                                met=True,
+                            ),
+                            KitRequirementStatus(kit_id="other", min_version="2.0.0", met=False),
+                        ),
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert "  requires base >= 1.0.0: met (installed 1.2.0)\n" in result.output
+    assert "  requires other >= 2.0.0: not met (not installed)\n" in result.output
+
+
+def test_a_registry_refusal_prints_its_code_without_the_class_name() -> None:
+    import click
+
+    from cruxible_client.artifacts.registry import RegistryRefusal
+    from cruxible_core.cli.main import handle_errors
+
+    @click.command()
+    @handle_errors
+    def fetch() -> None:
+        raise RegistryRefusal(
+            "not_found", "ghcr.io/acme/kit:1 is not published (HTTP 404)", status=404
+        )
+
+    result = CliRunner().invoke(fetch)
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "Error: cruxible.kit.not_found: ghcr.io/acme/kit:1 is not published (HTTP 404)\n"
+    )
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_kit_pull_from_a_kit_directory_writes_what_a_registry_pull_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.artifacts import pack_artifact
+    from cruxible_client.contracts.kits import KitFileBytes, kit_file_entry
+    from cruxible_client.kits import KIT_ARTIFACT, write_kit_directory
+
+    files = {
+        "README.md": b"# acme\n",
+        "walkthroughs.md": b"# walkthroughs\n",
+        "examples/automation.json": b"{}\n",
+        "reference.md": b"# reference\n",
+        "skills/acme-triage/SKILL.md": b"---\nname: acme-triage\n---\n",
+    }
+    plain = _bundle()
+    bundle = KitBundle(
+        manifest=plain.manifest.model_copy(
+            update={
+                "files": tuple(
+                    kit_file_entry(path, content) for path, content in sorted(files.items())
+                )
+            }
+        ),
+        artifacts=plain.artifacts,
+        files=tuple(KitFileBytes.of(path, content) for path, content in sorted(files.items())),
+    )
+    image = pack_artifact(KIT_ARTIFACT, bundle)
+    monkeypatch.setattr(
+        "cruxible_client.kits.fetch_kit_image",
+        lambda source, registry=None: (image, f"ghcr.io/cruxible-ai/kits/acme@{image.digest}"),
+    )
+    runner = CliRunner()
+    pulled = runner.invoke(cli, [*BASE, "pull", "acme:1.0.0", "--out", str(tmp_path / "reg")])
+    assert pulled.exit_code == 0, pulled.output
+
+    source = tmp_path / "acme"
+    write_kit_directory(bundle, source)
+    (source / "source").mkdir()
+    (source / "source" / "build.py").write_text("print()\n")  # not kit content
+    local = runner.invoke(cli, [*BASE, "pull", str(source), "--out", str(tmp_path / "local")])
+    assert local.exit_code == 0, local.output
+    assert local.output == "acme: 1 artifacts\n"
+    expected = _tree(tmp_path / "reg")
+    assert "walkthroughs.md" in expected and "skills/acme-triage/SKILL.md" in expected
+    assert _tree(tmp_path / "local") == expected
+
+    # A layout from the directory carries the release's digest, and pulls back the same files.
+    as_layout = runner.invoke(
+        cli, [*BASE, "pull", str(source), "--out", str(tmp_path / "layout"), "--layout", "--json"]
+    )
+    assert as_layout.exit_code == 0, as_layout.output
+    from cruxible_client.artifacts import read_layout
+
+    assert read_layout(tmp_path / "layout").digest == image.digest
+    again = runner.invoke(
+        cli, [*BASE, "pull", str(tmp_path / "layout"), "--out", str(tmp_path / "again")]
+    )
+    assert again.exit_code == 0, again.output
+    assert _tree(tmp_path / "again") == expected
+
+
+def test_kit_pull_from_a_bad_path_refuses_with_the_kit_forms(tmp_path: Path) -> None:
+    runner = CliRunner()
+    missing = runner.invoke(cli, [*BASE, "pull", "./no-such-kit", "--out", str(tmp_path / "out")])
+    assert missing.exit_code != 0
+    assert "cruxible.kit.source_invalid: no kit directory or layout at ./no-such-kit" in (
+        missing.stderr
+    )
+    assert "a kit is a kit directory (holding cruxible-kit.json)" in missing.stderr
+
+    (tmp_path / "empty").mkdir()
+    empty = runner.invoke(
+        cli, [*BASE, "pull", str(tmp_path / "empty"), "--out", str(tmp_path / "out")]
+    )
+    assert empty.exit_code != 0
+    assert "holds no cruxible-kit.json" in empty.stderr
+    assert not (tmp_path / "out").exists()
+
+
+def test_kit_build_sends_the_automation_template_and_names_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.kits import KitFileBytes, kit_file_entry
+
+    template = tmp_path / "automation.json"
+    content = '{"kind": "change_set", "members": []}\n'
+    template.write_text(content)
+    plain = _bundle()
+    built = KitBundle(
+        manifest=plain.manifest.model_copy(
+            update={
+                "files": (kit_file_entry("automation.json", content.encode()),),
+                "automation_template": "automation.json",
+            }
+        ),
+        artifacts=plain.artifacts,
+        files=(KitFileBytes.of("automation.json", content.encode()),),
+    )
+
+    class StubClient(_StagingClient):
+        def build_kit(self, instance_id: str, request: KitBuildRequest) -> KitBuildResult:
+            self.sent.append(request)
+            return KitBuildResult(bundle=built)
+
+    client = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    out = tmp_path / "kit"
+    result = CliRunner().invoke(
+        cli,
+        [
+            *BASE,
+            "build",
+            "--id",
+            "acme",
+            "--version",
+            "1.0.0",
+            "--owns",
+            "acme.",
+            "--out",
+            str(out),
+            "--automation-template",
+            str(template),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    (request,) = client.sent
+    assert request.automation_template is not None
+    assert (request.automation_template.path, request.automation_template.content) == (
+        "automation.json",
+        content,
+    )
+    assert f"automation template: {out / 'automation.json'} (never installed" in result.output
+    assert (out / "automation.json").read_text() == content
+
+    pulled = CliRunner().invoke(cli, [*BASE, "pull", str(out), "--out", str(tmp_path / "pull")])
+    assert pulled.exit_code == 0, pulled.output
+    assert f"automation template: {tmp_path / 'pull' / 'automation.json'}" in pulled.output
+    assert (tmp_path / "pull" / "automation.json").read_text() == content
+
+
+TEMPLATE = '{"kind": "change_set", "members": []}\n'
+
+
+def _template_bundle() -> KitBundle:
+    from cruxible_client.contracts.kits import KitFileBytes, kit_file_entry
+
+    plain = _bundle()
+    return KitBundle(
+        manifest=plain.manifest.model_copy(
+            update={
+                "files": (kit_file_entry("automation.json", TEMPLATE.encode()),),
+                "automation_template": "automation.json",
+            }
+        ),
+        artifacts=plain.artifacts,
+        files=(KitFileBytes.of("automation.json", TEMPLATE.encode()),),
+    )
+
+
+class _DaemonLikeClient(_StagingClient):
+    """Answers kit add as the daemon does: it names the template's path, never its text."""
+
+    def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+        self.sent.append(request)
+        return KitChangeResult(
+            kit_id="acme",
+            version="1.0.0",
+            status="accepted" if request.dry_run is False else "would_propose",
+            automation_template=request.bundle.manifest.automation_template,
+        )
+
+
+def test_kit_add_returns_a_kit_directorys_automation_template_and_names_its_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.kits import write_kit_directory
+
+    kit_dir = tmp_path / "acme"
+    write_kit_directory(_template_bundle(), kit_dir)
+    client = _DaemonLikeClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    runner = CliRunner()
+
+    for extra in ([], ["--commit"]):
+        added = runner.invoke(cli, [*BASE, "add", str(kit_dir), *extra, "--json"])
+        assert added.exit_code == 0, added.output
+        payload = json.loads(added.stdout)
+        assert payload["automation_template"] == "automation.json"
+        assert payload["automation_template_content"] == TEMPLATE
+    text = runner.invoke(cli, [*BASE, "add", str(kit_dir)])
+    assert text.exit_code == 0, text.output
+    on_disk = kit_dir / "automation.json"
+    assert f"automation template: {on_disk} (never installed" in text.output
+    assert TEMPLATE.strip() not in text.output
+    # The text came from the adapter's copy: kit add never sends inert files.
+    assert [request.dry_run for request in client.sent] == [None, False, None]
+    assert all(not request.bundle.files for request in client.sent)
+
+
+def test_kit_add_by_registry_reference_returns_the_template_and_says_how_to_pull_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.artifacts import pack_artifact
+    from cruxible_client.kits import KIT_ARTIFACT
+
+    image = pack_artifact(KIT_ARTIFACT, _template_bundle())
+    pinned = f"ghcr.io/cruxible-ai/kits/acme@{image.digest}"
+    monkeypatch.setattr(
+        "cruxible_client.kits.fetch_kit_image", lambda source, registry=None: (image, pinned)
+    )
+    client = _DaemonLikeClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    runner = CliRunner()
+
+    added = runner.invoke(cli, [*BASE, "add", "acme:1.0.0", "--json"])
+    assert added.exit_code == 0, added.output
+    assert json.loads(added.stdout)["automation_template_content"] == TEMPLATE
+    text = runner.invoke(cli, [*BASE, "add", "acme:1.0.0"])
+    assert text.exit_code == 0, text.output
+    assert (
+        f"automation template: automation.json (never installed: cruxible kit pull {pinned} "
+        "--out DIR writes it, and --json output carries its content" in text.output
+    )
+
+
+def test_kit_add_of_a_kit_without_a_template_carries_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.kits import write_kit_directory
+
+    kit_dir = tmp_path / "acme"
+    write_kit_directory(_bundle(), kit_dir)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client", lambda: _DaemonLikeClient()
+    )
+
+    added = CliRunner().invoke(cli, [*BASE, "add", str(kit_dir), "--json"])
+    assert added.exit_code == 0, added.output
+    payload = json.loads(added.stdout)
+    assert "automation_template" not in payload
+    assert "automation_template_content" not in payload
+
+
+def test_a_kit_directory_whose_template_differs_from_its_manifest_refuses_before_sending(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.kits import write_kit_directory
+
+    kit_dir = tmp_path / "acme"
+    write_kit_directory(_template_bundle(), kit_dir)
+    (kit_dir / "automation.json").write_text('{"kind": "change_set", "members": [1]}\n')
+    client = _DaemonLikeClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+
+    refused = CliRunner().invoke(cli, [*BASE, "add", str(kit_dir), "--commit"])
+    assert refused.exit_code != 0
+    assert "cruxible.kit.source_invalid" in refused.stderr
+    assert "automation.json differs from its sha256" in refused.stderr
+    assert client.sent == [] and client.stored == []

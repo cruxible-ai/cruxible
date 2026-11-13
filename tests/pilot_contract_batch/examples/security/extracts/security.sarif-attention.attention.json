@@ -1,0 +1,6 @@
+{
+  "capture": "$steps.findings.document",
+  "id": "attention",
+  "kind": "extract",
+  "records": "attention"
+}

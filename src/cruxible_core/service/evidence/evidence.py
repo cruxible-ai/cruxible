@@ -1,0 +1,1350 @@
+"""Client-held ClaimAttestationV1 submission and explicit-time verdict reads."""
+
+from __future__ import annotations
+
+import hashlib
+import pickle
+from collections import OrderedDict
+from collections.abc import Callable, Iterator, Mapping, MutableSet
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Literal, Protocol, cast
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from cruxible_client.contracts.accepted_attestations import (
+    AcceptedClaimAttestationEvidence,
+    ClaimAttestationEvidence,
+)
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    parse_capture_contract,
+)
+from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestation,
+)
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_digest,
+    claim_type_path,
+    effective_evidence_requirement,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claim_verdicts import (
+    CaptureReobservationEvidence,
+    CaptureVerdictEvidence,
+    ClaimAdjudicationRule,
+    ClaimVerdictResult,
+    claim_adjudication_rule,
+    claim_adjudication_rule_digest,
+    evaluate_claim_verdict,
+    verify_claim_verdict_freshness,
+)
+from cruxible_client.contracts.claims import (
+    AcceptedClaim,
+    ClaimArtifact,
+    ClaimLawEvidence,
+    NoneClaimObject,
+    SubjectClaimObject,
+    claim_artifact_digest,
+    claim_path,
+    claim_statement_digest,
+    parse_claim,
+    parse_claim_law_evidence,
+)
+from cruxible_client.contracts.errors import (
+    CasError,
+    ClaimNotFoundError,
+    ProposalIntegrityError,
+)
+from cruxible_client.contracts.laws import CLAIM_LAW
+from cruxible_client.contracts.providers import ProviderV1, parse_provider
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import (
+    CasSourceReference,
+    LedgerSourceReference,
+)
+from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.evidence.claim_reobservations import (
+    ReobservationReader,
+    reobservations_at,
+)
+from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
+from cruxible_core.indexes.history.history_index import HistoryReader, RetainedRecordReader
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.proposals.settlement import ChangeSetRecord
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
+from cruxible_core.storage.capture_metadata import capture_envelope
+from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import (
+    PositionedBodies,
+    body_identity,
+    current_positions,
+    positioned_read,
+    recording_identities,
+)
+
+
+class _StrictEvidenceServiceModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class AcceptedHistoryGenerationProtocol(Protocol):
+    """The accepted-history fields required by deterministic Claim fact replay."""
+
+    @property
+    def oid(self) -> str: ...
+
+    @property
+    def record(self) -> ChangeSetRecord | None: ...
+
+
+class ClaimReadSourceProtocol(Protocol):
+    """Accepted-state read seam shared by live instances and recovery replay."""
+
+    def accepted_history(self) -> tuple[AcceptedHistoryGenerationProtocol, ...]: ...
+
+    def tree_at(self, oid: str) -> dict[str, bytes]: ...
+
+    def body_store(self) -> BodyProjectionProtocol: ...
+
+
+class PlaybillClaimVerdictQuery(_StrictEvidenceServiceModel):
+    tag: Literal["cruxible-claim-verdict-query-v3"] = "cruxible-claim-verdict-query-v3"
+    coordinate: AcceptedCoordinate
+    claim_identity: str
+    evaluation_time: datetime
+    verdict: ClaimVerdictResult
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Claim verdict evaluation time must be timezone-aware")
+        return value
+
+
+def _accepted_claim_artifact(claim: ClaimArtifact) -> AcceptedClaim:
+    return AcceptedClaim(
+        path=claim_path(claim.identity.name),
+        claim=claim,
+        statement_digest=claim_statement_digest(claim.statement).tagged,
+        artifact_digest=claim_artifact_digest(claim).tagged,
+    )
+
+
+CasFileIdentity = tuple[int, int, int, int, int]
+BodyFingerprints = tuple[tuple[str, CasFileIdentity | None], ...]
+
+
+@dataclass
+class VerdictReads:
+    """Everything one slot's verdicts read, named so it can be re-read later.
+
+    A remembered slot answer is reused at another coordinate only when every
+    one of these reads returns what it returned then (see
+    ``ClaimVerdictReadContext.snapshot``), so the keys must cover every input a
+    verdict consults: accepted artifacts by path, the accepted attestation set
+    of each Claim version, each Claim path's latest law record, every provider
+    looked up (present or absent), and each capture's replay availability.
+    """
+
+    paths: set[str] = dataclass_field(default_factory=set)
+    attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set)
+    law_paths: set[str] = dataclass_field(default_factory=set)
+    providers: set[str] = dataclass_field(default_factory=set)
+    captures: set[str] = dataclass_field(default_factory=set)
+    # The replay availability each verdict actually used. Availability is the
+    # one input outside the accepted coordinate, so a remembered answer is keyed
+    # on what was used, never on a later re-read.
+    used_availability: dict[str, bool] = dataclass_field(default_factory=dict)
+    # Set when one Capture was observed both available and unavailable while
+    # this slot was derived: its verdicts rest on inconsistent observations and
+    # must not be remembered.
+    inconsistent: bool = False
+    # The body-store objects the verdicts' replay availability read, each with
+    # the file identity that read used (taken at the read, never afterwards).
+    body_identities: dict[str, CasFileIdentity | None] = dataclass_field(default_factory=dict)
+    # False when some body read has no identity to stand for it (an external
+    # reader, or a file that moved while it was read): nothing may be
+    # fingerprinted, so the whole derivation is not remembered.
+    bodies_complete: bool = True
+    # Each Claim lineage's re-observation journal sequence its verdict read
+    # (0: none recorded): like availability, an input outside the accepted
+    # coordinate, so a remembered answer is keyed on the record set it used.
+    # Within that set, the answer's time boundaries bound it.
+    used_reobservations: dict[str, int] = dataclass_field(default_factory=dict)
+    # The body-store objects each Capture's availability consulted, with the
+    # identity each read used; None when no identity stands for that answer.
+    # A landing of any of them is a change to that Capture's availability.
+    capture_bodies: dict[str, dict[str, CasFileIdentity | None] | None] = dataclass_field(
+        default_factory=dict
+    )
+
+    def update(self, other: VerdictReads) -> None:
+        self.paths |= other.paths
+        self.attestation_versions |= other.attestation_versions
+        self.law_paths |= other.law_paths
+        self.providers |= other.providers
+        self.captures |= other.captures
+        self.used_availability.update(other.used_availability)
+        for claim_id, used in other.used_reobservations.items():
+            if self.used_reobservations.setdefault(claim_id, used) != used:
+                self.inconsistent = True
+        self.inconsistent = self.inconsistent or other.inconsistent
+        self.note_bodies(other.body_identities if other.bodies_complete else None)
+        for digest, bodies in other.capture_bodies.items():
+            self.note_capture_bodies(digest, bodies)
+
+    def note_capture_bodies(
+        self, digest: str, bodies: Mapping[str, CasFileIdentity | None] | None
+    ) -> None:
+        """Attribute the objects one Capture's availability consulted to that Capture."""
+
+        known = self.capture_bodies.get(digest, {})
+        if bodies is None or known is None:
+            self.capture_bodies[digest] = None
+            return
+        self.capture_bodies[digest] = {**known, **bodies}
+
+    def note_bodies(self, identities: Mapping[str, CasFileIdentity | None] | None) -> None:
+        """Add the identities one read used; ``None`` means the read has none."""
+
+        if identities is None:
+            self.bodies_complete = False
+            return
+        for digest, identity in identities.items():
+            if self.body_identities.setdefault(digest, identity) != identity:
+                # Two reads saw one object with two identities.
+                self.bodies_complete = False
+
+    def keys(self) -> tuple[tuple[str, ...], ...]:
+        return (
+            *(("path", path) for path in sorted(self.paths)),
+            *(("attestations", *version) for version in sorted(self.attestation_versions)),
+            *(("law", path) for path in sorted(self.law_paths)),
+            *(("provider", identity) for identity in sorted(self.providers)),
+            *(("capture", digest) for digest in sorted(self.captures)),
+            *(("reobserved", claim_id) for claim_id in sorted(self.used_reobservations)),
+        )
+
+
+class _RecordingProviders(Mapping[str, ProviderV1]):
+    """Provider lookups attributed to the slot being resolved, absent ones included."""
+
+    def __init__(self, providers: Mapping[str, ProviderV1], reads: VerdictReads) -> None:
+        self._providers = providers
+        self._reads = reads
+
+    def __getitem__(self, identity: str) -> ProviderV1:
+        self._reads.providers.add(identity)
+        return self._providers[identity]
+
+    def __iter__(self) -> Iterator[str]:
+        raise ProposalIntegrityError("a remembered verdict cannot depend on every provider")
+
+    def __len__(self) -> int:
+        raise ProposalIntegrityError("a remembered verdict cannot depend on every provider")
+
+
+@dataclass(frozen=True)
+class ClaimVerdictReadContext:
+    """One request's immutable accepted inputs; never retains current evidence.
+
+    Shares selected accepted bytes, parsed Claim inputs and provider lookups
+    across a batch. CAS availability, attestations and time-dependent
+    verdicts are still evaluated by the ordinary service for each Claim.
+    """
+
+    instance: PlaybillInstance
+    coordinate: AcceptedProjectionCoordinate
+    _claims: dict[str, ClaimArtifact] = dataclass_field(default_factory=dict, init=False)
+    _providers: Mapping[str, ProviderV1] | None = dataclass_field(default=None, init=False)
+    _source_bytes: dict[str, bytes] = dataclass_field(default_factory=dict, init=False)
+    _tree: Mapping[str, bytes] = dataclass_field(init=False)
+    _history: "ClaimReadHistoryIndex | None" = dataclass_field(default=None, init=False)
+    _attestations: dict[tuple[str, str], list[ClaimAttestation]] | None = dataclass_field(
+        default=None, init=False
+    )
+    _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
+    _attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set, init=False)
+    _recording: VerdictReads | None = dataclass_field(default=None, init=False)
+    _store: Any = dataclass_field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        from cruxible_core.indexes.evaluated_state import SelectedRows
+
+        object.__setattr__(
+            self,
+            "_tree",
+            SelectedRows(self._source, lambda: self.instance.paths_at(self.coordinate.git_oid)),
+        )
+
+    def _source(self, path: str) -> bytes:
+        if path not in self._source_bytes:
+            content = self.instance.blob_at(self.coordinate.git_oid, path)
+            if content is None:
+                raise KeyError(path)
+            self._source_bytes[path] = content
+        return self._source_bytes[path]
+
+    def prefetch(self, paths: tuple[str, ...]) -> None:
+        wanted = tuple(dict.fromkeys(path for path in paths if path not in self._source_bytes))
+        if wanted:
+            self._source_bytes.update(self.instance.blobs_at(self.coordinate.git_oid, wanted))
+
+    @property
+    def tree(self) -> Mapping[str, bytes]:
+        return self._tree
+
+    def claims(self, *, subject: SemanticAddress | None = None) -> tuple[ClaimArtifact, ...]:
+        """Every accepted Claim, or only those about ``subject`` via the subject index."""
+
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            if subject is None:
+                identities = tuple(row.identity for row in projection.typed.envelopes(kind="claim"))
+            else:
+                identities = tuple(
+                    row[0]
+                    for row in projection.typed.connection.execute(
+                        "SELECT identity FROM claims WHERE subject_path=? "
+                        "AND subject_selector_scheme=? AND subject_selector_value=? "
+                        "ORDER BY identity",
+                        (subject.artifact_path, subject.selector.scheme, subject.selector.value),
+                    )
+                )
+        self.prefetch(tuple(claim_path(identity.removeprefix("Claim:")) for identity in identities))
+        selected = tuple(self.claim(identity) for identity in identities)
+        if subject is None:
+            return tuple(self._claims.values())
+        # The index only locates rows; the parsed statement is the authority.
+        return tuple(claim for claim in selected if claim.statement.subject == subject)
+
+    def claim(self, identity: str) -> ClaimArtifact:
+        identity = "Claim:" + identity.removeprefix("Claim:")
+        self.note_paths(claim_path(identity.removeprefix("Claim:")))
+        if identity not in self._claims:
+            path = claim_path(identity.removeprefix("Claim:"))
+            content = self._tree.get(path)
+            if content is None:
+                raise ClaimNotFoundError(identity)
+            self._claims[identity] = parse_claim(content, path=path)
+        return self._claims[identity]
+
+    def history(self) -> "ClaimReadHistoryIndex":
+        """One history index per batch, so each retained record is verified once."""
+
+        if self._history is None:
+            object.__setattr__(
+                self,
+                "_history",
+                _claim_read_history_index(self.instance, coordinate=self.coordinate),
+            )
+        assert self._history is not None
+        return self._history
+
+    def claim_type(self, path: str) -> ClaimType:
+        """The accepted ClaimType at ``path``, parsed once per batch."""
+
+        self.note_paths(path)
+        if path not in self._claim_types:
+            content = self._tree.get(path)
+            if content is None:
+                raise ClaimNotFoundError(path)
+            self._claim_types[path] = parse_claim_type(content, path=path)
+        return self._claim_types[path]
+
+    def prefetch_law_evidence(self, paths: tuple[str, ...]) -> None:
+        """Read every Claim's law evidence under one history snapshot."""
+
+        law_evidence = self.history().law_evidence
+        if isinstance(law_evidence, _IndexedClaimLawEvidence):
+            law_evidence.prefetch(paths)
+
+    def attestation_envelopes(self, claim: ClaimArtifact) -> tuple[ClaimAttestation, ...]:
+        """This exact Claim version's accepted attestations.
+
+        The first request reads attestations for every Claim version this batch
+        has selected, in bounded chunks, never the whole attestation population.
+        """
+
+        key = (claim.identity.qualified, claim_artifact_digest(claim).tagged)
+        if self._recording is not None:
+            self._recording.attestation_versions.add(key)
+        if self._attestations is None or key not in self._attestation_versions:
+            versions = tuple(
+                dict.fromkeys(
+                    (
+                        *(
+                            (selected.identity.qualified, claim_artifact_digest(selected).tagged)
+                            for selected in self._claims.values()
+                        ),
+                        key,
+                    )
+                )
+            )
+            grouped = dict(self._attestations or {})
+            with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                for start in range(0, len(versions), 400):
+                    chunk = versions[start : start + 400]
+                    for value in projection.typed.claim_attestations(claim_versions=chunk):
+                        grouped.setdefault(
+                            (
+                                value.statement.claim_identity.qualified,
+                                value.statement.claim_artifact_digest,
+                            ),
+                            [],
+                        ).append(value)
+            object.__setattr__(self, "_attestations", grouped)
+            self._attestation_versions.update(versions)
+        assert self._attestations is not None
+        return tuple(self._attestations.get(key, ()))
+
+    def providers(self) -> Mapping[str, ProviderV1]:
+        if self._providers is None:
+            object.__setattr__(
+                self,
+                "_providers",
+                accepted_claim_providers(self.instance, coordinate=self.coordinate),
+            )
+        assert self._providers is not None
+        if self._recording is not None:
+            return _RecordingProviders(self._providers, self._recording)
+        return self._providers
+
+    def body_store(self) -> Any:
+        """The instance's body store, obtained (and its storage binding checked) once."""
+
+        if self._store is None:
+            object.__setattr__(self, "_store", self.instance.body_store())
+        return self._store
+
+    def record(self) -> VerdictReads:
+        """Attribute every following read to a fresh slot read set, until ``stop``."""
+
+        reads = VerdictReads()
+        object.__setattr__(self, "_recording", reads)
+        return reads
+
+    def stop(self) -> None:
+        object.__setattr__(self, "_recording", None)
+
+    def note_paths(self, *paths: str | None) -> None:
+        if self._recording is not None:
+            self._recording.paths.update(path for path in paths if path is not None)
+
+    def note_law(self, path: str) -> None:
+        if self._recording is not None:
+            self._recording.law_paths.add(path)
+
+    def note_reobservations(self, claim_id: str, sequence: int) -> None:
+        """Attribute the re-observation record set one Claim lineage's verdict read."""
+
+        if self._recording is not None:
+            if self._recording.used_reobservations.setdefault(claim_id, sequence) != sequence:
+                self._recording.inconsistent = True
+
+    def note_capture(
+        self,
+        digest: str,
+        available: bool | None = None,
+        bodies: Mapping[str, CasFileIdentity | None] | None = None,
+        *,
+        bodies_known: bool = False,
+    ) -> None:
+        """Attribute one Capture read, and the body identities its availability used."""
+
+        if self._recording is not None:
+            self._recording.captures.add(digest)
+            if available is not None:
+                seen = self._recording.used_availability.setdefault(digest, available)
+                if seen != available:
+                    self._recording.inconsistent = True
+            if bodies_known:
+                self._recording.note_bodies(bodies)
+                self._recording.note_capture_bodies(digest, bodies)
+
+    def snapshot(
+        self, reads: VerdictReads, *, bodies: VerdictReads | None = None
+    ) -> dict[tuple[str, ...], object]:
+        """Re-read every named input at this context's coordinate, in batches.
+
+        The same function records a slot's reads and later validates them, so a
+        remembered answer and its check always agree on what each read means.
+        ``bodies`` collects the body identities each Capture re-read used.
+        """
+
+        values: dict[tuple[str, ...], object] = {}
+        paths = tuple(sorted(reads.paths))
+        providers = tuple(sorted(reads.providers))
+        versions = tuple(sorted(reads.attestation_versions))
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            connection = projection.typed.connection
+            for kind, column, keys in (
+                ("path", "path", paths),
+                ("provider", "identity", providers),
+            ):
+                found: dict[str, str] = {}
+                for start in range(0, len(keys), 500):
+                    chunk = keys[start : start + 500]
+                    found.update(
+                        (str(key), str(digest))
+                        for key, digest in connection.execute(
+                            f"SELECT {column}, artifact_digest FROM artifact_lookup WHERE "
+                            f"{column} IN (" + ",".join("?" for _ in chunk) + ")",
+                            chunk,
+                        )
+                    )
+                for key in keys:
+                    values[(kind, key)] = found.get(key)
+            attested: dict[tuple[str, str], list[str]] = {version: [] for version in versions}
+            for start in range(0, len(versions), 400):
+                selected = versions[start : start + 400]
+                for identity, digest, envelope in connection.execute(
+                    "SELECT claim_identity, claim_artifact_digest, envelope_digest "
+                    "FROM attestations WHERE (claim_identity, claim_artifact_digest) IN (VALUES "
+                    + ",".join("(?,?)" for _ in selected)
+                    + ")",
+                    tuple(item for version in selected for item in version),
+                ):
+                    attested[(str(identity), str(digest))].append(str(envelope))
+            for version, envelopes in attested.items():
+                values[("attestations", *version)] = tuple(sorted(envelopes))
+        if reads.law_paths:
+            with self.instance.accepted_history_reader(
+                at=AcceptedCoordinate.from_internal(self.coordinate)
+            ) as history:
+                for path, head in history.claim_law_heads(tuple(sorted(reads.law_paths))).items():
+                    values[("law", path)] = head
+        for digest in sorted(reads.captures):
+            used: dict[str, CasFileIdentity | None] = {}
+            values[("capture", digest)] = _current_replay_available(
+                self.instance, digest, readers={}, store=self.body_store(), bodies=used
+            )
+            if bodies is not None:
+                bodies.note_bodies(None if _UNKNOWN_BODIES in used else used)
+        if reads.used_reobservations:
+            reader = ReobservationReader.of(self.instance)
+            for claim_id in sorted(reads.used_reobservations):
+                values[("reobserved", claim_id)] = reader.sequence(claim_id)
+        values[("compiler",)] = self.coordinate.compiler.rule_digest
+        return values
+
+
+class _AcceptedClaimProviders(Mapping[str, ProviderV1]):
+    """One request's provider closure, selected from its immutable accepted coordinate."""
+
+    def __init__(
+        self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+    ) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._selected: dict[str, ProviderV1] = {}
+
+    def __getitem__(self, identity: str) -> ProviderV1:
+        if identity not in self._selected:
+            if not identity.startswith("Provider:"):
+                raise KeyError(identity)
+            with self._instance.bind_accepted_projection(self._coordinate) as projection:
+                provider = projection.typed.source(identity)
+                if provider is None:
+                    raise KeyError(identity)
+                self._selected[identity] = provider
+        return self._selected[identity]
+
+    def __iter__(self) -> Iterator[str]:
+        with self._instance.bind_accepted_projection(self._coordinate) as projection:
+            identities = tuple(row.identity for row in projection.typed.envelopes(kind="provider"))
+        return iter(identities)
+
+    def __len__(self) -> int:
+        with self._instance.bind_accepted_projection(self._coordinate) as projection:
+            return int(
+                projection.typed.connection.execute("SELECT count(*) FROM providers").fetchone()[0]
+            )
+
+
+def accepted_claim_providers(
+    instance: ClaimReadSourceProtocol, *, coordinate: AcceptedProjectionCoordinate
+) -> Mapping[str, ProviderV1]:
+    if isinstance(instance, PlaybillInstance):
+        return _AcceptedClaimProviders(instance, coordinate)
+    # Cold accepted replay has no published projection yet. Its source tree is
+    # the explicit reconstruction oracle, never the live service read path.
+    tree = instance.tree_at(coordinate.git_oid)
+    result: dict[str, ProviderV1] = {}
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("providers/"):
+            continue
+        provider = parse_provider(tree[path], path=path)
+        result[provider.identity.qualified] = provider
+    return result
+
+
+def accepted_claim_attestations(
+    instance: Any,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    claim: ClaimArtifact,
+    envelopes: tuple[ClaimAttestation, ...] | None = None,
+) -> tuple[ClaimAttestationEvidence, ...]:
+    """Read applicable immutable statements without inferring supersession.
+
+    A later timestamp is not a signed replacement instruction. Distinct records
+    remain evidence under the existing reducer; changing stance does not erase
+    the earlier statement. Explicit replacement requires its own signed contract.
+    """
+    if envelopes is None:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            envelopes = projection.typed.claim_attestations(
+                claim.identity.qualified,
+                claim_artifact_digest(claim).tagged,
+            )
+    subject_digest, object_digest = _referent_digests(tree, claim)
+    return tuple(
+        AcceptedClaimAttestationEvidence(
+            envelope=envelope,
+            coverage="exact_subject"
+            if (
+                current := (
+                    envelope.statement.subject_shell_digest == subject_digest
+                    and envelope.statement.object_shell_digest == object_digest
+                )
+            )
+            else "shell_stale",
+            current=current,
+        )
+        for envelope in envelopes
+    )
+
+
+def _referent_digest(tree: Mapping[str, bytes], path: str) -> str:
+    content = tree.get(path)
+    if content is None:
+        raise ProposalIntegrityError(f"Claim referent is absent: {path}")
+    if path.startswith("subjects/"):
+        return subject_digest(parse_subject(content, path=path)).tagged
+    if path.startswith("claim-types/"):
+        return claim_type_digest(parse_claim_type(content, path=path)).tagged
+    raise ProposalIntegrityError(f"unsupported Claim referent path: {path}")
+
+
+def _referent_digests(
+    tree: Mapping[str, bytes],
+    claim: ClaimArtifact,
+) -> tuple[str, str | None]:
+    subject_digest_value = _referent_digest(tree, claim.statement.subject.artifact_path)
+    named: object = claim.statement.object
+    # A none of a Subject (an object-keyed inverse) is judged as that object.
+    if isinstance(named, NoneClaimObject):
+        named = named.of
+    object_digest = (
+        _referent_digest(tree, named.address.artifact_path)
+        if isinstance(named, SubjectClaimObject)
+        else None
+    )
+    return subject_digest_value, object_digest
+
+
+_AVAILABILITY_CAPACITY = 65536
+# One derivation per Capture and landing position. A damage/repair record moves
+# that position just as a landing/erase does; no file identities validate reuse.
+_AVAILABILITY_MEMO: OrderedDict[tuple[str, str, str, int], tuple[bool, BodyFingerprints]] = (
+    OrderedDict()
+)
+
+_UNKNOWN_BODIES = "\0unknown"
+UNKNOWN_BODIES = _UNKNOWN_BODIES
+
+
+@positioned_read
+def _current_replay_available(
+    instance: ClaimReadSourceProtocol,
+    capture_digest_value: str,
+    *,
+    readers: Mapping[str, ExternalSourceReaderProtocol],
+    store: Any = None,
+    bodies: dict[str, CasFileIdentity | None] | None = None,
+) -> bool:
+    """Whether retained evidence was available at this read's landing position.
+
+    Only the Capture's own dependencies are consulted. The landing position
+    names all presence inputs, including damage and repair; external adapters
+    and preview-held bodies are never memoized under that persistent position.
+    ``bodies`` keeps the sweep's last verified observations, not validity checks.
+    """
+
+    from cruxible_core.storage.cas import dry_run_held_bodies
+
+    root = getattr(instance, "root", None)
+    store = store if store is not None else instance.body_store()
+    landings = getattr(store, "landings", None)
+    key = None
+    if (
+        not readers
+        and isinstance(root, Path)
+        and landings is not None
+        and dry_run_held_bodies() is None
+    ):
+        positions = current_positions()
+        if positions is None:
+            head = landings.head()
+            identity, sequence = head.identity, head.sequence
+        else:
+            identity, sequence = positions.landing_log, positions.landing
+        key = (str(root), capture_digest_value, identity, sequence)
+        remembered = memo_get(_AVAILABILITY_MEMO, key)
+        if remembered is not None:
+            answer, consulted = remembered
+            if bodies is not None:
+                # The boolean belongs to the landing position. A worker checks
+                # changed physical identities before persisting new baselines;
+                # memo reuse alone is no proof that the files remain intact.
+                if recording_identities():
+                    bodies.update(
+                        (digest, body_identity(store, digest)) for digest, _seen in consulted
+                    )
+                else:
+                    bodies.update(consulted)
+            return answer
+    objects: list[str] = []
+    available = _replay_available(
+        instance,
+        capture_digest_value,
+        readers=readers,
+        store=PositionedBodies(store),
+        consulted=objects,
+    )
+    consulted = tuple(
+        (digest, body_identity(store, digest))
+        for digest in dict.fromkeys(objects)
+        if digest != "external"
+    )
+    if bodies is not None:
+        bodies.update(consulted)
+        if readers or landings is None:
+            bodies[_UNKNOWN_BODIES] = None
+    if key is not None and "external" not in objects:
+        memo_put(_AVAILABILITY_MEMO, key, (available, consulted), capacity=_AVAILABILITY_CAPACITY)
+    return available
+
+
+def _verified(store: Any, digest: str) -> bool:
+    """Whether a CAS object is present with bytes that hash to its address.
+
+    A damaged object (rewritten in place, or deleted out of band) is not there
+    for replay, exactly as an absent one. In a positioned read presence is the
+    landing log's: an object damaged in place answers present until the
+    evidence sweep (or a read that hashed it) records the damage, and absent at
+    every position after that record. Only a read of the actual bytes refuses.
+    """
+
+    try:
+        return bool(store.verify(digest))
+    except CasError:
+        return False
+
+
+@positioned_read
+def _replay_available(
+    instance: ClaimReadSourceProtocol,
+    capture_digest_value: str,
+    *,
+    readers: Mapping[str, ExternalSourceReaderProtocol],
+    store: Any = None,
+    consulted: list[str] | None = None,
+) -> bool:
+    store = store if store is not None else instance.body_store()
+    store = store if isinstance(store, PositionedBodies) else PositionedBodies(store)
+    noted = consulted if consulted is not None else []
+    noted.append(capture_digest_value)
+    if not _verified(store, capture_digest_value):
+        return False
+    access = BodyAccessContext(principal_id="playbill-verdict", can_read_body=True)
+    try:
+        envelope = capture_envelope(store, capture_digest_value, access=access)
+    except CasError:
+        # Damaged since it verified: unavailable, as above.
+        return False
+    if isinstance(envelope.source, CasSourceReference):
+        noted.append(envelope.source.content_digest)
+        return _verified(store, envelope.source.content_digest)
+    if isinstance(envelope.source, LedgerSourceReference):
+        try:
+            material = (
+                instance.blob_at(
+                    envelope.source.coordinate.git_oid, envelope.source.address.artifact_path
+                )
+                if isinstance(instance, PlaybillInstance)
+                else instance.tree_at(envelope.source.coordinate.git_oid).get(
+                    envelope.source.address.artifact_path
+                )
+            )
+        except (KeyError, ValueError):
+            return False
+        return (
+            material is not None
+            and "sha256:" + hashlib.sha256(material).hexdigest() == envelope.commitment.digest
+        )
+    noted.append(envelope.commitment.digest)
+    if envelope.commitment.materialization == "cas" and _verified(
+        store, envelope.commitment.digest
+    ):
+        return True
+    # An external reader decides the rest; its availability is not in the CAS.
+    noted.append("external")
+    reader = readers.get(envelope.source.source_identity)
+    return reader is not None and reader.replay_available(envelope.source)
+
+
+@dataclass
+class ClaimReadHistoryIndex:
+    instance: ClaimReadSourceProtocol
+    generation_oids: tuple[str, ...]
+    law_evidence: Mapping[str, ClaimLawEvidence]
+    _claim_types: Mapping[tuple[str, str], ClaimType] | None = None
+    _contract_identity: Callable[[str], str | None] | None = None
+    _contract_identities: dict[str, str] | None = None
+
+    def capture_contract_identity(self, digest: str) -> str | None:
+        """The identity of one accepted CaptureContract version, however old."""
+
+        if self._contract_identity is not None:
+            return self._contract_identity(digest)
+        if self._contract_identities is None:
+            identities: dict[str, str] = {}
+            for oid in self.generation_oids:
+                tree = self.instance.tree_at(oid)
+                for path in tree:
+                    if path.startswith("capture-contracts/"):
+                        contract = parse_capture_contract(tree[path], path=path)
+                        identities[capture_contract_digest(contract).tagged] = (
+                            contract.identity.qualified
+                        )
+            self._contract_identities = identities
+        return self._contract_identities.get(digest)
+
+    def claim_types(self) -> Mapping[tuple[str, str], ClaimType]:
+        """Materialize historical trees once, only when stale evidence needs them."""
+
+        if self._claim_types is None:
+            claim_types: dict[tuple[str, str], ClaimType] = {}
+            for oid in self.generation_oids:
+                tree = self.instance.tree_at(oid)
+                for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+                    if not path.startswith("claim-types/"):
+                        continue
+                    claim_type = parse_claim_type(tree[path], path=path)
+                    digest = claim_type_digest(claim_type).tagged
+                    claim_types[(path, digest)] = claim_type
+            self._claim_types = claim_types
+        return self._claim_types
+
+
+class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidence]):
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        coordinate: AcceptedProjectionCoordinate,
+        records: RetainedRecordReader | Callable[[], RetainedRecordReader] | None = None,
+    ):
+        self.instance = instance
+        self.at = AcceptedCoordinate.from_internal(coordinate)
+        # Projections defer opening their shared record reader until a selected
+        # historical fact needs it. Resolve that factory here, rather than
+        # passing it to history as the two-argument byte loader.
+        selected = records() if callable(records) else records
+        self._records = selected if selected is not None else instance.retained_record_reader()
+        # Prefetched answers: parsed evidence, or None for a path with no law record.
+        self._prefetched: dict[str, ClaimLawEvidence | None] = {}
+
+    def prefetch(self, paths: tuple[str, ...]) -> None:
+        wanted = tuple(dict.fromkeys(p for p in paths if p not in self._prefetched))
+        if not wanted:
+            return
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            for path in wanted:
+                self._prefetched[path] = self._read(history, path)
+
+    def _read(self, history: HistoryReader, path: str) -> ClaimLawEvidence | None:
+        locations = history.claim_law_locations(path=path, latest=True)
+        if not locations:
+            return None
+        # A path's law evidence at one accepted sequence never changes, so it
+        # is parsed once per instance rather than re-read from its record.
+        # Kept as immutable bytes; each read gets its own objects.
+        memo = self.instance.claim_law_memo
+        key = (path, locations[0].sequence)
+        cached = memo.get(key)
+        if cached is not None:
+            return cast(ClaimLawEvidence | None, pickle.loads(cached))
+        found = self._read_record(history, path, locations[0])
+        frozen = pickle.dumps(found, protocol=pickle.HIGHEST_PROTOCOL)
+        memo.put(key, frozen, weight=len(frozen))
+        return found
+
+    def _read_record(
+        self, history: HistoryReader, path: str, location: Any
+    ) -> ClaimLawEvidence | None:
+        history.read_member(location, self._records)
+        # The one member's evaluation, read in place: never a copy of the record.
+        law = self._records.law_evidence(history.generation(location.sequence), path)
+        raw = law[-1].result.get("claim_evidence") if law else None
+        if raw is None:
+            raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
+        return parse_claim_law_evidence(raw)
+
+    def __getitem__(self, path: str) -> ClaimLawEvidence:
+        if path in self._prefetched:
+            found = self._prefetched[path]
+        else:
+            with self.instance.accepted_history_reader(at=self.at) as history:
+                found = self._read(history, path)
+        if found is None:
+            raise KeyError(path)
+        return found
+
+    def __iter__(self) -> Iterator[str]:
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            paths = {item.member_path for item in history.claim_law_locations()}
+        return iter(sorted(paths))
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+class _IndexedClaimTypes(Mapping[tuple[str, str], ClaimType]):
+    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
+        self.instance = instance
+        self.at = AcceptedCoordinate.from_internal(coordinate)
+
+    def __getitem__(self, key: tuple[str, str]) -> ClaimType:
+        path, digest = key
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            location = history.artifact(digest)
+            if location is None or location.path != path:
+                raise KeyError(key)
+            generation = history.generation(location.occurrence_sequence)
+        raw = self.instance.blob_at(generation.git_oid, location.path)
+        if raw is None:
+            raise ProposalIntegrityError("historical ClaimType source is unavailable")
+        claim_type = parse_claim_type(raw, path=path)
+        if claim_type_digest(claim_type).tagged != digest:
+            raise ProposalIntegrityError("historical ClaimType differs from requested digest")
+        return claim_type
+
+    def __iter__(self) -> Iterator[tuple[str, str]]:
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            keys = {(row.path, row.artifact_digest) for row in history.claim_type_versions()}
+        return iter(sorted(keys))
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def _claim_read_history_index(
+    instance: ClaimReadSourceProtocol,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    records: RetainedRecordReader | Callable[[], RetainedRecordReader] | None = None,
+) -> ClaimReadHistoryIndex:
+    """Live reads use retained locators; unprojected replay folds its supplied source."""
+    if isinstance(instance, PlaybillInstance):
+        return ClaimReadHistoryIndex(
+            instance=instance,
+            generation_oids=(),
+            law_evidence=_IndexedClaimLawEvidence(instance, coordinate, records),
+            _claim_types=_IndexedClaimTypes(instance, coordinate),
+            _contract_identity=lambda digest: (
+                None
+                if (
+                    found := instance.accepted_capture_contract_version(
+                        AcceptedCoordinate.from_internal(coordinate), digest
+                    )
+                )
+                is None
+                else found.contract.identity.qualified
+            ),
+        )
+    return _build_claim_read_history_index(instance, coordinate=coordinate)
+
+
+def _build_claim_read_history_index(
+    instance: ClaimReadSourceProtocol,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> ClaimReadHistoryIndex:
+    history = instance.accepted_history()
+    found_coordinate = False
+    generation_oids: list[str] = []
+    law_evidence: dict[str, ClaimLawEvidence] = {}
+    for generation in history:
+        generation_oids.append(generation.oid)
+        record = generation.record
+        if record is not None:
+            for evidence in record.law_evidence:
+                raw = evidence.result.get("claim_evidence")
+                if raw is not None:
+                    law_evidence[evidence.path] = parse_claim_law_evidence(raw)
+        if generation.oid == coordinate.git_oid:
+            found_coordinate = True
+            break
+    if not found_coordinate:
+        raise ProposalIntegrityError("ClaimType history coordinate is not accepted")
+    return ClaimReadHistoryIndex(
+        instance=instance,
+        generation_oids=tuple(generation_oids),
+        law_evidence=law_evidence,
+    )
+
+
+def _reproduced_claim_adjudication_rule(
+    *,
+    claim_type: ClaimType,
+    evidence_digest: str,
+    history: ClaimReadHistoryIndex,
+    law_digest: str | None = None,
+) -> ClaimAdjudicationRule:
+    """Return the current rule when accepted evidence proves the same verdict contract.
+
+    Queue-only policy changes cannot invalidate an otherwise identical
+    adjudication receipt. The exact-current digest remains preferred. Recovery
+    compares every historical predecessor's verdict-bearing projection directly
+    with the current rule, so a verdict-semantic change cannot be hidden by a
+    later revert.
+
+    Evidence recorded under the Claim law (``law_digest``) may carry the
+    origin-supports rule of a ClaimType whose own rule does not: a key Claim
+    covered by its Subject's creation. That rule reproduces from the same
+    ClaimType chain; no other law's evidence can select it. It may also exempt
+    origin-only entries from current replay wherever the origin supports; it
+    reproduces with that exemption. Each candidate is tried and the recorded digest
+    decides, so a retired Claim (whose evidence never took either) still
+    reproduces only its own rule.
+    """
+
+    creation_covered = law_digest == CLAIM_LAW.digest
+    replay_exempt_options = (False, True) if law_digest == CLAIM_LAW.digest else (False,)
+
+    # An inverse Claim (a none) is judged by the rule of its inverse's horizon;
+    # the recorded digest says which one it was, so only a type with an inverse
+    # tries it.
+    inverse_options = (False, True) if claim_type.inverse is not None else (False,)
+
+    def reproduces(item: ClaimType, digest: str) -> ClaimAdjudicationRule | None:
+        """The current rule this ClaimType version's recorded rule stands for, if any."""
+
+        for inverse in inverse_options:
+            for exempt in replay_exempt_options:
+                if (
+                    claim_adjudication_rule_digest(
+                        claim_adjudication_rule(
+                            item,
+                            claim_type_digest=digest,
+                            origin_replay_exempt=exempt,
+                            inverse=inverse,
+                        )
+                    )
+                    == evidence_digest
+                ):
+                    return (
+                        claim_adjudication_rule(
+                            claim_type,
+                            claim_type_digest=current_digest,
+                            origin_replay_exempt=exempt,
+                            inverse=inverse,
+                        )
+                        if exempt or inverse
+                        else current_rule
+                    )
+                if creation_covered and (
+                    claim_adjudication_rule_digest(
+                        claim_adjudication_rule(
+                            item,
+                            claim_type_digest=digest,
+                            origin_supports=True,
+                            origin_replay_exempt=exempt,
+                            inverse=inverse,
+                        )
+                    )
+                    == evidence_digest
+                ):
+                    return claim_adjudication_rule(
+                        claim_type,
+                        claim_type_digest=current_digest,
+                        origin_supports=True,
+                        origin_replay_exempt=exempt,
+                        inverse=inverse,
+                    )
+        return None
+
+    def verdict_projection(item: ClaimType) -> dict[str, object]:
+        payload = item.model_dump(mode="json")
+        for field in (
+            "artifact_format",
+            "authority",
+            "lifecycle",
+            "attestation_consequence_policy",
+            # What a predicate means, the role a write defaults to and what a
+            # revision keeps are not part of how a verdict is reached.
+            "description",
+            "member_descriptions",
+            "default_role",
+            "revision_evidence",
+            "evidence_requirement",
+        ):
+            payload.pop(field, None)
+        # Only `none` changes a verdict (the origin supports); `captured` is
+        # enforced at acceptance.
+        payload["origin_supports"] = effective_evidence_requirement(item) == "none"
+        # An absent horizon is omitted from the wire; compare it as null.
+        payload["evidence_freshness"] = (
+            None
+            if item.evidence_freshness is None
+            else item.evidence_freshness.model_dump(mode="json")
+        )
+        payload["evidence_admission_policy"] = [
+            {
+                **{
+                    key: value
+                    for key, value in rule.model_dump(mode="json").items()
+                    if key not in {"tag", "capture_contracts"}
+                },
+                "contracts": sorted({item.target.qualified for item in rule.capture_contracts}),
+            }
+            for rule in item.evidence_admission_policy.rules
+        ]
+        return payload
+
+    current_digest = claim_type_digest(claim_type).tagged
+    current_rule = claim_adjudication_rule(
+        claim_type,
+        claim_type_digest=current_digest,
+    )
+    found = reproduces(claim_type, current_digest)
+    if found is not None:
+        return found
+    current_projection = verdict_projection(claim_type)
+    claim_type_versions = history.claim_types()
+    path = claim_type_path(claim_type.predicate)
+    current = claim_type
+    seen = {current_digest}
+    while current.lifecycle.predecessor_digest is not None:
+        predecessor_digest = current.lifecycle.predecessor_digest
+        if predecessor_digest in seen:
+            raise ProposalIntegrityError("accepted ClaimType predecessor chain contains a cycle")
+        seen.add(predecessor_digest)
+        predecessor = claim_type_versions.get((path, predecessor_digest))
+        if predecessor is None:
+            raise ProposalIntegrityError(
+                "accepted ClaimType predecessor is absent from accepted history"
+            )
+        predecessor_projection = verdict_projection(predecessor)
+        if predecessor_projection != current_projection:
+            raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
+        found = reproduces(predecessor, predecessor_digest)
+        if found is not None:
+            return found
+        current = predecessor
+    raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
+
+
+def _record_verdict_time_boundaries(
+    boundaries: MutableSet[datetime],
+    *,
+    rule: ClaimAdjudicationRule,
+    claim: ClaimArtifact,
+    captures: tuple[CaptureVerdictEvidence, ...],
+    attestations: tuple[ClaimAttestationEvidence, ...],
+    reobservations: tuple[CaptureReobservationEvidence, ...] = (),
+) -> None:
+    """Record every instant at which this verdict's answer could change.
+
+    A verdict is a step function of the evaluation instant, and these are its
+    only breakpoints: the Claim's own effective interval, each capture's
+    observation, source expiry and freshness horizon, each recorded
+    re-observation's instants and freshness horizon, and each attestation's
+    observation and validity end. Between two consecutive breakpoints the answer
+    is the same at every instant, which is what lets a read be remembered
+    without pinning the wall clock into its key.
+    """
+
+    for instant in (claim.statement.effective_from, claim.statement.effective_until):
+        if instant is not None:
+            boundaries.add(instant)
+    for capture in captures:
+        boundaries.add(capture.observed_at)
+        if capture.source_effective_until is not None:
+            boundaries.add(capture.source_effective_until)
+        if rule.max_evidence_age is not None:
+            boundaries.add(
+                capture.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
+            )
+    for item in reobservations:
+        boundaries.add(item.observed_at)
+        boundaries.add(item.recorded_at)
+        if rule.max_evidence_age is not None:
+            boundaries.add(
+                item.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
+            )
+    for attestation in attestations:
+        boundaries.add(attestation.statement.observed_at)
+        if attestation.statement.valid_until is not None:
+            boundaries.add(attestation.statement.valid_until)
+
+
+@positioned_read
+def service_evaluate_playbill_claim_verdict(
+    instance: PlaybillInstance,
+    *,
+    claim_identity: str,
+    evaluation_time: datetime,
+    at: AcceptedCoordinate | None = None,
+    external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    time_boundaries: MutableSet[datetime] | None = None,
+    read_context: ClaimVerdictReadContext | None = None,
+) -> PlaybillClaimVerdictQuery:
+    """Recompute currency/verdict from accepted evidence at one explicit time.
+
+    ``time_boundaries``, when supplied, collects the instants this verdict's
+    answer could change at, so a caller memoizing a whole derivation can say
+    over what interval its answer holds instead of keying on the wall clock.
+    """
+
+    if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+        raise ProposalIntegrityError("Claim verdict evaluation_time must be timezone-aware")
+    if (
+        read_context is not None
+        and read_context.instance is instance
+        and at == AcceptedCoordinate.from_internal(read_context.coordinate)
+    ):
+        # The context was built from this exact resolved coordinate.
+        coordinate = read_context.coordinate
+    else:
+        coordinate = accepted_coordinate_at(instance, at)
+    if read_context is not None and (
+        read_context.instance is not instance or read_context.coordinate != coordinate
+    ):
+        raise ProposalIntegrityError("Claim read context differs from requested accepted state")
+    # Only a caller's shared batch context amortizes whole-coordinate reads.
+    batched = read_context is not None
+    read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
+    tree = read_context.tree
+    accepted = _accepted_claim_artifact(read_context.claim(claim_identity))
+    history = read_context.history()
+    read_context.note_law(accepted.path)
+    evidence = history.law_evidence.get(accepted.path)
+    if evidence is None:
+        raise ProposalIntegrityError("accepted Claim has no verdict law evidence")
+    type_path = claim_type_path(accepted.claim.statement.predicate)
+    claim_type = read_context.claim_type(type_path)
+    rule = _reproduced_claim_adjudication_rule(
+        claim_type=claim_type,
+        evidence_digest=evidence.adjudication_rule_digest,
+        history=history,
+        law_digest=evidence.law_digest,
+    )
+    readers = external_readers or {}
+    used: dict[str, dict[str, CasFileIdentity | None]] = {}
+    captures = tuple(
+        item.model_copy(
+            update={
+                "current_replay_available": _current_replay_available(
+                    instance,
+                    item.capture_digest,
+                    readers=readers,
+                    store=read_context.body_store() if batched else None,
+                    bodies=used.setdefault(item.capture_digest, {}),
+                )
+            }
+        )
+        for item in evidence.verdict_captures
+    )
+    for item in captures:
+        bodies = used.get(item.capture_digest, {})
+        read_context.note_capture(
+            item.capture_digest,
+            item.current_replay_available,
+            None if _UNKNOWN_BODIES in bodies else bodies,
+            bodies_known=True,
+        )
+    if evidence.verdict_result is not None:
+        verify_claim_verdict_freshness(
+            evidence.verdict_result,
+            rule=rule,
+            captures=evidence.verdict_captures,
+        )
+    read_context.note_paths(
+        accepted.claim.statement.subject.artifact_path,
+        accepted.claim.statement.object.address.artifact_path
+        if isinstance(accepted.claim.statement.object, SubjectClaimObject)
+        else None,
+    )
+    subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
+    referent_current = (
+        accepted.claim.backing.referent_context.subject_content_digest == subject_content_digest
+        and accepted.claim.backing.referent_context.object_content_digest == object_content_digest
+    )
+    attestations = accepted_claim_attestations(
+        instance,
+        coordinate=coordinate,
+        tree=tree,
+        claim=accepted.claim,
+        envelopes=(read_context.attestation_envelopes(accepted.claim) if batched else None),
+    )
+    reading = reobservations_at(
+        instance,
+        coordinate=coordinate,
+        claim_id=accepted.claim.identity.name,
+        captures=captures,
+        at=evaluation_time,
+    )
+    read_context.note_reobservations(accepted.claim.identity.name, reading.sequence)
+    reobservations = reading.evidence
+    if time_boundaries is not None:
+        time_boundaries |= set(reading.boundaries)
+    if time_boundaries is not None:
+        _record_verdict_time_boundaries(
+            time_boundaries,
+            rule=rule,
+            claim=accepted.claim,
+            captures=captures,
+            attestations=attestations,
+            reobservations=reobservations,
+        )
+    verdict = evaluate_claim_verdict(
+        claim_statement_digest=accepted.statement_digest,
+        rule=rule,
+        evaluation_time=evaluation_time,
+        captures=captures,
+        attestations=attestations,
+        providers=read_context.providers(),
+        claim_effective_from=accepted.claim.statement.effective_from,
+        claim_effective_until=accepted.claim.statement.effective_until,
+        referent_current=referent_current,
+        # Authority is resolved from live mandate/resolution state by PC-E1's
+        # resolver. Acceptance-time verdict output is never carried forward.
+        resolved_authority_basis=(),
+        reobservations=reobservations,
+    )
+    return PlaybillClaimVerdictQuery(
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        claim_identity=accepted.claim.identity.qualified,
+        evaluation_time=evaluation_time,
+        verdict=verdict,
+    )
+
+
+__all__ = [
+    "PlaybillClaimVerdictQuery",
+    "PlaybillClaimVerdictQuery",
+    "PlaybillClaimVerdictQuery",
+    "accepted_claim_providers",
+    "accepted_claim_attestations",
+    "service_evaluate_playbill_claim_verdict",
+]

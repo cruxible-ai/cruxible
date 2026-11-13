@@ -1,0 +1,1176 @@
+"""Structured candidate review and public approval-challenge services."""
+
+from __future__ import annotations
+
+import difflib
+import json
+from collections.abc import Mapping
+from typing import Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+from cruxible_client.contracts import SemanticFieldDelta
+from cruxible_client.contracts.attestations import ApprovalStatement, approval_digest
+from cruxible_client.contracts.candidates import (
+    CandidateMemberLawEvidence,
+    CandidateRecord,
+)
+from cruxible_client.contracts.compiler_upgrade import (
+    COMPILER_UPGRADE_PATH,
+    CompilerUpgradeNotice,
+    parse_compiler_upgrade,
+)
+from cruxible_client.contracts.declared_blocks import (
+    PresentationPolicyV1,
+    ReviewWorkspaceObservation,
+    upgrade_presentation_policy,
+)
+from cruxible_client.contracts.documents import parse_document
+from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
+    ProposalIntegrityError,
+    ProposalReviewOptionsInvalid,
+)
+from cruxible_client.contracts.proposal_models import (
+    OriginatingLine,
+    ProposalItemReason,
+    ProposalResult,
+)
+from cruxible_client.contracts.proposal_summary import ProposalReviewSummary, ReviewGuidance
+from cruxible_client.contracts.refusal_receipts import (
+    PriorRefusalCoverage,
+    PriorRefusalReceipt,
+)
+from cruxible_client.contracts.semantic import SourceMapping, whole_body_mapping
+from cruxible_client.contracts.semantic_delta import semantic_field_delta
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.claims.closure import parse_dependency_artifact
+from cruxible_core.compiler.upgrades import upgrade_notice
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.git import NOTE_REFS
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+from cruxible_core.service.discovery.backlinks import (
+    REVIEW_GUIDANCE_MAX_DEFINITIONS,
+    claim_type_identity,
+    review_guidance,
+)
+from cruxible_core.storage.cas import BodyAccessContext
+
+
+class _StrictReviewModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PlaybillReviewedDocument(_StrictReviewModel):
+    path: str
+    identity: str
+    disposition: str
+    title: str
+    document_kind: str
+    media_type: str
+    base_body_digest: str | None
+    candidate_body_digest: str
+    links: tuple[dict[str, object], ...]
+    pins: tuple[dict[str, object], ...]
+    governance_scope: tuple[str, ...]
+    base_source_mapping: SourceMapping | None
+    candidate_source_mapping: SourceMapping | None
+    readable_diff: str | None
+    diff_unavailable_reason: str | None
+
+
+class ReviewedMember(_StrictReviewModel):
+    """One member in the atomic review; generated/invalidated members cannot disappear."""
+
+    path: str
+    artifact_kind: str
+    disposition: str
+    closure_role: Literal["authored", "generated_successor", "invalidation"]
+    predecessor_artifact_digest: str | None
+    candidate_artifact_digest: str | None
+    base_semantic_artifact: dict[str, object] | None
+    candidate_semantic_artifact: dict[str, object] | None
+    semantic_delta: tuple[SemanticFieldDelta, ...]
+    law_identifier: str
+    law_digest: str
+    law_evidence: dict[str, object]
+    dependency_proof_refs: tuple[dict[str, object], ...]
+    # Earlier refusals of this Claim's statement on the same evidence -- a
+    # retirement, or a reviewer's rejection -- exactly as recorded. Nothing
+    # interprets them but the reviewer.
+    prior_refusals: tuple[PriorRefusalReceipt, ...] = ()
+
+
+class ProjectionAdvisory(_StrictReviewModel):
+    tag: Literal["playbill-projection-advisory-v1"] = "playbill-projection-advisory-v1"
+    unprojected_count: int = Field(ge=1)
+    artifact_identities: tuple[str, ...]
+    message: str
+
+    @field_validator("artifact_identities")
+    @classmethod
+    def _identities(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("projection advisory identities must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _count(self) -> "ProjectionAdvisory":
+        if self.unprojected_count != len(self.artifact_identities):
+            raise ValueError("projection advisory count must match its identities")
+        return self
+
+
+class ProjectionEvidence(_StrictReviewModel):
+    """Whether one bounded workspace projection observation informed review."""
+
+    tag: Literal["playbill-projection-evidence-v1"] = "playbill-projection-evidence-v1"
+    status: Literal["used", "rejected"]
+    coordinate: AcceptedCoordinate | None = None
+    reason: (
+        Literal[
+            "observation_invalid",
+            "presentation_policy_invalid",
+            "coverage_missing",
+            "coordinate_not_accepted",
+            "coordinate_before_settlement_base",
+        ]
+        | None
+    ) = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProjectionEvidence":
+        if self.status == "used" and (self.coordinate is None or self.reason is not None):
+            raise ValueError("used projection evidence requires a coordinate and no reason")
+        if self.status == "rejected" and self.reason is None:
+            raise ValueError("rejected projection evidence requires a reason")
+        return self
+
+
+class ProposalReview(_StrictReviewModel):
+    tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
+    coordinate_kind: Literal["provisional"] = "provisional"
+    proposal_id: str
+    candidate: CandidateRecord
+    candidate_digest: str
+    parent_semantic_root: str
+    settlement_base: AcceptedCoordinate
+    base_oid: str
+    complete_members: tuple[CandidateMemberLawEvidence, ...]
+    members: tuple[ReviewedMember, ...]
+    governance: dict[str, object]
+    provenance: dict[str, object]
+    # The author's own prose for the change set, as admitted: for a Procedure's
+    # proposal, the run that proposed it and how many items it carries.
+    originating_line: OriginatingLine | None = None
+    rationale: str | None = None
+    # A Procedure proposal's items' own reasons, one page at a time: each keyed
+    # by the Claim or Subject path it explains (`item_reasons_after` pages on).
+    item_reasons: tuple[ProposalItemReason, ...] = ()
+    item_reason_count: int = Field(default=0, ge=0)
+    item_reasons_next_cursor: str | None = None
+    attestation_coverage: dict[str, object]
+    documents: tuple[PlaybillReviewedDocument, ...]
+    # Review guidance for the ClaimTypes and Procedure this proposal touches:
+    # Documents linked `guides` them, read at the current head (bounded).
+    guidance: tuple[ReviewGuidance, ...] = Field(default=(), exclude_if=lambda value: not value)
+    redactions: tuple[str, ...]
+    projection_advisory: ProjectionAdvisory | None = None
+    projection_evidence: ProjectionEvidence | None = None
+    # Present only while the earlier-refusal index is catching up: members'
+    # receipts then reflect retirements accepted through the generation named.
+    prior_refusal_coverage: PriorRefusalCoverage | None = None
+    # A compiler upgrade's one-way notice: what activating it means.
+    compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+
+class ApprovalChallenge(_StrictReviewModel):
+    tag: Literal["playbill-approval-challenge-v1"] = "playbill-approval-challenge-v1"
+    proposal_id: str
+    signer_principal: PrincipalRecord
+    signer_key_history_ref: str
+    statement: ApprovalStatement
+    review: ProposalReview
+
+
+def _text_body(media_type: str, body: bytes) -> str | None:
+    textual = media_type.startswith("text/") or media_type in {
+        "application/json",
+        "application/toml",
+        "application/xml",
+        "application/yaml",
+    }
+    if not textual:
+        return None
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _readable_diff(
+    *,
+    path: str,
+    media_type: str,
+    base_body: bytes,
+    candidate_body: bytes,
+) -> tuple[str | None, str | None]:
+    base_text = _text_body(media_type, base_body)
+    candidate_text = _text_body(media_type, candidate_body)
+    if base_text is None or candidate_text is None:
+        return None, "body is not a supported UTF-8 text media type"
+    diff = "".join(
+        difflib.unified_diff(
+            base_text.splitlines(keepends=True),
+            candidate_text.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            lineterm="\n",
+        )
+    )
+    return diff, None
+
+
+def _review_document(
+    instance: PlaybillInstance,
+    *,
+    member: CandidateMemberLawEvidence,
+    base_tree: dict[str, bytes],
+    candidate_tree: dict[str, bytes],
+    access: BodyAccessContext,
+) -> PlaybillReviewedDocument:
+    candidate_content = candidate_tree.get(member.path)
+    if candidate_content is None:
+        raise ProposalIntegrityError("candidate review member is missing from its exact tree")
+    candidate = parse_document(candidate_content, path=member.path)
+    base_content = base_tree.get(member.path)
+    base = parse_document(base_content, path=member.path) if base_content is not None else None
+    base_mapping: SourceMapping | None = None
+    candidate_mapping: SourceMapping | None = None
+    readable_diff: str | None = None
+    unavailable: str | None = "body access is denied"
+    if access.can_read_body:
+        candidate_body = instance.body_store().read(candidate.body_digest, access=access)
+        base_body = (
+            b"" if base is None else instance.body_store().read(base.body_digest, access=access)
+        )
+        candidate_mapping = whole_body_mapping(
+            member.path,
+            candidate.body_digest,
+            len(candidate_body),
+        )
+        if base is not None:
+            base_mapping = whole_body_mapping(member.path, base.body_digest, len(base_body))
+        readable_diff, unavailable = _readable_diff(
+            path=member.path,
+            media_type=candidate.media_type,
+            base_body=base_body,
+            candidate_body=candidate_body,
+        )
+    return PlaybillReviewedDocument(
+        path=member.path,
+        identity=candidate.identity,
+        disposition=member.disposition,
+        title=candidate.title,
+        document_kind=candidate.document_kind,
+        media_type=candidate.media_type,
+        base_body_digest=None if base is None else base.body_digest,
+        candidate_body_digest=candidate.body_digest,
+        links=tuple(item.model_dump(mode="json") for item in candidate.links),
+        pins=tuple(item.model_dump(mode="json") for item in candidate.pins),
+        governance_scope=candidate.governance_scope,
+        base_source_mapping=base_mapping,
+        candidate_source_mapping=candidate_mapping,
+        readable_diff=readable_diff,
+        diff_unavailable_reason=unavailable,
+    )
+
+
+def _review_members(
+    candidate: CandidateRecord,
+    *,
+    base_tree: dict[str, bytes],
+    candidate_tree: dict[str, bytes],
+) -> tuple[ReviewedMember, ...]:
+    def semantic_artifact(content: bytes | None) -> dict[str, object] | None:
+        if content is None:
+            return None
+        try:
+            value = json.loads(content)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ProposalIntegrityError("review member is not canonical structured data") from exc
+        if not isinstance(value, dict):
+            raise ProposalIntegrityError("review member must be a canonical object")
+        return value
+
+    def member_delta(
+        base: dict[str, object] | None,
+        candidate_value: dict[str, object] | None,
+    ) -> tuple[SemanticFieldDelta, ...]:
+        return semantic_field_delta(base or {}, candidate_value or {})
+
+    evidence_by_path = {item.path: item for item in candidate.law_evidence}
+    reviewed: list[ReviewedMember] = []
+    for versioned_member in candidate.members:
+        base_artifact = semantic_artifact(base_tree.get(versioned_member.path))
+        candidate_artifact = semantic_artifact(candidate_tree.get(versioned_member.path))
+        reviewed.append(
+            ReviewedMember(
+                path=versioned_member.path,
+                artifact_kind=versioned_member.artifact_kind,
+                disposition=versioned_member.disposition,
+                closure_role=versioned_member.closure_role,
+                predecessor_artifact_digest=versioned_member.predecessor_artifact_digest,
+                candidate_artifact_digest=versioned_member.candidate_artifact_digest,
+                base_semantic_artifact=base_artifact,
+                candidate_semantic_artifact=candidate_artifact,
+                semantic_delta=member_delta(base_artifact, candidate_artifact),
+                law_identifier=versioned_member.law_identifier,
+                law_digest=versioned_member.law_digest,
+                law_evidence=evidence_by_path[versioned_member.path].model_dump(mode="json"),
+                dependency_proof_refs=tuple(
+                    item.model_dump(mode="json") for item in versioned_member.dependency_proof_refs
+                ),
+            )
+        )
+    return tuple(reviewed)
+
+
+def _projection_advisory(
+    *,
+    members: tuple[ReviewedMember, ...],
+    candidate_tree: dict[str, bytes],
+    settlement_base: AcceptedCoordinate,
+    workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None,
+    eligible_coordinates: tuple[AcceptedCoordinate, ...] | None = None,
+) -> ProjectionAdvisory | None:
+    if workspace_observation is None:
+        return None
+    if not isinstance(workspace_observation, ReviewWorkspaceObservation):
+        try:
+            workspace_observation = ReviewWorkspaceObservation.model_validate(workspace_observation)
+        except ValidationError:
+            return None
+    if workspace_observation.presentation_policy_notes:
+        return None
+    coverage = workspace_observation.projection_coverage
+    coordinates = (settlement_base,) if eligible_coordinates is None else eligible_coordinates
+    if coverage is None or coverage.coordinate not in coordinates:
+        return None
+    policy = upgrade_presentation_policy(
+        workspace_observation.presentation_policy or PresentationPolicyV1()
+    )
+    enabled = {
+        "Claim": policy.projection_advisories.claim,
+        "Procedure": policy.projection_advisories.procedure,
+    }
+    complete = set(coverage.complete_kinds)
+    covered = {item.artifact.qualified for item in coverage.bindings}
+    missing: list[str] = []
+    for member in members:
+        kind = {"claim": "Claim", "procedure": "Procedure"}.get(member.artifact_kind)
+        if (
+            kind is None
+            or member.closure_role == "invalidation"
+            or not enabled[kind]
+            or kind not in complete
+        ):
+            continue
+        content = candidate_tree.get(member.path)
+        parsed = None if content is None else parse_dependency_artifact(member.path, content)
+        if parsed is not None and parsed.identity.qualified not in covered:
+            missing.append(parsed.identity.qualified)
+    identities = tuple(sorted(set(missing), key=lambda item: item.encode("utf-8")))
+    if not identities:
+        return None
+    count = len(identities)
+    noun = "artifact" if count == 1 else "artifacts"
+    return ProjectionAdvisory(
+        unprojected_count=count,
+        artifact_identities=identities,
+        message=(
+            f"{count} changed {noun} have no projection coverage; reviewers will see raw JSON only"
+        ),
+    )
+
+
+def _assess_projection_evidence(
+    instance: PlaybillInstance,
+    *,
+    settlement_base: AcceptedCoordinate,
+    workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None,
+) -> tuple[
+    ReviewWorkspaceObservation | None,
+    ProjectionEvidence | None,
+    tuple[AcceptedCoordinate, ...],
+]:
+    history = tuple(
+        AcceptedCoordinate.from_internal(instance.coordinate_for_oid(generation.oid))
+        for generation in instance.accepted_history()
+    )
+    try:
+        base_index = history.index(settlement_base)
+    except ValueError as exc:  # pragma: no cover - settlement base is replay-verified
+        raise ProposalIntegrityError(
+            "proposal settlement base is outside accepted history"
+        ) from exc
+    eligible = history[base_index:]
+    if workspace_observation is None:
+        return None, None, eligible
+    if not isinstance(workspace_observation, ReviewWorkspaceObservation):
+        try:
+            workspace_observation = ReviewWorkspaceObservation.model_validate(workspace_observation)
+        except ValidationError:
+            return (
+                None,
+                ProjectionEvidence(
+                    status="rejected",
+                    reason="observation_invalid",
+                ),
+                eligible,
+            )
+    if workspace_observation.presentation_policy_notes:
+        return (
+            None,
+            ProjectionEvidence(
+                status="rejected",
+                reason="presentation_policy_invalid",
+            ),
+            eligible,
+        )
+    coverage = workspace_observation.projection_coverage
+    if coverage is None:
+        return (
+            None,
+            ProjectionEvidence(status="rejected", reason="coverage_missing"),
+            eligible,
+        )
+    coordinate = coverage.coordinate
+    if coordinate not in history:
+        return (
+            None,
+            ProjectionEvidence(
+                status="rejected",
+                coordinate=coordinate,
+                reason="coordinate_not_accepted",
+            ),
+            eligible,
+        )
+    if coordinate not in eligible:
+        return (
+            None,
+            ProjectionEvidence(
+                status="rejected",
+                coordinate=coordinate,
+                reason="coordinate_before_settlement_base",
+            ),
+            eligible,
+        )
+    return (
+        workspace_observation,
+        ProjectionEvidence(status="used", coordinate=coordinate),
+        eligible,
+    )
+
+
+PROPOSAL_REVIEW_REASONS_DEFAULT_LIMIT = 50
+PROPOSAL_REVIEW_REASONS_MAX_LIMIT = 500
+
+
+def service_review_playbill_proposal(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    access: BodyAccessContext,
+    workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None = None,
+    item_reasons_after: str | None = None,
+    item_reasons_limit: int | None = None,
+    include_body: bool | None = None,
+    detail: bool = False,
+    summary_after: str | None = None,
+    summary_group: str | None = None,
+    rows_after: str | None = None,
+    rows_limit: int = 5,
+    groups_limit: int = 5,
+    findings_after: str | None = None,
+) -> ProposalReview | ProposalReviewSummary:
+    """Return bounded summary pages, or the full immutable review with detail=True.
+
+    A detailed Procedure review's item reasons are paged: ``item_reasons_limit`` of
+    them after ``item_reasons_after`` (the previous page's
+    ``item_reasons_next_cursor``).
+    """
+
+    if not detail:
+        if (
+            workspace_observation is not None
+            or include_body is not None
+            or item_reasons_after is not None
+            or item_reasons_limit is not None
+        ):
+            raise ProposalReviewOptionsInvalid(
+                "workspace_observation, include_body and item_reasons_* require detail=True; "
+                "use --detail or omit these options for the summary"
+            )
+        from cruxible_core.service.proposals.summary import service_review_summary
+
+        return service_review_summary(
+            instance,
+            proposal_id=proposal_id,
+            after=summary_after,
+            group=summary_group,
+            rows_after=rows_after,
+            limit=rows_limit,
+            groups_limit=groups_limit,
+            findings_after=findings_after,
+            access=access,
+        )
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
+    proposal = inspection.proposal
+    # An inspection of an admitted proposal always carries the admitted record.
+    assert isinstance(proposal, ProposalResult)
+    candidate = proposal.candidate
+    if candidate is None or proposal.evaluation.evaluated_tree_oid is None:
+        raise ProposalIntegrityError("refused proposal has no reviewable candidate")
+    base = instance.coordinate_for_oid(proposal.evaluation.evaluated_base_oid)
+    base_public = AcceptedCoordinate.from_internal(base)
+    paths = tuple(member.path for member in candidate.members)
+    base_tree = instance.blobs_at(base.git_oid, paths)
+    candidate_tree = instance.proposal_blobs(
+        proposal.evaluation.evaluated_tree_oid, paths, proposal_id=proposal_id
+    )
+    documents = tuple(
+        _review_document(
+            instance,
+            member=member,
+            base_tree=base_tree,
+            candidate_tree=candidate_tree,
+            access=access,
+        )
+        for member in candidate.members
+        if member.artifact_kind == "document"
+    )
+    approvals = instance.proposal_evidence().read_approvals(candidate.candidate_digest)
+    attestation_items = [
+        {
+            "attestation_digest": approval_digest(item.attestation).tagged,
+            "coverage": "containing_change_set",
+            "signed_payload_digest": item.attestation.payload_digest,
+            "signer_id": item.attestation.signer_id,
+            "signing_semantic_root": item.attestation.signing_semantic_root,
+            "submitted_by": item.submitted_by,
+        }
+        for item in approvals
+    ]
+    redactions = () if access.can_read_body else ("body", "readable_diff", "source_mapping")
+    prior_refusals, prior_refusal_coverage = instance.refusal_index().prior_refusals_with_coverage(
+        instance, proposal.admission.proposal_id
+    )
+    reviewed_members = tuple(
+        member.model_copy(update={"prior_refusals": prior_refusals[member.path]})
+        if member.path in prior_refusals
+        else member
+        for member in _review_members(
+            candidate,
+            base_tree=base_tree,
+            candidate_tree=candidate_tree,
+        )
+    )
+    evidence_store = instance.proposal_evidence()
+    operation = evidence_store.item_reason_operation(proposal.admission)
+    item_reasons, item_reason_count, item_reasons_next_cursor = (
+        ((), 0, None)
+        if operation is None
+        else evidence_store.item_reason_page(
+            operation,
+            after=item_reasons_after,
+            limit=max(
+                1,
+                min(
+                    item_reasons_limit
+                    if item_reasons_limit is not None
+                    else PROPOSAL_REVIEW_REASONS_DEFAULT_LIMIT,
+                    PROPOSAL_REVIEW_REASONS_MAX_LIMIT,
+                ),
+            ),
+        )
+    )
+    usable_workspace_observation, projection_evidence, eligible_coordinates = (
+        _assess_projection_evidence(
+            instance,
+            settlement_base=base_public,
+            workspace_observation=workspace_observation,
+        )
+    )
+    return ProposalReview(
+        proposal_id=proposal_id,
+        candidate=candidate,
+        candidate_digest=candidate.candidate_digest,
+        parent_semantic_root=candidate.candidate.parent_semantic_root,
+        settlement_base=base_public,
+        base_oid=base.git_oid,
+        complete_members=candidate.members,
+        members=reviewed_members,
+        governance={
+            "activation_policy": candidate.activation_policy,
+            "approval_requirements": [
+                item.model_dump(mode="json") for item in candidate.approval_requirements
+            ],
+            "law_digests": candidate.law_digests,
+            "required_tier": candidate.required_tier,
+        },
+        provenance={
+            "actor_id": proposal.admission.actor_id,
+            "source_compilation_digest": proposal.admission.source_compilation_digest,
+        },
+        originating_line=proposal.admission.originating_line,
+        rationale=proposal.admission.rationale,
+        item_reasons=item_reasons,
+        item_reason_count=item_reason_count,
+        item_reasons_next_cursor=item_reasons_next_cursor,
+        attestation_coverage={
+            "attestations": attestation_items,
+            "coverage": "containing_change_set",
+            "coverage_basis": {
+                "candidate_digest": candidate.candidate_digest,
+                "scope": list(candidate.candidate.scope),
+            },
+        },
+        documents=documents,
+        guidance=review_guidance(
+            instance,
+            (
+                definition
+                for member in reviewed_members[: 4 * REVIEW_GUIDANCE_MAX_DEFINITIONS]
+                for definition in (
+                    claim_type_identity(
+                        member.candidate_semantic_artifact or member.base_semantic_artifact,
+                        member.artifact_kind,
+                    ),
+                )
+                if definition is not None
+            ),
+            line=None
+            if proposal.admission.originating_line is None
+            else proposal.admission.originating_line.identity.qualified,
+        ),
+        redactions=redactions,
+        projection_advisory=_projection_advisory(
+            members=reviewed_members,
+            candidate_tree=candidate_tree,
+            settlement_base=base_public,
+            workspace_observation=usable_workspace_observation,
+            eligible_coordinates=eligible_coordinates,
+        ),
+        projection_evidence=projection_evidence,
+        prior_refusal_coverage=prior_refusal_coverage,
+        compiler_upgrade=_compiler_upgrade_notice(candidate, candidate_tree),
+    )
+
+
+def _compiler_upgrade_notice(
+    candidate: CandidateRecord, candidate_tree: Mapping[str, bytes]
+) -> CompilerUpgradeNotice | None:
+    """The one-way notice of a compiler upgrade, read from its exact candidate bytes."""
+
+    if not any(member.artifact_kind == "compiler-upgrade" for member in candidate.members):
+        return None
+    content = candidate_tree.get(COMPILER_UPGRADE_PATH)
+    if content is None:
+        raise ProposalIntegrityError("compiler upgrade member is missing from its exact tree")
+    return upgrade_notice(parse_compiler_upgrade(content))
+
+
+def service_prepare_playbill_approval(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    signer_id: str,
+    access: BodyAccessContext,
+) -> ApprovalChallenge:
+    """Return the exact public statement a client signer may choose to approve."""
+
+    review = service_review_playbill_proposal(
+        instance, proposal_id=proposal_id, access=access, detail=True
+    )
+    assert isinstance(review, ProposalReview)
+    generation = instance.generation_for_semantic_root(review.parent_semantic_root)
+    principal = generation.principals.require_active(signer_id)
+    if principal.kind == "daemon":
+        raise ApprovalIntegrityError("daemon identity cannot provide client approval")
+    principal_lifecycle = all(
+        member.artifact_kind == "principal-lifecycle" for member in review.complete_members
+    )
+    creator_principal_id = str(review.provenance["actor_id"])
+    if (
+        not principal_lifecycle
+        and review.candidate.approval_requirements
+        and signer_id == creator_principal_id
+    ):
+        raise ApprovalIntegrityError(
+            "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
+            "an active ordinary approver other than the candidate creator, whose "
+            "approval activates it"
+        )
+    if not principal_lifecycle and principal.kind == "recovery":
+        raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")
+    return ApprovalChallenge(
+        proposal_id=proposal_id,
+        signer_principal=principal,
+        signer_key_history_ref=generation.principals.key_history_reference(signer_id),
+        statement=ApprovalStatement(
+            signer_id=signer_id,
+            signing_semantic_root=review.parent_semantic_root,
+            payload_digest=review.candidate_digest,
+        ),
+        review=review,
+    )
+
+
+def _prior_refusal_lines(review: ProposalReview) -> list[str]:
+    """Each earlier refusal of a proposed Claim's statement on its evidence, as recorded."""
+
+    lines: list[str] = []
+    coverage = review.prior_refusal_coverage
+    if coverage is not None:
+        lines.extend(
+            (
+                "",
+                "Earlier refusals are being indexed: retirements are covered through "
+                f"generation {coverage.indexed_through_generation} of "
+                f"{coverage.accepted_generation}.",
+            )
+        )
+    for member in review.members:
+        for receipt in member.prior_refusals:
+            if not lines:
+                lines.extend(("", "Earlier refusals of the same statement on the same evidence:"))
+            verb = "retired" if receipt.kind == "claim_retired" else "rejected"
+            subject = (
+                f"Claim {receipt.claim_id}"
+                if receipt.kind == "claim_retired"
+                else f"proposal {receipt.proposal_id} (Claim {receipt.claim_id})"
+            )
+            code = "" if receipt.reason_code is None else f" [{receipt.reason_code}]"
+            lines.append(
+                f"  {member.path}: {subject} {verb} by {receipt.decided_by} "
+                f"at {receipt.decided_at}{code}"
+            )
+            if receipt.rationale:
+                lines.extend(f"    {line}" for line in receipt.rationale.splitlines())
+    return lines
+
+
+def _item_reason_lines(review: ProposalReview) -> list[str]:
+    """This page of a Procedure proposal's item reasons, each under the member it explains."""
+
+    if not review.item_reasons:
+        return []
+    lines = ["", f"Item reasons ({len(review.item_reasons)} of {review.item_reason_count}):"]
+    for item in review.item_reasons:
+        lines.append(f"  {item.path}:")
+        lines.extend(f"    {line}" for line in item.reason.splitlines())
+    if review.item_reasons_next_cursor is not None:
+        lines.append(f"  More: --item-reasons-after {review.item_reasons_next_cursor}")
+    return lines
+
+
+_CHANGE_LINES_SHOWN = 20
+
+
+def _address_ref(address: object) -> str | None:
+    """``kind/id`` for a Subject artifact address, as the write verbs print it."""
+
+    if not isinstance(address, Mapping):
+        return None
+    path = address.get("artifact_path")
+    if not isinstance(path, str) or not path.startswith("subjects/"):
+        return None
+    return path.removeprefix("subjects/").removesuffix(".json")
+
+
+def _claim_object_text(statement: Mapping[str, object]) -> str:
+    claim_object = statement.get("object")
+    if not isinstance(claim_object, Mapping):
+        return "?"
+    if claim_object.get("kind") == "subject":
+        return _address_ref(claim_object.get("address")) or "?"
+    if claim_object.get("kind") == "literal":
+        value = claim_object.get("value")
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if claim_object.get("kind") == "none":
+        # An inverse Claim: the field holds nothing, or does not hold ``of``.
+        of = claim_object.get("of")
+        return (
+            "none"
+            if not isinstance(of, Mapping)
+            else f"none of {_claim_object_text({'object': of})}"
+        )
+    return f"<{claim_object.get('kind')}>"
+
+
+def _claim_change_line(member: ReviewedMember) -> str | None:
+    """One Claim member as the write verbs print a change: ``set subject field: a -> b``."""
+
+    candidate = member.candidate_semantic_artifact
+    base = member.base_semantic_artifact
+    current = candidate if candidate is not None else base
+    if current is None:
+        return None
+    statement = current.get("statement")
+    if not isinstance(statement, Mapping):
+        return None
+    subject = _address_ref(statement.get("subject"))
+    predicate = statement.get("predicate")
+    if subject is None or not isinstance(predicate, str):
+        return None
+    kind = subject.rpartition("/")[0]
+    field = predicate.removeprefix(f"{kind}.") if predicate.startswith(f"{kind}.") else predicate
+    identity = current.get("identity")
+    claim = identity.get("name") if isinstance(identity, Mapping) else None
+    lifecycle = candidate.get("lifecycle") if candidate is not None else None
+    retired = candidate is None or (
+        isinstance(lifecycle, Mapping) and lifecycle.get("state") != "live"
+    )
+    base_statement = base.get("statement") if base is not None else None
+    if retired:
+        line = f"retire {subject} {field}: {_claim_object_text(statement)}"
+    elif isinstance(base_statement, Mapping) and base_statement.get("object") == statement.get(
+        "object"
+    ):
+        # Same value on new evidence (a re-read file is new content): say so,
+        # rather than print `true -> true` as if the value moved.
+        line = (
+            f"refresh evidence {subject} {field}: {_claim_object_text(statement)} (value unchanged)"
+        )
+    elif isinstance(base_statement, Mapping):
+        line = (
+            f"set {subject} {field}: {_claim_object_text(base_statement)} -> "
+            f"{_claim_object_text(statement)}"
+        )
+    else:
+        line = f"set {subject} {field}: {_claim_object_text(statement)}"
+    return line + (f"  [{claim}]" if isinstance(claim, str) else "")
+
+
+def proposal_change_lines(review: ProposalReview) -> list[str]:
+    """What the change set does, one line per member, Claims as the write verbs print them.
+
+    A summary to orient the reviewer, never the review itself: the exact candidate
+    is the ledger commit (``git diff``) and ``--json``.
+    """
+
+    rows: list[str] = []
+    for member in review.members:
+        line = _claim_change_line(member) if member.artifact_kind == "claim" else None
+        if line is None:
+            line = f"{member.disposition} {member.artifact_kind} {member.path}"
+        if member.closure_role != "authored":
+            line += f"  ({member.closure_role.replace('_', ' ')})"
+        rows.append(line)
+    shown = [f"  {row}" for row in rows[:_CHANGE_LINES_SHOWN]]
+    if len(rows) > _CHANGE_LINES_SHOWN:
+        shown.append(
+            f"  ... and {len(rows) - _CHANGE_LINES_SHOWN} more (--json lists every member)"
+        )
+    lines: list[str] = []
+    if review.rationale is not None:
+        lines.extend(("Why:", *(f"  {line}" for line in review.rationale.splitlines())))
+    lines.extend((f"Changes ({len(rows)}):", *shown))
+    return lines
+
+
+def _compiler_upgrade_lines(review: ProposalReview) -> list[str]:
+    """A compiler upgrade's source, exact target digest and one-way notice."""
+
+    notice = review.compiler_upgrade
+    if notice is None:
+        return []
+    source = notice.source_revision or notice.source_compiler_digest
+    target = notice.target_revision or notice.target_compiler_digest
+    return [
+        "",
+        f"Compiler upgrade: {source} -> {target}",
+        f"Target compiler: {notice.target_compiler_digest}",
+        notice.message,
+    ]
+
+
+def _originating_line_lines(review: ProposalReview) -> list[str]:
+    origin = review.originating_line
+    return (
+        []
+        if origin is None
+        else [f"Originating Line: {origin.identity.qualified} {origin.artifact_digest}"]
+    )
+
+
+def _guidance_lines(review: ProposalReview) -> list[str]:
+    return [
+        f"Guidance for {item.definition}: {item.document}"
+        + ("" if item.title is None else f" ({item.title})")
+        for item in review.guidance
+    ]
+
+
+def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
+    """Point a reviewer at the ledger instead of re-rendering the ledger.
+
+    The ledger is Git, so review is Git. A second rendering of a change set --
+    diffs, semantic deltas, member rolls -- is a copy of what `git diff` already
+    shows, and it is the copy that goes stale: it has to learn every artifact
+    kind, and a reviewer who reads it is reasoning about the renderer's opinion
+    of the candidate rather than the bytes settlement will accept.
+
+    What is left here is the author's reason, one line per member saying what it
+    does (so a reviewer knows what to look for), a pointer and the two note refs,
+    because those are the coordinates a reviewer cannot guess. `--json` remains the
+    structured read for anything that needs fields rather than a diff.
+    """
+
+    key = review.proposal_id.removeprefix("sha256:")
+    return (
+        "\n".join(
+            (
+                f"Proposal: {review.proposal_id}",
+                f"Candidate: {review.candidate_digest}",
+                f"Settlement base OID: {review.base_oid}",
+                *_originating_line_lines(review),
+                "",
+                *proposal_change_lines(review),
+                *_guidance_lines(review),
+                *_compiler_upgrade_lines(review),
+                *_item_reason_lines(review),
+                *_prior_refusal_lines(review),
+                "",
+                "Review this proposal in the ledger, in the attached workspace:",
+                f"  git diff cruxible-ledger/accepted...cruxible-ledger/proposals/{key}",
+                "",
+                "The daemon's own records are notes on that same commit:",
+                f"  git notes --ref={NOTE_REFS['evaluation']} show cruxible-ledger/proposals/{key}",
+                f"  git notes --ref={NOTE_REFS['approval']} show cruxible-ledger/proposals/{key}",
+                "",
+                "From a clone of the ledger mirror instead (its URL is in cruxible orient),",
+                "fetch the notes once and read them off the proposal branch:",
+                "  git fetch origin '+refs/notes/*:refs/notes/*'",
+                f"  git diff origin/main...origin/proposals/{key}",
+                "",
+                "For the structured read, add --json.",
+            )
+        )
+        + "\n"
+    )
+
+
+def render_playbill_approval_summary(review: ProposalReview) -> str:
+    """What `proposal approve` shows before signing: who must approve, why, and what changes.
+
+    The signature covers the exact candidate digest printed here; `--full`
+    renders every member's artifact and semantic delta instead.
+    """
+
+    lines = [
+        f"Proposal: {review.proposal_id}",
+        f"Candidate: {review.candidate_digest}",
+        "Required approvals: " + _required_approvals_text(review),
+        "",
+        *proposal_change_lines(review),
+        *_compiler_upgrade_lines(review),
+        *_item_reason_lines(review),
+        *_prior_refusal_lines(review),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _required_approvals_text(review: ProposalReview) -> str:
+    required = ", ".join(
+        f"{item.minimum_distinct_signers} {item.role}"
+        for item in review.candidate.approval_requirements
+    )
+    if required:
+        return required
+    if review.compiler_upgrade is not None:
+        # Settlement requires one signed approval whatever the policy says.
+        return "one signature from any active ordinary principal, the proposer included"
+    return (
+        f"{review.provenance.get('actor_id', 'the proposing actor')}'s "
+        "own signature (lifecycle actor binding)"
+        if all(member.artifact_kind == "principal-lifecycle" for member in review.complete_members)
+        and review.complete_members
+        else "none"
+    )
+
+
+def render_playbill_proposal_review(review: ProposalReview) -> str:
+    """Render the exact candidate a signer is about to attest to.
+
+    This is the full approval confirmation, not the review surface: `proposal
+    approve --full` shows it immediately before asking for a signature, a full
+    rendering of what the signature will cover (by default `approve` shows
+    `render_playbill_approval_summary`). `proposal review --detail` points at
+    the ledger; the default review is a factored summary.
+    """
+
+    lines = [
+        f"Proposal: {review.proposal_id}",
+        f"Candidate: {review.candidate_digest}",
+        *_originating_line_lines(review),
+        f"Parent semantic root: {review.parent_semantic_root}",
+        f"Settlement base OID: {review.base_oid}",
+        f"Proposal admission tier: {review.candidate.required_tier}",
+        "Approve requires: graph_write",
+        "Activate requires: graph_write",
+        "Required approvals: " + _required_approvals_text(review),
+    ]
+    if review.rationale is not None:
+        lines.extend(("", "Rationale:", *(f"  {line}" for line in review.rationale.splitlines())))
+    lines.extend(_compiler_upgrade_lines(review))
+    lines.extend(_item_reason_lines(review))
+    lines.extend(_prior_refusal_lines(review))
+    if review.projection_evidence is not None:
+        evidence = review.projection_evidence
+        evidence_note = (
+            f"used@{evidence.coordinate.git_oid}"
+            if evidence.status == "used" and evidence.coordinate is not None
+            else f"rejected:{evidence.reason}"
+        )
+        lines.extend(("", f"Projection evidence: {evidence_note}."))
+    if review.projection_advisory is not None:
+        lines.extend(("", f"Projection advisory: {review.projection_advisory.message}."))
+    for document in review.documents:
+        lines.extend(
+            (
+                "",
+                f"{document.title} ({document.document_kind})",
+                f"Body: {document.base_body_digest or '<new>'} -> {document.candidate_body_digest}",
+                f"Path: {document.path}",
+            )
+        )
+        if document.readable_diff is not None:
+            lines.extend(("", document.readable_diff.rstrip("\n")))
+        elif document.diff_unavailable_reason is not None:
+            lines.append(f"Diff unavailable: {document.diff_unavailable_reason}")
+    non_documents = tuple(member for member in review.members if member.artifact_kind != "document")
+    for member in non_documents:
+        lines.extend(
+            (
+                "",
+                f"{member.path} ({member.artifact_kind})",
+                f"Closure role: {member.closure_role}",
+                "Artifact: "
+                f"{member.predecessor_artifact_digest or '<new>'} -> "
+                f"{member.candidate_artifact_digest or '<deleted>'}",
+                f"Law: {member.law_identifier} ({member.law_digest})",
+            )
+        )
+    for member in review.members:
+        lines.extend(("", f"Semantic delta: {member.path}"))
+        if not member.semantic_delta:
+            lines.append("  (no semantic field changes)")
+            continue
+        for row in member.semantic_delta:
+            before = (
+                "<absent>"
+                if row.before.state == "absent"
+                else json.dumps(row.before.value, sort_keys=True, ensure_ascii=False)
+            )
+            after = (
+                "<absent>"
+                if row.after.state == "absent"
+                else json.dumps(row.after.value, sort_keys=True, ensure_ascii=False)
+            )
+            lines.append(f"  {row.field_path or '/'}: {before} -> {after}")
+    return "\n".join(lines) + "\n"
+
+
+__all__ = [
+    "ApprovalChallenge",
+    "ProposalReview",
+    "ProjectionAdvisory",
+    "PlaybillReviewedDocument",
+    "ReviewedMember",
+    "render_playbill_approval_summary",
+    "render_playbill_proposal_review",
+    "render_playbill_proposal_review_pointer",
+    "proposal_change_lines",
+    "service_prepare_playbill_approval",
+    "service_review_playbill_proposal",
+]
+
+
+def withhold_review_values(
+    instance: PlaybillInstance,
+    payload: dict[str, Any],
+    access: BodyAccessContext | None,
+) -> dict[str, Any]:
+    """A served detailed review without what restricted Captures say (C14).
+
+    Before acceptance a candidate Claim's value is a run output: when it cites
+    a Capture withheld from the reader, its proposed value and semantic delta
+    go, and every span and evidence locator into the withheld Capture goes
+    from the whole response (members, law evidence, the candidate record),
+    together with the item reasons. Accepted base values, digests, closure,
+    governance and the candidate digest a signer signs stay intact.
+    """
+
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        WITHHELD_MARK,
+        capture_access_resolver,
+        named_captures,
+        redact_claim_evidence,
+        withheld_commitments,
+    )
+
+    reader = access or NO_RESTRICTED_ACCESS
+    if reader.can_read_restricted:
+        return payload
+    coordinate = instance.accepted_coordinate()
+    withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+        named_captures(payload), reader
+    )
+    if notice is None:
+        return payload
+    names = set(withheld)
+    members = []
+    for member in payload.get("members", []):
+        base = member.get("base_semantic_artifact")
+        candidate = member.get("candidate_semantic_artifact")
+        base_restricted = isinstance(base, dict) and bool(names & set(named_captures(base)))
+        candidate_restricted = isinstance(candidate, dict) and bool(
+            names & set(named_captures(candidate))
+        )
+        if candidate_restricted and isinstance(candidate, dict):
+            # Before acceptance its value is a run output drawn from the Capture.
+            statement = candidate.get("statement")
+            if isinstance(statement, dict) and "object" in statement:
+                candidate = {
+                    **candidate,
+                    "statement": {**statement, "object": {"withheld": WITHHELD_MARK}},
+                }
+        if base_restricted or candidate_restricted:
+            # A delta's leaves copy either side's evidence without naming its
+            # Capture: withheld whole when either side rests on a withheld one.
+            member = {**member, "candidate_semantic_artifact": candidate, "semantic_delta": []}
+        members.append(member)
+    commitments, complete = withheld_commitments(instance, coordinate, names)
+    redacted = redact_claim_evidence(
+        {**payload, "members": members, "item_reasons": []},
+        captures=names,
+        commitments=commitments,
+        every_span=not complete,
+    )
+    assert isinstance(redacted, dict)
+    redacted["withheld"] = notice.model_dump(mode="json")
+    return redacted

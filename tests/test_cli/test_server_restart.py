@@ -24,7 +24,11 @@ def cli_context_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, client: object) -> None:
-    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lambda: client)
+    # Mirrors _get_lifecycle_client: the command passes its --state-root (or None).
+    def lifecycle_client(state_root: Path | None = None) -> object:
+        return client
+
+    monkeypatch.setattr("cruxible_core.cli.commands.server._get_client", lifecycle_client)
 
 
 def test_server_restart_requires_server_mode(monkeypatch, runner: CliRunner):
@@ -43,15 +47,15 @@ def test_server_restart_waits_for_daemon_and_reports_version(monkeypatch, runner
         def server_restart(self) -> contracts.ServerRestartResult:
             self.restart_calls += 1
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
             )
 
-        def version(self) -> str:
+        def daemon_identity(self) -> tuple[str, str | None]:
             self.version_calls += 1
             # First poll fails (image being replaced), second succeeds.
             if self.version_calls < 2:
                 raise CoreError("connection refused")
-            return "0.1.6"
+            return "0.1.6", "new-image"
 
     client = StubClient()
     _patch_client(monkeypatch, client)
@@ -71,12 +75,12 @@ def test_server_restart_no_wait_skips_polling(monkeypatch, runner: CliRunner):
 
         def server_restart(self) -> contracts.ServerRestartResult:
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
             )
 
-        def version(self) -> str:
+        def daemon_identity(self) -> tuple[str, str | None]:
             self.version_calls += 1
-            return "0.1.5"
+            return "0.1.5", "old-image"
 
     client = StubClient()
     _patch_client(monkeypatch, client)
@@ -91,11 +95,11 @@ def test_server_restart_json_output(monkeypatch, runner: CliRunner):
     class StubClient:
         def server_restart(self) -> contracts.ServerRestartResult:
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
             )
 
-        def version(self) -> str:
-            return "0.1.6"
+        def daemon_identity(self) -> tuple[str, str | None]:
+            return "0.1.6", "new-image"
 
     _patch_client(monkeypatch, StubClient())
     result = runner.invoke(cli, ["--server-url", "http://server", "server", "restart", "--json"])
@@ -104,7 +108,7 @@ def test_server_restart_json_output(monkeypatch, runner: CliRunner):
     payload = json.loads(result.output)
     assert payload["scheduled"] is True
     assert payload["version"] == "0.1.5"
-    assert payload["state_dir"] == "/srv/state"
+    assert payload["state_root"] == "/srv/state"
     assert payload["waited"] is True
     assert payload["confirmed_version"] == "0.1.6"
 
@@ -113,10 +117,10 @@ def test_server_restart_times_out_when_daemon_never_returns(monkeypatch, runner:
     class StubClient:
         def server_restart(self) -> contracts.ServerRestartResult:
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
             )
 
-        def version(self) -> str:
+        def daemon_identity(self) -> tuple[str, str | None]:
             raise CoreError("connection refused")
 
     _patch_client(monkeypatch, StubClient())
@@ -129,3 +133,122 @@ def test_server_restart_times_out_when_daemon_never_returns(monkeypatch, runner:
 
     assert result.exit_code != 0
     assert "did not come back" in result.output
+
+
+def test_server_restart_does_not_confirm_against_the_old_process_image(
+    monkeypatch, runner: CliRunner
+):
+    """The old image answers before it re-execs; only a new boot id confirms."""
+
+    class StubClient:
+        def __init__(self) -> None:
+            self.polls = 0
+
+        def server_restart(self) -> contracts.ServerRestartResult:
+            return contracts.ServerRestartResult(
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
+            )
+
+        def daemon_identity(self) -> tuple[str, str | None]:
+            self.polls += 1
+            if self.polls < 3:
+                return "0.1.5", "old-image"
+            return "0.1.6", "new-image"
+
+    client = StubClient()
+    _patch_client(monkeypatch, client)
+    monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _s: None)
+    result = runner.invoke(cli, ["--server-url", "http://server", "server", "restart"])
+
+    assert result.exit_code == 0, result.output
+    assert client.polls == 3
+    assert "Daemon is back on version 0.1.6." in result.output
+
+
+def test_server_restart_times_out_while_the_old_image_keeps_answering(
+    monkeypatch, runner: CliRunner
+):
+    class StubClient:
+        def server_restart(self) -> contracts.ServerRestartResult:
+            return contracts.ServerRestartResult(
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
+            )
+
+        def daemon_identity(self) -> tuple[str, str | None]:
+            return "0.1.5", "old-image"
+
+    _patch_client(monkeypatch, StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _s: None)
+    result = runner.invoke(
+        cli,
+        ["--server-url", "http://server", "server", "restart", "--timeout", "0.05"],
+    )
+
+    assert result.exit_code != 0
+    assert "old process image is still answering" in result.output
+
+
+@pytest.mark.parametrize(
+    "old_boot_id,new_boot_id",
+    [
+        (None, "new-image"),
+        ("old-image", None),
+        (None, None),
+        ("", "new-image"),
+        ("old-image", " "),
+    ],
+)
+@pytest.mark.parametrize("output_json", [False, True])
+def test_restart_never_confirms_without_identifiable_old_and_new_images(
+    monkeypatch,
+    runner: CliRunner,
+    old_boot_id,
+    new_boot_id,
+    output_json: bool,
+):
+    class StubClient:
+        def server_restart(self) -> contracts.ServerRestartResult:
+            return contracts.ServerRestartResult(
+                scheduled=True,
+                version="0.5.1",
+                state_root="/srv/state",
+                boot_id=old_boot_id,
+            )
+
+        def daemon_identity(self) -> tuple[str, str | None]:
+            return "0.5.1", new_boot_id
+
+    _patch_client(monkeypatch, StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _s: None)
+    args = ["--server-url", "http://server", "server", "restart", "--timeout", "0.01"]
+    if output_json:
+        args.append("--json")
+    result = runner.invoke(cli, args)
+    assert result.exit_code == 1
+    assert "replacement could not be confirmed" in result.output
+    assert "boot ID" in result.output
+    assert "confirmed_version" not in result.stdout
+    assert "Daemon is back" not in result.output
+
+
+def test_restart_keeps_waiting_after_a_probe_without_a_boot_id(monkeypatch, runner: CliRunner):
+    probes = iter([("0.5.1", None), ("0.5.1", "old-image"), ("0.5.1", "new-image")])
+
+    class StubClient:
+        def server_restart(self) -> contracts.ServerRestartResult:
+            return contracts.ServerRestartResult(
+                scheduled=True,
+                version="0.5.1",
+                state_root="/srv/state",
+                boot_id="old-image",
+            )
+
+        def daemon_identity(self) -> tuple[str, str | None]:
+            return next(probes)
+
+    _patch_client(monkeypatch, StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _s: None)
+    result = runner.invoke(cli, ["--server-url", "http://server", "server", "restart", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["confirmed_version"] == "0.5.1"
+    assert list(probes) == []

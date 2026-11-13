@@ -1,0 +1,3007 @@
+{
+  "format": "playbill-served-surface-v1",
+  "succession": {
+    "ratified_by": "maintainer",
+    "register_entry": "2026-11-12:layout-extract-row-pins",
+    "surface_digest": "sha256:376ebdafddb094ab399525420832f66d9f4a8748750695d3086d5f9beac21aef"
+  },
+  "surface": {
+    "cli_leaves": [
+      {
+        "client_operations": [
+          "run_internal_action"
+        ],
+        "command": "action run",
+        "delegate": "cruxible_core.cli.commands.playbill.run_action"
+      },
+      {
+        "client_operations": [
+          "write"
+        ],
+        "command": "add",
+        "delegate": "cruxible_core.cli.commands.playbill.add_value"
+      },
+      {
+        "client_operations": [
+          "audit"
+        ],
+        "command": "audit",
+        "delegate": "cruxible_core.cli.commands.playbill.audit"
+      },
+      {
+        "client_operations": [
+          "compile_authoring"
+        ],
+        "command": "authoring bind",
+        "delegate": "cruxible_core.cli.commands.playbill.bind_authoring_selection"
+      },
+      {
+        "client_operations": [
+          "compile_authoring_input"
+        ],
+        "command": "authoring compile",
+        "delegate": "cruxible_core.cli.commands.playbill.compile_authoring"
+      },
+      {
+        "client_operations": [],
+        "command": "authoring example",
+        "delegate": "cruxible_core.cli.commands.playbill.authoring_example_command"
+      },
+      {
+        "client_operations": [
+          "get_authoring_intent"
+        ],
+        "command": "authoring get",
+        "delegate": "cruxible_core.cli.commands.playbill.get_authoring_intent"
+      },
+      {
+        "client_operations": [
+          "list_pending_authoring_intents"
+        ],
+        "command": "authoring list",
+        "delegate": "cruxible_core.cli.commands.playbill.list_pending_authoring_intents"
+      },
+      {
+        "client_operations": [
+          "preflight_authoring_intent"
+        ],
+        "command": "authoring preflight",
+        "delegate": "cruxible_core.cli.commands.playbill.preflight_authoring_intent"
+      },
+      {
+        "client_operations": [
+          "authoring_intent_status"
+        ],
+        "command": "authoring status",
+        "delegate": "cruxible_core.cli.commands.playbill.authoring_intent_status"
+      },
+      {
+        "client_operations": [
+          "get",
+          "preview_authoring_input",
+          "submit_authoring_input",
+          "submit_authoring_intent"
+        ],
+        "command": "authoring submit",
+        "delegate": "cruxible_core.cli.commands.playbill.submit_authoring_intent"
+      },
+      {
+        "client_operations": [
+          "backlinks"
+        ],
+        "command": "backlinks",
+        "delegate": "cruxible_core.cli.commands.playbill.backlinks"
+      },
+      {
+        "client_operations": [
+          "depublish_block"
+        ],
+        "command": "block depublish",
+        "delegate": "cruxible_core.cli.commands.playbill.depublish_projection"
+      },
+      {
+        "client_operations": [],
+        "command": "block detach",
+        "delegate": "cruxible_core.cli.commands.playbill.detach_projection"
+      },
+      {
+        "client_operations": [],
+        "command": "block repin",
+        "delegate": "cruxible_core.cli.commands.playbill.repin_projection"
+      },
+      {
+        "client_operations": [],
+        "command": "block sync",
+        "delegate": "cruxible_core.cli.commands.playbill.sync_projection"
+      },
+      {
+        "client_operations": [
+          "store_body"
+        ],
+        "command": "body store",
+        "delegate": "cruxible_core.cli.commands.playbill.store_body"
+      },
+      {
+        "client_operations": [
+          "erase_capture"
+        ],
+        "command": "capture erase",
+        "delegate": "cruxible_core.cli.commands.playbill.erase_capture"
+      },
+      {
+        "client_operations": [
+          "read_capture"
+        ],
+        "command": "capture read",
+        "delegate": "cruxible_core.cli.commands.playbill.read_capture"
+      },
+      {
+        "client_operations": [
+          "propose_capture_contract_input"
+        ],
+        "command": "capture-contract propose",
+        "delegate": "cruxible_core.cli.commands.playbill.propose_capture_contract"
+      },
+      {
+        "client_operations": [],
+        "command": "claim attest",
+        "delegate": "cruxible_core.cli.commands.playbill.attest_claim"
+      },
+      {
+        "client_operations": [
+          "get",
+          "migrate_claim_type"
+        ],
+        "command": "claim-type migrate",
+        "delegate": "cruxible_core.cli.commands.playbill.migrate_claim_type"
+      },
+      {
+        "client_operations": [
+          "propose_builtin_claim_type",
+          "propose_claim_type_input"
+        ],
+        "command": "claim-type propose",
+        "delegate": "cruxible_core.cli.commands.playbill.propose_claim_type"
+      },
+      {
+        "client_operations": [
+          "head",
+          "propose_compiler_upgrade",
+          "whoami"
+        ],
+        "command": "compiler upgrade",
+        "delegate": "cruxible_core.cli.commands.playbill.propose_compiler_upgrade"
+      },
+      {
+        "client_operations": [
+          "get"
+        ],
+        "command": "console",
+        "delegate": "cruxible_core.cli.commands.console.console_cmd"
+      },
+      {
+        "client_operations": [],
+        "command": "context clear",
+        "delegate": "cruxible_core.cli.commands.context.context_clear"
+      },
+      {
+        "client_operations": [],
+        "command": "context connect",
+        "delegate": "cruxible_core.cli.commands.context.context_connect"
+      },
+      {
+        "client_operations": [
+          "get",
+          "host_workspace_registration"
+        ],
+        "command": "context show",
+        "delegate": "cruxible_core.cli.commands.context.context_show"
+      },
+      {
+        "client_operations": [],
+        "command": "context use",
+        "delegate": "cruxible_core.cli.commands.context.context_use"
+      },
+      {
+        "client_operations": [],
+        "command": "coverage resolve",
+        "delegate": "cruxible_core.cli.commands.playbill.resolve_coverage"
+      },
+      {
+        "client_operations": [
+          "claim_runtime_bootstrap"
+        ],
+        "command": "credential claim-bootstrap",
+        "delegate": "cruxible_core.cli.commands.credentials.claim_bootstrap_cmd"
+      },
+      {
+        "client_operations": [
+          "list_runtime_credentials"
+        ],
+        "command": "credential list",
+        "delegate": "cruxible_core.cli.commands.credentials.list_cmd"
+      },
+      {
+        "client_operations": [
+          "create_runtime_credential"
+        ],
+        "command": "credential mint",
+        "delegate": "cruxible_core.cli.commands.credentials.mint_cmd"
+      },
+      {
+        "client_operations": [],
+        "command": "credential recover-admin",
+        "delegate": "cruxible_core.cli.commands.credentials.recover_admin_cmd"
+      },
+      {
+        "client_operations": [
+          "revoke_runtime_credential"
+        ],
+        "command": "credential revoke",
+        "delegate": "cruxible_core.cli.commands.credentials.revoke_cmd"
+      },
+      {
+        "client_operations": [
+          "list_runtime_credentials",
+          "rotate_runtime_credential"
+        ],
+        "command": "credential rotate",
+        "delegate": "cruxible_core.cli.commands.credentials.rotate_cmd"
+      },
+      {
+        "client_operations": [
+          "accept_fixed_curation"
+        ],
+        "command": "curation accept-fixed",
+        "delegate": "cruxible_core.cli.commands.playbill.curation_accept_fixed"
+      },
+      {
+        "client_operations": [
+          "curation_duplicates"
+        ],
+        "command": "curation duplicates",
+        "delegate": "cruxible_core.cli.commands.playbill.curation_duplicates"
+      },
+      {
+        "client_operations": [
+          "list_curation"
+        ],
+        "command": "curation list",
+        "delegate": "cruxible_core.cli.commands.playbill.curation_list"
+      },
+      {
+        "client_operations": [
+          "overrule_curation"
+        ],
+        "command": "curation overrule",
+        "delegate": "cruxible_core.cli.commands.playbill.curation_overrule"
+      },
+      {
+        "client_operations": [
+          "suppress_curation"
+        ],
+        "command": "curation suppress",
+        "delegate": "cruxible_core.cli.commands.playbill.curation_suppress"
+      },
+      {
+        "client_operations": [
+          "unsuppress_curation"
+        ],
+        "command": "curation unsuppress",
+        "delegate": "cruxible_core.cli.commands.playbill.curation_unsuppress"
+      },
+      {
+        "client_operations": [
+          "propose_document"
+        ],
+        "command": "document propose",
+        "delegate": "cruxible_core.cli.commands.playbill.propose_document"
+      },
+      {
+        "client_operations": [],
+        "command": "files add",
+        "delegate": "cruxible_core.cli.commands.playbill.add_file"
+      },
+      {
+        "client_operations": [
+          "check_file_bundle",
+          "get"
+        ],
+        "command": "files check",
+        "delegate": "cruxible_core.cli.commands.playbill.check_files"
+      },
+      {
+        "client_operations": [],
+        "command": "files compile",
+        "delegate": "cruxible_core.cli.commands.playbill.compile_files"
+      },
+      {
+        "client_operations": [
+          "get",
+          "propose_file_bundle"
+        ],
+        "command": "files propose",
+        "delegate": "cruxible_core.cli.commands.playbill.propose_files"
+      },
+      {
+        "client_operations": [],
+        "command": "files remove",
+        "delegate": "cruxible_core.cli.commands.playbill.remove_file"
+      },
+      {
+        "client_operations": [
+          "get",
+          "set_floor_delivery"
+        ],
+        "command": "floor delivery",
+        "delegate": "cruxible_core.cli.commands.playbill.floor_delivery"
+      },
+      {
+        "client_operations": [
+          "export_floor",
+          "floor_delta"
+        ],
+        "command": "floor export",
+        "delegate": "cruxible_core.cli.commands.playbill.export_floor"
+      },
+      {
+        "client_operations": [
+          "get"
+        ],
+        "command": "get",
+        "delegate": "cruxible_core.cli.commands.playbill.get_by_ref"
+      },
+      {
+        "client_operations": [
+          "create_host",
+          "get"
+        ],
+        "command": "host create",
+        "delegate": "cruxible_core.cli.commands.playbill.create_host"
+      },
+      {
+        "client_operations": [
+          "show_host"
+        ],
+        "command": "host show",
+        "delegate": "cruxible_core.cli.commands.playbill.show_host"
+      },
+      {
+        "client_operations": [
+          "ack_inbox_item"
+        ],
+        "command": "inbox ack",
+        "delegate": "cruxible_core.cli.commands.playbill.inbox_ack"
+      },
+      {
+        "client_operations": [
+          "dismiss_inbox_item"
+        ],
+        "command": "inbox dismiss",
+        "delegate": "cruxible_core.cli.commands.playbill.inbox_dismiss"
+      },
+      {
+        "client_operations": [
+          "get_inbox_item"
+        ],
+        "command": "inbox get",
+        "delegate": "cruxible_core.cli.commands.playbill.inbox_get"
+      },
+      {
+        "client_operations": [
+          "link_inbox_item"
+        ],
+        "command": "inbox link",
+        "delegate": "cruxible_core.cli.commands.playbill.inbox_link"
+      },
+      {
+        "client_operations": [
+          "list_inbox"
+        ],
+        "command": "inbox list",
+        "delegate": "cruxible_core.cli.commands.playbill.inbox_list"
+      },
+      {
+        "client_operations": [
+          "get",
+          "init"
+        ],
+        "command": "init",
+        "delegate": "cruxible_core.cli.commands.playbill.init_playbill"
+      },
+      {
+        "client_operations": [
+          "decommission_instance"
+        ],
+        "command": "instance decommission",
+        "delegate": "cruxible_core.cli.commands.playbill.decommission_instance"
+      },
+      {
+        "client_operations": [
+          "rebuild_next"
+        ],
+        "command": "instance rebuild-next",
+        "delegate": "cruxible_core.cli.commands.playbill.rebuild_next"
+      },
+      {
+        "client_operations": [
+          "add_kit"
+        ],
+        "command": "kit add",
+        "delegate": "cruxible_core.cli.commands.playbill.add_kit"
+      },
+      {
+        "client_operations": [
+          "build_kit"
+        ],
+        "command": "kit build",
+        "delegate": "cruxible_core.cli.commands.playbill.build_kit"
+      },
+      {
+        "client_operations": [],
+        "command": "kit pull",
+        "delegate": "cruxible_core.cli.commands.playbill.pull_kit"
+      },
+      {
+        "client_operations": [
+          "remove_kit"
+        ],
+        "command": "kit remove",
+        "delegate": "cruxible_core.cli.commands.playbill.remove_kit"
+      },
+      {
+        "client_operations": [
+          "kit_status"
+        ],
+        "command": "kit status",
+        "delegate": "cruxible_core.cli.commands.playbill.kit_status"
+      },
+      {
+        "client_operations": [
+          "publish_ledger"
+        ],
+        "command": "ledger publish",
+        "delegate": "cruxible_core.cli.commands.playbill.ledger_publish"
+      },
+      {
+        "client_operations": [
+          "clear_ledger_mirror",
+          "set_ledger_mirror"
+        ],
+        "command": "ledger set-mirror",
+        "delegate": "cruxible_core.cli.commands.playbill.set_ledger_mirror"
+      },
+      {
+        "client_operations": [
+          "disable_line"
+        ],
+        "command": "line disable",
+        "delegate": "cruxible_core.cli.commands.playbill.disable_line"
+      },
+      {
+        "client_operations": [
+          "dispatch_line"
+        ],
+        "command": "line dispatch",
+        "delegate": "cruxible_core.cli.commands.playbill.dispatch_line"
+      },
+      {
+        "client_operations": [
+          "enable_line"
+        ],
+        "command": "line enable",
+        "delegate": "cruxible_core.cli.commands.playbill.enable_line"
+      },
+      {
+        "client_operations": [
+          "dispatch_line",
+          "evaluate_line"
+        ],
+        "command": "line evaluate",
+        "delegate": "cruxible_core.cli.commands.playbill.evaluate_line"
+      },
+      {
+        "client_operations": [
+          "run_line"
+        ],
+        "command": "line run",
+        "delegate": "cruxible_core.cli.commands.playbill.run_line"
+      },
+      {
+        "client_operations": [],
+        "command": "mcp",
+        "delegate": "cruxible_core.cli.commands.mcp.mcp_cmd"
+      },
+      {
+        "client_operations": [
+          "get",
+          "next"
+        ],
+        "command": "next",
+        "delegate": "cruxible_core.cli.commands.playbill.next_work"
+      },
+      {
+        "client_operations": [
+          "write"
+        ],
+        "command": "note",
+        "delegate": "cruxible_core.cli.commands.playbill.note"
+      },
+      {
+        "client_operations": [
+          "orient"
+        ],
+        "command": "orient",
+        "delegate": "cruxible_core.cli.commands.playbill.orient"
+      },
+      {
+        "client_operations": [
+          "list_predictions"
+        ],
+        "command": "prediction list",
+        "delegate": "cruxible_core.cli.commands.playbill.list_predictions"
+      },
+      {
+        "client_operations": [
+          "predict"
+        ],
+        "command": "prediction propose",
+        "delegate": "cruxible_core.cli.commands.playbill.propose_prediction"
+      },
+      {
+        "client_operations": [
+          "settle_prediction"
+        ],
+        "command": "prediction settle",
+        "delegate": "cruxible_core.cli.commands.playbill.settle_prediction"
+      },
+      {
+        "client_operations": [
+          "create_runtime_credential",
+          "propose_principal_change",
+          "whoami"
+        ],
+        "command": "principal add",
+        "delegate": "cruxible_core.cli.commands.playbill.add_principal"
+      },
+      {
+        "client_operations": [],
+        "command": "principal recover",
+        "delegate": "cruxible_core.cli.commands.playbill.recover_principal"
+      },
+      {
+        "client_operations": [
+          "propose_principal_change"
+        ],
+        "command": "principal revoke",
+        "delegate": "cruxible_core.cli.commands.playbill.revoke_principal"
+      },
+      {
+        "client_operations": [],
+        "command": "principal rotate",
+        "delegate": "cruxible_core.cli.commands.playbill.rotate_principal"
+      },
+      {
+        "client_operations": [
+          "dispose_procedure_resolution"
+        ],
+        "command": "procedure dispose",
+        "delegate": "cruxible_core.cli.commands.playbill.procedure_dispose"
+      },
+      {
+        "client_operations": [
+          "measure_procedure"
+        ],
+        "command": "procedure measure",
+        "delegate": "cruxible_core.cli.commands.playbill.procedure_measure"
+      },
+      {
+        "client_operations": [
+          "list_procedure_readings"
+        ],
+        "command": "procedure readings",
+        "delegate": "cruxible_core.cli.commands.playbill.procedure_readings"
+      },
+      {
+        "client_operations": [
+          "run_procedure"
+        ],
+        "command": "procedure run",
+        "delegate": "cruxible_core.cli.commands.playbill.run_procedure"
+      },
+      {
+        "client_operations": [
+          "activate_proposal",
+          "resolve_proposal_selector"
+        ],
+        "command": "proposal activate",
+        "delegate": "cruxible_core.cli.commands.playbill.activate_proposal"
+      },
+      {
+        "client_operations": [
+          "get",
+          "prepare_approval",
+          "resolve_proposal_selector",
+          "submit_approval"
+        ],
+        "command": "proposal approve",
+        "delegate": "cruxible_core.cli.commands.playbill.approve_proposal"
+      },
+      {
+        "client_operations": [
+          "list_proposals"
+        ],
+        "command": "proposal list",
+        "delegate": "cruxible_core.cli.commands.playbill.list_proposals"
+      },
+      {
+        "client_operations": [
+          "get",
+          "readmit_proposal",
+          "resolve_proposal_selector"
+        ],
+        "command": "proposal readmit",
+        "delegate": "cruxible_core.cli.commands.playbill.readmit_proposal"
+      },
+      {
+        "client_operations": [
+          "reject_proposal",
+          "resolve_proposal_selector"
+        ],
+        "command": "proposal reject",
+        "delegate": "cruxible_core.cli.commands.playbill.reject_proposal"
+      },
+      {
+        "client_operations": [
+          "get",
+          "head",
+          "resolve_proposal_selector",
+          "review_proposal"
+        ],
+        "command": "proposal review",
+        "delegate": "cruxible_core.cli.commands.playbill.review_proposal"
+      },
+      {
+        "client_operations": [
+          "resolve_proposal_selector",
+          "withdraw_proposal"
+        ],
+        "command": "proposal withdraw",
+        "delegate": "cruxible_core.cli.commands.playbill.withdraw_proposal"
+      },
+      {
+        "client_operations": [
+          "install_provider"
+        ],
+        "command": "provider install",
+        "delegate": "cruxible_core.cli.commands.playbill.install_provider"
+      },
+      {
+        "client_operations": [
+          "list_provider_packages"
+        ],
+        "command": "provider list",
+        "delegate": "cruxible_core.cli.commands.playbill.list_provider_packages"
+      },
+      {
+        "client_operations": [
+          "move_provider"
+        ],
+        "command": "provider move",
+        "delegate": "cruxible_core.cli.commands.playbill.move_provider"
+      },
+      {
+        "client_operations": [
+          "retire_provider"
+        ],
+        "command": "provider retire",
+        "delegate": "cruxible_core.cli.commands.playbill.retire_provider"
+      },
+      {
+        "client_operations": [
+          "get"
+        ],
+        "command": "query",
+        "delegate": "cruxible_core.cli.commands.playbill.query_group"
+      },
+      {
+        "client_operations": [
+          "write"
+        ],
+        "command": "rebind",
+        "delegate": "cruxible_core.cli.commands.playbill.rebind"
+      },
+      {
+        "client_operations": [
+          "retire"
+        ],
+        "command": "retire",
+        "delegate": "cruxible_core.cli.commands.playbill.retire"
+      },
+      {
+        "client_operations": [
+          "preview_runbook"
+        ],
+        "command": "runbook preview",
+        "delegate": "cruxible_core.cli.commands.playbill.preview_runbook"
+      },
+      {
+        "client_operations": [
+          "preview_runbook",
+          "run_runbook"
+        ],
+        "command": "runbook run",
+        "delegate": "cruxible_core.cli.commands.playbill.run_runbook"
+      },
+      {
+        "client_operations": [],
+        "command": "server install-service",
+        "delegate": "cruxible_core.cli.commands.server.server_install_service_cmd"
+      },
+      {
+        "client_operations": [
+          "server_restart"
+        ],
+        "command": "server restart",
+        "delegate": "cruxible_core.cli.commands.server.server_restart_cmd"
+      },
+      {
+        "client_operations": [],
+        "command": "server start",
+        "delegate": "cruxible_core.cli.commands.server.server_start_cmd"
+      },
+      {
+        "client_operations": [
+          "server_info"
+        ],
+        "command": "server status",
+        "delegate": "cruxible_core.cli.commands.server.server_status_cmd"
+      },
+      {
+        "client_operations": [
+          "server_stop"
+        ],
+        "command": "server stop",
+        "delegate": "cruxible_core.cli.commands.server.server_stop_cmd"
+      },
+      {
+        "client_operations": [
+          "set"
+        ],
+        "command": "set",
+        "delegate": "cruxible_core.cli.commands.playbill.set_value"
+      },
+      {
+        "client_operations": [
+          "since"
+        ],
+        "command": "since",
+        "delegate": "cruxible_core.cli.commands.playbill.since"
+      },
+      {
+        "client_operations": [],
+        "command": "stub",
+        "delegate": "cruxible_core.cli.commands.playbill.world_stub"
+      },
+      {
+        "client_operations": [
+          "whoami"
+        ],
+        "command": "whoami",
+        "delegate": "cruxible_core.cli.commands.playbill.whoami"
+      },
+      {
+        "client_operations": [
+          "get",
+          "host_workspace_attach",
+          "host_workspace_registration",
+          "set_floor_delivery"
+        ],
+        "command": "workspace attach",
+        "delegate": "cruxible_core.cli.commands.playbill.attach_workspace"
+      },
+      {
+        "client_operations": [
+          "host_workspace_detach"
+        ],
+        "command": "workspace detach",
+        "delegate": "cruxible_core.cli.commands.playbill.detach_workspace"
+      },
+      {
+        "client_operations": [
+          "write"
+        ],
+        "command": "write",
+        "delegate": "cruxible_core.cli.commands.playbill.write_changes"
+      }
+    ],
+    "facade_verbs": [
+      "playbill_action_run",
+      "playbill_activate",
+      "playbill_append_claim_attestation",
+      "playbill_audit",
+      "playbill_authoring_compile",
+      "playbill_authoring_compile_and_submit",
+      "playbill_authoring_compile_input",
+      "playbill_authoring_get",
+      "playbill_authoring_list",
+      "playbill_authoring_preflight",
+      "playbill_authoring_preview_input",
+      "playbill_authoring_status",
+      "playbill_authoring_submit",
+      "playbill_authoring_submit_input",
+      "playbill_backlinks",
+      "playbill_block_declare",
+      "playbill_block_depublish",
+      "playbill_block_observe",
+      "playbill_capture_upload_complete",
+      "playbill_capture_upload_open",
+      "playbill_capture_upload_part",
+      "playbill_capture_upload_status",
+      "playbill_check_file_bundle",
+      "playbill_check_projection_blocks",
+      "playbill_curation_accept_fixed",
+      "playbill_curation_duplicates",
+      "playbill_curation_list",
+      "playbill_curation_overrule",
+      "playbill_curation_suppress",
+      "playbill_curation_unsuppress",
+      "playbill_erase_capture",
+      "playbill_export_floor",
+      "playbill_file_context",
+      "playbill_floor_delta",
+      "playbill_get",
+      "playbill_get_batch",
+      "playbill_head",
+      "playbill_inbox_ack",
+      "playbill_inbox_dismiss",
+      "playbill_inbox_get",
+      "playbill_inbox_link",
+      "playbill_inbox_list",
+      "playbill_init",
+      "playbill_instance_decommission",
+      "playbill_instance_rebuild_next",
+      "playbill_kit_add",
+      "playbill_kit_build",
+      "playbill_kit_remove",
+      "playbill_kit_status",
+      "playbill_ledger_clear_mirror",
+      "playbill_ledger_publish",
+      "playbill_ledger_set_mirror",
+      "playbill_line_disable",
+      "playbill_line_dispatch",
+      "playbill_line_enable",
+      "playbill_line_evaluate",
+      "playbill_line_run",
+      "playbill_list_proposals",
+      "playbill_migrate_claim_type",
+      "playbill_next",
+      "playbill_orient",
+      "playbill_predict",
+      "playbill_prediction_list",
+      "playbill_prepare_approval",
+      "playbill_prepare_claim_attestation_evidence",
+      "playbill_procedure_dispose",
+      "playbill_procedure_measure",
+      "playbill_procedure_readiness",
+      "playbill_procedure_readings",
+      "playbill_procedure_run",
+      "playbill_procedure_run_status",
+      "playbill_propose_builtin_claim_type",
+      "playbill_propose_capture_contract",
+      "playbill_propose_claim_type_input",
+      "playbill_propose_compiler_upgrade",
+      "playbill_propose_document",
+      "playbill_propose_file_bundle",
+      "playbill_propose_principal_change",
+      "playbill_provider_catalog",
+      "playbill_provider_install",
+      "playbill_provider_move",
+      "playbill_provider_retire",
+      "playbill_query",
+      "playbill_read_block_sync_backing",
+      "playbill_read_capture",
+      "playbill_read_claim_backings",
+      "playbill_read_claim_batch",
+      "playbill_readmit_proposal",
+      "playbill_reject_proposal",
+      "playbill_resolve_coverage",
+      "playbill_resolve_proposal_selector",
+      "playbill_retire",
+      "playbill_review_proposal",
+      "playbill_runbook_preview",
+      "playbill_runbook_run",
+      "playbill_set",
+      "playbill_settle_prediction",
+      "playbill_since",
+      "playbill_store_body",
+      "playbill_submit_approval",
+      "playbill_whoami",
+      "playbill_withdraw_proposal",
+      "playbill_write"
+    ],
+    "http_routes": [
+      {
+        "delegate": "cruxible_core.server.routes.playbill.run_action",
+        "facade_operations": [
+          "playbill_action_run"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/actions/run",
+        "request_model": "cruxible_client.contracts.actions.ActionRunRequest",
+        "request_schema_digest": "sha256:3becbf4258f97aaf8e450569b88b723bd0bb9cfb6e4bf69c1aa7b2a7878d444e",
+        "response_model": "cruxible_client.contracts.actions.ActionRunResult",
+        "response_schema_digest": "sha256:b86bbb46211eef76625a2db66a79902245bff8727ab86a8ce33b56d88a0dfe7c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.audit",
+        "facade_operations": [
+          "playbill_audit"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/audit",
+        "request_model": "cruxible_core.server.playbill_request_models.AuditRequest",
+        "request_schema_digest": "sha256:392b409c58b89e630311786d51ed130e8e450ee466228dfef2f526d50fde20ff",
+        "response_model": "cruxible_client.contracts.AuditResult",
+        "response_schema_digest": "sha256:006cba76c564ebdf23720c13abb3db5cfdda88f9e421475def20faf95bb25bb4"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.compile_authoring",
+        "facade_operations": [
+          "playbill_authoring_compile",
+          "playbill_authoring_compile_input"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/authoring/compile",
+        "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequest,cruxible_core.server.playbill_request_models.AuthoringInputCompileRequest]",
+        "request_schema_digest": "sha256:6171e0e1a13786b79ed052456354a982443f6041e533a0d9b3f38dfd8db40dea",
+        "response_model": "cruxible_client.contracts.AuthoringPreflightResult",
+        "response_schema_digest": "sha256:0b8f04acbbb051d43f898cfc761778faf38e867518abc722ae99ad6c3e52e665"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.list_pending_authoring_intents",
+        "facade_operations": [
+          "playbill_authoring_list"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/authoring/intents",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.AuthoringIntentListRecord",
+        "response_schema_digest": "sha256:5c18e2bca206152d34456cd871e635b85825967723e0613cd2dead25c74f4252"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.get_authoring_intent",
+        "facade_operations": [
+          "playbill_authoring_get"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/authoring/intents/{intent_id}",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.AuthoringIntentViewRecord",
+        "response_schema_digest": "sha256:9dc1d12ea30c4fea220f392557937d4d924d7b4e3202ce8146af20f840a56635"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.preflight_authoring_intent",
+        "facade_operations": [
+          "playbill_authoring_preflight"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight",
+        "request_model": "cruxible_core.server.playbill_request_models.AuthoringPreflightRequest",
+        "request_schema_digest": "sha256:1d2a46bdd7ade1f39faac768a3d7d3a8e1887f0bd926a3fa7b86fc3d4e0cee0b",
+        "response_model": "cruxible_client.contracts.AuthoringPreflightResult",
+        "response_schema_digest": "sha256:0b8f04acbbb051d43f898cfc761778faf38e867518abc722ae99ad6c3e52e665"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.authoring_intent_status",
+        "facade_operations": [
+          "playbill_authoring_status"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/authoring/intents/{intent_id}/status",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.CandidateStatusRecord",
+        "response_schema_digest": "sha256:4d218c494450b2331c822bb3d0e723f3818d5390d53c58e8f9b3614736dd83c0"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.submit_authoring_intent",
+        "facade_operations": [
+          "playbill_authoring_submit"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/authoring/intents/{intent_id}/submit",
+        "request_model": "cruxible_core.server.playbill_request_models.AuthoringSubmitRequest",
+        "request_schema_digest": "sha256:3690a441f5a25368054809eb2c6b02885b083216b0d6bf88097f43f40aec30ae",
+        "response_model": "cruxible_client.contracts.AuthoringSubmitResultRecord",
+        "response_schema_digest": "sha256:67de4c242159b438cc9e816475cbaf740ddbdd11794ae342b9cc91716a6553aa"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.compile_and_submit_authoring",
+        "facade_operations": [
+          "playbill_authoring_compile_and_submit",
+          "playbill_authoring_preview_input",
+          "playbill_authoring_submit_input"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/authoring/submit",
+        "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringCompileSubmitRequest,cruxible_core.server.playbill_request_models.AuthoringInputSubmitRequest]",
+        "request_schema_digest": "sha256:6731e5a02d4e699bc3e93611bd9004e1e7a3d018b0f48ac87339c77990846c70",
+        "response_model": "types.UnionType[cruxible_client.contracts.AuthoringSubmitResultRecord,cruxible_client.contracts.AuthoringPreflightResult]",
+        "response_schema_digest": "sha256:1321858649dbd943f842c8ec1d6d4a43629076cab7ef4dd79dfdf394c2f9b2ae"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.backlinks",
+        "facade_operations": [
+          "playbill_backlinks"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/backlinks",
+        "request_model": "cruxible_client.contracts.backlinks.BacklinksRequest",
+        "request_schema_digest": "sha256:b8d696851579724126d7e3529577c5b4123269a0bbc1b2685c9c23c9ae52b74b",
+        "response_model": "cruxible_client.contracts.backlinks.BacklinksResult",
+        "response_schema_digest": "sha256:08b0cf0dfab76abf4a9659ffd96171288759c6ca7bc64f04d5fae58528e8d79c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.declare_playbill_block",
+        "facade_operations": [
+          "playbill_block_declare"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/blocks/declare",
+        "request_model": "cruxible_core.server.playbill_request_models.BlockDeclareRequest",
+        "request_schema_digest": "sha256:830959093e44436a146ee7c81cc826e65a221c7f707743b96da9b10521fcd4f7",
+        "response_model": "cruxible_client.contracts.BlockDeclareResult",
+        "response_schema_digest": "sha256:d52145b3b7988373e32be84926948b5bd6f498cb8236b0c1e9b34d139bc6bf69"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.depublish_playbill_block",
+        "facade_operations": [
+          "playbill_block_depublish"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/blocks/depublish",
+        "request_model": "cruxible_core.server.playbill_request_models.BlockDepublishRequest",
+        "request_schema_digest": "sha256:9368c62b01b3fdf411e5f8353437f80dfc93ba66299d0773ca39e3e3338d60f3",
+        "response_model": "cruxible_client.contracts.BlockDepublishResult",
+        "response_schema_digest": "sha256:cf764312fd27fe1498996ce33fb363d7268f5eee06986c1078aed02bfbb893a6"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.observe_playbill_blocks",
+        "facade_operations": [
+          "playbill_block_observe"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/blocks/observe",
+        "request_model": "cruxible_core.server.playbill_request_models.BlockObserveRequest",
+        "request_schema_digest": "sha256:462f8de1069ef9bd5c2c08e24d16d185cda027e067427438db77439d6dfa4601",
+        "response_model": "cruxible_client.contracts.BlockObserveResult",
+        "response_schema_digest": "sha256:71e6e0cc052402cfc47539ef7ca36f0145746fa7fbfb622bc51d9cfd9714715e"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.store_body",
+        "facade_operations": [
+          "playbill_store_body"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/bodies",
+        "request_model": "cruxible_core.server.playbill_request_models.StoreBodyRequest",
+        "request_schema_digest": "sha256:158e5ac689c9b615236c9a0f6411e9e231cb8b8fda844e6ce63f78105a7ac5fa",
+        "response_model": "cruxible_client.contracts.CasObjectResult",
+        "response_schema_digest": "sha256:4e2267acea2ed459895b6e13b8aea056cb5d4fbf807b864096cc8c4133bb34e3"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.propose_capture_contract",
+        "facade_operations": [
+          "playbill_propose_capture_contract"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/capture-contracts/proposals",
+        "request_model": "cruxible_core.server.playbill_request_models.ProposeCaptureContractRequest",
+        "request_schema_digest": "sha256:42f19f2d4bcafec62e465ad0f7fc25dee007e3f227740138788d3d80f3d531a3",
+        "response_model": "cruxible_client.contracts.ProposalInspection",
+        "response_schema_digest": "sha256:1679db1069beb351bb1d1d93c2cbb3a3c0e43fb4c8cd49cd90e8657565f6a5b1"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.erase_capture",
+        "facade_operations": [
+          "playbill_erase_capture"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/captures/erase",
+        "request_model": "cruxible_client.contracts.capture_erasure.CaptureEraseRequest",
+        "request_schema_digest": "sha256:2c4cfb2ab55c1207315b9381110534273f0cdd319b56a6fff8a522147d812f12",
+        "response_model": "cruxible_client.contracts.capture_erasure.CaptureEraseResult",
+        "response_schema_digest": "sha256:ef22463e7f05867db62092b2ee36619bb6ca83731f4165164037b68a91c4bfe5"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.read_capture",
+        "facade_operations": [
+          "playbill_read_capture"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/captures/read",
+        "request_model": "cruxible_client.contracts.capture_reads.CaptureReadRequest",
+        "request_schema_digest": "sha256:46085bf6758d2cc5acce67cb9ed61bba87524d58b68b5f9a52c8b46c80b5c384",
+        "response_model": "cruxible_client.contracts.capture_reads.CaptureRead",
+        "response_schema_digest": "sha256:629d628cd89e94e4fe1f5bc1b9ee40b1759ed2576c927a8f671428641b1d60da"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.append_claim_attestation",
+        "facade_operations": [
+          "playbill_append_claim_attestation"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/claim-attestations",
+        "request_model": "cruxible_client.contracts.claim_attestations.ClaimAttestationAppendRequest",
+        "request_schema_digest": "sha256:0570a923a97608020c0ce4b75fc516c14d0dbe16a9fbad607a54dd916b20a61e",
+        "response_model": "cruxible_client.contracts.claim_attestations.ClaimAttestationAppendResult",
+        "response_schema_digest": "sha256:2bf86b73b85f4070fffea7e91e0f38668b7dfed17c7cd5b3d054c1c8ed93dce2"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.prepare_claim_attestation_evidence",
+        "facade_operations": [
+          "playbill_prepare_claim_attestation_evidence"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/claim-attestations/evidence",
+        "request_model": "cruxible_client.contracts.attestation_evidence.ClaimAttestationEvidenceRequest",
+        "request_schema_digest": "sha256:242d2f1f43935eda09d0084e985257f3d49f7399f70b7b8218be7a3c2b775872",
+        "response_model": "cruxible_client.contracts.attestation_evidence.ClaimAttestationEvidenceResult",
+        "response_schema_digest": "sha256:5943fc34fc382941bef2295eb0c18f3f063940858acc6696f820db6922bc5e69"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.migrate_claim_type",
+        "facade_operations": [
+          "playbill_migrate_claim_type"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/claim-types/migrations",
+        "request_model": "cruxible_core.playbill.claim_type_migrations.ClaimTypeMigrationRequest",
+        "request_schema_digest": "sha256:bec93bd30551f40da22a67b79a93c51b8b5048835c475e3490999e73c1d39ba8",
+        "response_model": "types.UnionType[cruxible_client.contracts.ClaimTypeMigrationPreflight,cruxible_client.contracts.ClaimTypeMigrationResult]",
+        "response_schema_digest": "sha256:3fd6c43af1016b727cb3ad1a292d0bffc663f93d133ac3060a5449052eb91c70"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.propose_claim_type",
+        "facade_operations": [
+          "playbill_propose_builtin_claim_type",
+          "playbill_propose_claim_type_input"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/claim-types/proposals",
+        "request_model": "types.UnionType[cruxible_core.server.playbill_request_models.ProposeBuiltinClaimTypeRequest,cruxible_core.server.playbill_request_models.ProposeClaimTypeInputRequest]",
+        "request_schema_digest": "sha256:47568e978f11a44016ddd77a44553345bb4c06564db2e6a03d3449022b398684",
+        "response_model": "cruxible_client.contracts.ClaimTypeInputProposalResult",
+        "response_schema_digest": "sha256:9e7212807f10bff237fb4fe77ee62cbfe57694174179df163543e7f3bf6204fa"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.read_claim_backings",
+        "facade_operations": [
+          "playbill_read_claim_backings"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/claims/backings",
+        "request_model": "cruxible_client.contracts.claim_reads.ClaimBackingsRequest",
+        "request_schema_digest": "sha256:817cf694c493de2afc1f63286883448bd1deb345630ea78054e577ffcac11ea6",
+        "response_model": "cruxible_client.contracts.claim_reads.ClaimBackingsResult",
+        "response_schema_digest": "sha256:bb1844df381fbe2ba8d41a4aec15bd442ae441a429050d28d954cd2de68db5c6"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.read_claim_batch",
+        "facade_operations": [
+          "playbill_read_claim_batch"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/claims/read-batch",
+        "request_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchRequest",
+        "request_schema_digest": "sha256:753a3f67b39fe322537a3d7314168bcd774db0546bbfbea868479b85647ef1ab",
+        "response_model": "cruxible_client.contracts.claim_reads.ClaimReadBatchResult",
+        "response_schema_digest": "sha256:a97cf8b1c7f9eb93f67facb48cc5113810ebc46648c3152d4bf03733c24f4834"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.propose_compiler_upgrade",
+        "facade_operations": [
+          "playbill_propose_compiler_upgrade"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/compiler/proposals",
+        "request_model": "cruxible_core.server.playbill_request_models.CompilerUpgradeRequest",
+        "request_schema_digest": "sha256:2899cf428f9083d97e6138aea12e7e1983355dd934561550b57f60510551909f",
+        "response_model": "cruxible_client.contracts.ProposalInspection",
+        "response_schema_digest": "sha256:1679db1069beb351bb1d1d93c2cbb3a3c0e43fb4c8cd49cd90e8657565f6a5b1"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.resolve_coverage",
+        "facade_operations": [
+          "playbill_resolve_coverage"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/coverage/resolve",
+        "request_model": "cruxible_core.server.playbill_request_models.ResolveCoverageRequest",
+        "request_schema_digest": "sha256:a4df313f752b2b95e1f5de954e4820e61491bf5a1fd3c70f63aba1a690c92a41",
+        "response_model": "cruxible_client.contracts.CoverageResult",
+        "response_schema_digest": "sha256:a5f10efde05e26485c51898ee4bf21ef61690a0c939ef86701ce6c46ae0c8756"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.curation_accept_fixed",
+        "facade_operations": [
+          "playbill_curation_accept_fixed"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/curation/accept-fixed",
+        "request_model": "cruxible_core.server.playbill_request_models.CurationAcceptFixedRequest",
+        "request_schema_digest": "sha256:1aed7610c26aba19ed0b28b29195a66d5436cdd26afc11528e4eaedd02c14e84",
+        "response_model": "cruxible_client.contracts.CurationActionResult",
+        "response_schema_digest": "sha256:54d5bb635b393cd95f39ad95df5617bd4a12ffd3d293e43570e2ff7354f0711a"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.curation_duplicates",
+        "facade_operations": [
+          "playbill_curation_duplicates"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/curation/duplicates",
+        "request_model": "cruxible_client.contracts.duplicates.DuplicatesAuditRequest",
+        "request_schema_digest": "sha256:641d2e6de82fc3500193a3b717324a3e84dc95b62ea7d6d665eea8782bdaf8bf",
+        "response_model": "cruxible_client.contracts.duplicates.DuplicatesAuditResult",
+        "response_schema_digest": "sha256:8839b7a3532b730269f9b5c7c216e9e68c9f348ddd52d787565f7b3b394c429d"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.curation_list",
+        "facade_operations": [
+          "playbill_curation_list"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/curation/list",
+        "request_model": "cruxible_core.server.playbill_request_models.CurationListRequest",
+        "request_schema_digest": "sha256:d6613c2f6fcbd1f2d8ca66b709dd0226b56b041dcf6fc1fcd86ec7f90c471cb3",
+        "response_model": "cruxible_client.contracts.CurationListResult",
+        "response_schema_digest": "sha256:7989c32d70b2138ea59f9987d528fe39841a1eaacb1d3d4b0982e8c32dddf452"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.curation_overrule",
+        "facade_operations": [
+          "playbill_curation_overrule"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/curation/overrule",
+        "request_model": "cruxible_core.server.playbill_request_models.CurationOverruleRequest",
+        "request_schema_digest": "sha256:3747d024007f1690ac15cbf865e21817a79f9f10329aa4ca0a02da46e4612199",
+        "response_model": "cruxible_client.contracts.CurationActionResult",
+        "response_schema_digest": "sha256:54d5bb635b393cd95f39ad95df5617bd4a12ffd3d293e43570e2ff7354f0711a"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.curation_suppress",
+        "facade_operations": [
+          "playbill_curation_suppress"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/curation/suppress",
+        "request_model": "cruxible_core.server.playbill_request_models.CurationSuppressRequest",
+        "request_schema_digest": "sha256:0516b2ff6ff4f18df816c0a1f9323d1b4bf6ad4a2c726dca2aac54c39e5f3d45",
+        "response_model": "cruxible_client.contracts.CurationActionResult",
+        "response_schema_digest": "sha256:54d5bb635b393cd95f39ad95df5617bd4a12ffd3d293e43570e2ff7354f0711a"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.curation_unsuppress",
+        "facade_operations": [
+          "playbill_curation_unsuppress"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/curation/unsuppress",
+        "request_model": "cruxible_core.server.playbill_request_models.CurationUnsuppressRequest",
+        "request_schema_digest": "sha256:28ce33054a14ea59aae652e617c76edd1a7f5055a9bff60677f0d4d958564f01",
+        "response_model": "cruxible_client.contracts.CurationActionResult",
+        "response_schema_digest": "sha256:54d5bb635b393cd95f39ad95df5617bd4a12ffd3d293e43570e2ff7354f0711a"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.propose_document",
+        "facade_operations": [
+          "playbill_propose_document"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/documents/proposals",
+        "request_model": "cruxible_core.server.playbill_request_models.ProposeDocumentRequest",
+        "request_schema_digest": "sha256:fde87acc1be2dac41e6e7550294ca8cc1d1f3859a8aefc8a7f0ea24d55d20839",
+        "response_model": "cruxible_client.contracts.ProposalInspection",
+        "response_schema_digest": "sha256:1679db1069beb351bb1d1d93c2cbb3a3c0e43fb4c8cd49cd90e8657565f6a5b1"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.check_files",
+        "facade_operations": [
+          "playbill_check_file_bundle"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/files/check",
+        "request_model": "cruxible_core.server.playbill_request_models.FileBundleRequest",
+        "request_schema_digest": "sha256:9f796d3b51373548344ed1d5e064ea415ad7f3c42e0123475118f8338e79d62f",
+        "response_model": "cruxible_client.contracts.FileCheckResult",
+        "response_schema_digest": "sha256:274171dce9e2429103919a05700f1b8d4d106edb9f669deb32bee3d6e6782ce5"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.file_context",
+        "facade_operations": [
+          "playbill_file_context"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/files/context",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.FileContext",
+        "response_schema_digest": "sha256:527047a1c37862a89675084a87f0b93cd3559c1a4739d1881c31403a94c08297"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.propose_files",
+        "facade_operations": [
+          "playbill_propose_file_bundle"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/files/proposals",
+        "request_model": "cruxible_core.server.playbill_request_models.FileProposeRequest",
+        "request_schema_digest": "sha256:8ac2185cac30d8beedacb7a26458f81535c42eb8ba6cb409f333d5db490f629f",
+        "response_model": "cruxible_client.contracts.ProposalInspection",
+        "response_schema_digest": "sha256:1679db1069beb351bb1d1d93c2cbb3a3c0e43fb4c8cd49cd90e8657565f6a5b1"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.floor_delta",
+        "facade_operations": [
+          "playbill_floor_delta"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/floor/delta",
+        "request_model": "cruxible_core.server.playbill_request_models.FloorDeltaRequest",
+        "request_schema_digest": "sha256:6d0532f61e71d6665d74c9bb39e00fda4f6aa259d85688579c3ad73ceb0373d7",
+        "response_model": "cruxible_client.contracts.floor.FloorDelta",
+        "response_schema_digest": "sha256:a0da2c3a0c61b953616439e14463b8f8918c2ee7b36caa88fa6bc7cf4d96084b"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.export_floor",
+        "facade_operations": [
+          "playbill_export_floor"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/floor/export",
+        "request_model": "cruxible_core.server.playbill_request_models.FloorExportRequest",
+        "request_schema_digest": "sha256:5e59fbb10f53b6ae6bbc5ee9603115e81c5c3842ae3dc92c939d3afdf4fbf6a7",
+        "response_model": "cruxible_client.contracts.FloorExport",
+        "response_schema_digest": "sha256:a93ec610998c378a11e57b53e7ec36f778e25fcb9fd29adeab97fc26873fbf61"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.get_by_ref",
+        "facade_operations": [
+          "playbill_get"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/get",
+        "request_model": "cruxible_client.contracts.get_reads.GetRequest",
+        "request_schema_digest": "sha256:225e6febd38c1cf6ba12bcfa91d6783eedb37004f415c445b11064471d1101b3",
+        "response_model": "cruxible_client.contracts.get_reads.GetResult",
+        "response_schema_digest": "sha256:1c0b66f12286c08cabb82f15837aa8d37bc9deca1349e3f490588f08a5bfcca2"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.get_batch",
+        "facade_operations": [
+          "playbill_get_batch"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/get-batch",
+        "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
+        "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
+        "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
+        "response_schema_digest": "sha256:6d5fab176492ed96ba36c6c411fd7bbe6bc75eae619354b32e83b8bd93034d4c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.head",
+        "facade_operations": [
+          "playbill_head"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/head",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.orient.Head",
+        "response_schema_digest": "sha256:f89cd505ce9bd7ae189ed86fb6ec0bac018372e91cab1bafb59dcb4207ee607e"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.list_inbox",
+        "facade_operations": [
+          "playbill_inbox_list"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/inbox",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.line_inbox.InboxList",
+        "response_schema_digest": "sha256:80594b57ba878ea1f96d371c7a66a6f4c59b8571ff7a03e725ed254c8aa43d79"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.get_inbox_item",
+        "facade_operations": [
+          "playbill_inbox_get"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/inbox/{item_id}",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.line_inbox.InboxItem",
+        "response_schema_digest": "sha256:023dc0e0deaa4a99eccc18fbcae26cbd1fed52c526204e6faee5cfcdf2442817"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.ack_inbox_item",
+        "facade_operations": [
+          "playbill_inbox_ack"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/inbox/{item_id}/ack",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.line_inbox.InboxDispositionResult",
+        "response_schema_digest": "sha256:7d462ee7c35a087c6df28588662a57686549bf23b5665bc903bfa4e6618bfac9"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.dismiss_inbox_item",
+        "facade_operations": [
+          "playbill_inbox_dismiss"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/inbox/{item_id}/dismiss",
+        "request_model": "cruxible_client.contracts.line_inbox.InboxDismissRequest",
+        "request_schema_digest": "sha256:10508fbfcef93af555518c1cf18a4e180f667f0c7a1bf22396ec32550501334b",
+        "response_model": "cruxible_client.contracts.line_inbox.InboxDispositionResult",
+        "response_schema_digest": "sha256:7d462ee7c35a087c6df28588662a57686549bf23b5665bc903bfa4e6618bfac9"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.link_inbox_item",
+        "facade_operations": [
+          "playbill_inbox_link"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/inbox/{item_id}/link",
+        "request_model": "cruxible_client.contracts.line_inbox.InboxLinkRequest",
+        "request_schema_digest": "sha256:1e0b82dea4ef31f29474461032db62a80e585294cfd48167920b0c580f8f07a1",
+        "response_model": "cruxible_client.contracts.line_inbox.InboxDispositionResult",
+        "response_schema_digest": "sha256:7d462ee7c35a087c6df28588662a57686549bf23b5665bc903bfa4e6618bfac9"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.playbill_init",
+        "facade_operations": [
+          "playbill_init"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/init",
+        "request_model": "cruxible_core.server.playbill_request_models.InitRequest",
+        "request_schema_digest": "sha256:adfdb247bb056580199eed0832483994262d2466328ff23e329181fb4a18c813",
+        "response_model": "cruxible_client.contracts.InitResult",
+        "response_schema_digest": "sha256:8258441209f241fc82a8ecc4558b0742a6655ff56632acec97e2435813131200"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.instance_decommission",
+        "facade_operations": [
+          "playbill_instance_decommission"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/instance/decommission",
+        "request_model": "cruxible_core.server.playbill_request_models.InstanceDecommissionRequest",
+        "request_schema_digest": "sha256:bbc4c4716ca0bb32e7f5462a4335cfff6bfdeca7a0ccc0913b3c1af23761c8c1",
+        "response_model": "cruxible_client.contracts.InstanceDecommissionResult",
+        "response_schema_digest": "sha256:f94e9cd7d944958c56c713587a67c34942b117def19999ff1ac36200ac3193b5"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.instance_rebuild_next",
+        "facade_operations": [
+          "playbill_instance_rebuild_next"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/instance/rebuild-next",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.NextRebuildResult",
+        "response_schema_digest": "sha256:c7eecd6c97bc87673267dce82d019adc1b2c4a6c02954489aed8cc248e18c09f"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.kit_status",
+        "facade_operations": [
+          "playbill_kit_status"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/kits",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.kits.KitStatus",
+        "response_schema_digest": "sha256:0a364a3cb616c82aabe0c30e3fdf385be5c9898c5adb6ba2f8744a8b4f549490"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.kit_add",
+        "facade_operations": [
+          "playbill_kit_add"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/kits",
+        "request_model": "cruxible_client.contracts.kits.KitAddRequest",
+        "request_schema_digest": "sha256:ae0d59d8494f211236c070482a488799a59377cce08c3cc31acbc0d618095982",
+        "response_model": "cruxible_client.contracts.kits.KitChangeResult",
+        "response_schema_digest": "sha256:e48f3fba6ebaec4965623c02e7774687ad1558e6d01291722e1c5cefd5c6f807"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.kit_build",
+        "facade_operations": [
+          "playbill_kit_build"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/kits/build",
+        "request_model": "cruxible_client.contracts.kits.KitBuildRequest",
+        "request_schema_digest": "sha256:c69291fe41528b1d69e74ae0145a4fb4128d2719bd3674ecd3c3a50eafd0e43a",
+        "response_model": "cruxible_client.contracts.kits.KitBuildResult",
+        "response_schema_digest": "sha256:a96559964e75613d0d5485b0e1cac3ecbd1cd5d038aad360e348bdba52271355"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.kit_remove",
+        "facade_operations": [
+          "playbill_kit_remove"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/kits/remove",
+        "request_model": "cruxible_client.contracts.kits.KitRemoveRequest",
+        "request_schema_digest": "sha256:c6095f470d74262c9a4899ae3d320f133131036d3ad4570b30db6c916c023c2c",
+        "response_model": "cruxible_client.contracts.kits.KitChangeResult",
+        "response_schema_digest": "sha256:e48f3fba6ebaec4965623c02e7774687ad1558e6d01291722e1c5cefd5c6f807"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.set_ledger_mirror",
+        "facade_operations": [
+          "playbill_ledger_set_mirror"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/ledger/mirror",
+        "request_model": "cruxible_core.server.playbill_request_models.LedgerMirrorRequest",
+        "request_schema_digest": "sha256:10ef0728c2dc28e48feb4115bb36c62753d78efab50d6b3fbb23cf08e2df94c5",
+        "response_model": "cruxible_client.contracts.LedgerMirror",
+        "response_schema_digest": "sha256:0b0864a6e3fdb07438f89e2203d111775a4163a67f44b7e1e7ccb89cccf80808"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.clear_ledger_mirror",
+        "facade_operations": [
+          "playbill_ledger_clear_mirror"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/ledger/mirror/clear",
+        "request_model": "cruxible_core.server.playbill_request_models.LedgerMirrorClearRequest",
+        "request_schema_digest": "sha256:8a911a5d2f57233d3aa040486dd847d2e843f1d248cd34594e27138465462a2d",
+        "response_model": "cruxible_client.contracts.LedgerMirrorCleared",
+        "response_schema_digest": "sha256:1b9439dd279b64a1155093d6632edde7d50327f4ef856f19f55cd68fb76bf3ef"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.publish_ledger",
+        "facade_operations": [
+          "playbill_ledger_publish"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/ledger/publish",
+        "request_model": "cruxible_core.server.playbill_request_models.LedgerPublishRequest",
+        "request_schema_digest": "sha256:f4ea4d6aba13d58d58409feed6945a54b1abd1413cd085e62dbab6dbfc4ac21f",
+        "response_model": "cruxible_client.contracts.LedgerMirror",
+        "response_schema_digest": "sha256:0b0864a6e3fdb07438f89e2203d111775a4163a67f44b7e1e7ccb89cccf80808"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.disable_line",
+        "facade_operations": [
+          "playbill_line_disable"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/lines/{line}/disable",
+        "request_model": "types.UnionType[cruxible_client.contracts.change_control.ChangeControlRequest,NoneType]",
+        "request_schema_digest": "sha256:59fa2082396e169b1d528292f5b3db2b0a7012813d5f175c7bb359ae5bf04991",
+        "response_model": "cruxible_client.contracts.line_dispatch.LineEnablement",
+        "response_schema_digest": "sha256:69213b3fd65511a9b1d59b78ae36d25f211cd7c75cf3a232bc717d9885875d40"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.dispatch_line",
+        "facade_operations": [
+          "playbill_line_dispatch"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/lines/{line}/dispatch",
+        "request_model": "cruxible_client.contracts.line_dispatch.LineDispatchRequest",
+        "request_schema_digest": "sha256:5cb4b396fc54833847eb540b4bc6e33cd9d39c41957abc26d50aaec1515e4315",
+        "response_model": "cruxible_client.contracts.line_dispatch.LineDispatchResult",
+        "response_schema_digest": "sha256:da5cfe6a8f2e0173d45946a4bd1f687758a7107048d896da582025c156db5f48"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.enable_line",
+        "facade_operations": [
+          "playbill_line_enable"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/lines/{line}/enable",
+        "request_model": "types.UnionType[cruxible_client.contracts.change_control.ChangeControlRequest,NoneType]",
+        "request_schema_digest": "sha256:59fa2082396e169b1d528292f5b3db2b0a7012813d5f175c7bb359ae5bf04991",
+        "response_model": "cruxible_client.contracts.line_dispatch.LineEnablement",
+        "response_schema_digest": "sha256:69213b3fd65511a9b1d59b78ae36d25f211cd7c75cf3a232bc717d9885875d40"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.evaluate_line",
+        "facade_operations": [
+          "playbill_line_evaluate"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/lines/{line}/evaluate",
+        "request_model": "cruxible_client.contracts.line_dispatch.LineEvaluateRequest",
+        "request_schema_digest": "sha256:5030996d787181106e504373a75af6df6ff8bb73683e4a2375fed7c78dfc6571",
+        "response_model": "cruxible_client.contracts.line_dispatch.LineEvaluateResult",
+        "response_schema_digest": "sha256:079ac55f892052ce87a7fbddc322a6a6213668995abd7fdac0b4214e5565cab3"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.run_line",
+        "facade_operations": [
+          "playbill_line_run"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/lines/{line}/runs",
+        "request_model": "cruxible_core.service.playbill_procedure_runs.LineRunRequest",
+        "request_schema_digest": "sha256:f9360750a34aa61c3f2d35598e6e4eb548192185bc5376ea138833057f6feff6",
+        "response_model": "cruxible_client.contracts.ProcedureRunState",
+        "response_schema_digest": "sha256:0b61cedb9caee1f92e8ccd8f640090d5a1216d48c749a3e2e2a3b25134649b9c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.next_work",
+        "facade_operations": [
+          "playbill_next"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/next",
+        "request_model": "cruxible_core.server.playbill_request_models.NextRequest",
+        "request_schema_digest": "sha256:14d072eede4cb2410b6556b1c72f72f8a62476ce192771692a1530eb499fe73b",
+        "response_model": "cruxible_client.contracts.NextResult",
+        "response_schema_digest": "sha256:cb1b6fe8757ff9b4e33c528521726d52ee9c91104d5b7a9a20503db6b0704a0c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.orient",
+        "facade_operations": [
+          "playbill_orient"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/orient",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.orient.OrientResult",
+        "response_schema_digest": "sha256:e2062ecd2e6997d8437abc2048104531ce8c9a4d2d27463b3207913f716a835c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.predict",
+        "facade_operations": [
+          "playbill_predict"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/predictions",
+        "request_model": "cruxible_client.contracts.predictions.PredictRequest",
+        "request_schema_digest": "sha256:4c15e8541fc0e041a95ad24c34847582edb0959551644402eabe494da2ecfca0",
+        "response_model": "cruxible_client.contracts.predictions.PredictResult",
+        "response_schema_digest": "sha256:ec66a0258360772d8e22b32faee47058797db84e13bcbf439602996f925446a1"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.list_predictions",
+        "facade_operations": [
+          "playbill_prediction_list"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/predictions/query",
+        "request_model": "cruxible_client.contracts.resolution_contracts.ResolutionContractsRequest",
+        "request_schema_digest": "sha256:2d55ae1f5ab1f779f4b6070cfd0b229acab9ef13f398d74a07f291f49ad14e3a",
+        "response_model": "cruxible_client.contracts.resolution_contracts.ResolutionContractsResult",
+        "response_schema_digest": "sha256:96434964b70d0ab2c7397d1777b63de9c5614b3a215a3c86f03286410b4bf43a"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.settle_prediction",
+        "facade_operations": [
+          "playbill_settle_prediction"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/predictions/{prediction_id}/settlements",
+        "request_model": "cruxible_client.contracts.predictions.SettleRequest",
+        "request_schema_digest": "sha256:66887af1a8ad848c78f5db0ba93bf83921b1e1d52c83aa82b9e5c0a69d706ebe",
+        "response_model": "cruxible_client.contracts.predictions.SettleResult",
+        "response_schema_digest": "sha256:8a6442ef9e6528f01ff8860c421344073618ac8070046582e6499310c48cafa5"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.propose_principal",
+        "facade_operations": [
+          "playbill_propose_principal_change"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/principals/proposals",
+        "request_model": "cruxible_core.server.playbill_request_models.ProposePrincipalRequest",
+        "request_schema_digest": "sha256:bb04cbedb9f23f58d95b19931953facfcef5e90a6432371e0ba4ba2fe9f142b7",
+        "response_model": "cruxible_client.contracts.ProposalInspection",
+        "response_schema_digest": "sha256:1679db1069beb351bb1d1d93c2cbb3a3c0e43fb4c8cd49cd90e8657565f6a5b1"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.procedure_run_status",
+        "facade_operations": [
+          "playbill_procedure_run_status"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/procedure-runs/{run_id}",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.ProcedureRunState",
+        "response_schema_digest": "sha256:0b61cedb9caee1f92e8ccd8f640090d5a1216d48c749a3e2e2a3b25134649b9c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.procedure_measure",
+        "facade_operations": [
+          "playbill_procedure_measure"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/procedures/{name}/measurements",
+        "request_model": "cruxible_client.contracts.procedures.readings.ProcedureMeasureRequest",
+        "request_schema_digest": "sha256:747e5194740b001ccf63b26ca4278226a6dfbc222c108b9958469962d76fd32d",
+        "response_model": "cruxible_client.contracts.procedures.readings.ProcedureMeasureResult",
+        "response_schema_digest": "sha256:69e689dfe9a5c03edfd209e733461855aae9bb0b6e71072eef3b2e7375b90cd8"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.procedure_readiness",
+        "facade_operations": [
+          "playbill_procedure_readiness"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/procedures/{name}/readiness",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.ProcedureReadiness",
+        "response_schema_digest": "sha256:4095fa69fffe637c1ecfe806842958d2bc6244703d43916736736697a0b3aadd"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.procedure_readings",
+        "facade_operations": [
+          "playbill_procedure_readings"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/procedures/{name}/readings",
+        "request_model": "cruxible_client.contracts.procedures.readings.ProcedureReadingsRequest",
+        "request_schema_digest": "sha256:934160c455d6d73c3a7c185df756bf1234c342bb8551189f108264fadee79941",
+        "response_model": "cruxible_client.contracts.procedures.readings.ProcedureReadingsResult",
+        "response_schema_digest": "sha256:2dc1de6a40f2e8e08c5e22591eb4eb5d1e12afb28620f28aeb85a84055b0ed01"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.procedure_dispose",
+        "facade_operations": [
+          "playbill_procedure_dispose"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/procedures/{name}/resolution-dispositions",
+        "request_model": "cruxible_client.contracts.procedures.dispositions.ProcedureResolutionDispositionRequest",
+        "request_schema_digest": "sha256:032a31ad3815ad51f7c90d717d4f82af4ed774d95fd7e4eea6df063f86c6f557",
+        "response_model": "cruxible_client.contracts.procedures.dispositions.ProcedureResolutionDispositionResult",
+        "response_schema_digest": "sha256:6e0308b176d2dd829feeb3d22801d6914c3b1b93978b8c786948f96e336e93af"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.run_procedure",
+        "facade_operations": [
+          "playbill_procedure_run"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/procedures/{name}/runs",
+        "request_model": "cruxible_core.service.playbill_procedure_runs.ProcedureRunRequest",
+        "request_schema_digest": "sha256:5426c803e2561011a3c0b9a6dc9ec1ff339f6cfcd01039339b2836ade2505a71",
+        "response_model": "cruxible_client.contracts.ProcedureRunState",
+        "response_schema_digest": "sha256:0b61cedb9caee1f92e8ccd8f640090d5a1216d48c749a3e2e2a3b25134649b9c"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.check_projection_blocks",
+        "facade_operations": [
+          "playbill_check_projection_blocks"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/projections/check",
+        "request_model": "cruxible_client.contracts.authoring.models.ProjectionCheckRequest",
+        "request_schema_digest": "sha256:7432060063376d628f9aca271c3ff00ab494e95e982af3769b0b5aabc186462e",
+        "response_model": "cruxible_client.contracts.authoring.models.ProjectionCheckResult",
+        "response_schema_digest": "sha256:b203b27be5189e12399aff3bd1af12763a2e1e986a94d87311dab19ea7c7b8c3"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.read_block_sync_backing",
+        "facade_operations": [
+          "playbill_read_block_sync_backing"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/projections/sync-backing",
+        "request_model": "cruxible_client.contracts.authoring.models.BlockSyncReadRequest",
+        "request_schema_digest": "sha256:d2b6779bcd972f0f4de7aa84b578ea857602e4e7afa31ec15566e26eba5353cb",
+        "response_model": "cruxible_client.contracts.authoring.models.BlockSyncReadResult",
+        "response_schema_digest": "sha256:eb1079666cb4ecf3ee64a97838561530bd35ff43ca44b50b1ce633be7fb60512"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.resolve_proposal_selector",
+        "facade_operations": [
+          "playbill_resolve_proposal_selector"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/proposal-selector",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.ProposalSelectorResult",
+        "response_schema_digest": "sha256:ebe17d761ca15a56818f88c855ffb928d4722a65f248d2114a7e66391651593f"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.list_proposals",
+        "facade_operations": [
+          "playbill_list_proposals"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/proposals",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.ProposalList",
+        "response_schema_digest": "sha256:1976a2bc471681d40f2b17f90fa05dccdb2eebca08accb4062b6c1c76bdca827"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.activate_proposal",
+        "facade_operations": [
+          "playbill_activate"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/proposals/{proposal_id}/activate",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "types.UnionType[cruxible_client.contracts.ActivationReceipt,cruxible_client.contracts.recompilation.ProposalRecompiled]",
+        "response_schema_digest": "sha256:a8ef71ed11df31a47da9c2abeed9688a2b9124250a963f1ce62ab3db39eda51f"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.prepare_approval",
+        "facade_operations": [
+          "playbill_prepare_approval"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
+        "request_model": "cruxible_core.server.playbill_request_models.ApprovalChallengeRequest",
+        "request_schema_digest": "sha256:95a4cd74c8fd1fc6a4ca74be9e15a8c1eb5601b5b298a2756e9c4f7048922dc5",
+        "response_model": "cruxible_client.contracts.ApprovalChallenge",
+        "response_schema_digest": "sha256:e73023ab331471a2e374f6994f1b385a00d15415a4c69916fe796a6a1f19ab47"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.submit_approval",
+        "facade_operations": [
+          "playbill_submit_approval"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
+        "request_model": "cruxible_core.server.playbill_request_models.ApprovalRequest",
+        "request_schema_digest": "sha256:efd76179b913b8af44bbebf93cf2cd7688d14b89911d6fa5a7894bc372b16e12",
+        "response_model": "types.UnionType[cruxible_client.contracts.ApprovalReceipt,cruxible_client.contracts.ActivationReceipt,cruxible_client.contracts.recompilation.ProposalRecompiled]",
+        "response_schema_digest": "sha256:77d27d5ccd17adfd1676b064846b0128021498222ae10f1857942f539f254758"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.readmit_proposal",
+        "facade_operations": [
+          "playbill_readmit_proposal"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/proposals/{proposal_id}/readmit",
+        "request_model": "cruxible_core.server.playbill_request_models.ProposalReadmitRequest",
+        "request_schema_digest": "sha256:49f4f7889a299673684f3b9753401c108c20147159ce0e0a9517cf9b9e137b89",
+        "response_model": "cruxible_client.contracts.ProposalReadmitResult",
+        "response_schema_digest": "sha256:3dee000c280664105135ba821581c0025de65f6d495dad3b817d05017bdbba00"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.reject_proposal",
+        "facade_operations": [
+          "playbill_reject_proposal"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/proposals/{proposal_id}/reject",
+        "request_model": "cruxible_core.server.playbill_request_models.ProposalRejectRequest",
+        "request_schema_digest": "sha256:9e73df0c0c72645f899704c774117b5de6f960b08908e36da9d52c03badb0a62",
+        "response_model": "cruxible_client.contracts.ProposalRejectResult",
+        "response_schema_digest": "sha256:c713087b4decf88891f85129dbafe09b379c7dd6b37950f9d75ebef262f05d29"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.review_proposal",
+        "facade_operations": [
+          "playbill_review_proposal"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/proposals/{proposal_id}/review",
+        "request_model": "cruxible_core.server.playbill_request_models.ReviewRequest",
+        "request_schema_digest": "sha256:c9b0188659fd3625397a672badd02645bcf0814bc8990217518b22ccec062392",
+        "response_model": "typing.Annotated[types.UnionType[cruxible_client.contracts.ProposalReview,cruxible_client.contracts.proposal_summary.ProposalReviewSummary],annotation=NoneType required=True discriminator='tag']",
+        "response_schema_digest": "sha256:639497254272dc7c00e02538a11c3f25251457324e11b16dd2a95b2704173634"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.withdraw_proposal",
+        "facade_operations": [
+          "playbill_withdraw_proposal"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/proposals/{proposal_id}/withdraw",
+        "request_model": "cruxible_core.server.playbill_request_models.ProposalWithdrawRequest",
+        "request_schema_digest": "sha256:95a92f12da900e0a21fb239aab2e600fcbaee60029afc83a3cc1bc9cf9763dc4",
+        "response_model": "cruxible_client.contracts.ProposalWithdrawResult",
+        "response_schema_digest": "sha256:9a6a4044bf3adad1fbdcf2b37371ed49ac89b80abd7f291d91b5497742c38c86"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.provider_catalog",
+        "facade_operations": [
+          "playbill_provider_catalog"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/providers",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.provider_installation.ProviderCatalog",
+        "response_schema_digest": "sha256:f0bf737e06b83f214ce8b1d071a399580d0358eba276c2ff9af911246e8487c2"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.provider_install",
+        "facade_operations": [
+          "playbill_provider_install"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/providers/install",
+        "request_model": "cruxible_client.contracts.provider_installation.ProviderInstallRequest",
+        "request_schema_digest": "sha256:eb72913379102d7b42c6a40b08b5e4909d5f5d89c38b058c04d47f8e6035612c",
+        "response_model": "cruxible_client.contracts.provider_installation.ProviderInstallResult",
+        "response_schema_digest": "sha256:1a6a3c231ae88409a47288a15834496efb5a44d993b714d8e156c01ea0418f85"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.provider_move",
+        "facade_operations": [
+          "playbill_provider_move"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/providers/move",
+        "request_model": "cruxible_client.contracts.provider_installation.ProviderMoveRequest",
+        "request_schema_digest": "sha256:f05310509235d5381a7b1c6f4363fa800058007b9f38ead4dc54fc44b57be579",
+        "response_model": "cruxible_client.contracts.provider_installation.ProviderMoveResult",
+        "response_schema_digest": "sha256:11c2136770809070326a829ee332828e6ecfaa960902d7824ee20543a55830f3"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.provider_retire",
+        "facade_operations": [
+          "playbill_provider_retire"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/providers/retire",
+        "request_model": "cruxible_client.contracts.provider_installation.ProviderRetireRequest",
+        "request_schema_digest": "sha256:e9b0920e1622b7131076896a364c2782d49d2440c11678f03a6694f6dcf002a1",
+        "response_model": "cruxible_client.contracts.provider_installation.ProviderRetireResult",
+        "response_schema_digest": "sha256:969a8cab833b177fea95fd17b34afa36e00f1a7e841c7fac73330b52d6192209"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.query_playbill",
+        "facade_operations": [
+          "playbill_query"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/query",
+        "request_model": "cruxible_client.contracts.compact_query.QueryRequest",
+        "request_schema_digest": "sha256:99484a08184c3371edb36cf8212f1233b723b75b1d7a5afe5be4ad18eee9b79a",
+        "response_model": "cruxible_client.contracts.compact_query.QueryResultRecord",
+        "response_schema_digest": "sha256:a4215254d0ea4117cfa4ea539a70c704ddd0f9a0946c041774cd8507722aa22f"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.retire",
+        "facade_operations": [
+          "playbill_retire"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/retire",
+        "request_model": "cruxible_client.contracts.write.RetireRequest",
+        "request_schema_digest": "sha256:245a39416a2cada525a9426a397e23f978cf386f79d90899a0faf943677f834a",
+        "response_model": "cruxible_client.contracts.write.WriteOutcome",
+        "response_schema_digest": "sha256:347b8f8fe7f0c3a96de1f4a800a1b597c32bbae5f9612ae66ac54de8521f8fff"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.preview_runbook",
+        "facade_operations": [
+          "playbill_runbook_preview"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/runbooks/{name}/preview",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.runbooks.RunbookPreview",
+        "response_schema_digest": "sha256:3e67064b39dd2822353d2d708360d1e39d3d4569c3cc1f997011d3bee40db171"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.run_runbook",
+        "facade_operations": [
+          "playbill_runbook_run"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/runbooks/{name}/runs",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.runbooks.RunbookRunResult",
+        "response_schema_digest": "sha256:f15785ad4e5cf5fd28b7511f96de016e73169caf70a8b0dd96f2e3983ed03763"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.set_value",
+        "facade_operations": [
+          "playbill_set"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/set",
+        "request_model": "cruxible_client.contracts.write.SetRequest",
+        "request_schema_digest": "sha256:b985c629cc152dc9ba8e3098f40faa8f2e1758455083e7359a4b714465412cc3",
+        "response_model": "cruxible_client.contracts.write.WriteOutcome",
+        "response_schema_digest": "sha256:347b8f8fe7f0c3a96de1f4a800a1b597c32bbae5f9612ae66ac54de8521f8fff"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.since",
+        "facade_operations": [
+          "playbill_since"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/since",
+        "request_model": "cruxible_client.contracts.SinceRequest",
+        "request_schema_digest": "sha256:bd157ba013588410ff382fca54d3e665736c11bcbc8ff0cb89ce89f35a0c2f8f",
+        "response_model": "cruxible_client.contracts.SinceResult",
+        "response_schema_digest": "sha256:66b6547fb8f6a2829e17e5edf47ed6556cc130bd2a3c6e9a523085da2de4c9cb"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.capture_upload_open",
+        "facade_operations": [
+          "playbill_capture_upload_open"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/uploads",
+        "request_model": "cruxible_client.contracts.uploads.CaptureUploadOpenRequest",
+        "request_schema_digest": "sha256:4b9bf36179e09ebe748feecbc286e3e38f4f6b3ed3d561dfecca5f3f21d1a42d",
+        "response_model": "cruxible_client.contracts.uploads.CaptureUploadSession",
+        "response_schema_digest": "sha256:b5f27d953c244bc934fc7417d020a1db960be760b4f85493d7a41186f554b0dd"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.capture_upload_status",
+        "facade_operations": [
+          "playbill_capture_upload_status"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/uploads/{upload_id}",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.uploads.CaptureUploadSession",
+        "response_schema_digest": "sha256:b5f27d953c244bc934fc7417d020a1db960be760b4f85493d7a41186f554b0dd"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.capture_upload_complete",
+        "facade_operations": [
+          "playbill_capture_upload_complete"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/uploads/{upload_id}/complete",
+        "request_model": "cruxible_client.contracts.uploads.CaptureUploadCompleteRequest",
+        "request_schema_digest": "sha256:2efbee143361ac3bb7887abb6291f9fee8fe0064b6c469b242d196d6c9836cb0",
+        "response_model": "cruxible_client.contracts.uploads.CaptureUploadCompleteResult",
+        "response_schema_digest": "sha256:7e079d7d39863c07b59eb9aba28bd9ff270fc70d7f3a61502fa188c96a2ff295"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.capture_upload_part",
+        "facade_operations": [
+          "playbill_capture_upload_part"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/uploads/{upload_id}/parts/{part}",
+        "request_model": "bytes",
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.uploads.CaptureUploadSession",
+        "response_schema_digest": "sha256:b5f27d953c244bc934fc7417d020a1db960be760b4f85493d7a41186f554b0dd"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.whoami",
+        "facade_operations": [
+          "playbill_whoami"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/whoami",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.WhoAmI",
+        "response_schema_digest": "sha256:b5e31721c12eff8c4467f8dc646e842bb4ba8541b51a48763ccf356692dec424"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.write",
+        "facade_operations": [
+          "playbill_write"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/write",
+        "request_model": "cruxible_client.contracts.write.WriteRequest",
+        "request_schema_digest": "sha256:d7e04449f5058037b1d07b41036890aa570f0a2d9fe8c599339edef5983fc59d",
+        "response_model": "cruxible_client.contracts.write.WriteOutcome",
+        "response_schema_digest": "sha256:347b8f8fe7f0c3a96de1f4a800a1b597c32bbae5f9612ae66ac54de8521f8fff"
+      }
+    ],
+    "mcp_tools": [
+      {
+        "client_operations": [
+          "audit"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_audit",
+        "input_schema_digest": "sha256:4f9437a03bbef623059f84614bc52bfe9ab4a84516de61abcfd638a7623d51ef",
+        "name": "cruxible_audit",
+        "output_schema_digest": "sha256:491fb5bcb5b46adf089cecf15015342cd3c7e6b0e475418e58987cda98c68a80",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "compile_authoring"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_bind",
+        "input_schema_digest": "sha256:abe703d5c80239a82a5b77fa9d62dacd17fe6a481e20af5091f98f626f53e32a",
+        "name": "cruxible_authoring_bind",
+        "output_schema_digest": "sha256:a8819d14ca84dc062b4eed2a406bdec97f81df37d4318f754b3d62c3c6489afa",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "compile_authoring_input"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_compile",
+        "input_schema_digest": "sha256:e14484c3514fa92c51ac0a0243aa0e68f9401d5645d839ab00d6c3f0cc7de8fc",
+        "name": "cruxible_authoring_compile",
+        "output_schema_digest": "sha256:a8819d14ca84dc062b4eed2a406bdec97f81df37d4318f754b3d62c3c6489afa",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_example",
+        "input_schema_digest": "sha256:f32d0be3764b2253fd33cd605ab29c1642f919182ecb8298443147028da61871",
+        "name": "cruxible_authoring_example",
+        "output_schema_digest": "sha256:1063308c947c48c4c446fd959301e456c4b333f3d666a425db76b137b6e16c6c",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "get_authoring_intent"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_get",
+        "input_schema_digest": "sha256:d996f8e8029e26b314325ccdfc2cb02d0451b6cbb86f1273e7a52df1b607e92d",
+        "name": "cruxible_authoring_get",
+        "output_schema_digest": "sha256:9dc1d12ea30c4fea220f392557937d4d924d7b4e3202ce8146af20f840a56635",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "list_pending_authoring_intents"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_list",
+        "input_schema_digest": "sha256:a8825f015f73d9fccd91306046104981231333a9d865efba8101b40627a708d3",
+        "name": "cruxible_authoring_list",
+        "output_schema_digest": "sha256:5c18e2bca206152d34456cd871e635b85825967723e0613cd2dead25c74f4252",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "preflight_authoring_intent"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_preflight",
+        "input_schema_digest": "sha256:0c619bc501bdb2c4d906d9238fe9ef9f302ce8f8eafb3fd3e3f0787858d7c48e",
+        "name": "cruxible_authoring_preflight",
+        "output_schema_digest": "sha256:a8819d14ca84dc062b4eed2a406bdec97f81df37d4318f754b3d62c3c6489afa",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "authoring_intent_status"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_status",
+        "input_schema_digest": "sha256:dbbf30bf833582227cb14074f5c9e76cdbb4ef21504a00631854516dad86360f",
+        "name": "cruxible_authoring_status",
+        "output_schema_digest": "sha256:3999f1a373baf30d822dd9b1c63b3ac4cd5c14ec93e7d55fe9ebf9c15c11d50f",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "submit_authoring_input",
+          "submit_authoring_intent"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_submit",
+        "input_schema_digest": "sha256:3e45d8eca9fbd8d93a91988e714ee8a6b181804dccbaffe843936ff6134538d3",
+        "name": "cruxible_authoring_submit",
+        "output_schema_digest": "sha256:7102b4f9ea6a815baf4cca1b07dd1891d3a3fbcfe14c60ff27bd8ff78066dc82",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "submit_authoring_input",
+          "submit_authoring_intent"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_submit_file",
+        "input_schema_digest": "sha256:f7592346c4cb9ebb4225377b7d951e913507410d43243b741fb469e19dac13f6",
+        "name": "cruxible_authoring_submit_file",
+        "output_schema_digest": "sha256:7102b4f9ea6a815baf4cca1b07dd1891d3a3fbcfe14c60ff27bd8ff78066dc82",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "backlinks"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_backlinks",
+        "input_schema_digest": "sha256:fa65be7104e9ba4bade58102f4c70425734d30d204d8070cbc1da71806b406e8",
+        "name": "cruxible_backlinks",
+        "output_schema_digest": "sha256:4f72a58abe863ae113ba351109e5017385ce6d9b14013d28337733f329051749",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "depublish_block"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_depublish",
+        "input_schema_digest": "sha256:5951a8c2084356a669a782ea31fab3bd0d1c26702a3d12300ea34530fa43fb2b",
+        "name": "cruxible_block_depublish",
+        "output_schema_digest": "sha256:7bf2b6e9b55535e79f601d6f3c006da7356a3fa19d8794e1b513d60f5fcf633a",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "check_projection_blocks",
+          "declare_block",
+          "get",
+          "head",
+          "observe_blocks",
+          "query",
+          "read_block_sync_backing"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_detach",
+        "input_schema_digest": "sha256:41df891b9cb6d6447844e9c09ef2296e2140985292b7cc5a4ed9cab918f0d5ab",
+        "name": "cruxible_block_detach",
+        "output_schema_digest": "sha256:c0c81884e3ef17036cff9dd06ceac7256608b5d7b5b52a67d7a5b2bd81751982",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "declare_block",
+          "get",
+          "head",
+          "observe_blocks",
+          "query",
+          "read_block_sync_backing"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_repin",
+        "input_schema_digest": "sha256:8a7ae8e6ebdd255017ce8a73498fae6c3bbcb08a693d10a67b4efdaaf5560e88",
+        "name": "cruxible_block_repin",
+        "output_schema_digest": "sha256:1db02632001500e7cb6f9777ecef275cbef5cec6709ed842baf01a40cb303872",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "check_projection_blocks",
+          "declare_block",
+          "get",
+          "head",
+          "observe_blocks",
+          "query",
+          "read_block_sync_backing"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_sync",
+        "input_schema_digest": "sha256:9daa3058512a08c60c90ac85da1becc621e51d429397be01fcd2033df94e8897",
+        "name": "cruxible_block_sync",
+        "output_schema_digest": "sha256:81385db8a0dc25d32fcd6049de0c6580210b6e758df365954d4f2d9c62aaa627",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "store_body"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_store_body",
+        "input_schema_digest": "sha256:638f90bdda26aae204b34b7856a90a849979470bb9b3bfae9a500797bca1971d",
+        "name": "cruxible_body_store",
+        "output_schema_digest": "sha256:4e2267acea2ed459895b6e13b8aea056cb5d4fbf807b864096cc8c4133bb34e3",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "propose_capture_contract_input"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_propose_capture_contract",
+        "input_schema_digest": "sha256:0e8b6e2f02e75bf44b01e70cfccd7915e158873213862a5a856408600170e713",
+        "name": "cruxible_capture_contract_propose",
+        "output_schema_digest": "sha256:1dcb5fce3acb2e716040674d144f9e6ad57b76df49b81771a47dc105c813f34d",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "erase_capture"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_erase_capture",
+        "input_schema_digest": "sha256:a95664319607ecff2e1fb02de5b3012a953e41874fc54525fea19aaec551ca0c",
+        "name": "cruxible_capture_erase",
+        "output_schema_digest": "sha256:6679068480374266cc20d93bfb0fee411f32caa30ac12ef77194c94c2c119fc5",
+        "permission": "GRAPH_WRITE"
+      },
+      {
+        "client_operations": [
+          "read_capture"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_read_capture",
+        "input_schema_digest": "sha256:aebf34bcaaade145a2ddfbb64260ecff9a4ac3470dfef465c0e069d22968253f",
+        "name": "cruxible_capture_read",
+        "output_schema_digest": "sha256:c3c984336d0c524c4f17122aa5c7cb91126960e7a3a16297ae23cd0726db162d",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "orient",
+          "server_info",
+          "whoami"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_claim_attest",
+        "input_schema_digest": "sha256:70dbf43ecfdf5060029a756e9a3b7e199b2dad558d75cfcb0b2cde142d34b528",
+        "name": "cruxible_claim_attest",
+        "output_schema_digest": "sha256:ccc87e67574b1793bfc91a3c5b4b2fe3b4fc42bdaa0fd819f20ce5dec74ef3b8",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "migrate_claim_type"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_migrate_claim_type",
+        "input_schema_digest": "sha256:d6299c0059040efc05a67200d7e1880c4ab05138d0985cc3b6f3ad11c609e43c",
+        "name": "cruxible_claim_type_migrate",
+        "output_schema_digest": "sha256:9596d1cc908206ca8c23c8cfdbc0b0375c7d7498d954d85351979e093d00a7e7",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "propose_builtin_claim_type",
+          "propose_claim_type_input"
+        ],
+        "delegate": "cruxible_core.mcp.tools.cruxible_claim_type_propose",
+        "input_schema_digest": "sha256:7da428c77eaaad2f96acee3cf867e9b9e19e6c83a0501443f115e77863ee66a5",
+        "name": "cruxible_claim_type_propose",
+        "output_schema_digest": "sha256:08dda3383e4c7b9821da75532e980d43bbf84c02464fcba5e165336db46de5ed",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "propose_compiler_upgrade"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_compiler_upgrade",
+        "input_schema_digest": "sha256:3be7b981a9438d9654c4a92059f0e69be786d98a8eee5f87ad43e0a976bf005d",
+        "name": "cruxible_compiler_upgrade",
+        "output_schema_digest": "sha256:1dcb5fce3acb2e716040674d144f9e6ad57b76df49b81771a47dc105c813f34d",
+        "permission": "ADMIN"
+      },
+      {
+        "client_operations": [],
+        "delegate": "cruxible_core.mcp.handlers.handle_console",
+        "input_schema_digest": "sha256:419cc464b9e84035b066da68491cf67800fed7f14dc0c8cf6333906fe6dc36f1",
+        "name": "cruxible_console",
+        "output_schema_digest": "sha256:1091f8cc1b43f0dea1c32fdf434e9811226ce0c456caab3d05eaff7f38cc50f3",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "resolve_coverage"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_coverage",
+        "input_schema_digest": "sha256:df502de65f9a2ba4a3b08b7d75635cadc376d33b319e49c72eee81b58ac56298",
+        "name": "cruxible_coverage_resolve",
+        "output_schema_digest": "sha256:4a944fcfdf91118ef46ee78b26ea5b206c9e16825f4bc7153e956a689db27440",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "accept_fixed_curation"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_accept_fixed",
+        "input_schema_digest": "sha256:381ce42d445165e55f3c120e1dfdc7931f155e0fc44febd69f0274d4c3aaa862",
+        "name": "cruxible_curation_accept_fixed",
+        "output_schema_digest": "sha256:7dab863b628be4086c9cf0d23ce6cbf3cde1220cc795fec1fa3a14621ba7ecda",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "curation_duplicates"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_duplicates",
+        "input_schema_digest": "sha256:19c1ca37178e93f2e1c91417dbb17670f3eb4f9a09bf8112121b1d5c2bbdfa81",
+        "name": "cruxible_curation_duplicates",
+        "output_schema_digest": "sha256:3e9423e0f30f2e7e517165574e8f66d74d8387a7a96311d50cc4305cc441d5f0",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "list_curation"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_list",
+        "input_schema_digest": "sha256:3a3791b8bdf1444b7504b16385ca9586c79a95aab99a0a405be47562bafe95b2",
+        "name": "cruxible_curation_list",
+        "output_schema_digest": "sha256:4b1c9d704ae5c6c9e81034492636cd773109197cfb241d69fbed7f2b7d75a432",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "overrule_curation"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_overrule",
+        "input_schema_digest": "sha256:dfb6cfd912799b6cb498c4e73ec7851226c0ba5958975376d9e84abb69abe7d9",
+        "name": "cruxible_curation_overrule",
+        "output_schema_digest": "sha256:7dab863b628be4086c9cf0d23ce6cbf3cde1220cc795fec1fa3a14621ba7ecda",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "suppress_curation"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_suppress",
+        "input_schema_digest": "sha256:edab4f4c1b1a5ed9ff5286a93f6ee2a0152ec3c546dd540711ba2a139d1a5595",
+        "name": "cruxible_curation_suppress",
+        "output_schema_digest": "sha256:7dab863b628be4086c9cf0d23ce6cbf3cde1220cc795fec1fa3a14621ba7ecda",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "unsuppress_curation"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_curation_unsuppress",
+        "input_schema_digest": "sha256:3aff2cfaff720fe9129604cce1e9c7c1b9a5c60436a1c1d1632a762ed257db3d",
+        "name": "cruxible_curation_unsuppress",
+        "output_schema_digest": "sha256:7dab863b628be4086c9cf0d23ce6cbf3cde1220cc795fec1fa3a14621ba7ecda",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "propose_document"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_propose_document",
+        "input_schema_digest": "sha256:b1963f0bf36b56d27529ed559fd867ffb0735894bf1a7b1129f992c8393735d3",
+        "name": "cruxible_document_propose",
+        "output_schema_digest": "sha256:1dcb5fce3acb2e716040674d144f9e6ad57b76df49b81771a47dc105c813f34d",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "check_file_bundle",
+          "file_context"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_files_check",
+        "input_schema_digest": "sha256:433f6c9d36f396821eb8ea89866558cb71b8fb8984305c1ad6438b3f661592ed",
+        "name": "cruxible_files_check",
+        "output_schema_digest": "sha256:66367c9e619bb92f391485158fdf8ba8282861e0dc89531c9154389654a20c45",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "file_context"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_files_compile",
+        "input_schema_digest": "sha256:c260c15a99078230dc1d9cf1e446c439a2860900535109b4c8a47a96a8853d15",
+        "name": "cruxible_files_compile",
+        "output_schema_digest": "sha256:93428252cb6f9db514651e6cc999c2fd03116f1aadfa8334a798a0f0d61be770",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "file_context",
+          "propose_file_bundle"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_files_propose",
+        "input_schema_digest": "sha256:7b96f50b3bd73713d7813d2c2168870a368f5012bd77657596edff5a06168b8c",
+        "name": "cruxible_files_propose",
+        "output_schema_digest": "sha256:1dcb5fce3acb2e716040674d144f9e6ad57b76df49b81771a47dc105c813f34d",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "deliver_floor_now",
+          "export_floor",
+          "floor_delta",
+          "head",
+          "host_workspace_registration"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_floor_export",
+        "input_schema_digest": "sha256:893ec2eb1fece89a23417980079272cb46d9d3499d0080cd1e892aa249faeeff",
+        "name": "cruxible_floor_export",
+        "output_schema_digest": "sha256:293869bd5d929b82728b729d15009cc3e65268b29b40316da9fe6fa2407f3835",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "get"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
+        "input_schema_digest": "sha256:181b54480af5b96e180a267b9efd3f7426df530154df37c60b1382ce9326f5d8",
+        "name": "cruxible_get",
+        "output_schema_digest": "sha256:7fc01f8969d6efce503bcb484c701c76fa98b71e2be20496624d30b8fa4ad15e",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "ack_inbox_item"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_ack",
+        "input_schema_digest": "sha256:9254a49f4af9a5e110049bf5a102735057f9f69134ce7027eb3b5fa8741094dd",
+        "name": "cruxible_inbox_ack",
+        "output_schema_digest": "sha256:f34aced3aeb170781078c817758622435ab22b401f7ec52a4164ecdb89d39151",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "dismiss_inbox_item"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_dismiss",
+        "input_schema_digest": "sha256:bedb5d56ef70d7ef71bf1d67557081d3ec8806c2b6d43d40f493dc6a0349f258",
+        "name": "cruxible_inbox_dismiss",
+        "output_schema_digest": "sha256:f34aced3aeb170781078c817758622435ab22b401f7ec52a4164ecdb89d39151",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "get_inbox_item"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_get",
+        "input_schema_digest": "sha256:59d992430c136800ccb6b9317865c7e7644af141260537122c0200048f337b19",
+        "name": "cruxible_inbox_get",
+        "output_schema_digest": "sha256:2a076b1e8428c2a70da46c43d1cb7a3e9016e59fa7fcfe9593ab602a33bae707",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "link_inbox_item"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_link",
+        "input_schema_digest": "sha256:b57a072c97f664a57bf425eb9040bcda6c58b6492423d736c93a9ce16b674b70",
+        "name": "cruxible_inbox_link",
+        "output_schema_digest": "sha256:f34aced3aeb170781078c817758622435ab22b401f7ec52a4164ecdb89d39151",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "list_inbox"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_inbox_list",
+        "input_schema_digest": "sha256:53516478e595f248537ae277482b9e4f54c7b818c262731d229e29e403ab5d8a",
+        "name": "cruxible_inbox_list",
+        "output_schema_digest": "sha256:29e554beb55882aa37e086781387db0630d6e36d86887f7cff44e51aa68e922e",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "create_host",
+          "init",
+          "orient",
+          "show_host"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_init",
+        "input_schema_digest": "sha256:1cf060135e2b393ae0fbe0b7cdbac99b39d52127d73e49e09611cf595c65be2c",
+        "name": "cruxible_init",
+        "output_schema_digest": "sha256:d6321b60efe130609096d01614b49b09a46d4c0b779b88f5a8dd0cbf7d1c864e",
+        "permission": "ADMIN"
+      },
+      {
+        "client_operations": [
+          "add_kit",
+          "close",
+          "store_body"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_add",
+        "input_schema_digest": "sha256:896e3102cda48fa967c599a7e4b047929d25654af3000ea434d0f4fb2b8d418b",
+        "name": "cruxible_kit_add",
+        "output_schema_digest": "sha256:9efab76f81601132daceb571b66c1e09f1e1d3df383735a0261a1c128fe3b68a",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "build_kit"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_build",
+        "input_schema_digest": "sha256:aa02642b4d17c39778cd3dfcfbe5ee91d54596862e14859b17ca22cba54d6f61",
+        "name": "cruxible_kit_build",
+        "output_schema_digest": "sha256:97d258111501436856e1fa81e1b71d81d5798832fded41548320fe800d7efc80",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "remove_kit"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_remove",
+        "input_schema_digest": "sha256:a65e83c3a6b77ca397c737244489b8f81b3dfe7d2760185d6a529a531fcecd37",
+        "name": "cruxible_kit_remove",
+        "output_schema_digest": "sha256:9efab76f81601132daceb571b66c1e09f1e1d3df383735a0261a1c128fe3b68a",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "close",
+          "kit_status"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_status",
+        "input_schema_digest": "sha256:7ac7b304b74762eec1aa955ef4dd274936e6b74f1e8b1d1b39f84cf9698b2ed7",
+        "name": "cruxible_kit_status",
+        "output_schema_digest": "sha256:91f34af030dc1115c1f8b25a54db0350f40335be57040a0b7c7d19e5816e7b35",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "disable_line"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_disable",
+        "input_schema_digest": "sha256:998b619a7add17e6ca77c2dfd629b4ad8dad2ca77b638ff3412871d637d6076f",
+        "name": "cruxible_line_disable",
+        "output_schema_digest": "sha256:b0063925af83f885e31bde3fd962049fbc4446b92c9e27d617b089763cbeaeb3",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "dispatch_line"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_dispatch",
+        "input_schema_digest": "sha256:0353670dc52021c4955e598bbfde5d45c8e00757587b082e9c6f4056a1999d88",
+        "name": "cruxible_line_dispatch",
+        "output_schema_digest": "sha256:59b03074a0b5c2bc48628172530f1c04d4b0cbc31ff032730632fbf6939bcf32",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "enable_line"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_enable",
+        "input_schema_digest": "sha256:01bf747751912e6a1caf5e012ec110f56c78f36c0dea3a5e138b27bb5ddaca01",
+        "name": "cruxible_line_enable",
+        "output_schema_digest": "sha256:b0063925af83f885e31bde3fd962049fbc4446b92c9e27d617b089763cbeaeb3",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "evaluate_line"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_evaluate",
+        "input_schema_digest": "sha256:2a6221fe034390487e599a1dc49666a2005cf646d95db93c3a9b8c37a9f7be91",
+        "name": "cruxible_line_evaluate",
+        "output_schema_digest": "sha256:1268ee17f6cf6331547f7c171a7b856a42d2ed29c17be2c976ccd8ee8609662c",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "run_line"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_line_run",
+        "input_schema_digest": "sha256:f0671802cb81791cef6038c088f1037c42346620977a8c24956bf557458724f1",
+        "name": "cruxible_line_run",
+        "output_schema_digest": "sha256:33b54d634a3ba3442273f0493f8292d84698ab85d869e6397fc8745f1f9b9234",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "head",
+          "next",
+          "resolve_coverage"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_next",
+        "input_schema_digest": "sha256:822dc04c16064413474f2632b8758500c7aa6db30bbe675a5ea7584518b5602f",
+        "name": "cruxible_next",
+        "output_schema_digest": "sha256:4594b3559c27f56527748d5dab749e7c0ccbe1020161b5c3c58510a758e107c1",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "orient"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_orient",
+        "input_schema_digest": "sha256:603232f2a3e158425ddb2c294f3d9be3c304f93841cf5f3b9fed04adff3fd68f",
+        "name": "cruxible_orient",
+        "output_schema_digest": "sha256:50223ccd1304bb394f04f560f381fe0edbf78830a7308b15e2cce55e8df51be6",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "list_predictions"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_prediction_list",
+        "input_schema_digest": "sha256:ad4c0a39666aed089fa5b84548e39a852e870deb77d0093bb07e5fef590d2d6b",
+        "name": "cruxible_prediction_list",
+        "output_schema_digest": "sha256:556b4d10169c49532a76e9879d1cffe7788f587b64c95dff95db93d3631602da",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "predict"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_predict",
+        "input_schema_digest": "sha256:21a6f9509f74b97d8d82ebbfcaf0e666cd4e43cf6c5e9a02481887bb3ac2cd11",
+        "name": "cruxible_prediction_propose",
+        "output_schema_digest": "sha256:ec66a0258360772d8e22b32faee47058797db84e13bcbf439602996f925446a1",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "settle_prediction"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_settle_prediction",
+        "input_schema_digest": "sha256:77480ff8bb55e90c35608c86223e62f86757910d7d97d5829f098aaff39fa2c9",
+        "name": "cruxible_prediction_settle",
+        "output_schema_digest": "sha256:8a6442ef9e6528f01ff8860c421344073618ac8070046582e6499310c48cafa5",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "propose_principal_change"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_propose_principal_change",
+        "input_schema_digest": "sha256:a3f45ef91a1aba3d417245adc305a2db3329df3678a4f519d2ba8c6a4faeaeaf",
+        "name": "cruxible_principal_propose",
+        "output_schema_digest": "sha256:1dcb5fce3acb2e716040674d144f9e6ad57b76df49b81771a47dc105c813f34d",
+        "permission": "ADMIN"
+      },
+      {
+        "client_operations": [
+          "dispose_procedure_resolution"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_dispose",
+        "input_schema_digest": "sha256:d09aed14d9ec0e36c8482516cb719eae991df4ca0bbc2c2379cc680aa3ddb50d",
+        "name": "cruxible_procedure_dispose",
+        "output_schema_digest": "sha256:2263a4d98dc47b516c0e3755660c0cf89ef29be903ee6f8cf2b803ba3fb1a72c",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "measure_procedure"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_measure",
+        "input_schema_digest": "sha256:ce11a90fb7f2daacf6d863c02ce6a7ad4af463e3e6e2db04b09d8bb614b3067b",
+        "name": "cruxible_procedure_measure",
+        "output_schema_digest": "sha256:16ed91479458d32c34053217ff9b77de95b7c5356aefa893b190a654870bd4ce",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "list_procedure_readings"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_readings",
+        "input_schema_digest": "sha256:e41ce4e6c2ab5ea98ab40cd85bc49a3ab7774d4eb17dfc8a22ec201812262831",
+        "name": "cruxible_procedure_readings",
+        "output_schema_digest": "sha256:7f5e8fe587c55f62ca458f9b4c43ee3a4628aa0ea3834374a027e1d79311969d",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "run_procedure"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_run",
+        "input_schema_digest": "sha256:7f5607895fadcea1d99da89d8165b1c463efe675eaada00ba9f10b7faf7e58f0",
+        "name": "cruxible_procedure_run",
+        "output_schema_digest": "sha256:33b54d634a3ba3442273f0493f8292d84698ab85d869e6397fc8745f1f9b9234",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "activate_proposal"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_activate",
+        "input_schema_digest": "sha256:ece46a5fb78446a1a4780c3ad4152281ccdef1f340498a0c6e07a673737fbc51",
+        "name": "cruxible_proposal_activate",
+        "output_schema_digest": "sha256:a7c43227f3547d7e157dad9a29b508582b463b4be7e75aa039c056f68ec84e8a",
+        "permission": "GRAPH_WRITE"
+      },
+      {
+        "client_operations": [
+          "prepare_approval",
+          "submit_approval"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_approve",
+        "input_schema_digest": "sha256:2eb49c3d3661904141d4f36210a4add5e4bf19177980c48d0635e6499b3ee2fe",
+        "name": "cruxible_proposal_approve",
+        "output_schema_digest": "sha256:5b6cad4cc239ae018a66395434171b15269861d1ca368736fe0377c1fe150409",
+        "permission": "GRAPH_WRITE"
+      },
+      {
+        "client_operations": [
+          "prepare_approval"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_prepare_approval",
+        "input_schema_digest": "sha256:2b46c0ec893507bf5314d30a03288bbb4a08459838be79f8f5f3bcb37d06021e",
+        "name": "cruxible_proposal_approve_prepare",
+        "output_schema_digest": "sha256:23ce6cca24cb91968171937b6210cb2b89fd30cda92cab771da4a2d142a14c98",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "submit_approval"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_submit_approval",
+        "input_schema_digest": "sha256:f9d60c0ac039c785c882721238ac431750e8c08f088db12c616b38596e5c82f6",
+        "name": "cruxible_proposal_approve_submit",
+        "output_schema_digest": "sha256:22dc03d9d1acd86e430724e2b80380142d21e41e6f7f10b9cd920ac8eeabb34e",
+        "permission": "GRAPH_WRITE"
+      },
+      {
+        "client_operations": [
+          "list_proposals"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_list_proposals",
+        "input_schema_digest": "sha256:0dd82bb206d3f698f7372ebccf3e3febc56e4113f59bcd8cfd5adbdf4b6a64af",
+        "name": "cruxible_proposal_list",
+        "output_schema_digest": "sha256:9f4fd1ca0a50d670fe38988227f499b35ec9d6372dfc93e63e8049f9ea9582c9",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "readmit_proposal"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_readmit_proposal",
+        "input_schema_digest": "sha256:39aa6e9ceb873f7c1b482f85950fe410184035decf5ec4a569721315d594ae4d",
+        "name": "cruxible_proposal_readmit",
+        "output_schema_digest": "sha256:c642d26d5134f372adc011b2c83e118b5f64a1cead1931fb8691a072364f7015",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "reject_proposal"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_reject_proposal",
+        "input_schema_digest": "sha256:8c862a5632e44e475da7d9ee3206dcb981a86836e5de5017774231f0287bcd26",
+        "name": "cruxible_proposal_reject",
+        "output_schema_digest": "sha256:235cc0a4d7f52dc8894f1900195137ce74d09dc13fad718bb2af5a8409371cc7",
+        "permission": "GRAPH_WRITE"
+      },
+      {
+        "client_operations": [
+          "review_proposal"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_review",
+        "input_schema_digest": "sha256:52c62ed49d7c31fd68b75b13d9d0d745d8c0fb371a8d2eacbb938cf58d5f177a",
+        "name": "cruxible_proposal_review",
+        "output_schema_digest": "sha256:b640435105c205047baba9bca82248817dab032ef96f5a9a9676979c6836b7de",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "withdraw_proposal"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_withdraw_proposal",
+        "input_schema_digest": "sha256:b166c63fffc7d15eec6ade12cd460305b56de85b1c9b099ed9e51f557794480d",
+        "name": "cruxible_proposal_withdraw",
+        "output_schema_digest": "sha256:2b88b8c7afac7e179b22d73f64b683d9bf82a181ac9fe06fc5540bebbe1e0460",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "install_provider"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_install",
+        "input_schema_digest": "sha256:2e8677dce25c477dfca9ad5bba738ae24e490d1eadb6b3acadd8b60542f75898",
+        "name": "cruxible_provider_install",
+        "output_schema_digest": "sha256:c455bef4a14cc2988428eda70244f044ccb580e8fc29443332e40afcd8e9bf1e",
+        "permission": "ADMIN"
+      },
+      {
+        "client_operations": [
+          "list_provider_packages"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_catalog",
+        "input_schema_digest": "sha256:989d4d6f16ee8339b9d31cd45dcfdffbdbc48ee241949b69e6b81f0763f63443",
+        "name": "cruxible_provider_list",
+        "output_schema_digest": "sha256:ffd50fe2c45551852acd0d59f7d8c681b9f8b6c1f689f92a570b06f95ad41248",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "move_provider"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_move",
+        "input_schema_digest": "sha256:c5a92401b87ab61fbc96e7f89ea73c745b6dfd291ee47ff1808a0f2e56e00d81",
+        "name": "cruxible_provider_move",
+        "output_schema_digest": "sha256:92d4d9c8f6bc7ffa0541c32edb0cc293d9d076c706d8dcbc00352867d3094c6d",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "retire_provider"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_provider_retire",
+        "input_schema_digest": "sha256:18f6c26ded0e40a09a2922fba6e83749ea7520aed4f32bd8d89813a75a998f1e",
+        "name": "cruxible_provider_retire",
+        "output_schema_digest": "sha256:f237089b75a5a0a30a5b82955337277ebcb497cc49c30860b9dc3d8b11fbe32a",
+        "permission": "ADMIN"
+      },
+      {
+        "client_operations": [
+          "query"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_query",
+        "input_schema_digest": "sha256:aa99ac540ad1e6eb6aa1685d869ee00d5b4d85cd716831adfccd1368da47fd91",
+        "name": "cruxible_query",
+        "output_schema_digest": "sha256:d35ceebedd881dbea139076d680a6c063552bb5371ff150e8054afc93c8ca9a5",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "query"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_query_spec",
+        "input_schema_digest": "sha256:2a9240293d697f2e638ada4a34f4878a933afa1cf71a0b68bfa7f7127a78d1cc",
+        "name": "cruxible_query_spec",
+        "output_schema_digest": "sha256:d35ceebedd881dbea139076d680a6c063552bb5371ff150e8054afc93c8ca9a5",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "retire"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_retire",
+        "input_schema_digest": "sha256:7e85fa06b5e63e507813ab8683f426532e1f69a3cc510a705041ae6af8941543",
+        "name": "cruxible_retire",
+        "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "preview_runbook"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_runbook_preview",
+        "input_schema_digest": "sha256:969fc97a23094626699e0fde63cd83c89cd48337f2f1a02a33e985c056993d85",
+        "name": "cruxible_runbook_preview",
+        "output_schema_digest": "sha256:01507aa4c2fbe69f6df51bec7d667b80337f996358802d05713b47dce87cbbc9",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "run_runbook"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_runbook_run",
+        "input_schema_digest": "sha256:1084b36d75122b700f29335e7a125c9cdd2e2ee48be76d7220d8d738cd0c353b",
+        "name": "cruxible_runbook_run",
+        "output_schema_digest": "sha256:19aa52ed449f86e6b8abc4f1038b467282de1f0c664b729cc381d0d37f054e79",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "server_info",
+          "show_host",
+          "version",
+          "whoami"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_server_info",
+        "input_schema_digest": "sha256:99d0490133578d67317d5885bb4e59121f2c6efce091358dfcb03d3542792925",
+        "name": "cruxible_server_info",
+        "output_schema_digest": "sha256:a75c3e1fda791b4df7c863ddcb3bad58e1641b3de62169b53d76daecc799d8a5",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "set"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_set",
+        "input_schema_digest": "sha256:c4657a8b908962fec6021ec75ef0348b31e034ee66d116362fe0b2609cd3b37f",
+        "name": "cruxible_set",
+        "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "since"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_since",
+        "input_schema_digest": "sha256:c370dfc5750663d330304f47f24b3464c2b8b275410df9524a4620a6e33d6a24",
+        "name": "cruxible_since",
+        "output_schema_digest": "sha256:8b8e98678acc7ac953c981be03f221f548b5952903cf56dd27fa0a7e1428843a",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "version",
+          "whoami"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_whoami",
+        "input_schema_digest": "sha256:0167ead570c40ac2ba921fc5289a06d08ae2a4969fc61d437836b7b9aefdf516",
+        "name": "cruxible_whoami",
+        "output_schema_digest": "sha256:b6ceb6b542c40f483f640600fb130b2a45b4d111f95e479a9db12977694965a6",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "write"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_write",
+        "input_schema_digest": "sha256:f3c38fbafb0b7868eaa3a6103ea5a829c9ada932c3edb2e07360977b2018e25c",
+        "name": "cruxible_write",
+        "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
+        "permission": "GOVERNED_WRITE"
+      }
+    ]
+  }
+}

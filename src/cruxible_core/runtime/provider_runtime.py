@@ -1,0 +1,981 @@
+"""Daemon-owned operational construction for the local Provider runtime."""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import tempfile
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Literal, cast
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
+
+from cruxible_client.contracts import ProviderLaneUnavailableCode
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.provider_execution import VerifiedProviderBinding
+from cruxible_client.contracts.provider_registration import DeclaredOperation
+from cruxible_client.contracts.providers import AcceptedProvider
+from cruxible_core.providers.builtin_runtime import (
+    BuiltinDispatchingInvoker,
+    builtin_provider_binding,
+)
+from cruxible_core.providers.provider_local_runtime import (
+    EnvironmentProviderSecretResolver,
+    FileProviderSecretStore,
+    LocalProviderDeploymentV1,
+    LocalProviderExecutionDriver,
+    ProviderInstallationVerification,
+    ProviderLocalRuntimeInvoker,
+    ProviderSecretResolverRegistry,
+    verification_format_upgrade,
+)
+from cruxible_core.providers.provider_process_leases import (
+    DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS,
+    DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_REARM_BACKOFF_SECONDS,
+    DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS,
+    PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+    ProviderLocalRuntimeRefused,
+    ProviderProcessFenceCodeV1,
+    ProviderProcessLeaseStore,
+    ProviderProcessRecoveryFailureV1,
+    ProviderProcessRecoveryResultV1,
+)
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
+
+PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
+DEFAULT_UPLOAD_MAX_BYTES = 8 * 1024 * 1024
+MAX_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024
+DEFAULT_UPLOAD_SESSION_SECONDS = 3_600.0
+DEFAULT_UPLOAD_MAX_OPEN_SESSIONS = 8
+ProviderRecoveryFoldDisposition = Literal["handled", "unclaimed", "fold_failed"]
+_ConstructionStage = Literal[
+    "state root",
+    "operational config",
+    "process lease store",
+    "secret store",
+    "deployment",
+]
+_FILESYSTEM_CONSTRUCTION_STAGES: tuple[_ConstructionStage, ...] = (
+    "operational config",
+    "process lease store",
+    "secret store",
+    "deployment",
+)
+_CONSTRUCTION_STAGE_DEPENDENTS: Mapping[
+    _ConstructionStage,
+    tuple[_ConstructionStage, ...],
+] = {
+    "state root": _FILESYSTEM_CONSTRUCTION_STAGES,
+    "operational config": ("process lease store", "secret store", "deployment"),
+    "process lease store": (),
+    "secret store": (),
+    "deployment": (),
+}
+
+
+class _StrictOperationalModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProviderDeploymentConfigV1(_StrictOperationalModel):
+    tag: Literal["cruxible-provider-deployment-config-v1"] = (
+        "cruxible-provider-deployment-config-v1"
+    )
+    deployment_digest: str
+    distribution_path: str
+    lock_path: str
+    environment_path: str
+    environment_manifest_path: str
+    environment_pin_key: str
+    interpreter_path: str
+    provider_runtime_version: str
+    installation_verification: ProviderInstallationVerification | None = None
+
+    @field_validator(
+        "distribution_path",
+        "lock_path",
+        "environment_path",
+        "environment_manifest_path",
+        "interpreter_path",
+    )
+    @classmethod
+    def _relative_path(cls, value: str) -> str:
+        path = Path(value)
+        if path.is_absolute() or value in {"", ".", ".."} or ".." in path.parts:
+            raise ValueError("Provider deployment paths must be state-root-relative")
+        return value
+
+
+class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
+    tag: Literal["cruxible-provider-runtime-operational-config-v1"] = (
+        "cruxible-provider-runtime-operational-config-v1"
+    )
+    lease_acquisition_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    lease_recovery_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    recovery_aggregate_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS,
+        gt=0,
+        description=(
+            "VALIDITY WINDOW: maximum elapsed duration of one process-fence recovery scan."
+        ),
+    )
+    rearm_backoff_seconds: float = Field(
+        default=DEFAULT_PROVIDER_REARM_BACKOFF_SECONDS,
+        gt=0,
+        description="VALIDITY WINDOW: minimum interval between lazy recovery attempts.",
+    )
+    secret_writer_join_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    stdin_writer_join_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    descendant_tracker_join_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    descendant_tracker_poll_interval_seconds: float = Field(
+        default=DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS,
+        gt=0,
+    )
+    process_group_termination_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    deployments: tuple[ProviderDeploymentConfigV1, ...] = ()
+    workspace_allowed_roots: tuple[str, ...] = ()
+    provider_repository: str | None = None
+    provider_index_urls: tuple[str, ...] = ()
+    #: Where Capture uploads stage (a daemon-owned directory outside the state
+    #: root). Unset, the daemon refuses uploads.
+    upload_root: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: The largest file one upload may carry.
+    upload_max_bytes: int = Field(
+        default=DEFAULT_UPLOAD_MAX_BYTES,
+        ge=1,
+        le=MAX_UPLOAD_MAX_BYTES,
+        exclude_if=lambda value: value == DEFAULT_UPLOAD_MAX_BYTES,
+    )
+    #: How long an upload session stays open before it expires.
+    upload_session_seconds: float = Field(
+        default=DEFAULT_UPLOAD_SESSION_SECONDS,
+        gt=0,
+        le=86_400,
+        exclude_if=lambda value: value == DEFAULT_UPLOAD_SESSION_SECONDS,
+    )
+    #: Open upload sessions one instance may hold at once.
+    upload_max_open_sessions: int = Field(
+        default=DEFAULT_UPLOAD_MAX_OPEN_SESSIONS,
+        ge=1,
+        le=1_024,
+        exclude_if=lambda value: value == DEFAULT_UPLOAD_MAX_OPEN_SESSIONS,
+    )
+
+    @field_validator("upload_root")
+    @classmethod
+    def _upload_root(cls, value: str | None) -> str | None:
+        if value is not None:
+            path = Path(value)
+            if not path.is_absolute() or value != str(path) or ".." in path.parts:
+                raise ValueError("the upload root must be a canonical absolute path")
+        return value
+
+    @field_validator("provider_repository")
+    @classmethod
+    def _provider_repository(cls, value: str | None) -> str | None:
+        if value is not None and (not Path(value).is_absolute() or ".." in Path(value).parts):
+            raise ValueError("provider repository must be an operator-configured absolute path")
+        return value
+
+    @field_validator("workspace_allowed_roots")
+    @classmethod
+    def _workspace_allowed_roots(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("Workspace allowed roots must be sorted and unique")
+        for item in value:
+            path = Path(item)
+            if not path.is_absolute() or item != str(path) or ".." in path.parts:
+                raise ValueError("Workspace allowed roots must be canonical absolute paths")
+        return value
+
+    @field_validator("deployments")
+    @classmethod
+    def _deployments(
+        cls, value: tuple[ProviderDeploymentConfigV1, ...]
+    ) -> tuple[ProviderDeploymentConfigV1, ...]:
+        expected = tuple(sorted(value, key=lambda item: item.deployment_digest.encode("ascii")))
+        digests = tuple(item.deployment_digest for item in value)
+        if value != expected or len(digests) != len(set(digests)):
+            raise ValueError("Provider deployments must be digest-sorted and unique")
+        return value
+
+
+PROVIDER_LANE_NOT_APPLICABLE_DETAIL = (
+    "this hosted profile runs no installed Provider code: the lane is out of scope here, "
+    "not degraded"
+)
+
+
+def _inapplicable_lane_status() -> tuple[Literal["not_applicable"], None, str] | None:
+    """The lane's answer when this deployment runs no installed Provider code.
+
+    Core built-ins (``providers/builtin_runtime.py``) are not installed Provider
+    code and still run here.
+    """
+
+    from cruxible_core.runtime.execution_policy import provider_lane_applicable
+
+    if provider_lane_applicable():
+        return None
+    return ("not_applicable", None, PROVIDER_LANE_NOT_APPLICABLE_DETAIL)
+
+
+def pinned_provider_catalogs(
+    instance: PlaybillInstance,
+    coordinate: Any,
+    pins: Sequence[ArtifactPin],
+) -> dict[str, AcceptedProvider]:
+    """The live builds ``pins`` name, keyed by artifact digest.
+
+    One indexed row per pinned version: O(pins), whatever else is installed.
+    """
+
+    providers: dict[str, AcceptedProvider] = {}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for pin in dict.fromkeys(pins):
+            if pin.target.kind != "Provider":
+                continue
+            row = projection.typed.connection.execute(
+                "SELECT path FROM providers "
+                "WHERE identity=? AND artifact_digest=? AND lifecycle='live'",
+                (pin.target.qualified, pin.artifact_digest),
+            ).fetchone()
+            if row is None:
+                continue
+            source = projection.typed.source(pin.target.qualified)
+            assert source is not None
+            providers[pin.artifact_digest] = AcceptedProvider(
+                path=row[0], provider=source, artifact_digest=pin.artifact_digest
+            )
+    return providers
+
+
+class ProviderRuntimeOperator:
+    """One daemon process's local custody, leases, and installed deployments."""
+
+    def __init__(self, state_root: Path) -> None:
+        self._initialize_degraded(state_root)
+        if not self._initialize_state_root():
+            self._pending_construction_stages.update(_FILESYSTEM_CONSTRUCTION_STAGES)
+            return
+        self._initialize_filesystem_components()
+
+    @classmethod
+    def degraded(cls, state_root: Path, *, message: str) -> ProviderRuntimeOperator:
+        """Build a non-filesystem fallback when manager construction itself fails."""
+
+        operator = cls.__new__(cls)
+        operator._initialize_degraded(state_root)
+        operator.mark_unavailable("provider_runtime_recovery_failed", message, retryable=True)
+        return operator
+
+    def _initialize_degraded(self, state_root: Path) -> None:
+        """Initialize every field needed by refusal and status paths without filesystem I/O."""
+
+        self.state_root = state_root
+        self._lock = threading.RLock()
+        self._in_flight = 0
+        self._rearm_required = False
+        self._next_rearm_after = 0.0
+        self._recovery_fold: (
+            Callable[
+                [ProviderProcessRecoveryResultV1],
+                Mapping[str, ProviderRecoveryFoldDisposition],
+            ]
+            | None
+        ) = None
+        self._construction_failures: dict[str, tuple[ProviderLaneUnavailableCode, str]] = {}
+        self._recovery_failures: dict[ProviderLaneUnavailableCode, str] = {}
+        self._pending_construction_stages: set[_ConstructionStage] = set()
+        self._latest_failure: tuple[Literal["construction", "recovery"], str] | None = None
+        self._unavailable_failure_count = 0
+        self._observation_diagnostic_count = 0
+        self._last_observation_diagnostic: tuple[ProviderProcessFenceCodeV1, str] | None = None
+        self.unavailable_code: ProviderLaneUnavailableCode | None = None
+        self.unavailable_reason: str | None = None
+        # The lane precondition refusal, while the process lease store cannot
+        # find a private runtime directory: every Provider-backed refusal
+        # carries it (cause and repair) rather than the generic one.
+        self.environment_refusal: ProviderLocalRuntimeRefused | None = None
+        self._lane_status_snapshot: tuple[
+            Literal["available", "unavailable", "not_applicable"],
+            ProviderLaneUnavailableCode | None,
+            str | None,
+        ] = _inapplicable_lane_status() or ("available", None, None)
+        self.config = ProviderRuntimeOperationalConfigV1()
+        self.process_leases: ProviderProcessLeaseStore | None = None
+        self.secret_store: FileProviderSecretStore | None = None
+        self.secret_resolvers = ProviderSecretResolverRegistry(
+            (EnvironmentProviderSecretResolver(),)
+        )
+        self.driver = LocalProviderExecutionDriver()
+        self.deployments: dict[str, LocalProviderDeploymentV1] = {}
+
+    def _initialize_state_root(self) -> bool:
+        try:
+            self.state_root = self.state_root.resolve()
+            self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except (OSError, ProviderLocalRuntimeRefused) as exc:
+            self._mark_construction_failure("state root", exc)
+            return False
+        self._clear_construction_failure("state root")
+        return True
+
+    def _initialize_filesystem_components(
+        self,
+        stages: set[_ConstructionStage] | None = None,
+    ) -> None:
+        selected = set(_FILESYSTEM_CONSTRUCTION_STAGES) if stages is None else set(stages)
+        if "operational config" in selected:
+            try:
+                self.config = self._load_config()
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self._mark_construction_failure("operational config", exc)
+            else:
+                self._clear_construction_failure("operational config")
+        if "process lease store" in selected:
+            try:
+                process_leases = ProviderProcessLeaseStore(
+                    self.state_root / "daemon" / "provider-process-leases",
+                    control_root=self.state_root / "c",
+                    diagnostic_sink=self._record_observation_diagnostic,
+                    acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
+                    recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
+                    recovery_aggregate_timeout_seconds=(
+                        self.config.recovery_aggregate_timeout_seconds
+                    ),
+                    secret_writer_join_timeout_seconds=(
+                        self.config.secret_writer_join_timeout_seconds
+                    ),
+                    stdin_writer_join_timeout_seconds=(
+                        self.config.stdin_writer_join_timeout_seconds
+                    ),
+                    descendant_tracker_join_timeout_seconds=(
+                        self.config.descendant_tracker_join_timeout_seconds
+                    ),
+                    descendant_tracker_poll_interval_seconds=(
+                        self.config.descendant_tracker_poll_interval_seconds
+                    ),
+                    process_group_termination_timeout_seconds=(
+                        self.config.process_group_termination_timeout_seconds
+                    ),
+                )
+                process_leases.paths("sha256:" + "0" * 64)
+                self.process_leases = process_leases
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self.environment_refusal = (
+                    exc
+                    if isinstance(exc, ProviderLocalRuntimeRefused)
+                    and exc.code == PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE
+                    else None
+                )
+                self._mark_construction_failure("process lease store", exc)
+            else:
+                self.environment_refusal = None
+                self._clear_construction_failure("process lease store")
+        if "secret store" in selected:
+            try:
+                secret_store = FileProviderSecretStore(
+                    self.state_root / "daemon" / "provider-secrets"
+                )
+                self.secret_store = secret_store
+                self.secret_resolvers = ProviderSecretResolverRegistry(
+                    (EnvironmentProviderSecretResolver(), secret_store)
+                )
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self._mark_construction_failure("secret store", exc)
+            else:
+                self._clear_construction_failure("secret store")
+        if "deployment" in selected:
+            try:
+                self.deployments = {
+                    item.deployment_digest: self._deployment(item)
+                    for item in self.config.deployments
+                }
+            except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self._mark_construction_failure("deployment", exc)
+            else:
+                self._clear_construction_failure("deployment")
+
+    def _record_observation_diagnostic(
+        self,
+        code: ProviderProcessFenceCodeV1,
+        message: str,
+    ) -> None:
+        """Retain bounded observation telemetry without changing lane availability."""
+
+        with self._lock:
+            self._observation_diagnostic_count += 1
+            self._last_observation_diagnostic = (code, message)
+            self._refresh_lane_status_locked()
+
+    def _observation_diagnostic_detail_locked(self) -> str | None:
+        if self._last_observation_diagnostic is None:
+            return None
+        _code, message = self._last_observation_diagnostic
+        retained = 0 if self.process_leases is None else len(self.process_leases.diagnostics)
+        return (
+            "observation_diagnostics: "
+            f"count={self._observation_diagnostic_count}; retained={retained}; last={message}"
+        )
+
+    def _reinitialize_failed_construction_stages_locked(self) -> None:
+        stages = {
+            cast(_ConstructionStage, stage)
+            for stage in self._construction_failures
+            if stage in {"state root", *_FILESYSTEM_CONSTRUCTION_STAGES}
+        }
+        stages.update(self._pending_construction_stages)
+        frontier = list(stages)
+        while frontier:
+            stage = frontier.pop()
+            for dependent in _CONSTRUCTION_STAGE_DEPENDENTS[stage]:
+                if dependent not in stages:
+                    stages.add(dependent)
+                    frontier.append(dependent)
+        if "state root" in stages:
+            if not self._initialize_state_root():
+                return
+            stages.remove("state root")
+        filesystem_stages = stages & set(_FILESYSTEM_CONSTRUCTION_STAGES)
+        if filesystem_stages:
+            self._initialize_filesystem_components(filesystem_stages)
+
+    def _mark_construction_failure(
+        self,
+        component: str,
+        exc: OSError | ProviderLocalRuntimeRefused,
+    ) -> None:
+        code = (
+            cast(ProviderLaneUnavailableCode, exc.code)
+            if isinstance(exc, ProviderLocalRuntimeRefused)
+            else "provider_process_lease_invalid"
+        )
+        message = f"Provider {component} is unavailable: {exc}"
+        with self._lock:
+            self._construction_failures[component] = (code, message)
+            self._pending_construction_stages.discard(cast(_ConstructionStage, component))
+            self._latest_failure = ("construction", component)
+            self._unavailable_failure_count += 1
+            self._rearm_required = True
+            self._refresh_lane_status_locked()
+
+    def _clear_construction_failure(self, component: _ConstructionStage) -> None:
+        with self._lock:
+            self._construction_failures.pop(component, None)
+            self._pending_construction_stages.discard(component)
+            self._refresh_lane_status_locked()
+
+    def mark_unavailable(
+        self,
+        code: ProviderLaneUnavailableCode | ProviderProcessFenceCodeV1,
+        message: str,
+        *,
+        retryable: bool = False,
+    ) -> None:
+        """Degrade only the Provider lane and preserve an operator-visible reason."""
+
+        with self._lock:
+            typed_code = code
+            if retryable:
+                self._recovery_failures[typed_code] = message
+                self._latest_failure = ("recovery", typed_code)
+            else:
+                key = f"manual:{typed_code}"
+                self._construction_failures[key] = (typed_code, message)
+                self._latest_failure = ("construction", key)
+            self._unavailable_failure_count += 1
+            self._rearm_required = self._rearm_required or retryable
+            self._refresh_lane_status_locked()
+
+    def _refresh_lane_status_locked(self) -> None:
+        inapplicable = _inapplicable_lane_status()
+        if inapplicable is not None:
+            # A lane this deployment cannot run has no health to report, and
+            # folding failures into one would describe a lane that broke.
+            self.unavailable_code = None
+            self.unavailable_reason = None
+            self._lane_status_snapshot = inapplicable
+            return
+        failures = [*self._construction_failures.values()]
+        failures.extend((code, message) for code, message in self._recovery_failures.items())
+        if not failures:
+            if self._rearm_required and self.unavailable_reason is not None:
+                return
+            self.unavailable_code = None
+            self.unavailable_reason = None
+            self._lane_status_snapshot = (
+                "available",
+                None,
+                self._observation_diagnostic_detail_locked(),
+            )
+            return
+        latest: tuple[ProviderLaneUnavailableCode, str] | None = None
+        if self._latest_failure is not None:
+            category, key = self._latest_failure
+            if category == "construction":
+                latest = self._construction_failures.get(key)
+            else:
+                typed_key = cast(ProviderLaneUnavailableCode, key)
+                message = self._recovery_failures.get(typed_key)
+                if message is not None:
+                    latest = (typed_key, message)
+        if latest is None:
+            latest = failures[-1]
+        code, message = latest
+        codes = ",".join(sorted({item[0] for item in failures}, key=str.encode))
+        self.unavailable_code = code
+        self.unavailable_reason = (
+            f"latest={code}: {message}; codes=[{codes}]; count={self._unavailable_failure_count}"
+        )
+        observation_detail = self._observation_diagnostic_detail_locked()
+        status_detail = self.unavailable_reason
+        if observation_detail is not None:
+            status_detail = f"{status_detail}; {observation_detail}"
+        self._lane_status_snapshot = ("unavailable", code, status_detail)
+
+    def recover_all(self) -> ProviderProcessRecoveryResultV1:
+        """Recover every persisted process fence before serving requests."""
+
+        with self._lock:
+            if self._in_flight:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_process_lease_invalid",
+                    "Provider process recovery cannot run while an invocation is in flight",
+                )
+            return self._recover_locked()
+
+    def recover_all_with_bound_fold(self) -> ProviderProcessRecoveryResultV1:
+        """Run startup recovery and its manager-owned fold under one lock."""
+
+        with self._lock:
+            if self._in_flight:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_process_lease_invalid",
+                    "Provider process recovery cannot run while an invocation is in flight",
+                )
+            result = self._recover_locked()
+            if self._fold_recovery_locked(result):
+                self._mark_available_locked()
+            elif self._rearm_required:
+                self._schedule_next_rearm_locked()
+            return result
+
+    def _recover_locked(self) -> ProviderProcessRecoveryResultV1:
+        if self.process_leases is None:
+            failure = ProviderProcessRecoveryFailureV1(
+                record_name="provider-process-leases",
+                invocation_id=None,
+                code="provider_process_lease_invalid",
+                message=self.unavailable_reason or "Provider process leases are unavailable",
+            )
+            return ProviderProcessRecoveryResultV1(
+                recovered=(),
+                removed=(),
+                could_not_clean=(failure,),
+            )
+        result = self.process_leases.recover_all(defer_completion_release=True)
+        for item in result.could_not_clean:
+            self.mark_unavailable(item.code, item.message, retryable=True)
+        return result
+
+    def _lazy_rearm_locked(self) -> None:
+        if not self._rearm_required or self._in_flight:
+            return
+        if time.monotonic() < self._next_rearm_after:
+            return
+        self._reinitialize_failed_construction_stages_locked()
+        result = self._recover_locked()
+        if not self._fold_recovery_locked(result):
+            self._schedule_next_rearm_locked()
+            return
+        self._mark_available_locked()
+        if self._rearm_required:
+            self._schedule_next_rearm_locked()
+
+    def _fold_recovery_locked(self, result: ProviderProcessRecoveryResultV1) -> bool:
+        needs_fold = bool(
+            result.completion_invocation_ids
+            or any(item.invocation_id is not None for item in result.could_not_clean)
+        )
+        if needs_fold:
+            if self._recovery_fold is None:
+                self.mark_unavailable(
+                    "provider_runtime_recovery_failed",
+                    "Provider recovery result has no manager-owned journal fold",
+                    retryable=True,
+                )
+                return False
+            dispositions = self._recovery_fold(result)
+            if "fold_failed" in dispositions.values():
+                return False
+        return not result.could_not_clean
+
+    def _mark_available_locked(self) -> None:
+        self._recovery_failures.clear()
+        self._rearm_required = bool(
+            self._construction_failures or self._pending_construction_stages
+        )
+        self._next_rearm_after = 0.0
+        if not self._rearm_required:
+            self._unavailable_failure_count = 0
+            self._latest_failure = None
+        self._refresh_lane_status_locked()
+
+    def _schedule_next_rearm_locked(self) -> None:
+        self._rearm_required = True
+        self._next_rearm_after = time.monotonic() + self.config.rearm_backoff_seconds
+
+    def bind_recovery_fold(
+        self,
+        fold: Callable[
+            [ProviderProcessRecoveryResultV1],
+            Mapping[str, ProviderRecoveryFoldDisposition],
+        ],
+    ) -> None:
+        """Bind the manager-owned governed-journal fold used by lazy re-arm."""
+
+        with self._lock:
+            self._recovery_fold = fold
+
+    def acknowledge_recovery(
+        self,
+        dispositions: Mapping[str, ProviderRecoveryFoldDisposition],
+    ) -> None:
+        """Release only fences the manager fold classified terminally."""
+
+        with self._lock:
+            refused = tuple(
+                sorted(
+                    (
+                        invocation_id
+                        for invocation_id, disposition in dispositions.items()
+                        if disposition == "fold_failed"
+                    ),
+                    key=str.encode,
+                )
+            )
+            invalid = tuple(
+                sorted(
+                    (
+                        invocation_id
+                        for invocation_id, disposition in dispositions.items()
+                        if disposition not in {"handled", "unclaimed", "fold_failed"}
+                    ),
+                    key=str.encode,
+                )
+            )
+            if refused or invalid:
+                invocation_ids = refused or invalid
+                raise ProviderLocalRuntimeRefused(
+                    "provider_runtime_recovery_failed",
+                    "Provider recovery acknowledgement requires a handled or unclaimed "
+                    f"fold disposition: {','.join(invocation_ids)}",
+                )
+            if self.process_leases is not None:
+                releasable = tuple(
+                    sorted(
+                        (
+                            invocation_id
+                            for invocation_id, disposition in dispositions.items()
+                            if disposition in {"handled", "unclaimed"}
+                        ),
+                        key=str.encode,
+                    )
+                )
+                self.process_leases.acknowledge_recovery(releasable)
+
+    def lane_status(
+        self,
+    ) -> tuple[
+        Literal["available", "unavailable", "not_applicable"],
+        ProviderLaneUnavailableCode | None,
+        str | None,
+    ]:
+        return self._lane_status_snapshot
+
+    def invoker_for(
+        self,
+        instance: PlaybillInstance,
+        *,
+        accepted_oid: str,
+        pins: Sequence[ArtifactPin] = (),
+    ) -> Any:
+        """An invoker for one run: only the builds its bindings pin.
+
+        ``pins`` are the run's build pins (its Line's bindings), so the invoker
+        reads one typed row per bound build and never every Provider (several
+        builds of one name can be live; each Line runs the builds it binds).
+        With no Provider pins it serves the core built-ins alone.
+        """
+
+        with self._lock:
+            self._lazy_rearm_locked()
+            if self.unavailable_reason is not None:
+                # Core built-ins run in-process and need none of what failed.
+                return BuiltinDispatchingInvoker(
+                    _UnavailableProviderRuntimeInvoker(refusal=self.lane_refusal())
+                )
+            assert self.process_leases is not None
+        selected = tuple(pin for pin in pins if pin.target.kind == "Provider")
+        providers = (
+            pinned_provider_catalogs(instance, instance.coordinate_for_oid(accepted_oid), selected)
+            if selected
+            else {}
+        )
+        invoker = ProviderLocalRuntimeInvoker(
+            deployments_by_digest=self.deployments,
+            accepted_providers_by_digest=providers,
+            secret_resolvers=self.secret_resolvers,
+            process_leases=self.process_leases,
+            driver=self.driver,
+        )
+        return BuiltinDispatchingInvoker(_OperatorBoundProviderRuntimeInvoker(self, invoker))
+
+    def admit_line_provider(
+        self,
+        accepted_provider: AcceptedProvider,
+        operation: DeclaredOperation,
+        implementation_digest: str,
+        *,
+        eligible_environment_pin_keys: tuple[str, ...],
+    ) -> VerifiedProviderBinding:
+        """Resolve one bound operation against operator-owned deployments.
+
+        A core built-in resolves to its constant in-process binding without a
+        deployment, and regardless of the subprocess lane's availability.
+        """
+
+        builtin = builtin_provider_binding(accepted_provider, operation, implementation_digest)
+        if builtin is not None:
+            return builtin
+        with self._lock:
+            self._lazy_rearm_locked()
+            if self.unavailable_reason is not None:
+                raise self.lane_refusal()
+            candidates = tuple(
+                deployment
+                for _digest, deployment in sorted(self.deployments.items())
+                if deployment.environment_pin_key in eligible_environment_pin_keys
+            )
+        last_refusal: ProviderLocalRuntimeRefused | None = None
+        for deployment in candidates:
+            try:
+                return self.driver.bind(
+                    accepted_provider,
+                    operation,
+                    implementation_digest,
+                    deployment,
+                ).binding
+            except ProviderLocalRuntimeRefused as exc:
+                last_refusal = exc
+        if last_refusal is not None:
+            raise last_refusal
+        raise ProviderLocalRuntimeRefused(
+            "no_compatible_artifact",
+            "No operator deployment matches the accepted Line environment closure.",
+        )
+
+    def lane_refusal(self) -> ProviderLocalRuntimeRefused:
+        """The refusal a Provider-backed operation carries while the lane is down.
+
+        The lane precondition (no private runtime directory) refuses as itself,
+        an operator-environment refusal naming its cause and repair; any other
+        failure refuses as ``provider_unavailable``. Both carry the lane reason.
+        """
+
+        with self._lock:
+            reason = {
+                "code": self.unavailable_code or "provider_runtime_recovery_failed",
+                "detail": self.unavailable_reason or "Provider process leases are unavailable",
+            }
+            environment = self.environment_refusal
+        if environment is not None:
+            return ProviderLocalRuntimeRefused(
+                environment.code,
+                environment.refusal_message,
+                details={"reason": reason},
+            )
+        return ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "Provider runtime is unavailable until operator recovery",
+            details={"reason": reason},
+        )
+
+    def _begin_invocation(self) -> None:
+        with self._lock:
+            self._lazy_rearm_locked()
+            if self.unavailable_reason is not None:
+                raise self.lane_refusal()
+            self._in_flight += 1
+
+    def _end_invocation(self) -> None:
+        with self._lock:
+            self._in_flight -= 1
+
+    def _load_config(self) -> ProviderRuntimeOperationalConfigV1:
+        path = self.state_root / PROVIDER_RUNTIME_CONFIG_PATH
+        if not path.exists():
+            return ProviderRuntimeOperationalConfigV1()
+        if path.is_symlink() or not path.is_file():
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid", "Provider runtime config is not a regular file"
+            )
+        try:
+            return ProviderRuntimeOperationalConfigV1.model_validate(json.loads(path.read_bytes()))
+        except (OSError, ValueError, ValidationError) as exc:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid", "Provider runtime config is malformed"
+            ) from exc
+
+    def register_deployment(self, deployment: ProviderDeploymentConfigV1) -> None:
+        """Publish prepared custody without replacing any older admitted deployment."""
+        refuse_write_while_previewing("provider runtime configuration")
+        path = self.state_root / PROVIDER_RUNTIME_CONFIG_PATH
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with self._lock, (path.parent / "provider-runtime.lock").open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                current = self._load_config()
+                deployments = {item.deployment_digest: item for item in current.deployments}
+                prior = deployments.get(deployment.deployment_digest)
+                upgrade = prior is not None and (
+                    prior.model_dump(exclude={"installation_verification"})
+                    == deployment.model_dump(exclude={"installation_verification"})
+                    and verification_format_upgrade(
+                        prior.installation_verification, deployment.installation_verification
+                    )
+                )
+                if prior is not None and prior != deployment and not upgrade:
+                    raise ProviderLocalRuntimeRefused(
+                        "environment_divergence",
+                        "installed deployment identity cannot be overwritten",
+                    )
+                deployments[deployment.deployment_digest] = deployment
+                updated = current.model_copy(
+                    update={"deployments": tuple(deployments[key] for key in sorted(deployments))}
+                )
+                fd, temporary = tempfile.mkstemp(prefix=".provider-runtime-", dir=path.parent)
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(updated.model_dump_json().encode())
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, path)
+                    directory = os.open(path.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(directory)
+                    finally:
+                        os.close(directory)
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+                self.config = updated
+                self.deployments[deployment.deployment_digest] = self._deployment(deployment)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def _deployment(self, item: ProviderDeploymentConfigV1) -> LocalProviderDeploymentV1:
+        def resolve(value: str) -> Path:
+            path = (self.state_root / value).resolve(strict=False)
+            if not path.is_relative_to(self.state_root):  # defensive after model validation
+                raise ProviderLocalRuntimeRefused(
+                    "provider_process_lease_invalid", "Provider deployment path escapes state root"
+                )
+            return path
+
+        return LocalProviderDeploymentV1(
+            deployment_digest=item.deployment_digest,
+            distribution_path=resolve(item.distribution_path),
+            lock_path=resolve(item.lock_path),
+            environment_path=resolve(item.environment_path),
+            environment_manifest_path=resolve(item.environment_manifest_path),
+            environment_pin_key=item.environment_pin_key,
+            interpreter_path=resolve(item.interpreter_path),
+            provider_runtime_version=item.provider_runtime_version,
+            installation_verification=item.installation_verification,
+        )
+
+
+class _OperatorBoundProviderRuntimeInvoker:
+    def __init__(self, operator: ProviderRuntimeOperator, delegate: Any) -> None:
+        self.operator = operator
+        self.delegate = delegate
+
+    def bind_provider(self, *, occurrence: object) -> object:
+        return self.delegate.bind_provider(occurrence=occurrence)
+
+    def invoke_provider(self, **kwargs: object) -> object:
+        self.operator._begin_invocation()
+        try:
+            return self.delegate.invoke_provider(**kwargs)
+        finally:
+            self.operator._end_invocation()
+
+
+class _UnavailableProviderRuntimeInvoker:
+    """Refusing invoker used when startup fences degrade the Provider lane."""
+
+    def __init__(self, *, refusal: ProviderLocalRuntimeRefused) -> None:
+        self.refusal = refusal
+
+    @property
+    def reason(self) -> object:
+        return self.refusal.details["reason"]
+
+    def _refuse(self) -> ProviderLocalRuntimeRefused:
+        return ProviderLocalRuntimeRefused(
+            self.refusal.code,
+            self.refusal.refusal_message,
+            details=dict(self.refusal.details),
+        )
+
+    def bind_provider(self, *, occurrence: object) -> object:
+        raise self._refuse()
+
+    def invoke_provider(self, **_kwargs: object) -> object:
+        raise self._refuse()
+
+
+__all__ = [
+    "PROVIDER_RUNTIME_CONFIG_PATH",
+    "ProviderDeploymentConfigV1",
+    "ProviderRuntimeOperationalConfigV1",
+    "ProviderRuntimeOperator",
+    "ProviderRecoveryFoldDisposition",
+]

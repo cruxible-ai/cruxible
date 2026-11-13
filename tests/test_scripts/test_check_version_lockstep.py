@@ -30,13 +30,12 @@ def _write_tree(
     core_version: str = "1.2.3",
     client_version: str = "1.2.3",
     pin: str | None = None,
-    manifest_version: str | None = None,
-    base_url: str | None = None,
+    listing_version: str | None = None,
+    listing_identifier: str = "cruxible",
+    core_module_version: str | None = None,
+    client_module_version: str | None = None,
 ) -> dict[str, Path]:
     pin = f"cruxible-client=={client_version}" if pin is None else pin
-    manifest_version = core_version if manifest_version is None else manifest_version
-    if base_url is None:
-        base_url = f"https://example.invalid/releases/download/v{core_version}/"
 
     core = tmp_path / "pyproject.toml"
     core.write_text(
@@ -51,12 +50,39 @@ def _write_tree(
         f'[project]\nname = "cruxible-client"\nversion = "{client_version}"\n',
         encoding="utf-8",
     )
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        json.dumps({"version": manifest_version, "base_url": base_url, "kits": {}}),
+    listing_version = core_version if listing_version is None else listing_version
+    server = tmp_path / "server.json"
+    server.write_text(
+        json.dumps(
+            {
+                "version": listing_version,
+                "packages": [
+                    {
+                        "registryType": "pypi",
+                        "identifier": listing_identifier,
+                        "version": listing_version,
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
-    return {"core": core, "client": client, "manifest": manifest}
+    core_init = tmp_path / "core__init__.py"
+    core_init.write_text(
+        f'"""Core."""\n\n__version__ = "{core_module_version or core_version}"\n',
+        encoding="utf-8",
+    )
+    client_init = tmp_path / "client__init__.py"
+    client_init.write_text(
+        f'__version__ = "{client_module_version or client_version}"\n', encoding="utf-8"
+    )
+    return {
+        "core": core,
+        "client": client,
+        "server": server,
+        "core_init": core_init,
+        "client_init": client_init,
+    }
 
 
 def _argv(paths: dict[str, Path], *extra: str) -> list[str]:
@@ -65,8 +91,12 @@ def _argv(paths: dict[str, Path], *extra: str) -> list[str]:
         str(paths["core"]),
         "--client-pyproject",
         str(paths["client"]),
-        "--manifest-path",
-        str(paths["manifest"]),
+        "--server-json",
+        str(paths["server"]),
+        "--core-init",
+        str(paths["core_init"]),
+        "--client-init",
+        str(paths["client_init"]),
         *extra,
     ]
 
@@ -116,22 +146,6 @@ def test_dependency_pin_not_exact_fails(tmp_path: Path, capsys: pytest.CaptureFi
     assert "found: cruxible-client>=1.2.3" in err
 
 
-def test_manifest_version_and_base_url_must_match(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    script = _load_script()
-    paths = _write_tree(
-        tmp_path,
-        manifest_version="1.2.2",
-        base_url="https://example.invalid/releases/download/v1.2.2/",
-    )
-
-    assert script.main(_argv(paths)) == 1
-    err = capsys.readouterr().err
-    assert "Kit manifest version '1.2.2' does not match 1.2.3" in err
-    assert "does not point at v1.2.3" in err
-
-
 def test_tag_mismatch_fails_only_when_a_tag_is_given(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -146,17 +160,6 @@ def test_tag_mismatch_fails_only_when_a_tag_is_given(
     assert "Tag v1.2.4 does not match package version 1.2.3" in capsys.readouterr().err
 
 
-def test_unreadable_inputs_error_rather_than_pass(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    script = _load_script()
-    paths = _write_tree(tmp_path)
-    paths["manifest"].unlink()
-
-    assert script.main(_argv(paths)) == 1
-    assert "could not read manifest" in capsys.readouterr().err
-
-
 def test_ci_parity_runs_the_lockstep_check() -> None:
     """Item 2's whole point: the gate script must actually invoke it."""
     parity = (_REPO_ROOT / "scripts" / "ci_parity.sh").read_text(encoding="utf-8")
@@ -166,3 +169,39 @@ def test_ci_parity_runs_the_lockstep_check() -> None:
 def test_publish_workflow_runs_the_same_script_with_the_tag() -> None:
     workflow = (_REPO_ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
     assert 'python scripts/check_version_lockstep.py --tag "$GITHUB_REF_NAME"' in workflow
+
+
+def test_registry_listing_behind_core_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = _load_script()
+    paths = _write_tree(tmp_path, listing_version="1.2.2")
+
+    assert script.main(_argv(paths)) == 1
+    err = capsys.readouterr().err
+    assert "server.json version 1.2.2 != cruxible 1.2.3" in err
+    assert "server.json package cruxible version 1.2.2 != cruxible 1.2.3" in err
+
+
+def test_registry_listing_must_launch_cruxible(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The stale listing named the compatibility stub, which was never published."""
+    script = _load_script()
+    paths = _write_tree(tmp_path, listing_identifier="cruxible-core")
+
+    assert script.main(_argv(paths)) == 1
+    assert "must list exactly one PyPI package, cruxible" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("package", ["core", "client"])
+def test_a_module_version_behind_its_package_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], package: str
+) -> None:
+    """Both ``__version__`` strings are release stamps too (the MCP server name shows core's)."""
+    script = _load_script()
+    paths = _write_tree(tmp_path, **{f"{package}_module_version": "1.2.2"})
+
+    assert script.main(_argv(paths)) == 1
+    module = "cruxible_core" if package == "core" else "cruxible_client"
+    assert f"{module}.__version__ 1.2.2 != package version 1.2.3" in capsys.readouterr().err

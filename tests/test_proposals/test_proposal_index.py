@@ -1,0 +1,953 @@
+"""Verified SQL proposal lookup replaces the independent review-note cache."""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalIntegrityError
+from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+from cruxible_core.proposals.proposal_notes import admission_bytes
+from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
+from tests.core_support._support import initialize_local
+from tests.support.evidence_files import remove_later
+from tests.test_proposals.test_grouped_proposal_notes import _submit as _submit_once
+
+
+def _submit(instance, name, **kwargs):
+    """Submit, then drain the workspace advertisement the submission queued.
+
+    The advertisement reads and repairs this index on its own thread. Left
+    running, it held the index's write lock while a test's foreign writer (or a
+    patched commit callback) ran, which then failed "database is locked" on a
+    loaded runner (CI run 38364444240).
+    """
+
+    submitted = _submit_once(instance, name, **kwargs)
+    instance.settled_workspace_advertisement()
+    return submitted
+
+
+def test_submit_drains_advertiser_holding_index_writer(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import closing
+
+    instance, _ = initialize_local(tmp_path)
+    owner = instance._accepted_history_index
+    writer_entered = threading.Event()
+    settle_entered = threading.Event()
+    release_writer = threading.Event()
+    reconcile = instance._reconcile_proposal_review_refs
+    settle = instance.settled_workspace_advertisement
+
+    def blocked_reconcile():
+        with owner._lock:
+            writer = owner._write_connection()
+            writer.execute("BEGIN IMMEDIATE")
+            try:
+                writer_entered.set()
+                assert release_writer.wait(30), "test did not release the advertiser"
+            finally:
+                writer.rollback()
+        reconcile()
+
+    def observed_settle():
+        settle_entered.set()
+        return settle()
+
+    monkeypatch.setattr(instance, "_reconcile_proposal_review_refs", blocked_reconcile)
+    monkeypatch.setattr(instance, "settled_workspace_advertisement", observed_settle)
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        submission = workers.submit(_submit, instance, "one")
+        try:
+            assert writer_entered.wait(30), "submission did not queue the advertiser"
+            assert settle_entered.wait(30), "submission did not drain the advertiser"
+            assert not submission.done()
+            # Prove this is a real SQLite writer, the historical flake's cause.
+            with closing(sqlite3.connect(owner.path, timeout=0)) as foreign:
+                with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+                    foreign.execute("BEGIN IMMEDIATE")
+        finally:
+            release_writer.set()
+        first = submission.result(timeout=30)
+
+    # Once _submit returns, the tests' foreign writers can run immediately.
+    with closing(sqlite3.connect(owner.path, timeout=0)) as foreign:
+        foreign.execute("BEGIN IMMEDIATE")
+        foreign.rollback()
+    assert (
+        instance.proposal_evidence().read_admission(first.admission.proposal_id) == first.admission
+    )
+
+
+def _oracle(instance):
+    # An unbound source store deliberately selects the independent cold verifier.
+    expected = build_proposal_note_oracle(
+        ProposalEvidenceStore(instance.proposal_evidence().root), instance._ledger
+    )
+    actual = instance.proposal_note_index()
+    for field in (
+        "admissions",
+        "evaluations",
+        "candidates",
+        "review_oids",
+        "proposal_ids_by_oid",
+        "proposal_ids_by_candidate",
+    ):
+        assert dict(getattr(actual, field)) == dict(getattr(expected, field))
+    for oid in expected.proposal_ids_by_oid:
+        assert actual.note_bytes(oid) == expected.note_bytes(oid)
+    return expected
+
+
+def test_warm_list_is_source_free_and_fixed_inspect_reads_only_selected(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "first")
+    index = instance.proposal_evidence().index
+    assert index is not None
+    measurements = []
+    for amount in (1, 5):
+        for number in range(amount):
+            _submit(
+                instance,
+                f"unrelated-{amount}-{number}",
+                timestamp=f"2026-08-11T12:30:{amount + number:02d}.000000Z",
+            )
+        service_list_playbill_proposals(instance)
+        # Submits schedule a background workspace advertisement that reads
+        # evidence; let it finish so only the list and inspect are measured.
+        instance.settled_workspace_advertisement()
+        reads = []
+        original = ProposalEvidenceStore.read_record_bytes
+
+        def counted(path):
+            reads.append(path)
+            return original(path)
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("warmed lookup must not enumerate evidence or rebuild")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "glob", forbidden)
+            patch.setattr(index, "_rebuild", forbidden)
+            patch.setattr(ProposalEvidenceStore, "read_record_bytes", staticmethod(counted))
+            listed = service_list_playbill_proposals(instance)
+            assert listed.entries
+            assert reads == []
+            service_inspect_playbill_proposal(instance, proposal_id=first.admission.proposal_id)
+        measurements.append(len(reads))
+        assert {p.parent.name for p in reads} == {"proposals", "evaluations"}
+        assert first.admission.proposal_id.removeprefix("sha256:") in reads[0].name
+    assert measurements == [2, 2]
+    _oracle(instance)
+
+
+@pytest.mark.parametrize("kind", ["proposals", "evaluations", "candidates"])
+def test_selected_same_size_restored_mtime_corruption_is_refused(tmp_path, kind):
+    instance, _ = initialize_local(tmp_path)
+    proposal = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    path = next(getattr(evidence, kind).glob("*.json"))
+    old = path.stat()
+    raw = path.read_bytes()
+    path.write_bytes(b"!" + raw[1:])
+    os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns))
+    with pytest.raises(ProposalIntegrityError):
+        service_inspect_playbill_proposal(instance, proposal_id=proposal.admission.proposal_id)
+    with pytest.raises(ProposalIntegrityError):
+        instance.proposal_note_index().note_bytes(proposal.admission.candidate_commit_oid)
+    path.write_bytes(raw)
+    _oracle(instance)
+
+
+def test_duplicate_evaluation_foreign_names_and_conflicting_admissions(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    evaluation = next(evidence.evaluations.glob("*.json"))
+    duplicate = evidence.evaluations / "foreign.json"
+    duplicate.write_bytes(evaluation.read_bytes())
+    with pytest.raises(ProposalIntegrityError, match="multiple evaluations"):
+        evidence.read_evaluation(first.admission.proposal_id)
+    remove_later(duplicate)
+    renamed = evidence.evaluations / "legacy.json"
+    evaluation.rename(renamed)
+    assert evidence.read_evaluation(first.admission.proposal_id) == first.evaluation
+    admission = evidence.proposals / "foreign.json"
+    admission.write_bytes(admission_bytes(first.admission))
+    assert len(service_list_playbill_proposals(instance).entries) == 1
+    _oracle(instance)
+    admission.write_bytes(
+        admission_bytes(first.admission.model_copy(update={"rationale": "conflict"}))
+    )
+    # Directory membership changed since the prior successful checkpoint only
+    # for the duplicate addition; explicit recovery diagnoses an in-place edit.
+    (evidence.root / ".proposal-source.json").unlink()
+    with pytest.raises(ProposalIntegrityError, match="conflicting admissions"):
+        evidence.read_admission(first.admission.proposal_id)
+
+
+def test_missing_evaluation_is_not_a_refused_list_entry(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    remove_later(next(evidence.evaluations.glob("*.json")))
+    entry = service_list_playbill_proposals(instance).entries[0]
+    assert entry.status == "incomplete"
+    assert entry.verdict is None
+    assert entry.incomplete_reasons == ("missing_evaluation",)
+    with pytest.raises(ProposalIntegrityError, match="exactly one"):
+        evidence.read_evaluation(first.admission.proposal_id)
+
+
+def test_source_write_crash_never_publishes_a_false_checkpoint(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    assert index is not None
+
+    index.rows(evidence)
+    finish = index._finish
+
+    def crash(*args):
+        pending = args[0]._pending_records
+        if pending and pending.get("admission"):
+            raise OSError("after evidence before index commit")
+        # Evaluation can synchronize the shared history owner before the
+        # publication begins. Interrupt only after the authoritative admission.
+        return finish(*args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(index, "_finish", crash)
+        with pytest.raises(OSError, match="before index commit"):
+            _submit(instance, "interrupted")
+    assert index._marker(evidence.root)["clean"] is False
+    # Source admission is the commit point even if derived publication crashed.
+    result = service_list_playbill_proposals(instance)
+    assert len(result.entries) == 1
+    assert index._marker(evidence.root)["clean"] is True
+    retried = _submit(instance, "interrupted")
+    assert retried.admission.proposal_id in {
+        item.proposal_id for item in service_list_playbill_proposals(instance).entries
+    }
+    assert (
+        evidence.read_admission(result.entries[0].proposal_id).proposal_id
+        == result.entries[0].proposal_id
+    )
+    _oracle(instance)
+
+
+def test_missing_checkpoint_and_deleted_sql_row_reconstruct_before_miss(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    assert index is not None
+    with sqlite3.connect(index.path) as connection:
+        connection.execute("DELETE FROM proposals")
+    assert evidence.read_admission(first.admission.proposal_id) == first.admission
+    (evidence.root / ".proposal-source.json").unlink()
+    assert evidence.read_evaluation(first.admission.proposal_id) == first.evaluation
+    _oracle(instance)
+
+
+@pytest.mark.parametrize("publisher", ("proposal", "history"))
+@pytest.mark.parametrize("attack", ("delete", "replace"))
+def test_commit_gap_never_certifies_foreign_rows_or_file(tmp_path, monkeypatch, publisher, attack):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    with instance.accepted_history_reader():
+        pass
+    # The submission queued a background workspace advertisement, which reads
+    # accepted history too: settled now, it cannot restore readiness between the
+    # invalidation below and the attacked read (and leave nothing to attack).
+    instance.settled_workspace_advertisement()
+    owner = instance._accepted_history_index
+    marker_before = index._marker(evidence.root)
+    field = "_connection" if publisher == "proposal" else "_writer"
+    component = index if publisher == "proposal" else owner
+    connection = getattr(component, field)
+    attacks: list[str] = []
+
+    class CommitGap:
+        def __getattr__(self, name):
+            return getattr(connection, name)
+
+        def commit(self):
+            connection.commit()
+            if attacks:
+                return
+            if attack == "delete":
+                with sqlite3.connect(index.path) as foreign:
+                    deleted = foreign.execute("DELETE FROM proposals").rowcount
+                assert deleted > 0, "the foreign writer deleted no row"
+            else:
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                replacement = index.path.with_suffix(".replacement")
+                with sqlite3.connect(replacement) as copied:
+                    connection.backup(copied)
+                    copied.execute("PRAGMA journal_mode=DELETE")
+                    copied.execute("DELETE FROM proposals")
+                copied.close()
+                before = index.path.stat().st_ino
+                os.replace(replacement, index.path)
+                assert index.path.stat().st_ino != before, "the file was not replaced"
+            attacks.append(attack)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(component, field, CommitGap())
+        if publisher == "history":
+            # Clean reads no longer commit. Exercise the actual repair publisher's
+            # commit gap by requiring it to revalidate its source-backed rows.
+            owner.invalidate()
+        with pytest.raises((ProjectionIntegrityError, sqlite3.DatabaseError)):
+            if publisher == "proposal":
+                evidence.write_evaluation(first.evaluation)
+            else:
+                with instance.accepted_history_reader():
+                    assert attacks, "the read took the clean path; no commit gap was attacked"
+                    pytest.fail("the foreign writer must refuse snapshot publication")
+    # The refusal answers the attack: the commit gap was reached and mutated.
+    assert attacks == [attack]
+    # No callback may certify the foreign row deletion as trusted local work.
+    marker = index._marker(evidence.root)
+    assert marker["clean"] is False or marker["database_stamp"] == marker_before["database_stamp"]
+    assert evidence.read_admission(first.admission.proposal_id) == first.admission
+
+
+def test_c_callback_uses_only_the_captured_commit_stamp(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    with instance.accepted_history_reader():
+        pass
+    before = index._file_stamp()
+    with sqlite3.connect(index.path) as connection:
+        connection.execute("UPDATE history_progress SET sequence=sequence")
+    after = index._file_stamp()
+    original_marker = index._marker
+
+    def marker_then_foreign_write(root):
+        marker = original_marker(root)
+        with sqlite3.connect(index.path) as foreign:
+            foreign.execute("DELETE FROM proposals")
+        return marker
+
+    with monkeypatch.context() as patch:
+        patch.setattr(index, "_marker", marker_then_foreign_write)
+        index.database_committed(before, after)
+    assert evidence.read_admission(first.admission.proposal_id) == first.admission
+
+
+def test_git_context_change_replaces_alias_and_keeps_submitted_group(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    old = dict(instance.proposal_note_index().review_oids)
+    instance._ledger._git(["config", "i18n.commitEncoding", "ISO-8859-1"])
+    notes = instance.proposal_note_index()
+    assert dict(notes.review_oids) != old
+    assert (
+        first.admission.proposal_id
+        in notes.proposal_ids_by_oid[first.admission.candidate_commit_oid]
+    )
+    for oid in old.values():
+        if oid != first.admission.candidate_commit_oid:
+            assert oid not in notes.proposal_ids_by_oid
+    _oracle(instance)
+
+
+def test_reader_yield_holds_no_write_transaction_or_acquisition_lock(tmp_path):
+    import threading
+
+    instance, _ = initialize_local(tmp_path)
+    _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    assert index is not None
+    completed = threading.Event()
+
+    def writer():
+        with index._lock:
+            with sqlite3.connect(index.path, timeout=1) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "UPDATE proposal_progress SET verified_sequence=verified_sequence"
+                )
+        completed.set()
+
+    with index.read(evidence):
+        thread = threading.Thread(target=writer)
+        thread.start()
+        assert completed.wait(3)
+    thread.join()
+
+
+def test_split_source_completion_refreshes_missing_evaluation_and_candidate(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    proposal = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    remove_later(next(evidence.evaluations.glob("*.json")))
+    remove_later(next(evidence.candidates.glob("*.json")))
+    assert service_list_playbill_proposals(instance).entries[0].incomplete_reasons == (
+        "missing_evaluation",
+    )
+    evidence.write_evaluation(proposal.evaluation)
+    assert evidence.read_evaluation(proposal.admission.proposal_id) == proposal.evaluation
+    assert service_list_playbill_proposals(instance).entries[0].incomplete_reasons == (
+        "missing_candidate",
+    )
+    evidence.write_candidate(proposal.candidate)
+    assert service_list_playbill_proposals(instance).entries[0].status == "open"
+    _oracle(instance)
+
+
+def test_graceful_process_exit_reuses_exact_checkpoint_on_restart(tmp_path):
+    import subprocess
+    import sys
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    for number in range(3):
+        _submit(instance, f"unrelated-{number}", timestamp=f"2026-08-11T12:31:0{number}.000000Z")
+    # Let the queued advisory review-ref refresh finish: it reads the index and
+    # could otherwise rewrite the checkpoint after the close below.
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    code = """
+import sys
+from pathlib import Path
+from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+owner = AcceptedHistoryIndex(Path(sys.argv[1]))
+evidence = ProposalEvidenceStore(Path(sys.argv[2]), index=owner.proposals)
+def no_rebuild(*args, **kwargs):
+    raise AssertionError('graceful restart must reuse the verified source inventory')
+owner.proposals._rebuild = no_rebuild
+assert evidence.read_admission(sys.argv[3]).proposal_id == sys.argv[3]
+assert evidence.read_evaluation(sys.argv[3]).proposal_id == sys.argv[3]
+# Normal process exit runs the single owner's finalizer.
+"""
+    for _ in range(2):
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                code,
+                str(index_path),
+                str(evidence.root),
+                first.admission.proposal_id,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_close_never_blesses_foreign_database_or_source_corruption(tmp_path):
+    from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    # The submission queues an advisory review-ref refresh that reads (and would
+    # repair) this index; let it finish so the foreign delete below is the last
+    # write the reopened owner sees.
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    with sqlite3.connect(index_path) as connection:
+        connection.execute("DELETE FROM proposals")
+    instance._accepted_history_index.close()
+    owner = AcceptedHistoryIndex(index_path)
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 1
+    evaluation = next(evidence.evaluations.glob("*.json"))
+    raw = evaluation.read_bytes()
+    evaluation.write_bytes(b"!" + raw[1:])
+    owner.close()
+    latest = AcceptedHistoryIndex(index_path)
+    with pytest.raises(ProposalIntegrityError):
+        ProposalEvidenceStore(evidence.root, index=latest.proposals).read_evaluation(
+            first.admission.proposal_id
+        )
+    latest.close()
+
+
+def test_verified_orphan_inventory_cannot_hide_later_duplicate_evaluation(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    proposal = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    next(evidence.proposals.glob("*.json")).unlink()
+    # An evaluation survives loss of its admission as an explicit partial row.
+    assert service_list_playbill_proposals(instance).entries[0].incomplete_reasons == (
+        "missing_admission",
+    )
+    competing = proposal.evaluation.model_copy(
+        update={"evaluated_at": "2026-08-11T12:31:00.000000Z"}
+    )
+    with pytest.raises(ProposalIntegrityError, match="multiple evaluations"):
+        evidence.write_evaluation(competing)
+    assert len(tuple(evidence.evaluations.glob("*.json"))) == 1
+    evidence.write_evaluation(proposal.evaluation)
+    evidence.write_admission(proposal.admission)
+    assert (
+        service_list_playbill_proposals(instance).entries[0].proposal_id
+        == proposal.admission.proposal_id
+    )
+    assert evidence.index.locate(evidence, proposal.admission.proposal_id)["admission_path"]
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("resolved orphan must permit bounded future writes")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(evidence.index, "_rebuild", forbidden)
+        evidence.write_evaluation(proposal.evaluation)
+
+
+def test_another_process_publishes_selected_withdrawal_without_stale_absence(tmp_path):
+    import subprocess
+    import sys
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    assert evidence.read_withdrawal(first.admission.proposal_id) is None
+    code = """
+import sys
+from pathlib import Path
+from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+from cruxible_core.ledger.git import GitLedger
+from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
+owner = AcceptedHistoryIndex(Path(sys.argv[1]))
+ledger = GitLedger(Path(sys.argv[3]), signing_key_path=Path('unused'),
+                   allowed_signers_path=Path('unused'))
+evidence = ProposalEvidenceStore(Path(sys.argv[2]), index=owner.proposals, transport=ledger)
+evidence.write_withdrawal(ProposalWithdrawalRecord(
+    proposal_id=sys.argv[4], actor_id='owner', reason='other writer',
+    withdrawn_at='2026-08-11T12:40:00.000000Z'))
+"""
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(evidence.index.path),
+            str(evidence.root),
+            str(instance._ledger.path),
+            first.admission.proposal_id,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert evidence.read_withdrawal(first.admission.proposal_id).reason == "other writer"
+    assert service_list_playbill_proposals(instance).entries[0].terminal_reason == "withdrawn"
+    _oracle(instance)
+
+
+@pytest.mark.parametrize("replace_file", [False, True])
+def test_close_does_not_certify_mutation_after_exclusive_lock_release(tmp_path, replace_file):
+    from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    owner = instance._accepted_history_index
+    replacement = tmp_path / "replacement.sqlite3"
+    if replace_file:
+        from contextlib import closing
+
+        with (
+            closing(sqlite3.connect(owner.path)) as source,
+            closing(sqlite3.connect(replacement)) as target,
+        ):
+            source.backup(target)
+            target.execute("DELETE FROM proposals")
+            target.commit()
+
+    class MutateAfterClose:
+        def __init__(self, connection):
+            self.connection = connection
+            self.done = False
+
+        def execute(self, *args):
+            return self.connection.execute(*args)
+
+        def commit(self):
+            self.connection.commit()
+
+        def close(self):
+            self.connection.close()
+            if not self.done:
+                self.done = True
+                if replace_file:
+                    os.replace(replacement, owner.path)
+                else:
+                    with sqlite3.connect(owner.path) as changed:
+                        changed.execute("DELETE FROM proposals")
+
+    owner._connections[-1] = MutateAfterClose(owner._connections[-1])
+    owner.close()
+    restarted = AcceptedHistoryIndex(owner.path)
+    fresh = ProposalEvidenceStore(
+        evidence.root, index=restarted.proposals, transport=instance._ledger
+    )
+    assert fresh.read_admission(first.admission.proposal_id) == first.admission
+    assert restarted.proposals.reconstructions == 1
+    restarted.close()
+
+
+def test_interrupted_existing_records_are_fsynced_before_checkpoint_commit(tmp_path, monkeypatch):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    paths = [next(evidence.evaluations.glob("*.json")), next(evidence.proposals.glob("*.json"))]
+    for path in paths:
+        # Model a writer stopped after full write but before its fsync.
+        path.write_bytes(path.read_bytes())
+    index._write_marker(evidence.root, dict(index._marker(evidence.root), clean=False))
+    expected = [(path.stat().st_ino, path.parent.stat().st_ino) for path in paths]
+    flushed = []
+    fsync = os.fsync
+    finish = index._finish
+
+    def recorded_fsync(descriptor):
+        flushed.append(os.fstat(descriptor).st_ino)
+        fsync(descriptor)
+
+    def checked_finish(*args):
+        for file_inode, directory_inode in expected:
+            assert file_inode in flushed
+            assert directory_inode in flushed
+            assert flushed.index(file_inode) < flushed.index(directory_inode)
+        return finish(*args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", recorded_fsync)
+        patch.setattr(index, "_finish", checked_finish)
+        with evidence.publication():
+            evidence.write_evaluation(first.evaluation)
+            evidence.write_admission(first.admission)
+    assert index._marker(evidence.root)["clean"] is True
+
+
+def test_existing_evidence_retry_refuses_symlink_even_with_identical_bytes(tmp_path):
+    from cruxible_core.proposals.proposal_evidence import _exclusive_canonical_write
+
+    target = tmp_path / "target.json"
+    target.write_bytes(b"{}\n")
+    path = tmp_path / "source.json"
+    path.symlink_to(target)
+    with pytest.raises(ProposalIntegrityError):
+        _exclusive_canonical_write(path, b"{}\n")
+
+
+@pytest.mark.parametrize("reader", ["cold", "indexed", "rebuild"])
+def test_admission_identity_is_verified_by_every_evidence_reader(tmp_path, reader):
+    instance, _ = initialize_local(tmp_path)
+    proposal = _submit(instance, "one")
+    evidence = instance.proposal_evidence()
+    record = proposal.admission.model_copy(
+        update={"source_compilation_digest": "sha256:" + "42" * 32}
+    )
+    path = evidence.proposals / (record.proposal_id.removeprefix("sha256:") + ".json")
+    path.write_bytes(admission_bytes(record))
+    if reader == "cold":
+        evidence = ProposalEvidenceStore(evidence.root)
+    elif reader == "rebuild":
+        (evidence.root / ".proposal-source.json").unlink()
+    with pytest.raises(ProposalIntegrityError):
+        evidence.read_admission(record.proposal_id)
+
+
+def test_cold_admission_reader_rejects_valid_record_under_another_id(tmp_path):
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    second = _submit(instance, "two", timestamp="2026-08-11T12:30:01.000000Z")
+    store = ProposalEvidenceStore(instance.proposal_evidence().root)
+    path = store.proposals / (second.admission.proposal_id[7:] + ".json")
+    path.write_bytes(admission_bytes(first.admission))
+    with pytest.raises(ProposalIntegrityError, match="another admission"):
+        store.read_admission(second.admission.proposal_id)
+
+
+def _accept_document(instance, owner, name: str, second: int):
+    from cruxible_core.service.authoring.documents import service_propose_playbill_document
+    from tests.test_proposals.test_proposal_readmit import _accept, _shell
+
+    body = instance.store_document_body(f"{name}\n".encode())
+    proposal = service_propose_playbill_document(
+        instance,
+        shell=_shell(name, body.digest, title=name.title()),
+        actor_id="owner",
+        proposal_name=f"settled-{name}",
+        timestamp=f"2026-08-24T17:00:{second:02d}.000000Z",
+    )
+    _accept(instance, owner, proposal)
+    return proposal
+
+
+@pytest.mark.parametrize("statement_cached", [False, True], ids=["prepare", "cached"])
+def test_open_candidate_enumeration_does_not_grow_with_accepted_history(
+    tmp_path, monkeypatch, statement_cached, record_property
+):
+    import cruxible_core.service.proposals.proposals as proposals_module
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from tests.core_support._support import every_moved_base_overlaps
+
+    every_moved_base_overlaps(monkeypatch)
+    instance, owner = initialize_local(tmp_path)
+    steps: list[int] = []
+    enumerate_open = proposals_module._open_candidates
+
+    def counted(connection, *args, **kwargs):  # type: ignore[no-untyped-def]
+        executed = [0]
+        authorizations = []
+
+        def authorize(*action):
+            authorizations.append(action)
+            return sqlite3.SQLITE_OK
+
+        def tick() -> int:
+            executed[0] += 1
+            return 0
+
+        # Changing the authorizer expires prepared statements on this pooled
+        # connection. SQLite 3.41+ can call the progress handler during prepare,
+        # so comparing a first preparation with a later cache hit counts
+        # different work. Exercise both states at each history size, including
+        # preparation in the cold case rather than allowing extra VM steps.
+        connection.set_authorizer(authorize)
+        try:
+            if statement_cached:
+                enumerate_open(connection, *args, **kwargs)
+            authorizations.clear()
+            connection.set_progress_handler(tick, 1)
+            try:
+                rows = enumerate_open(connection, *args, **kwargs)
+            finally:
+                connection.set_progress_handler(None, 0)
+            # The authorizer runs during preparation, proving the measured
+            # calls really used the requested cache state.
+            assert bool(authorizations) is not statement_cached
+            steps.append(executed[0])
+            return rows
+        finally:
+            connection.set_authorizer(None)
+
+    monkeypatch.setattr(proposals_module, "_open_candidates", counted)
+    stale = _submit(instance, "left-behind")
+    measured = []
+    settled = 0
+    for amount in (1, 6):
+        while settled < amount:
+            _accept_document(instance, owner, f"doc-{settled}", settled)
+            settled += 1
+        head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        (found,) = proposals_module.stale_unreadmitted_proposals(instance, head)
+        assert found.proposal_id == stale.admission.proposal_id
+        measured.append(steps[-1])
+    # Settled candidates leave the open locator: five more accepted proposals
+    # add no SQLite work to enumerating the one still open.
+    record_property("open_candidate_vm_steps", measured)
+    assert measured[0] == measured[1]
+
+
+def test_an_older_coordinate_counts_candidates_settled_after_it(tmp_path):
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
+
+    instance, owner = initialize_local(tmp_path)
+    _accept_document(instance, owner, "first", 0)
+    older = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    _accept_document(instance, owner, "second", 1)
+    third = _accept_document(instance, owner, "third", 2)
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    assert stale_unreadmitted_proposals(instance, head) == ()
+    # A bound read synchronized history, and each settled candidate with it.
+    index = instance.proposal_evidence().index
+    assert index is not None
+    rows = sorted(index.rows(instance.proposal_evidence()), key=lambda row: row["admitted_at_us"])
+    assert [row["accepted_sequence"] for row in rows] == [1, 2, 3]
+    # At the older coordinate the third candidate was not yet settled, and its
+    # parent is not that coordinate's root: it reads exactly as history then did.
+    assert [item.proposal_id for item in stale_unreadmitted_proposals(instance, older)] == [
+        third.proposal.admission.proposal_id
+    ]
+
+
+def test_a_pre_acceptance_index_is_reconstructed_on_the_current_schema(tmp_path):
+    import json
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        working_file_stamp,
+    )
+    from cruxible_core.indexes.proposals import proposal_index
+
+    instance, owner = initialize_local(tmp_path)
+    settled = _accept_document(instance, owner, "settled", 0)
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    index_path = evidence.index.path
+    with instance.accepted_history_reader():
+        pass
+    instance._accepted_history_index.close()
+    with sqlite3.connect(index_path) as connection:
+        connection.execute("DROP TABLE proposals")
+        connection.executescript(proposal_index._PRE_ACCEPTANCE_SCHEMA_SQL)
+    # A checkpoint that still certifies the file: only the schema is behind.
+    marker_path = evidence.root / ".proposal-source.json"
+    marker = json.loads(marker_path.read_bytes())
+    marker["database_stamp"] = list(working_file_stamp(index_path))
+    marker_path.write_text(json.dumps(marker))
+
+    owner_index = AcceptedHistoryIndex(index_path)
+    reopened = ProposalEvidenceStore(evidence.root, index=owner_index.proposals)
+    proposal_id = settled.proposal.admission.proposal_id
+    assert reopened.read_admission(proposal_id).proposal_id == proposal_id
+    with sqlite3.connect(index_path) as connection:
+        assert proposal_index._schema_rows(connection) == proposal_index._EXPECTED_SCHEMA
+        assert connection.execute(
+            "SELECT accepted_sequence FROM proposals WHERE proposal_id=?", (proposal_id,)
+        ).fetchone() == (1,)
+    owner_index.close()
+
+
+def test_a_restarted_reader_carries_its_clean_checkpoint_across_history_commits(tmp_path):
+    """A clean snapshot after a restart seeds the checkpoint (perf E3).
+
+    History-only commits to the shared file then carry it forward, so the next
+    proposal read is a clean snapshot again instead of re-reading every
+    admission, evaluation and withdrawal record.
+    """
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        commit_working_write,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    owner = AcceptedHistoryIndex(index_path)
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    for _ in range(2):
+        # A history-only transaction, as an accepted generation's sync commits one.
+        with owner._lock:
+            writer = owner._write_connection()
+            writer.execute("BEGIN IMMEDIATE")
+            before = owner._file_stamp()
+            # A real page change the proposal rows do not see.
+            writer.execute("CREATE TABLE IF NOT EXISTS scratch_history_commit (n INTEGER)")
+            writer.execute("DROP TABLE scratch_history_commit")
+            after = commit_working_write(writer, owner._file_stamp, before)
+            assert after != before
+            owner.proposals.database_committed(before, after)
+            writer.rollback()
+        assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()
+
+
+def test_a_preview_names_the_root_so_a_later_history_commit_keeps_the_checkpoint(tmp_path):
+    """A preview's evidence store binds the root without writing; the next commit carries.
+
+    A restarted process whose first proposal access was a dry run (detached
+    reads), followed by a write whose history sync moves the shared file before
+    any proposal read, keeps its clean checkpoint (perf E3).
+    """
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        commit_working_write,
+        detached_history_reads,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    owner = AcceptedHistoryIndex(index_path)
+    marker = (evidence.root / ".proposal-source.json").read_bytes()
+    with detached_history_reads():
+        ProposalEvidenceStore(evidence.root, index=owner.proposals, transport=instance._ledger)
+    assert (evidence.root / ".proposal-source.json").read_bytes() == marker
+    with owner._lock:
+        writer = owner._write_connection()
+        writer.execute("BEGIN IMMEDIATE")
+        before = owner._file_stamp()
+        writer.execute("CREATE TABLE IF NOT EXISTS scratch_history_commit (n INTEGER)")
+        writer.execute("DROP TABLE scratch_history_commit")
+        after = commit_working_write(writer, owner._file_stamp, before)
+        assert after != before
+        owner.proposals.database_committed(before, after)
+        writer.rollback()
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()
+
+
+def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_path):
+    """A restart's history sync, before any proposal read, leaves the checkpoint clean (E3).
+
+    The history-only commits a process makes before its proposal component
+    exists are replayed onto the source checkpoint once the evidence root is
+    known, so the first proposal read is still a clean snapshot.
+    """
+
+    from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    # Without a recorded readiness the restart re-derives (and here rewrites)
+    # every generation: a history-only transaction that moves the file.
+    index_path.with_name(index_path.name + ".verified.json").unlink()
+    owner = AcceptedHistoryIndex(index_path)
+    before = owner._file_stamp()
+    with owner.read(instance._recovered, lambda _n, _prior: []):
+        pass
+    assert owner._file_stamp() != before and owner._unannounced_commits
+    from cruxible_core.indexes.history.history_index import detached_history_reads
+
+    marker = (evidence.root / ".proposal-source.json").read_bytes()
+    with detached_history_reads():
+        # A preview writes no source checkpoint: the replay waits for a writer.
+        ProposalEvidenceStore(evidence.root, index=owner.proposals, transport=instance._ledger)
+    assert (evidence.root / ".proposal-source.json").read_bytes() == marker
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()

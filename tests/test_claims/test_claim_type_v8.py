@@ -1,0 +1,157 @@
+"""A ClaimType's canonical form: how its literal values are stored and compared."""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.contracts.canonical_forms import (
+    CANONICAL_TRANSFORMS,
+    canonicalize_literal,
+    canonicalize_text,
+    is_canonical_literal,
+    validate_canonical_form,
+)
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_digest,
+    claim_type_path,
+    effective_canonical_form,
+    evaluate_claim_type_law,
+    parse_claim_type,
+    render_claim_type,
+)
+from tests.support.claim_types import claim_type_changes
+from tests.test_claims.test_claim_type_v7 import v7
+
+PATH = claim_type_path("project.work_item.status")
+
+
+def v8(form: tuple[str, ...] = ("trim", "casefold"), **update: object) -> ClaimType:
+    if "value_type" in update:
+        update = claim_type_changes(value_type=update.pop("value_type"), **update)
+    base = v7().model_dump(mode="python")
+    base.update(canonical_form=form)
+    base.update(update)
+    return ClaimType.model_validate(base)
+
+
+# --- the transforms ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("transform", "raw", "canonical"),
+    [
+        ("nfc", "é", "é"),
+        ("nfkc", "ﬁle", "file"),
+        ("trim", " \t a b \n", "a b"),
+        ("collapse_whitespace", " a \t\n b ", " a b "),
+        ("casefold", "Straße", "strasse"),
+        ("upper", "straße", "STRASSE"),
+        ("strip_punctuation", "CVE-2024.1 (x)", "CVE20241 x"),
+    ],
+)
+def test_each_transform_is_the_rule_it_names(transform: str, raw: str, canonical: str) -> None:
+    assert canonicalize_text(raw, (transform,)) == canonical
+
+
+def test_the_canonical_value_is_the_fixed_point_so_canonicalizing_is_idempotent() -> None:
+    form = ("trim", "strip_punctuation")
+    # One pass leaves the space a stripped trailing period exposed; the fixed point does not.
+    assert canonicalize_text(" a .", form) == "a"
+    for raw in (" a .", "⑴ X", "e.́"):
+        for order in (form, ("strip_punctuation", "nfkc", "trim"), ("casefold", "nfc")):
+            once = canonicalize_text(raw, order)
+            assert canonicalize_text(once, order) == once
+
+
+def test_a_literal_is_canonical_member_by_member_and_only_text_changes() -> None:
+    form = ("trim", "casefold")
+    value = {"Name": " A ", "items": [" B", 3, True, None], "n": 2}
+    assert canonicalize_literal(value, form) == {
+        "Name": "a",
+        "items": ["b", 3, True, None],
+        "n": 2,
+    }
+    assert canonicalize_literal(" A ", ()) == " A "
+    assert is_canonical_literal("a", form) and not is_canonical_literal(" a", form)
+
+
+def test_a_form_refuses_unknown_repeated_and_conflicting_transforms() -> None:
+    assert len(CANONICAL_TRANSFORMS) == 7
+    assert validate_canonical_form(("nfc", "trim", "casefold")) == ("nfc", "trim", "casefold")
+    for bad, needle in (
+        (("lower",), "unknown canonical transform"),
+        (("trim", "trim"), "at most once"),
+        (("nfc", "nfkc"), "at most one of nfc and nfkc"),
+        (("casefold", "upper"), "at most one of casefold and upper"),
+    ):
+        with pytest.raises(ValueError, match=needle):
+            validate_canonical_form(bad)
+
+
+# --- the format ------------------------------------------------------------------
+
+
+def test_a_claim_type_always_states_its_form_and_digests_it() -> None:
+    plain = v7()
+    assert plain.model_dump(mode="json")["canonical_form"] == []
+    assert effective_canonical_form(plain) == ()
+    claim_type = v8()
+    assert claim_type.model_dump(mode="json")["canonical_form"] == ["trim", "casefold"]
+    assert parse_claim_type(render_claim_type(claim_type), path=PATH) == claim_type
+    assert claim_type_digest(claim_type) != claim_type_digest(plain)
+    assert effective_canonical_form(claim_type) == ("trim", "casefold")
+    assert v8(()) == plain
+    with pytest.raises(ValidationError, match="canonical_form"):
+        v8(None)  # type: ignore[arg-type]
+
+
+def test_a_form_applies_only_to_literals_and_every_enum_member_is_already_canonical() -> None:
+    with pytest.raises(ValidationError, match="only to literal ClaimTypes"):
+        v8(
+            value={"kind": "subject", "subject_kinds": ["project.work_item"]},
+            member_descriptions=(),
+        )
+    with pytest.raises(ValidationError, match="'Done' is not in the declared canonical form"):
+        v8(value_type={"enum": ["Done", "ready"], "type": "string"})
+    assert v8(("upper",), value_type={"enum": ["DONE"], "type": "string"})
+
+
+def test_the_claim_type_law_accepts_a_form_under_the_requirement_rules() -> None:
+    from cruxible_client.contracts.claim_types import CLAIM_TYPE_FORMAT
+    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, CLAIM_TYPE_LAW
+
+    accepted = evaluate_claim_type_law(v8(), path=PATH, predecessor=None)
+    assert accepted.verdict == "accepted", accepted
+    resolution = v7().resolution_policy.model_copy(update={"required_basis_kinds": ("direct",)})
+    refused = evaluate_claim_type_law(
+        v8(evidence_requirement="none", resolution_policy=resolution), path=PATH, predecessor=None
+    )
+    assert refused.verdict == "refused"
+    assert refused.diagnostics[0].code == "cruxible.claim_type.evidence_requirement_unsatisfiable"
+    installed = ACCEPTANCE_LAWS.resolve_member(artifact_tag=CLAIM_TYPE_FORMAT)
+    assert installed.coordinate == CLAIM_TYPE_LAW
+
+
+# --- lowering authored input -----------------------------------------------------
+
+
+def test_lowering_states_a_form_and_an_edit_keeps_it_unless_named() -> None:
+    from tests.test_claims.test_claim_type_v7 import _input, _lower
+
+    plain = _lower(_input(canonical_form=None), {})
+    assert plain.canonical_form == ()
+    formed = _lower(_input(canonical_form=["nfc", "trim"]), {})
+    assert formed.canonical_form == ("nfc", "trim")
+    path = claim_type_path(formed.predicate)
+    tree = {path: render_claim_type(formed)}
+    kept = _lower(_input(), tree)
+    assert kept.canonical_form == ("nfc", "trim")
+    cleared = _lower(_input(canonical_form=None), tree)
+    assert cleared.canonical_form == ()
+    moved = _lower(_input(canonical_form=["casefold"]), tree)
+    assert moved.canonical_form == ("casefold",)
+    assert moved.lifecycle.predecessor_digest == claim_type_digest(formed).tagged
+    # Over a ClaimType without a form, leaving the field out keeps none.
+    assert _lower(_input(), {path: render_claim_type(plain)}).canonical_form == ()

@@ -1,0 +1,734 @@
+"""A Line's ``post_inbox`` terminal: items posted as they are, with their own evidence."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.procedures.artifacts import procedure_path
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
+from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    ProjectNode,
+)
+from cruxible_client.contracts.shapes import Contract
+from cruxible_core.exhaust.line_inbox import LineInboxStore
+from cruxible_core.runtime.instance import PlaybillInstance
+from tests.support.inbox import NOTE, contract_members, inbox_node
+from tests.support.procedures import MAX_WALL_CLOCK, procedure_members
+from tests.test_procedures.test_manual_line_runs import manual_run
+from tests.test_procedures.test_procedure_source_runs import (
+    NOW,
+    SOURCE_ALIAS,
+    _accept_more,
+    _served_line,
+    _world,
+)
+
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
+ROWS = [{"cve": "CVE-2026-0001"}, {"cve": "CVE-2026-0002"}, {"cve": "CVE-2026-0003"}]
+#: The extract that reads the feed's rows out of the workspace read's exact bytes.
+ROWS_ALIAS = "feed_rows"
+
+
+def _row_contract() -> Any:
+    from cruxible_client.contracts.shapes import validate_contract
+
+    return validate_contract({"name": "test.inbox-row", "version": 1, "fields": {"cve": "string"}})
+
+
+def _rows_layout(instance: Any) -> dict[str, bytes]:
+    """The world kind's successor declaring the feed's ``rows`` record set (``/rows/*``)."""
+
+    from cruxible_client.contracts.shapes import contract_digest
+    from tests.core_support._light_capture_support import record_contract
+    from tests.support.layouts import grown_kind_members, record_set
+
+    row = _row_contract()
+    pinned = {"name": row.name, "version": row.version, "digest": contract_digest(row).tagged}
+    return grown_kind_members(
+        instance,
+        record_contract().identity.name,
+        {"rows": record_set(at="/rows/*", row=pinned, fields={"cve": {"at": "cve"}})},
+    )
+
+
+def _rows_extract(*, next_node: str) -> LayoutExtractNode:
+    from tests.support.layouts import thin_node
+
+    return thin_node(
+        node_id="rows",
+        capture=f"$steps.{SOURCE_ALIAS}.capture",
+        records="rows",
+        as_=ROWS_ALIAS,
+        next=next_node,
+        row=_row_contract(),
+    )
+
+
+#: A one-item post of the shaped severity.
+SEVERITY = Contract.model_validate(
+    {"name": "test.inbox-severity", "version": 1, "fields": {"severity": {"type": "string"}}}
+)
+#: A row keyed by its note: rows with one note are one inbox item.
+KEYED = Contract.model_validate(
+    {
+        "name": "test.inbox-keyed",
+        "version": 1,
+        "fields": {"cve": {"type": "string"}, "note": {"type": "string"}},
+    }
+)
+#: Each extracted row posted as one item.
+EACH_ROW: dict[str, Any] = {
+    "for_each": f"$steps.{ROWS_ALIAS}.records",
+    "fields": {"cve": "$item.fields.cve"},
+}
+
+
+def _feed(extra: Any = None) -> bytes:
+    return canonical_bytes({"severity": "high", "rows": ROWS, **(extra or {})})
+
+
+def inbox_world(  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+    *,
+    max_items: int | None = None,
+    post: dict[str, Any] | None = None,
+    contract: Contract | None = None,
+    extra: Any = None,
+):
+    """The workspace read, its rows extracted, ending in a post_inbox, behind an observe Line."""
+
+    from cruxible_client.contracts.shapes import contract_path, render_contract
+
+    instance, owner, procedure, root, policy = _world(
+        tmp_path, accept_procedure=False, contents=_feed(extra)
+    )
+    source, shape = procedure.definition.nodes
+    assert isinstance(source, CallNode) and isinstance(shape, ProjectNode)
+    definition = procedure.definition.model_copy(
+        update={
+            "nodes": (
+                source.model_copy(update={"next": "rows"}),
+                _rows_extract(next_node=shape.node_id),
+                shape.model_copy(update={"next": "inbox"}),
+                inbox_node(
+                    contract=_row_contract() if contract is None else contract,
+                    **(EACH_ROW if post is None else post),
+                    **({} if max_items is None else {"max_items": max_items}),
+                ),
+            ),
+            "terminal_capability": 1,
+        }
+    )
+    with_inbox = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    line = _served_line(instance, with_inbox, policy)
+    row = _row_contract()
+    _accept_more(
+        instance,
+        owner,
+        {
+            contract_path(row.name, row.version): render_contract(row),
+            **_rows_layout(instance),
+            **contract_members(NOTE, SEVERITY, KEYED),
+            **procedure_members(with_inbox),
+            line_spec_path(line.identity.name): render_line_spec(line),
+        },
+        name="inbox-line",
+    )
+    return instance, root, line
+
+
+def _entries(instance: PlaybillInstance) -> list[Any]:
+    store = LineInboxStore(instance)
+    entries, _cursor = store.page(line=None, status=None, limit=50, cursor=None)
+    return [store.get(entry.envelope.item_id) for entry in entries]
+
+
+def test_a_line_posts_each_item_as_is_with_its_capture_attached(tmp_path: Path) -> None:
+    instance, root, line = inbox_world(tmp_path)
+    head = instance.accepted_coordinate()
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert (egress.kind, egress.verdict, egress.required_authority) == (
+        "post_inbox",
+        "delivered",
+        "observe",
+    )
+    assert egress.inbox_truncation is None
+    (capture,) = {item.capture_digest for item in state.source_observations}
+    entries = _entries(instance)
+    assert sorted(item.payload["cve"] for item in entries) == [row["cve"] for row in ROWS]
+    for item in entries:
+        envelope = item.envelope
+        assert envelope.status == "unread"
+        assert envelope.line == line.identity.qualified
+        assert envelope.node_id == "inbox"
+        assert envelope.occurrences == 1
+        assert envelope.first_sighting == envelope.last_sighting
+        assert envelope.last_sighting.run_id == state.run_id
+        assert envelope.last_sighting.source_capture_digests == (capture,)
+    assert {child.egress_digest for child in egress.children} == {
+        item.envelope.dedupe_key for item in entries
+    }
+    assert LineInboxStore(instance).unread_by_line() == ((line.identity.qualified, 3),)
+    # The run counts its postings: a "succeeded" run that left inbox items.
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (3, True)
+    assert (state.counts.inbox_new, state.counts.inbox_seen_again) == (3, 0)
+    # Posting is inert: the accepted head did not move.
+    assert instance.accepted_coordinate() == head
+
+
+def test_a_run_posts_at_most_its_cap_and_reports_the_truncation(tmp_path: Path) -> None:
+    instance, root, line = inbox_world(tmp_path, max_items=2)
+    head = instance.accepted_coordinate()
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.inbox_truncation is not None
+    assert egress.inbox_truncation.model_dump(exclude={"tag"}) == {
+        "cap": 2,
+        "cap_source": "declared",
+        "selected": 3,
+        "posted": 2,
+    }
+    assert len(egress.children) == 2
+    posted = sorted((item.payload for item in _entries(instance)), key=lambda row: row["cve"])
+    assert posted == ROWS[:2]
+    assert instance.accepted_coordinate() == head
+    assert state.counts is not None
+    assert (
+        state.counts.inbox,
+        state.counts.inbox_new,
+        state.counts.inbox_unposted,
+        state.counts.needs_attention,
+    ) == (2, 2, 1, True)
+
+
+def test_a_capped_run_that_only_sees_items_again_still_needs_attention(tmp_path: Path) -> None:
+    """Nothing posted the item the cap cut, so it may be new: the cut keeps the flag."""
+
+    from cruxible_core.cli.commands.playbill import _counts_text
+
+    instance, root, line = inbox_world(tmp_path, max_items=2)
+    manual_run(instance, line, at=NOW, root=root)
+
+    again = manual_run(instance, line, at=NOW + timedelta(hours=1), root=root)
+
+    assert again.status == "succeeded", again.terminal
+    assert again.counts is not None
+    assert (
+        again.counts.inbox,
+        again.counts.inbox_new,
+        again.counts.inbox_seen_again,
+        again.counts.inbox_unposted,
+        again.counts.needs_attention,
+    ) == (2, 0, 2, 1, True)
+    assert _counts_text(again.counts).endswith("; inbox 0 new, 2 seen again, 1 over the cap")
+
+
+def test_fields_without_for_each_are_one_item(tmp_path: Path) -> None:
+    instance, root, line = inbox_world(
+        tmp_path, post={"fields": {"severity": "$steps.result.severity"}}, contract=SEVERITY
+    )
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (entry,) = _entries(instance)
+    assert entry.payload == {"severity": _feed().decode()}
+
+
+def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
+    tmp_path: Path,
+) -> None:
+    """Each tick reads its own Capture; the same rows are the same items, seen again."""
+
+    instance, root, line = inbox_world(tmp_path)
+    hours = 4
+
+    states = [
+        manual_run(instance, line, at=NOW + timedelta(hours=hour), root=root)
+        for hour in range(hours)
+    ]
+
+    assert all(state.status == "succeeded" for state in states)
+    entries = _entries(instance)
+    assert sorted(item.payload["cve"] for item in entries) == [row["cve"] for row in ROWS]
+    captures = [
+        next(iter({item.capture_digest for item in state.source_observations})) for state in states
+    ]
+    assert len(set(captures)) == hours  # new evidence every hour
+    for item in entries:
+        envelope = item.envelope
+        assert envelope.occurrences == hours
+        assert envelope.first_sighting.run_id == states[0].run_id
+        assert [sighting.source_capture_digests for sighting in envelope.recent_sightings] == [
+            (capture,) for capture in reversed(captures)
+        ]
+    assert LineInboxStore(instance).unread_by_line() == ((line.identity.qualified, len(ROWS)),)
+
+
+def test_an_identical_second_run_counts_re_sightings_and_needs_no_attention(
+    tmp_path: Path,
+) -> None:
+    """The second run's posts all land on items already there: nothing new to judge."""
+
+    from cruxible_core.cli.commands.playbill import _counts_text
+
+    instance, root, line = inbox_world(tmp_path)
+    first = manual_run(instance, line, at=NOW, root=root)
+
+    second = manual_run(instance, line, at=NOW + timedelta(hours=1), root=root)
+
+    assert first.counts is not None and second.counts is not None
+    assert (first.counts.inbox_new, first.counts.inbox_seen_again) == (3, 0)
+    assert first.counts.needs_attention
+    assert (
+        second.counts.inbox,
+        second.counts.inbox_new,
+        second.counts.inbox_seen_again,
+        second.counts.needs_attention,
+    ) == (3, 0, 3, False)
+    assert _counts_text(second.counts).endswith("; inbox 0 new, 3 seen again")
+    assert _counts_text(first.counts).endswith("; inbox 3 new")
+    assert LineInboxStore(instance).posted_by_run(second.run_id) == (3, 0)
+
+
+def test_a_run_with_one_new_row_among_re_sightings_needs_attention(tmp_path: Path) -> None:
+    from tests.test_procedures.test_procedure_source_runs import RELATIVE_PATH
+
+    instance, root, line = inbox_world(tmp_path)
+    manual_run(instance, line, at=NOW, root=root)
+    (root / RELATIVE_PATH).write_bytes(_feed({"rows": [*ROWS, {"cve": "CVE-2026-0004"}]}))
+
+    mixed = manual_run(instance, line, at=NOW + timedelta(hours=1), root=root)
+
+    assert mixed.status == "succeeded", mixed.terminal
+    assert mixed.counts is not None
+    assert (
+        mixed.counts.inbox,
+        mixed.counts.inbox_new,
+        mixed.counts.inbox_seen_again,
+        mixed.counts.needs_attention,
+    ) == (4, 1, 3, True)
+
+
+def test_the_same_item_again_keeps_its_disposition(tmp_path: Path) -> None:
+    """An item no Capture backs, posted by two runs: one item, seen twice, decided once."""
+
+    from cruxible_client.contracts.line_inbox import InboxDismissed
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from tests.test_procedures.test_procedure_source_runs import _actor
+
+    instance, root, line = inbox_world(
+        tmp_path, post={"fields": {"note": "check the feed"}}, contract=NOTE
+    )
+    first = manual_run(instance, line, at=NOW, root=root)
+    (entry,) = _entries(instance)
+    assert entry.envelope.last_sighting.source_capture_digests == ()
+    store = LineInboxStore(instance)
+    dismissed = InboxDismissed(actor_id="owner", decided_at=NOW, reason="seen it")
+    store.record_disposition(
+        entry.envelope.item_id,
+        dismissed,
+        actor=_actor(instance),
+        now=NOW,
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+
+    second = manual_run(instance, line, at=NOW + timedelta(seconds=1), root=root)
+
+    assert first.status == second.status == "succeeded"
+    (entry,) = _entries(instance)
+    envelope = entry.envelope
+    assert (envelope.status, envelope.occurrences, envelope.recurred_since_disposition) == (
+        "dismissed",
+        2,
+        1,
+    )
+    assert envelope.disposition == dismissed
+    assert (envelope.first_sighting.run_id, envelope.last_sighting.run_id) == (
+        first.run_id,
+        second.run_id,
+    )
+
+
+# --- typed items: their Contract, their for_each, their dedupe_key (F13) -----------
+
+
+def test_a_for_each_over_no_records_posts_nothing(tmp_path: Path) -> None:
+    instance, root, line = inbox_world(tmp_path, extra={"rows": []})
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    assert _entries(instance) == []
+    assert state.counts is not None and state.counts.inbox == 0
+
+
+def test_an_item_outside_its_contract_refuses_and_posts_nothing(tmp_path: Path) -> None:
+    instance, root, line = inbox_world(
+        tmp_path, post={"fields": {"note": "$steps.result.severity", "extra": 1}}, contract=NOTE
+    )
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "inbox_item_invalid"  # type: ignore[union-attr]
+    assert state.terminal.details == {"field": "fields", "reason": "contract_refused"}  # type: ignore[union-attr]
+    assert _entries(instance) == []
+
+
+def test_a_dedupe_key_makes_its_fields_the_items_identity(tmp_path: Path) -> None:
+    """Rows that share the keyed field post once; a later run whose payload changed
+    under the same key is a sighting of the same item, not new work."""
+
+    from tests.test_procedures.test_procedure_source_runs import RELATIVE_PATH
+
+    keyed = {
+        "for_each": f"$steps.{ROWS_ALIAS}.records",
+        "fields": {"cve": "$item.fields.cve", "note": "review"},
+        "dedupe_key": ["note"],
+    }
+    instance, root, line = inbox_world(tmp_path, post=keyed, contract=KEYED)
+
+    first = manual_run(instance, line, at=NOW, root=root)
+
+    assert first.status == "succeeded", first.terminal
+    (entry,) = _entries(instance)
+    assert entry.envelope.occurrences == 1
+    assert entry.payload["cve"] == "CVE-2026-0001"
+    (root / RELATIVE_PATH).write_bytes(_feed({"rows": [{"cve": "CVE-2026-0009"}]}))
+
+    second = manual_run(instance, line, at=NOW + timedelta(seconds=1), root=root)
+
+    assert second.status == "succeeded", second.terminal
+    (entry,) = _entries(instance)
+    assert entry.envelope.occurrences == 2
+    assert entry.payload["cve"] == "CVE-2026-0001"  # the first sighting's payload
+
+
+# --- an explicit fan-out must resolve to a list (review F-005) --------------------
+
+
+@pytest.mark.parametrize(
+    ("reference", "reason"),
+    [
+        (f"$steps.{ROWS_ALIAS}.absent", "items_unresolved"),
+        (f"$steps.{ROWS_ALIAS}.complete", "items_not_a_list"),
+        ("$steps.result.severity", "items_not_a_list"),
+        (f"$steps.{ROWS_ALIAS}.header", "items_not_a_list"),
+    ],
+    ids=["absent", "bool", "string", "object"],
+)
+def test_an_explicit_fan_out_that_is_not_a_list_refuses_typed(  # type: ignore[no-untyped-def]
+    tmp_path: Path, reference, reason
+) -> None:
+    instance, root, line = inbox_world(
+        tmp_path, post={"for_each": reference, "fields": {"cve": "$item.fields.cve"}}
+    )
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "inbox_item_invalid"  # type: ignore[union-attr]
+    assert state.terminal.details == {"field": "for_each", "reason": reason}  # type: ignore[union-attr]
+    assert _entries(instance) == []
+
+
+# --- inbox bytes are bounded before anything is posted (review F-003) -------------
+
+
+def test_an_item_over_the_byte_bound_refuses_and_posts_nothing(tmp_path: Path) -> None:
+    from cruxible_client.contracts.line_inbox import INBOX_ITEM_MAX_BYTES
+
+    big = "x" * INBOX_ITEM_MAX_BYTES  # its canonical JSON adds the record around it
+    instance, root, line = inbox_world(tmp_path, post={"fields": {"note": big}}, contract=NOTE)
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "inbox_item_over_budget"  # type: ignore[union-attr]
+    assert state.terminal.details["bound"] == "item"  # type: ignore[union-attr]
+    assert state.terminal.details["child_index"] == 0  # type: ignore[union-attr]
+    assert _entries(instance) == []
+
+
+def test_an_item_just_under_the_byte_bound_posts(tmp_path: Path) -> None:
+    from cruxible_client.contracts.line_inbox import INBOX_ITEM_MAX_BYTES
+
+    fits = "x" * (INBOX_ITEM_MAX_BYTES - len(canonical_bytes({"note": ""})))
+    instance, root, line = inbox_world(tmp_path, post={"fields": {"note": fits}}, contract=NOTE)
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (entry,) = _entries(instance)
+    assert entry.envelope.payload_bytes == INBOX_ITEM_MAX_BYTES
+
+
+def _accept_sdk_input(instance: PlaybillInstance, owner: Any, payload: Any) -> None:
+    """Accept one SDK-built authoring payload through the coordinator, as any surface does."""
+
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_submit_playbill_approval,
+    )
+    from tests.test_ledger.test_activation import _sign
+
+    actor = AuthenticatedActor(actor_id="owner")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    compiled = coordinator.compile(
+        actor=actor, payload=payload, canonical_timestamp="2026-09-12T11:40:00.000000Z"
+    )
+    assert compiled.verdict == "passed", compiled.frontier
+    intent = coordinator.list_pending(actor=actor).intents[0]
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    approval = _sign(
+        owner, submitted.status.candidate_digest, instance.accepted_coordinate().semantic_root
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
+    )
+
+
+def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Path) -> None:
+    """Sequence(..., Extract, PostInbox) lowers to the same graph a Line posts from."""
+
+    from cruxible_client.authoring.procedures import ProcedureLimits, Sequence, field
+    from cruxible_client.authoring.sdk import Cruxible
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_client.contracts.shapes import contract_digest, contract_path, render_contract
+    from tests.core_support._light_capture_support import record_contract as capture_contract
+    from tests.support.procedures import project
+    from tests.test_procedures.test_procedure_source_runs import _source_request
+
+    instance, owner, procedure, root, policy = _world(
+        tmp_path, accept_procedure=False, contents=_feed()
+    )
+    row = _row_contract()
+    _accept_more(
+        instance,
+        owner,
+        {contract_path(row.name, row.version): render_contract(row), **_rows_layout(instance)},
+        name="row",
+    )
+    plan = Sequence(
+        "sdk-inbox",
+        input={},
+        output={"severity": "string"},
+        hard_caps=ProcedureLimits(
+            wall_clock=f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
+            provider_calls=4,
+            capture_bytes=131_072,
+            items=200,
+            repeat_attempts=1,
+        ),
+        slots=dict(procedure.definition.slots),
+    )
+    source = plan.call(
+        SOURCE_ALIAS,
+        slot="read",
+        input=_source_request(instance, root).model_dump(mode="json"),
+        captures={"capture": capture_contract().identity.name},
+    )
+    rows = plan.extract(
+        ROWS_ALIAS,
+        capture=source["capture"],
+        records="rows",
+    )
+    project(plan, "result", fields={"severity": source.ref("content", "text")})
+    plan.inbox(
+        f"{row.name}@{row.version}",
+        for_each=rows["records"],
+        fields={"cve": field("cve")},
+        id="inbox",
+    )
+    preview = plan.preview()
+    assert preview.ready_for_prepare, preview.errors
+    assert preview.terminals == ("inbox",)
+    assert preview.authority == "observe"
+    plan.build()
+
+    _accept_sdk_input(instance, owner, Cruxible.procedure(object(), definition=plan).payload)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    accepted = parse_procedure(tree[procedure_path("sdk-inbox")], path=procedure_path("sdk-inbox"))
+    assert accepted.definition.model_dump(mode="json", by_alias=True)["nodes"][-1] == {
+        "kind": "post_inbox",
+        "node_id": "inbox",
+        "contract": {
+            "name": row.name,
+            "version": row.version,
+            "digest": contract_digest(row).tagged,
+        },
+        "for_each": f"$steps.{ROWS_ALIAS}.records",
+        "fields": {"cve": "$item.fields.cve"},
+    }
+    line = _served_line(instance, accepted, policy)
+    _accept_more(
+        instance,
+        owner,
+        {line_spec_path(line.identity.name): render_line_spec(line)},
+        name="sdk-inbox-line",
+    )
+
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert (egress.kind, egress.verdict) == ("post_inbox", "delivered")
+    assert sorted(item.payload["cve"] for item in _entries(instance)) == [
+        row["cve"] for row in ROWS
+    ]
+
+
+def test_an_unreadable_inbox_count_keeps_the_journaled_posts_and_needs_attention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the count lookup fails: the run's post_inbox summaries still prove 3 posts."""
+
+    import sqlite3
+
+    instance, root, line = inbox_world(tmp_path)
+
+    def unreadable(self: Any, run_id: str) -> tuple[int, int | None]:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(LineInboxStore, "posted_by_run", unreadable)
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (3, True)
+    # The journal proves the posts, not which were new.
+    assert (state.counts.inbox_new, state.counts.inbox_seen_again) == (None, None)
+
+
+def test_a_line_run_that_posts_nothing_counts_zero_without_opening_the_inbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No post_inbox terminal and no findings: the journal proves 0; the store stays shut."""
+
+    from tests.test_procedures.test_procedure_source_runs import _line_world
+
+    instance, root, line = _line_world(tmp_path)
+
+    def opened(self: Any, run_id: str) -> tuple[int, int | None]:
+        raise AssertionError("a run with no posting point opened the inbox store")
+
+    monkeypatch.setattr(LineInboxStore, "posted_by_run", opened)
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert state.status == "succeeded", state.terminal
+    assert state.findings_count == 0
+    assert all(item.kind != "post_inbox" for item in state.terminal_egress)
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (0, False)
+
+
+@pytest.mark.parametrize(
+    ("kinds", "findings_count", "code", "consults"),
+    [
+        ((), 0, None, False),
+        (("claims",), 0, None, False),
+        (("post_inbox",), 0, None, True),
+        ((), 2, None, True),
+        # A failure that can fall between a post and its record reads the store.
+        ((), 0, "unexpected_exception", True),
+        ((), 0, "journal_append_failed", True),
+        ((), 0, "journal_conflict", True),
+        ((), 0, "journal_integrity_error", True),
+        ((), 0, "terminal_egress_unverified", True),
+        ((), 0, "terminal_egress_recovered", True),
+        ((), 0, "run_record_invalid", True),
+        # A provider fence fails before any terminal: the journal stands.
+        ((), 0, "provider_process_lease_invalid", False),
+        ((), 0, "wall_clock_exhausted", False),
+    ],
+)
+def test_only_a_run_whose_journal_leaves_room_for_a_post_reads_the_inbox_count(
+    kinds: tuple[str, ...], findings_count: int, code: str | None, consults: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.procedures import procedure_runs
+
+    assert (
+        procedure_runs._run_may_have_posted(  # noqa: SLF001
+            [SimpleNamespace(kind=kind) for kind in kinds],  # type: ignore[misc]
+            findings_count=findings_count,
+            terminal=None if code is None else SimpleNamespace(code=code),  # type: ignore[arg-type]
+        )
+        is consults
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ("JournalIntegrityError", "journal_integrity_error"),
+        ("JournalConflictError", "journal_conflict"),
+        ("JournalError", "journal_append_failed"),
+    ],
+)
+def test_posts_whose_terminal_record_fails_to_append_still_count_and_need_attention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: str, code: str
+) -> None:
+    """The items are posted, then the run journal refuses their ``terminal_egress`` record.
+
+    Nothing the run journaled names a post, so the count comes from the inbox
+    store because the run ended in a code that can fall between a post and its
+    record.
+    """
+
+    from cruxible_client.contracts import errors as contract_errors
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    instance, root, line = inbox_world(tmp_path)
+    original = LocalJournalBackend.append
+    refused: list[str] = []
+
+    def refuse_terminal_record(self: Any, draft: Any, **kwargs: Any) -> Any:
+        if draft.event_kind == "terminal_egress" and not refused:
+            refused.append(draft.event_kind)
+            raise getattr(contract_errors, error)("terminal record refused after the post")
+        return original(self, draft, **kwargs)
+
+    monkeypatch.setattr(LocalJournalBackend, "append", refuse_terminal_record)
+    state = manual_run(instance, line, at=NOW, root=root)
+
+    assert refused == ["terminal_egress"]
+    assert state.terminal is not None and state.terminal.code == code  # type: ignore[union-attr]
+    assert state.findings_count == 0 and state.terminal_egress == ()
+    assert LineInboxStore(instance).posted_by_run(state.run_id) == (3, 3)
+    assert state.counts is not None
+    assert (state.counts.inbox, state.counts.needs_attention) == (3, True)

@@ -6,25 +6,79 @@ import hashlib
 import hmac
 import secrets
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
-from cruxible_core.config.auth_managed import LOCAL_OPERATOR_ACTOR_ID
+from cruxible_client.contracts.change_control import StateCoordinate
+from cruxible_client.contracts.primitives import new_id
+from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.runtime_credentials import (
+    RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS,
+)
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_core.errors import (
-    AuthenticationError,
-    ConfigError,
+    BootstrapClaimRefusedError,
     InstanceNotFoundError,
+    PrincipalRefusedError,
     RuntimeCredentialNotFoundError,
 )
-from cruxible_core.primitives import new_id
 from cruxible_core.runtime.permissions import PermissionMode
-from cruxible_core.server.config import get_server_state_dir
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
-from cruxible_core.temporal import format_datetime, utc_now
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 _TOKEN_PREFIX = "crt"
 _TOKEN_SECRET_BYTES = 32
+
+
+#: Where the per-secret claim table is renamed while it is rebuilt per host.
+_STRANDED_CLAIMS_TABLE = "runtime_bootstrap_claims_per_secret"
+
+#: The columns a credential's state coordinate covers: everything that names,
+#: authorizes or ends it.
+_CREDENTIAL_STATE_COLUMNS = (
+    "credential_id",
+    "instance_id",
+    "principal_id",
+    "label",
+    "permission_mode",
+    "token_hash",
+    "created_at",
+    "created_by",
+    "revoked_at",
+)
+
+#: Called with the state a change is about to write over, inside the write's
+#: own transaction: R12's pin check (`StateChange.observe`).
+StateObserver = Callable[[StateCoordinate], None]
+
+
+def credential_state(credential_id: str, row: sqlite3.Row | None) -> StateCoordinate:
+    """The state coordinate of one credential (its whole stored row)."""
+
+    state = None if row is None else {name: row[name] for name in _CREDENTIAL_STATE_COLUMNS}
+    return StateCoordinate.of(f"runtime_credential:{credential_id}", state)
+
+
+def _credential_set_state(
+    conn: sqlite3.Connection, instance_id: str, *, principal_id: str | None, scope: str
+) -> StateCoordinate:
+    """The state coordinate of the credentials a mint or recovery adds to."""
+
+    rows = conn.execute(
+        """
+        SELECT credential_id, permission_mode, principal_id, revoked_at
+        FROM runtime_credentials
+        WHERE instance_id = ? AND (? IS NULL OR principal_id IS ?)
+        ORDER BY credential_id
+        """,
+        (instance_id, principal_id, principal_id),
+    ).fetchall()
+    return StateCoordinate.of(
+        f"runtime_credentials:{instance_id}/{scope}", [list(row) for row in rows]
+    )
 
 
 @dataclass(frozen=True)
@@ -39,6 +93,10 @@ class RuntimeCredentialRecord:
     created_at: str
     created_by: str | None = None
     revoked_at: str | None = None
+    # The principal this credential acts as; the label is a description only.
+    # None for an unbound operator credential (bootstrap claim, local recovery,
+    # or any row minted before this column existed): transport authority only.
+    principal_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,14 +113,6 @@ class RuntimeCredentialRecoveryBusyError(RuntimeError):
 
 class RuntimeCredentialRecoveryError(RuntimeError):
     """Raised when offline credential recovery cannot safely target an instance."""
-
-
-def _validate_credential_label(label: str) -> None:
-    if label.strip() == LOCAL_OPERATOR_ACTOR_ID:
-        raise ConfigError(
-            "Credential label 'operator' is reserved for the auth-off local "
-            "operator identity and cannot be minted."
-        )
 
 
 def _hash_token(token: str) -> str:
@@ -89,6 +139,15 @@ def _validate_governed_instance_id(instance_id: str) -> None:
     record = get_registry().get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise InstanceNotFoundError(instance_id)
+
+
+def _proof_replayed() -> PrincipalRefusedError:
+    return PrincipalRefusedError(
+        "runtime_credential.principal_proof_replayed",
+        "this signed consent already minted a credential; repair: sign a fresh "
+        "one with `cruxible credential mint --principal-id ID --key-dir DIR`",
+        repair=RepairOperation(operation="credential.mint"),
+    )
 
 
 class RuntimeCredentialStore:
@@ -121,6 +180,7 @@ class RuntimeCredentialStore:
                 )
                 """
             )
+            self._ensure_principal_column_conn(conn)
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_runtime_credentials_instance
@@ -129,14 +189,25 @@ class RuntimeCredentialStore:
             )
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS runtime_bootstrap_claims (
-                    bootstrap_secret_hash TEXT PRIMARY KEY,
-                    instance_id TEXT NOT NULL,
-                    credential_id TEXT NOT NULL UNIQUE,
-                    claimed_at TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS runtime_credential_proofs (
+                    proof_digest TEXT PRIMARY KEY,
+                    credential_id TEXT NOT NULL,
+                    used_at TEXT NOT NULL
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_bootstrap_claims (
+                    bootstrap_secret_hash TEXT NOT NULL,
+                    instance_id TEXT NOT NULL,
+                    credential_id TEXT NOT NULL UNIQUE,
+                    claimed_at TEXT NOT NULL,
+                    PRIMARY KEY (bootstrap_secret_hash, instance_id)
+                )
+                """
+            )
+            self._ensure_bootstrap_claims_per_host_conn(conn)
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_runtime_bootstrap_claims_instance
@@ -162,6 +233,7 @@ class RuntimeCredentialStore:
         label: str,
         permission_mode: PermissionMode = PermissionMode.ADMIN,
         created_by: str | None = None,
+        principal_id: str | None = None,
     ) -> CreatedRuntimeCredential:
         """Prepare an instance-scoped credential without committing it."""
         _validate_governed_instance_id(instance_id)
@@ -170,6 +242,7 @@ class RuntimeCredentialStore:
             label=label,
             permission_mode=permission_mode,
             created_by=created_by,
+            principal_id=principal_id,
         )
 
     def commit_prepared_credential(
@@ -177,16 +250,35 @@ class RuntimeCredentialStore:
         created: CreatedRuntimeCredential,
         *,
         reason: str = "runtime_credential_created",
+        proof_digest: str | None = None,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
-        """Commit a prepared credential after caller-side materialization succeeds."""
+        """Commit a prepared credential after caller-side materialization succeeds.
+
+        ``proof_digest`` names the principal's signed consent this credential
+        consumed; recording it in the same transaction makes that consent
+        single-use. ``observe`` sees the state the mint adds to
+        (`mint_state`), inside that transaction.
+        """
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(created.record.instance_id)
-        with self._connect() as conn:
-            self._mark_auth_required_conn(
-                conn,
-                updated_at=created.record.created_at,
-                reason=reason,
-            )
-            self._insert_credential_conn(conn, created.record)
+        try:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if observe is not None:
+                    observe(self.mint_state_conn(conn, created.record))
+                if proof_digest is not None:
+                    self._spend_proof_conn(conn, proof_digest, created.record)
+                self._mark_auth_required_conn(
+                    conn,
+                    updated_at=created.record.created_at,
+                    reason=reason,
+                )
+                self._insert_credential_conn(conn, created.record)
+        except sqlite3.IntegrityError as exc:
+            if proof_digest is None:
+                raise
+            raise _proof_replayed() from exc
         return created
 
     def create_credential(
@@ -196,6 +288,8 @@ class RuntimeCredentialStore:
         label: str,
         permission_mode: PermissionMode = PermissionMode.ADMIN,
         created_by: str | None = None,
+        principal_id: str | None = None,
+        proof_digest: str | None = None,
     ) -> CreatedRuntimeCredential:
         """Create an instance-scoped credential and return its token once."""
         created = self.prepare_credential(
@@ -203,8 +297,60 @@ class RuntimeCredentialStore:
             label=label,
             permission_mode=permission_mode,
             created_by=created_by,
+            principal_id=principal_id,
         )
-        return self.commit_prepared_credential(created)
+        return self.commit_prepared_credential(created, proof_digest=proof_digest)
+
+    def mint_state(self, record: RuntimeCredentialRecord) -> StateCoordinate:
+        """The state a mint of ``record`` adds to: its principal's credentials."""
+
+        with self._connect() as conn:
+            return self.mint_state_conn(conn, record)
+
+    @staticmethod
+    def mint_state_conn(
+        conn: sqlite3.Connection, record: RuntimeCredentialRecord
+    ) -> StateCoordinate:
+        return _credential_set_state(
+            conn,
+            record.instance_id,
+            principal_id=record.principal_id,
+            scope=f"principal:{record.principal_id or '-'}",
+        )
+
+    def credential_state(self, credential_id: str) -> StateCoordinate:
+        """One credential's state coordinate, as a revoke or rotate would see it."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT {', '.join(_CREDENTIAL_STATE_COLUMNS)} FROM runtime_credentials "
+                "WHERE credential_id = ?",
+                (credential_id,),
+            ).fetchone()
+        return credential_state(credential_id, row)
+
+    def proof_spent(self, proof_digest: str) -> bool:
+        """Whether this signed consent already minted a credential (a read)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM runtime_credential_proofs WHERE proof_digest = ?", (proof_digest,)
+            ).fetchone()
+        return row is not None
+
+    def revoke_credentials_of_principal(self, *, instance_id: str, principal_id: str) -> int:
+        """Revoke every active credential that acts as ``principal_id``; return the count."""
+        refuse_write_while_previewing("runtime credential store")
+        revoked_at = format_datetime(utc_now())
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE runtime_credentials
+                SET revoked_at = ?
+                WHERE instance_id = ? AND principal_id = ? AND revoked_at IS NULL
+                """,
+                (revoked_at, instance_id, principal_id),
+            )
+        return int(cursor.rowcount)
 
     def recover_admin_credential(
         self,
@@ -213,6 +359,8 @@ class RuntimeCredentialStore:
         label: str,
         uid: int,
         hostname: str,
+        dry_run: bool = False,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Create a local offline ADMIN recovery credential plus audit row.
 
@@ -222,7 +370,14 @@ class RuntimeCredentialStore:
         itself is the targeting source of truth. Token generation, hashing, auth
         state, and credential insertion still use the same store helpers as the
         normal mint path.
+
+        ``dry_run`` runs this same transaction -- the write lock, the schema
+        and target checks, every insert -- and rolls it back instead of
+        committing (R12), so a preview refuses exactly where the recovery
+        would. ``observe`` sees the instance's credentials inside it.
         """
+        if not dry_run:
+            refuse_write_while_previewing("runtime credential store")
         created = self._new_created_credential(
             instance_id=instance_id,
             label=label,
@@ -243,7 +398,10 @@ class RuntimeCredentialStore:
                     f"Could not write runtime credentials DB at {self.db_path}: {exc}"
                 ) from exc
 
+            self._ensure_principal_column_conn(conn)
             self._validate_recovery_target_conn(conn, instance_id)
+            if observe is not None:
+                observe(_credential_set_state(conn, instance_id, principal_id=None, scope="all"))
             self._ensure_recovery_events_table_conn(conn)
             self._mark_auth_required_conn(
                 conn,
@@ -275,7 +433,10 @@ class RuntimeCredentialStore:
                 created.record.instance_id,
                 created.record.credential_id,
             )
-            conn.commit()
+            if dry_run:
+                conn.rollback()
+            else:
+                conn.commit()
         except Exception:
             if conn.in_transaction:
                 conn.rollback()
@@ -295,6 +456,7 @@ class RuntimeCredentialStore:
         instance_id: str,
         bootstrap_secret: str,
         expected_bootstrap_secret: str | None,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Prepare the initial ADMIN credential without committing it."""
         _validate_governed_instance_id(instance_id)
@@ -302,11 +464,15 @@ class RuntimeCredentialStore:
             bootstrap_secret,
             expected_bootstrap_secret,
         ):
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.secret_invalid", instance_id=instance_id
+            )
 
         bootstrap_secret_hash = _hash_token(bootstrap_secret)
         with self._connect() as conn:
             self._validate_bootstrap_claim_conn(conn, instance_id, bootstrap_secret_hash)
+            if observe is not None:
+                observe(_credential_set_state(conn, instance_id, principal_id=None, scope="all"))
 
         return self._new_created_credential(
             instance_id=instance_id,
@@ -320,17 +486,26 @@ class RuntimeCredentialStore:
         created: CreatedRuntimeCredential,
         *,
         bootstrap_secret: str,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Commit a prepared bootstrap credential after materialization succeeds."""
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(created.record.instance_id)
         bootstrap_secret_hash = _hash_token(bootstrap_secret)
         try:
             with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 self._validate_bootstrap_claim_conn(
                     conn,
                     created.record.instance_id,
                     bootstrap_secret_hash,
                 )
+                if observe is not None:
+                    observe(
+                        _credential_set_state(
+                            conn, created.record.instance_id, principal_id=None, scope="all"
+                        )
+                    )
                 self._mark_auth_required_conn(
                     conn,
                     updated_at=created.record.created_at,
@@ -355,7 +530,10 @@ class RuntimeCredentialStore:
                     ),
                 )
         except sqlite3.IntegrityError as exc:
-            raise AuthenticationError("Invalid bootstrap secret") from exc
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.claim_conflict",
+                instance_id=created.record.instance_id,
+            ) from exc
         return created
 
     def claim_bootstrap_credential(
@@ -376,21 +554,6 @@ class RuntimeCredentialStore:
             bootstrap_secret=bootstrap_secret,
         )
 
-    def bootstrap_secret_claimed(self, bootstrap_secret: str) -> bool:
-        """Return whether a bootstrap secret has already been exchanged."""
-        bootstrap_secret_hash = _hash_token(bootstrap_secret)
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT 1
-                FROM runtime_bootstrap_claims
-                WHERE bootstrap_secret_hash = ?
-                LIMIT 1
-                """,
-                (bootstrap_secret_hash,),
-            ).fetchone()
-        return row is not None
-
     def authenticate(self, token: str) -> RuntimeCredentialRecord | None:
         """Return the active credential matching *token*, if one exists."""
         token_hash = _hash_token(token)
@@ -405,7 +568,8 @@ class RuntimeCredentialStore:
                     token_hash,
                     created_at,
                     created_by,
-                    revoked_at
+                    revoked_at,
+                    principal_id
                 FROM runtime_credentials
                 WHERE token_hash = ? AND revoked_at IS NULL
                 """,
@@ -430,7 +594,8 @@ class RuntimeCredentialStore:
                     token_hash,
                     created_at,
                     created_by,
-                    revoked_at
+                    revoked_at,
+                    principal_id
                 FROM runtime_credentials
                 WHERE credential_id = ?
                 """,
@@ -454,7 +619,8 @@ class RuntimeCredentialStore:
                     token_hash,
                     created_at,
                     created_by,
-                    revoked_at
+                    revoked_at,
+                    principal_id
                 FROM runtime_credentials
                 WHERE instance_id = ?
                 ORDER BY created_at, credential_id
@@ -468,15 +634,24 @@ class RuntimeCredentialStore:
         *,
         instance_id: str,
         credential_id: str,
+        observe: StateObserver | None = None,
     ) -> RuntimeCredentialRecord:
-        """Revoke one instance-scoped credential and return its metadata."""
+        """Revoke one instance-scoped credential and return its metadata.
+
+        ``observe`` sees the credential's state inside the revoking
+        transaction, before it is changed.
+        """
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(instance_id)
         revoked_at = format_datetime(utc_now())
         assert revoked_at is not None
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             existing = self._fetch_record_row(conn, instance_id, credential_id)
             if existing is None:
                 raise RuntimeCredentialNotFoundError(credential_id)
+            if observe is not None:
+                observe(credential_state(credential_id, existing))
             if existing["revoked_at"] is None:
                 conn.execute(
                     """
@@ -505,12 +680,15 @@ class RuntimeCredentialStore:
                 raise RuntimeCredentialNotFoundError(credential_id)
             label = str(existing["label"])
             permission_mode = _parse_permission_mode(str(existing["permission_mode"]))
+            principal_id = existing["principal_id"]
 
+        # A rotation replaces the token, never the principal it acts as.
         return self._new_created_credential(
             instance_id=instance_id,
             label=label,
             permission_mode=permission_mode,
             created_by=rotated_by,
+            principal_id=principal_id,
         )
 
     def commit_prepared_rotation(
@@ -519,13 +697,48 @@ class RuntimeCredentialStore:
         *,
         instance_id: str,
         credential_id: str,
+        proof_digest: str | None = None,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
-        """Revoke an active credential and commit a prepared replacement."""
+        """Revoke an active credential and commit a prepared replacement.
+
+        ``proof_digest`` names the principal's signed consent the replacement
+        consumed, spent in the same transaction exactly as a mint spends one.
+        ``observe`` sees the replaced credential's state in that transaction.
+        """
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(instance_id)
+        try:
+            return self._commit_rotation(
+                created,
+                instance_id=instance_id,
+                credential_id=credential_id,
+                proof_digest=proof_digest,
+                observe=observe,
+            )
+        except sqlite3.IntegrityError as exc:
+            if proof_digest is None:
+                raise
+            raise _proof_replayed() from exc
+
+    def _commit_rotation(
+        self,
+        created: CreatedRuntimeCredential,
+        *,
+        instance_id: str,
+        credential_id: str,
+        proof_digest: str | None,
+        observe: StateObserver | None,
+    ) -> CreatedRuntimeCredential:
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             existing = self._fetch_record_row(conn, instance_id, credential_id)
             if existing is None or existing["revoked_at"] is not None:
                 raise RuntimeCredentialNotFoundError(credential_id)
+            if observe is not None:
+                observe(credential_state(credential_id, existing))
+            if proof_digest is not None:
+                self._spend_proof_conn(conn, proof_digest, created.record)
 
             self._mark_auth_required_conn(
                 conn,
@@ -587,6 +800,7 @@ class RuntimeCredentialStore:
 
     def mark_auth_required(self, reason: str) -> None:
         """Persist that this server state dir must not restart without auth."""
+        refuse_write_while_previewing("runtime credential store")
         updated_at = format_datetime(utc_now())
         assert updated_at is not None
         with self._connect() as conn:
@@ -621,8 +835,8 @@ class RuntimeCredentialStore:
         label: str,
         permission_mode: PermissionMode,
         created_by: str | None,
+        principal_id: str | None = None,
     ) -> CreatedRuntimeCredential:
-        _validate_credential_label(label)
         credential_id = _new_credential_id()
         token = _new_token(credential_id)
         token_hash = _hash_token(token)
@@ -637,6 +851,7 @@ class RuntimeCredentialStore:
                 token_hash=token_hash,
                 created_at=created_at,
                 created_by=created_by,
+                principal_id=principal_id,
             ),
             token=token,
         )
@@ -656,9 +871,10 @@ class RuntimeCredentialStore:
                 token_hash,
                 created_at,
                 created_by,
-                revoked_at
+                revoked_at,
+                principal_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.credential_id,
@@ -669,6 +885,7 @@ class RuntimeCredentialStore:
                 record.created_at,
                 record.created_by,
                 record.revoked_at,
+                record.principal_id,
             ),
         )
 
@@ -682,13 +899,15 @@ class RuntimeCredentialStore:
             """
             SELECT 1
             FROM runtime_bootstrap_claims
-            WHERE bootstrap_secret_hash = ?
+            WHERE bootstrap_secret_hash = ? AND instance_id = ?
             LIMIT 1
             """,
-            (bootstrap_secret_hash,),
+            (bootstrap_secret_hash, instance_id),
         ).fetchone()
         if prior_claim is not None:
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.secret_already_claimed", instance_id=instance_id
+            )
 
         prior_admin = conn.execute(
             """
@@ -700,7 +919,9 @@ class RuntimeCredentialStore:
             (instance_id, _serialize_permission_mode(PermissionMode.ADMIN)),
         ).fetchone()
         if prior_admin is not None:
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.admin_exists", instance_id=instance_id
+            )
 
     @staticmethod
     def _mark_auth_required_conn(
@@ -740,6 +961,134 @@ class RuntimeCredentialStore:
                 f"No ADMIN runtime credential exists for instance_id {instance_id!r}."
             )
 
+    @classmethod
+    def _spend_proof_conn(
+        cls, conn: sqlite3.Connection, proof_digest: str, record: RuntimeCredentialRecord
+    ) -> None:
+        """Record one signed consent as spent; a second spend raises IntegrityError."""
+
+        cls._prune_spent_proofs_conn(conn, now=record.created_at)
+        conn.execute(
+            """
+            INSERT INTO runtime_credential_proofs(proof_digest, credential_id, used_at)
+            VALUES (?, ?, ?)
+            """,
+            (proof_digest, record.credential_id, record.created_at),
+        )
+
+    @staticmethod
+    def _prune_spent_proofs_conn(conn: sqlite3.Connection, *, now: str) -> int:
+        """Forget spent consents that can no longer be replayed; return how many.
+
+        A consent is accepted only while its ``issued_at`` is within the skew
+        window of the daemon's clock, on either side. One spent at ``u`` was
+        issued no later than ``u + skew``, so it stops verifying by
+        ``u + 2 * skew``; past that its row guards nothing.
+        """
+
+        current = parse_datetime(now)
+        assert current is not None
+        horizon = current - timedelta(seconds=2 * RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS)
+        stale = [
+            (str(row[0]),)
+            for row in conn.execute("SELECT proof_digest, used_at FROM runtime_credential_proofs")
+            if (used := parse_datetime(str(row[1]))) is not None and used < horizon
+        ]
+        conn.executemany("DELETE FROM runtime_credential_proofs WHERE proof_digest = ?", stale)
+        return len(stale)
+
+    @staticmethod
+    def _ensure_principal_column_conn(conn: sqlite3.Connection) -> None:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(runtime_credentials)")}
+        if "principal_id" not in columns:
+            # Migration, never a rebind: every credential minted before
+            # credentials named a principal stays unbound (NULL). It keeps its
+            # transport authority and can no longer author; the repair is to
+            # mint a principal-bound credential and revoke the unbound one.
+            conn.execute("ALTER TABLE runtime_credentials ADD COLUMN principal_id TEXT")
+
+    @staticmethod
+    def _ensure_bootstrap_claims_per_host_conn(conn: sqlite3.Connection) -> None:
+        """Migrate the claim table from one claim per secret to one per host.
+
+        The daemon's bootstrap secret is claimable once per host: a second host
+        on the same daemon claims its own first ADMIN credential with the same
+        secret, with no restart. The old table keyed claims by the secret alone,
+        so one claim on any host used it up for every other one.
+
+        The rebuild is one transaction: an interruption anywhere leaves the old
+        layout, which the next open migrates again. A layout an earlier,
+        non-atomic rebuild stranded (claims left in the renamed
+        ``runtime_bootstrap_claims_per_secret``) is recovered the same way: its
+        rows move into the per-host table and the stranded table is dropped.
+        """
+
+        def primary_key(table: str) -> list[str]:
+            return [
+                str(row[1])
+                for row in sorted(
+                    (row for row in conn.execute(f"PRAGMA table_info({table})")),
+                    key=lambda row: int(row[5]),
+                )
+                if int(row[5]) > 0
+            ]
+
+        stranded = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (_STRANDED_CLAIMS_TABLE,),
+            ).fetchone()
+            is not None
+        )
+        old_layout = primary_key("runtime_bootstrap_claims") == ["bootstrap_secret_hash"]
+        if not old_layout and not stranded:
+            return
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if old_layout:
+                if stranded:
+                    raise sqlite3.DatabaseError(
+                        "runtime_bootstrap_claims has both the per-secret layout and a "
+                        f"stranded {_STRANDED_CLAIMS_TABLE}; resolve by hand"
+                    )
+                conn.execute(
+                    f"ALTER TABLE runtime_bootstrap_claims RENAME TO {_STRANDED_CLAIMS_TABLE}"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE runtime_bootstrap_claims (
+                        bootstrap_secret_hash TEXT NOT NULL,
+                        instance_id TEXT NOT NULL,
+                        credential_id TEXT NOT NULL UNIQUE,
+                        claimed_at TEXT NOT NULL,
+                        PRIMARY KEY (bootstrap_secret_hash, instance_id)
+                    )
+                    """
+                )
+            # INSERT OR IGNORE: a stranded copy may already be partly present
+            # in the per-host table, and a row in both is the same claim.
+            conn.execute(
+                f"""
+                INSERT OR IGNORE INTO runtime_bootstrap_claims
+                    (bootstrap_secret_hash, instance_id, credential_id, claimed_at)
+                SELECT bootstrap_secret_hash, instance_id, credential_id, claimed_at
+                FROM {_STRANDED_CLAIMS_TABLE}
+                """
+            )
+            conn.execute(f"DROP TABLE {_STRANDED_CLAIMS_TABLE}")
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_runtime_bootstrap_claims_instance
+                ON runtime_bootstrap_claims(instance_id)
+                """
+            )
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
+
     @staticmethod
     def _ensure_recovery_events_table_conn(conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -770,7 +1119,8 @@ class RuntimeCredentialStore:
                 token_hash,
                 created_at,
                 created_by,
-                revoked_at
+                revoked_at,
+                principal_id
             FROM runtime_credentials
             WHERE instance_id = ? AND credential_id = ?
             """,
@@ -789,6 +1139,7 @@ class RuntimeCredentialStore:
             created_at=row["created_at"],
             created_by=row["created_by"],
             revoked_at=row["revoked_at"],
+            principal_id=row["principal_id"],
         )
 
 
@@ -800,7 +1151,7 @@ def get_runtime_credential_store() -> RuntimeCredentialStore:
     global _runtime_credential_store
     if _runtime_credential_store is None:
         _runtime_credential_store = RuntimeCredentialStore(
-            get_server_state_dir() / "runtime_credentials.db"
+            get_registry().state_root / "daemon" / "runtime_credentials.db"
         )
     return _runtime_credential_store
 

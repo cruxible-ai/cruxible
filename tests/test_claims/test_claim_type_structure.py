@@ -1,0 +1,75 @@
+"""PC-A1 policy-free ClaimType structural validation tests."""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_type_structure import (
+    ClaimTypeStructure,
+    check_claim_type_structure,
+)
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
+
+
+def _literal() -> dict[str, object]:
+    return {
+        "predicate": "project.work_item.status",
+        "allowed_subject_kinds": ["project.work_item"],
+        "value": "enum[blocked, done, ready]",
+        "cardinality": "one",
+        "permitted_roles": ["normative", "observation"],
+        "referent_sensitivity": "identity",
+    }
+
+
+def test_claim_type_structure_validates_native_value_without_digesting_artifact() -> None:
+    structure = ClaimTypeStructure.model_validate(_literal())
+    assert canonical_bytes(structure.value.model_dump(mode="json")) == (
+        b'{"kind":"enum","members":["blocked","done","ready"]}'
+    )
+    assert not hasattr(structure, "artifact_format")
+    assert not hasattr(structure, "artifact_digest")
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"value": None}, "value"),
+        ({"value": "subject<>"}, "subject"),
+        ({"literal_schema": {}}, "Extra inputs"),
+        ({"allowed_subject_kinds": []}, "allowed subject kind"),
+        ({"permitted_roles": []}, "roles"),
+        ({"referent_sensitivity": "bytes"}, "referent_sensitivity"),
+    ],
+)
+def test_claim_type_structure_refuses_mismatched_kinds_schemas_and_roles(
+    updates: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        ClaimTypeStructure.model_validate({**_literal(), **updates})
+
+
+def test_claim_type_structural_diagnostics_are_explicitly_local_only() -> None:
+    valid = check_claim_type_structure(_literal())
+    assert valid.status == "valid"
+    assert valid.coverage == "local_only"
+    assert valid.structure is not None
+
+    invalid = check_claim_type_structure({**_literal(), "value": None})
+    assert invalid.status == "invalid"
+    assert invalid.coverage == "local_only"
+    assert [item.code for item in invalid.diagnostics] == ["cruxible.claim_type.structure_invalid"]
+    assert all(item.subject is None for item in invalid.diagnostics)
+
+
+def test_the_one_claim_type_format_activates_the_one_claim_type_law() -> None:
+    law = ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v11")
+    assert law.artifact_kind == "claim-type"
+    assert law.coordinate.identifier == "cruxible.claim-type.v10"
+    for removed in ("playbill-claim-type-v1", "playbill-claim-type-v8", "cruxible-claim-type-v9"):
+        with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
+            ACCEPTANCE_LAWS.resolve_member(artifact_tag=removed)

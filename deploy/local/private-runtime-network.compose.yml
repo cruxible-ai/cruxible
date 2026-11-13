@@ -7,7 +7,7 @@ services:
     environment:
       CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET: ${CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET:-bootstrap-secret}
     volumes:
-      - ${CRUXIBLE_RUNTIME_STATE_DIR:?set CRUXIBLE_RUNTIME_STATE_DIR to a writable host directory}:/var/lib/cruxible/server
+      - ${CRUXIBLE_RUNTIME_STATE_DIR:?set CRUXIBLE_RUNTIME_STATE_DIR to a writable host directory}:/var/lib/cruxible
     expose:
       - "8100"
     networks:

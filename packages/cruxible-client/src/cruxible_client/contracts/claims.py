@@ -1,0 +1,3542 @@
+"""First-class Claim artifacts, identity layers, and PC-B acceptance law."""
+
+from __future__ import annotations
+
+import json
+import re
+import secrets
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Annotated, Any, Literal, TypeAlias, cast
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+)
+from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
+    CanonicalValue,
+    CasDigest,
+    Sha256Value,
+    canonical_bytes,
+    canonical_equal,
+    normalize_canonical,
+    pretty_canonical_bytes,
+    typed_digest,
+)
+from cruxible_client.contracts.canonical_forms import is_canonical_literal
+from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    DIRECT_SELF_ASSERTED_CONTRACT_ID,
+    FOREIGN_SOURCE_COORDINATE_TYPE,
+    AcceptedCaptureContract,
+    CaptureContractV1,
+    CaptureEnvelopeAny,
+    CaptureObjectStoreProtocol,
+    CaptureProductionUnproven,
+    CaptureShape,
+    LazyKeyedOverlay,
+    LedgerMaterialResolverProtocol,
+    ProducerReceiptResolverProtocol,
+    ProducerVersions,
+    VerifiedCaptureMemo,
+    _RequestCaptureProofEpoch,
+    capture_components,
+    capture_contract_digest,
+    capture_contract_is_self_asserted,
+    capture_erasure_authorized,
+    capture_is_coordinator_self_source,
+    capture_is_direct_selection_bound,
+    capture_is_direct_self_source,
+    capture_retained_body_digests,
+    classify_capture_reuse,
+    foreign_source_contract_id,
+    is_coordinator_self_source_contract,
+    parse_capture_envelope,
+    producer_version_admitted,
+    verify_capture,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_attestations import (
+    VerifiedClaimAttestationV1,
+    read_claim_attestation,
+    verify_claim_attestation,
+)
+from cruxible_client.contracts.claim_evidence import AbsenceWitness, ClaimEvidenceReceipt
+from cruxible_client.contracts.claim_type_structure import ClaimRole
+from cruxible_client.contracts.claim_types import (
+    AcceptedClaimType,
+    ClaimInverse,
+    ClaimInverseObjectKey,
+    ClaimInverseObjectKeyPart,
+    ClaimType,
+    EvidenceRequirement,
+    claim_type_accepts_subject,
+    effective_evidence_requirement,
+    effective_revision_evidence,
+)
+from cruxible_client.contracts.claim_verdicts import (
+    CaptureVerdictEvidence,
+    ClaimVerdictResult,
+    claim_adjudication_rule,
+    claim_adjudication_rule_digest,
+    evaluate_claim_verdict,
+)
+from cruxible_client.contracts.content_memo import (
+    ParseMemo,
+    ValueMemo,
+    request_derive,
+    seal,
+    sealed_memo,
+)
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionWindow,
+    projection_window_intersecting,
+)
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.errors import CasError, FormatError
+from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionTrace,
+    EvidenceAdmissionInput,
+    VerifiedAttestationGrade,
+    evaluate_claim_evidence_admission_trace,
+)
+from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.providers import ProviderV1, provider_digest
+from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
+from cruxible_client.contracts.shapes import (
+    ContractResolver,
+    EnumResolver,
+    KeyCanonicalizer,
+    claim_literal_detail,
+    claim_literal_problem,
+    claim_value_kind,
+    render_type,
+    subject_value_kinds,
+)
+from cruxible_client.contracts.source_references import (
+    CasSourceReference,
+    EvidenceCommitment,
+    ExternalSourceReference,
+)
+from cruxible_client.contracts.subjects import AcceptedSubject
+
+_CLAIM_ID_RE = re.compile(r"^CLM-[0-9a-f]{32}$")
+
+
+class ClaimFormatError(FormatError):
+    """A Claim envelope, path, or frozen semantic preimage is invalid."""
+
+
+class ClaimUnsupportedFormatError(ClaimFormatError):
+    error_code = "cruxible.claim.format_unsupported"
+
+
+class _StrictClaimModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class LiteralClaimObject(_StrictClaimModel):
+    kind: Literal["literal"] = "literal"
+    value: object
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class SubjectClaimObject(_StrictClaimModel):
+    kind: Literal["subject"] = "subject"
+    address: SemanticAddress
+
+
+class NoneClaimObject(_StrictClaimModel):
+    """An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.
+
+    ``of`` names the unit within the slot: omitted for an inverse keyed by
+    ``slot`` (the whole one-valued slot), the absent object itself for one keyed
+    by ``object``, and the key value (a literal in the key ClaimType's canonical
+    form) for one keyed by ``object_key``. Only a ClaimType that declares an
+    inverse admits one.
+    """
+
+    kind: Literal["none"] = "none"
+    of: Annotated[LiteralClaimObject | SubjectClaimObject, Field(discriminator="kind")] | None = (
+        Field(default=None, exclude_if=lambda value: value is None)
+    )
+
+
+ClaimObject = Annotated[
+    LiteralClaimObject | SubjectClaimObject | NoneClaimObject,
+    Field(discriminator="kind"),
+]
+
+
+ClaimPolarity: TypeAlias = Literal["positive", "inverse"]
+
+
+def claim_polarity(statement: ClaimStatement) -> ClaimPolarity:
+    """``inverse`` for a Claim stating that its unit holds nothing, else ``positive``."""
+
+    return "inverse" if isinstance(statement.object, NoneClaimObject) else "positive"
+
+
+class ClaimUnitKey(_StrictClaimModel):
+    """The unit of a slot one Claim speaks about, under its ClaimType's inverse.
+
+    A unit holds positives or one inverse, never both. ``value`` is ``None`` for
+    a ``slot`` unit, the object's canonical JSON for an ``object`` unit and the
+    canonical key value for an ``object_key`` unit.
+    """
+
+    kind: Literal["slot", "object", "object_key"]
+    value: object = None
+
+
+def claim_unit_key(
+    statement: ClaimStatement,
+    inverse: ClaimInverse | None,
+    *,
+    object_key_value: Callable[[SemanticAddress, str], object] | None = None,
+) -> ClaimUnitKey | None:
+    """The unit ``statement`` speaks about, or None when it cannot be read here.
+
+    ``object_key_value(address, predicate)`` reads the one live key value of an
+    object Subject (None: none or several); it is consulted only for a positive
+    Claim under an inverse keyed by ``object_key``.
+    """
+
+    key = None if inverse is None else inverse.key
+    value = statement.object
+    if key is None or isinstance(key, ClaimInverseObjectKey):
+        named = value.of if isinstance(value, NoneClaimObject) else value
+        return (
+            None
+            if named is None
+            else ClaimUnitKey(kind="object", value=named.model_dump(mode="json"))
+        )
+    if isinstance(key, ClaimInverseObjectKeyPart):
+        if isinstance(value, NoneClaimObject):
+            if not isinstance(value.of, LiteralClaimObject):
+                return None
+            return ClaimUnitKey(kind="object_key", value=value.of.value)
+        if not isinstance(value, SubjectClaimObject) or object_key_value is None:
+            return None
+        found = object_key_value(value.address, key.predicate)
+        return None if found is None else ClaimUnitKey(kind="object_key", value=found)
+    return ClaimUnitKey(kind="slot")
+
+
+class ClaimStatement(_StrictClaimModel):
+    tag: Literal["playbill-claim-statement-v1"] = "playbill-claim-statement-v1"
+    subject: SemanticAddress
+    claim_type: ArtifactIdentity
+    claim_type_digest: str
+    predicate: str
+    qualifier: str | None = None
+    object: ClaimObject
+
+    @field_validator("object", mode="before")
+    @classmethod
+    def _retired_object(cls, value: Any) -> Any:
+        if isinstance(value, Mapping) and value.get("kind") == "exact_content":
+            raise ValueError(
+                "cruxible.claim.exact_content_retired: prose lives in Documents; "
+                "cite a Document section"
+            )
+        return value
+
+    role: ClaimRole
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    shell_context_digest: str | None = None
+
+    @field_validator("claim_type_digest")
+    @classmethod
+    def _claim_type_digest(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
+
+    @field_validator("shell_context_digest")
+    @classmethod
+    def _shell_context_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _statement_shape(self) -> "ClaimStatement":
+        if self.claim_type.kind != "ClaimType":
+            raise ValueError("Claim statement must name a ClaimType identity")
+        if self.claim_type.name != self.predicate:
+            raise ValueError("Claim statement predicate must equal its ClaimType identity")
+        for value in (self.effective_from, self.effective_until):
+            if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+                raise ValueError("Claim effective times must be timezone-aware")
+        if (
+            self.effective_from is not None
+            and self.effective_until is not None
+            and self.effective_until <= self.effective_from
+        ):
+            raise ValueError("Claim effective interval must be increasing")
+        return self
+
+
+class ClaimStatementCard(_StrictClaimModel):
+    """Flat, typed statement-first projection shared by read and floor surfaces."""
+
+    tag: Literal["playbill-claim-statement-card-v1"] = "playbill-claim-statement-card-v1"
+    subject: SemanticAddress
+    predicate: str
+    object: ClaimObject
+
+    @field_validator("object", mode="before")
+    @classmethod
+    def _retired_object(cls, value: Any) -> Any:
+        if isinstance(value, Mapping) and value.get("kind") == "exact_content":
+            raise ValueError(
+                "cruxible.claim.exact_content_retired: prose lives in Documents; "
+                "cite a Document section"
+            )
+        return value
+
+    role: ClaimRole
+    qualifier: str | None = None
+    lifecycle: Literal["live", "retired"]
+    predecessor_digest: str | None = None
+
+    @field_validator("predecessor_digest")
+    @classmethod
+    def _predecessor_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactDigest.from_tagged(value)
+        return value
+
+
+def claim_statement_card(claim: ClaimArtifact) -> ClaimStatementCard:
+    """Project one already-validated Claim without flattening semantic objects."""
+
+    return ClaimStatementCard(
+        subject=claim.statement.subject,
+        predicate=claim.statement.predicate,
+        object=claim.statement.object,
+        role=claim.statement.role,
+        qualifier=claim.statement.qualifier,
+        lifecycle=claim.lifecycle.state,
+        predecessor_digest=claim.lifecycle.predecessor_digest,
+    )
+
+
+class ClaimReferentContext(_StrictClaimModel):
+    tag: Literal["playbill-claim-referent-context-v1"] = "playbill-claim-referent-context-v1"
+    subject_content_digest: str
+    object_content_digest: str | None = None
+    observed_at: datetime
+
+    @field_validator("subject_content_digest", "object_content_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactDigest.from_tagged(value)
+        return value
+
+    @field_validator("observed_at")
+    @classmethod
+    def _observed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Claim referent observed_at must be timezone-aware")
+        return value
+
+
+def _verified_contract_subject_binding(
+    envelope_source: object,
+    *,
+    contract: CaptureContract,
+    subject: SemanticAddress,
+) -> bool:
+    mapping_pin = next(
+        (
+            pin
+            for pin in capture_components(contract).pins
+            if pin.role == "source-subject-mapping"
+            and pin.artifact_digest == capture_components(contract).source_subject_mapping_digest
+        ),
+        None,
+    )
+    if mapping_pin is None or mapping_pin.target.name != "playbill.external.record-subject-v1":
+        return False
+    if not isinstance(envelope_source, ExternalSourceReference) or not isinstance(
+        envelope_source.selector, dict
+    ):
+        return False
+    declared = envelope_source.selector.get("semantic_subject")
+    return canonical_equal(declared, subject.model_dump(mode="json"))
+
+
+CitationRole: TypeAlias = Literal["evidence", "copy"]
+# A citation is independent evidence or the author's own body. There was a
+# third spelling, `self_published`, for a Claim projected back into the page it
+# came from -- the road the two-block-kinds law refuses -- and no code path in
+# the product ever wrote one, so no accepted artifact carries it and nothing
+# that once parsed stops parsing.
+CitationOrigin: TypeAlias = Literal["independent", "self_source"]
+
+
+_CITATION_IDS: ValueMemo[Sha256Value] = ValueMemo(capacity=16384)
+
+
+def claim_citation_id(
+    claim_identity: ArtifactIdentity,
+    *,
+    capture_digest: str,
+    role: CitationRole,
+    origin: CitationOrigin,
+) -> Sha256Value:
+    """Derive the frozen per-Claim citation-association identity."""
+
+    if claim_identity.kind != "Claim":
+        raise ValueError("Claim citation identity requires a Claim identity")
+    CasDigest.from_tagged(capture_digest)
+    # A citation is built once and reproduced by every validation of the Claim
+    # that carries it; the id is a pure function of these strings.
+    return _CITATION_IDS.derive(
+        (claim_identity.kind, claim_identity.name, capture_digest, origin, role),
+        lambda: typed_digest(
+            Sha256Value,
+            "playbill-claim-citation-v1",
+            {
+                "claim_identity": claim_identity.model_dump(mode="json"),
+                "capture_digest": capture_digest,
+                "origin": origin,
+                "role": role,
+            },
+        ),
+    )
+
+
+class ClaimCitation(_StrictClaimModel):
+    """One explicit, append-only association between a Claim and a Capture."""
+
+    tag: Literal["playbill-claim-citation-v1"] = "playbill-claim-citation-v1"
+    citation_id: str
+    capture_digest: str
+    role: CitationRole
+    origin: CitationOrigin
+
+    @field_validator("citation_id")
+    @classmethod
+    def _citation_id(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("capture_digest")
+    @classmethod
+    def _capture_digest(cls, value: str) -> str:
+        CasDigest.from_tagged(value)
+        return value
+
+
+def build_claim_citation(
+    claim_identity: ArtifactIdentity,
+    *,
+    capture_digest: str,
+    role: CitationRole,
+    origin: CitationOrigin,
+) -> ClaimCitation:
+    """Build one server-derived association; identical retries reproduce its ID."""
+
+    return ClaimCitation(
+        citation_id=claim_citation_id(
+            claim_identity,
+            capture_digest=capture_digest,
+            role=role,
+            origin=origin,
+        ).tagged,
+        capture_digest=capture_digest,
+        role=role,
+        origin=origin,
+    )
+
+
+def merge_claim_citations(
+    *groups: tuple[ClaimCitation, ...],
+) -> tuple[ClaimCitation, ...]:
+    """Union citation retries by their frozen identity and reject impossible aliases."""
+
+    by_id: dict[str, ClaimCitation] = {}
+    for citation in (item for group in groups for item in group):
+        previous = by_id.setdefault(citation.citation_id, citation)
+        if previous != citation:
+            raise ValueError("one Claim citation ID cannot name different association bytes")
+    return tuple(by_id[key] for key in sorted(by_id, key=lambda item: item.encode("ascii")))
+
+
+class ClaimBacking(_StrictClaimModel):
+    """What a Claim rests on: cited Captures, attestations and any derivation.
+
+    Every backing Capture is named by at least one explicit citation (the Claim
+    law refuses a backing that is not); ``capture_digests`` is that set.
+    """
+
+    tag: Literal["playbill-claim-backing-v2"] = "playbill-claim-backing-v2"
+    referent_context: ClaimReferentContext
+    capture_digests: tuple[str, ...] = ()
+    citations: tuple[ClaimCitation, ...] = ()
+    attestation_digests: tuple[str, ...] = ()
+    input_claim_digests: tuple[str, ...] = ()
+    reducer_digest: str | None = None
+    source_mappings: tuple[SourceMapping, ...] = ()
+    procedure_evidence: ClaimEvidenceReceipt | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("capture_digests", "attestation_digests")
+    @classmethod
+    def _cas_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("Claim CAS digest sets must be sorted and unique")
+        for item in value:
+            CasDigest.from_tagged(item)
+        return value
+
+    @field_validator("input_claim_digests")
+    @classmethod
+    def _claim_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("input Claim digest set must be sorted and unique")
+        for item in value:
+            ArtifactDigest.from_tagged(item)
+        return value
+
+    @field_validator("reducer_digest")
+    @classmethod
+    def _reducer_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactDigest.from_tagged(value)
+        return value
+
+    @field_validator("source_mappings")
+    @classmethod
+    def _source_mappings(cls, value: tuple[SourceMapping, ...]) -> tuple[SourceMapping, ...]:
+        encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
+        if encoded != tuple(sorted(set(encoded))):
+            raise ValueError("Claim source mappings must be canonically sorted and unique")
+        return value
+
+    @field_validator("citations")
+    @classmethod
+    def _citations(cls, value: tuple[ClaimCitation, ...]) -> tuple[ClaimCitation, ...]:
+        ids = tuple(item.citation_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
+            raise ValueError("Claim citations must be sorted and unique by citation_id")
+        return value
+
+    @model_validator(mode="after")
+    def _backing_shape(self) -> "ClaimBacking":
+        if self.input_claim_digests and self.reducer_digest is None:
+            raise ValueError("Claim derivation requires reducer and input Claims together")
+        if self.procedure_evidence is not None:
+            from cruxible_client.contracts.claim_evidence import DerivedBasis
+
+            basis = self.procedure_evidence.value
+            if isinstance(basis, DerivedBasis):
+                if self.procedure_evidence.procedure_digest != self.reducer_digest:
+                    raise ValueError("derived receipt must pin its exact reducer")
+                if not {source.capture_digest for source in basis.extractions}.issubset(
+                    self.capture_digests
+                ):
+                    raise ValueError("derived extraction receipts must cite backing Captures")
+                if (
+                    tuple(sorted(pin.artifact_digest for pin in basis.inputs))
+                    != self.input_claim_digests
+                ):
+                    raise ValueError("claim-evidence-v2 inputs must match exact derivation backing")
+            elif basis.capture_digest not in self.capture_digests:
+                raise ValueError("claim-evidence-v2 must cite a backing Capture")
+        if not {item.capture_digest for item in self.citations}.issubset(self.capture_digests):
+            raise ValueError("every Claim citation must name a backing Capture digest")
+        return self
+
+
+CAPTURE_CONTRACT_PROVENANCE_ROLE = "capture-contract"
+"""The pin role that records which contract version a backing Capture used.
+
+It is provenance, not a requirement: it names the exact historical version and
+never obliges the Claim to follow the contract's head. A Claim whose evidence
+was captured under two versions of one contract pins both.
+"""
+
+
+def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
+    return (
+        pin.role.encode("utf-8"),
+        pin.target.qualified.encode("utf-8"),
+        pin.artifact_digest.encode("ascii"),
+    )
+
+
+def _canonical_claim_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
+    if value != tuple(sorted(value, key=_pin_key)):
+        raise ValueError("Claim pins must be canonically sorted")
+    identities = tuple(
+        (item.role, item.target.qualified)
+        + ((item.artifact_digest,) if item.role == CAPTURE_CONTRACT_PROVENANCE_ROLE else ())
+        for item in value
+    )
+    if len(identities) != len(set(identities)):
+        raise ValueError(
+            "Claim pins must be unique by role and target "
+            "(capture-contract provenance: by exact version)"
+        )
+    return value
+
+
+ClaimRetirementReason: TypeAlias = Literal["was-rescinded", "was-wrong", "superseded"]
+"""Why a Claim's lineage ends, in the reader's own filter.
+
+`was-wrong` says the statement was false. `was-rescinded` says the authority
+behind it was withdrawn. Neither describes the ordinary case of a shape a later
+ruling replaced: twenty-six Claims that correctly said "this block is
+published", under a publication shape a ruling then withdrew, were neither
+wrong nor rescinded, and spelling them `was-rescinded` put the less informative
+of the two recorded facts in the field a reader can filter on. `superseded` is
+that case, and only that case: the statement stood, and the shape it was made
+under does not.
+"""
+
+
+class ClaimRetirementAttribution(_StrictClaimModel):
+    tag: Literal["playbill-claim-retirement-attribution-v1"] = (
+        "playbill-claim-retirement-attribution-v1"
+    )
+    reason: ClaimRetirementReason
+    absence: AbsenceWitness | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class ClaimRetireDependent(_StrictClaimModel):
+    tag: Literal["playbill-claim-retire-dependent-v1"] = "playbill-claim-retire-dependent-v1"
+    artifact_identity: ArtifactIdentity
+    predecessor_digest: str
+    reason: ClaimRetirementReason
+    absence: AbsenceWitness | None = Field(default=None, exclude_if=lambda value: value is None)
+    effective_until: datetime | None = None
+
+    @field_validator("predecessor_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("artifact_identity")
+    @classmethod
+    def _identity(cls, value: ArtifactIdentity) -> ArtifactIdentity:
+        if value.kind != "Claim":
+            raise ValueError("retirement dependents must be Claims")
+        claim_path(value.name)
+        return value
+
+    @field_validator("effective_until")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("effective_until must be timezone-aware")
+        return value
+
+
+class ClaimArtifact(_StrictClaimModel):
+    """The one Claim artifact: a live Claim, or an attributed retirement of one.
+
+    ``retirement`` is present exactly when the lifecycle is retired, and a
+    retired Claim names its exact predecessor; a live Claim carries no
+    attribution. Which kind a Claim is reads off its lifecycle, never its class.
+    """
+
+    artifact_format: Literal["playbill-claim-v4"] = "playbill-claim-v4"
+    identity: ArtifactIdentity
+    statement: ClaimStatement
+    backing: ClaimBacking
+    pins: tuple[ArtifactPin, ...]
+    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+    retirement: ClaimRetirementAttribution | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("pins")
+    @classmethod
+    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
+        return _canonical_claim_pins(value)
+
+    @model_validator(mode="after")
+    def _identity_shape(self) -> "ClaimArtifact":
+        if self.identity.kind != "Claim" or not _CLAIM_ID_RE.fullmatch(self.identity.name):
+            raise ValueError("Claim identity must be Claim:CLM- plus 128-bit lowercase hex")
+        retired = self.lifecycle.state == "retired"
+        receipt = self.backing.procedure_evidence
+        if (
+            receipt is not None
+            and receipt.absence is not None
+            and not isinstance(self.statement.object, NoneClaimObject)
+        ):
+            raise ValueError("absence evidence proves only a declared inverse")
+        if retired != (self.retirement is not None):
+            raise ValueError("a Claim carries a retirement attribution exactly when retired")
+        if retired and self.lifecycle.predecessor_digest is None:
+            raise ValueError("a retired Claim names its exact predecessor")
+        for citation in self.backing.citations:
+            expected = claim_citation_id(
+                self.identity,
+                capture_digest=citation.capture_digest,
+                role=citation.role,
+                origin=citation.origin,
+            ).tagged
+            if citation.citation_id != expected:
+                raise ValueError("Claim citation ID does not reproduce")
+        return self
+
+
+def new_claim_id() -> str:
+    """Allocate a proposal-side opaque lineage name using the operating-system CSPRNG."""
+
+    return f"CLM-{secrets.token_hex(16)}"
+
+
+def claim_path(claim_id: str) -> str:
+    if not _CLAIM_ID_RE.fullmatch(claim_id):
+        raise ClaimFormatError("Claim ID must be CLM- plus 32 lowercase hexadecimal digits")
+    return f"claims/{claim_id[4:6]}/{claim_id}.json"
+
+
+def validate_claim_path(
+    claim: ClaimArtifact,
+    path: str,
+) -> str:
+    expected = claim_path(claim.identity.name)
+    if expected != path:
+        raise ClaimFormatError(
+            f"Claim identity/path disagreement: {claim.identity.qualified!r} requires {expected!r}"
+        )
+    return path
+
+
+def render_claim(claim: ClaimArtifact) -> bytes:
+    return pretty_canonical_bytes(claim.model_dump(mode="json"))
+
+
+_CLAIM_PARSES: ParseMemo[ClaimArtifact] = ParseMemo(capacity=4096, max_bytes=32 * 1024 * 1024)
+
+
+def parse_claim(
+    content: bytes,
+    *,
+    path: str,
+) -> ClaimArtifact:
+    """Parse once per exact (path, bytes); see ``content_memo``."""
+    return _CLAIM_PARSES.parse(content, path, None, lambda: _parse_claim(content, path=path))
+
+
+def _parse_claim(
+    content: bytes,
+    *,
+    path: str,
+) -> ClaimArtifact:
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ClaimFormatError("Claim is not strict JSON") from exc
+    declared = payload.get("artifact_format") if isinstance(payload, dict) else None
+    if declared != ClaimArtifact.model_fields["artifact_format"].default:
+        raise ClaimUnsupportedFormatError(f"{ClaimUnsupportedFormatError.error_code}: {declared!r}")
+    try:
+        claim = ClaimArtifact.model_validate(payload)
+    except ValidationError as exc:
+        raise ClaimFormatError(f"Claim failed strict {declared!r} validation") from exc
+    validate_claim_path(claim, path)
+    if render_claim(claim) != content:
+        raise ClaimFormatError("Claim is not in canonical wire form")
+    return claim
+
+
+@sealed_memo
+def claim_statement_digest(statement: ClaimStatement) -> Sha256Value:
+    payload = statement.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, "playbill-claim-statement-v1", payload)
+
+
+def claim_referent_context_digest(context: ClaimReferentContext) -> Sha256Value:
+    """Digest only exact shells; acquisition time remains backing, not statement identity."""
+
+    return typed_digest(
+        Sha256Value,
+        "playbill-claim-referent-context-v1",
+        {
+            "subject_content_digest": context.subject_content_digest,
+            "object_content_digest": context.object_content_digest,
+        },
+    )
+
+
+@sealed_memo
+def claim_artifact_digest(claim: ClaimArtifact) -> ArtifactDigest:
+    payload: dict[str, CanonicalValue] = {
+        "artifact_format": claim.artifact_format,
+        "identity": claim.identity.model_dump(mode="json"),
+        "statement_digest": claim_statement_digest(claim.statement).tagged,
+        "backing": claim.backing.model_dump(mode="json"),
+        "pins": [item.model_dump(mode="json") for item in claim.pins],
+        "lifecycle": claim.lifecycle.model_dump(mode="json"),
+    }
+    if claim.retirement is not None:
+        payload["retirement"] = claim.retirement.model_dump(mode="json")
+    return typed_digest(ArtifactDigest, "playbill-envelope-v1", payload)
+
+
+def claim_statement_address(path: str) -> SemanticAddress:
+    return SemanticAddress.claim_statement(path)
+
+
+class AcceptedClaim(_StrictClaimModel):
+    path: str
+    claim: ClaimArtifact
+    statement_digest: str
+    artifact_digest: str
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "AcceptedClaim":
+        validate_claim_path(self.claim, self.path)
+        if self.statement_digest != claim_statement_digest(self.claim.statement).tagged:
+            raise ValueError("accepted Claim statement digest does not reproduce")
+        if self.artifact_digest != claim_artifact_digest(self.claim).tagged:
+            raise ValueError("accepted Claim artifact digest does not reproduce")
+        return self
+
+
+def claim_citation_references(claim: ClaimArtifact) -> tuple[ClaimCitation, ...]:
+    """Every explicit citation association a Claim holds, in citation-id order."""
+
+    return claim.backing.citations
+
+
+class ClaimLawEvidence(_StrictClaimModel):
+    """What the Claim law found for one accepted Claim, horizon-free or not."""
+
+    tag: Literal["cruxible-claim-law-evidence-v3"] = "cruxible-claim-law-evidence-v3"
+    law_digest: str
+    adjudication_rule_digest: str
+    statement_digest: str
+    artifact_digest: str
+    initial_verdict: Literal[
+        "supported",
+        "uncovered",
+        "stale",
+        "stale_evidence",
+        "contradicted",
+        "unresolved",
+    ]
+    evidence_basis: tuple[Literal["origin_only", "direct", "derivational"], ...]
+    evaluation_time: datetime | None = None
+    verdict_result: ClaimVerdictResult
+    verified_attestation_digests: tuple[str, ...] = ()
+    verified_attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
+    verdict_captures: tuple[CaptureVerdictEvidence, ...] = ()
+    procedure_evidence: ClaimEvidenceReceipt | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator(
+        "law_digest", "adjudication_rule_digest", "statement_digest", "artifact_digest"
+    )
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("Claim law evaluation time must be timezone-aware")
+        return value
+
+    @field_validator("verified_attestation_digests")
+    @classmethod
+    def _attestation_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verified ClaimAttestationV1 digests must be sorted and unique")
+        for item in value:
+            CasDigest.from_tagged(item)
+        return value
+
+    @field_validator("verified_attestations")
+    @classmethod
+    def _verified_attestations(
+        cls, value: tuple[VerifiedClaimAttestationV1, ...]
+    ) -> tuple[VerifiedClaimAttestationV1, ...]:
+        digests = tuple(item.attestation_digest for item in value)
+        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verified ClaimAttestations must be sorted and unique")
+        return value
+
+    @field_validator("verdict_captures")
+    @classmethod
+    def _verdict_captures(
+        cls, value: tuple[CaptureVerdictEvidence, ...]
+    ) -> tuple[CaptureVerdictEvidence, ...]:
+        digests = tuple(item.capture_digest for item in value)
+        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verdict Captures must be sorted and unique")
+        return value
+
+
+def parse_claim_law_evidence(value: object) -> ClaimLawEvidence:
+    """Read retained Claim-law evidence; a removed envelope is refused, not read."""
+
+    if (
+        not isinstance(value, dict)
+        or value.get("tag") != ClaimLawEvidence.model_fields["tag"].default
+    ):
+        declared = value.get("tag") if isinstance(value, dict) else None
+        raise ClaimFormatError(f"unsupported Claim law evidence: {declared!r}")
+    return ClaimLawEvidence.model_validate(value)
+
+
+class ClaimLawResult(_StrictClaimModel):
+    verdict: Literal["accepted", "refused"]
+    artifact_digest: str | None = None
+    statement_digest: str | None = None
+    required_tier: PermissionTier | None = None
+    approval_scope: tuple[str, ...] = ()
+    evidence: ClaimLawEvidence | None = None
+    diagnostics: tuple[CompilerDiagnostic, ...] = ()
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ClaimLawResult":
+        complete = all(
+            item is not None
+            for item in (
+                self.artifact_digest,
+                self.statement_digest,
+                self.required_tier,
+                self.evidence,
+            )
+        )
+        if self.verdict == "accepted" and (not complete or self.diagnostics):
+            raise ValueError("accepted Claim law result is incomplete")
+        if self.verdict == "refused" and complete:
+            raise ValueError("refused Claim law result cannot be complete")
+        return self
+
+
+def _diagnostic(code: str, message: str, *, path: str, field: str | None = None) -> ClaimLawResult:
+    return ClaimLawResult(
+        verdict="refused",
+        diagnostics=(
+            CompilerDiagnostic(
+                code=code,
+                severity="error",
+                message=message,
+                subject=(
+                    SemanticAddress.whole_artifact(path)
+                    if field is None
+                    else SemanticAddress.claim_statement_field(path, field)
+                ),
+            ),
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class _ResolvedReferent:
+    identity: ArtifactIdentity
+    artifact_digest: str
+    semantic_kind: str
+
+
+def _resolved_referent(
+    address: SemanticAddress,
+    subjects: Mapping[str, AcceptedSubject],
+    claim_types: Mapping[str, AcceptedClaimType],
+    *,
+    descriptor: bool,
+) -> _ResolvedReferent | None:
+    if address.selector.scheme != "artifact-v1":
+        return None
+    subject = subjects.get(address.artifact_path)
+    if subject is not None:
+        return _ResolvedReferent(
+            identity=subject.shell.identity,
+            artifact_digest=subject.artifact_digest,
+            semantic_kind=("semantic.subject" if descriptor else subject.shell.subject_kind),
+        )
+    if not descriptor:
+        # Only descriptor Claims may address a ClaimType; skip reading them all.
+        return None
+    claim_type = next(
+        (item for item in claim_types.values() if item.path == address.artifact_path),
+        None,
+    )
+    if claim_type is not None:
+        return _ResolvedReferent(
+            identity=claim_type.claim_type.identity,
+            artifact_digest=claim_type.artifact_digest,
+            semantic_kind="semantic.claim_type",
+        )
+    return None
+
+
+def _required_pin(
+    claim: ClaimArtifact,
+    *,
+    role: str,
+    identity: ArtifactIdentity,
+    digest: str,
+) -> bool:
+    return any(
+        pin.role == role and pin.target == identity and pin.artifact_digest == digest
+        for pin in claim.pins
+    )
+
+
+@dataclass(frozen=True)
+class CitedSourceWindow:
+    """The whole source a capture was taken from, and the window inside it the Claim cites."""
+
+    source_id: str | None
+    content: bytes
+    start_byte: int
+    end_byte: int
+    # Whether ``content`` is the whole source the capture names, or only the
+    # bytes the capture committed to because the whole source did not resolve.
+    whole_source: bool = True
+
+
+_WINDOW_ACCESS = BodyAccessContext(principal_id="playbill-compiler", can_read_body=True)
+
+
+def resolve_cited_source_window(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+    memo: VerifiedCaptureMemo | None = None,
+) -> CitedSourceWindow | None:
+    """Resolve the bytes a citation's span is measured against, when they resolve.
+
+    A foreign-source capture commits to the SELECTED bytes and names the whole
+    source only by digest, so the whole source is read back from the store
+    when it is there -- a page that declares a block is handed over at
+    lowering and kept -- and the selection alone stands in for it otherwise.
+    A coordinator body is its own source. Anything else materialized in the
+    store is measured against its own commitment. ``None`` means nothing
+    resolves, and the caller decides whether that is allowed to pass.
+
+    ``memo`` is the request's verification of this Capture. The window is a
+    function of immutable bytes AND of which of them the store holds now -- a
+    foreign source's whole page may land later in the same request -- so a
+    kept window is reused only while every body it consulted is held exactly
+    as it was when it was derived: a warm answer is always the cold one.
+    """
+
+    held = _window_bodies_held(envelope, store=store)
+    if memo is not None:
+        kept = memo.derived.get(_CITED_WINDOW)
+        if isinstance(kept, tuple) and kept[0] == held:
+            return cast(CitedSourceWindow | None, kept[1])
+    window = _resolve_cited_source_window(envelope, store=store)
+    if memo is not None:
+        memo.derived[_CITED_WINDOW] = (held, window)
+    return window
+
+
+def _window_bodies_held(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> tuple[tuple[str, bool], ...]:
+    """Every body the window derivation may consult, and whether the store holds it."""
+
+    consulted: list[str] = [envelope.commitment.digest]
+    source = envelope.source
+    if isinstance(source, CasSourceReference):
+        consulted.append(source.content_digest)
+    if isinstance(source, ExternalSourceReference) and isinstance(source.coordinate, Mapping):
+        page_digest = source.coordinate.get("source_content_digest")
+        if isinstance(page_digest, str):
+            consulted.append(page_digest)
+    return tuple((digest, bool(store.verify(digest))) for digest in dict.fromkeys(consulted))
+
+
+_CITED_WINDOW = "cited_source_window"
+
+
+def _resolve_cited_source_window(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> CitedSourceWindow | None:
+    source = envelope.source
+    commitment = envelope.commitment
+    if isinstance(source, ExternalSourceReference) and (
+        source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+    ):
+        coordinate = source.coordinate if isinstance(source.coordinate, Mapping) else {}
+        selector = source.selector if isinstance(source.selector, Mapping) else {}
+        window = selector.get("working_selection", selector)
+        page_digest = coordinate.get("source_content_digest")
+        start = window.get("start_byte") if isinstance(window, Mapping) else None
+        end = window.get("end_byte") if isinstance(window, Mapping) else None
+        if (
+            isinstance(page_digest, str)
+            and isinstance(start, int)
+            and isinstance(end, int)
+            and not isinstance(start, bool)
+            and not isinstance(end, bool)
+            and store.verify(page_digest)
+        ):
+            page = store.read(page_digest, access=_WINDOW_ACCESS)
+            if len(page) == coordinate.get("source_byte_length") and 0 <= start <= end <= len(page):
+                return CitedSourceWindow(source.source_identity, page, start, end)
+        if commitment.materialization == "cas" and store.verify(commitment.digest):
+            selected = store.read(commitment.digest, access=_WINDOW_ACCESS)
+            return CitedSourceWindow(
+                source.source_identity, selected, 0, len(selected), whole_source=False
+            )
+        return None
+    if isinstance(source, CasSourceReference) and store.verify(source.content_digest):
+        substrate = store.read(source.content_digest, access=_WINDOW_ACCESS)
+        if source.content_digest == commitment.digest or not store.verify(commitment.digest):
+            return CitedSourceWindow(None, substrate, 0, len(substrate))
+        selected = store.read(commitment.digest, access=_WINDOW_ACCESS)
+        first = substrate.find(selected)
+        if selected and first >= 0 and substrate.find(selected, first + 1) < 0:
+            return CitedSourceWindow(None, substrate, first, first + len(selected))
+        return CitedSourceWindow(None, selected, 0, len(selected))
+    if commitment.materialization == "cas" and store.verify(commitment.digest):
+        content = store.read(commitment.digest, access=_WINDOW_ACCESS)
+        return CitedSourceWindow(None, content, 0, len(content))
+    return None
+
+
+def _citation_ids_by_capture(claim: ClaimArtifact) -> dict[str, frozenset[str]]:
+    """Every explicit association a Claim holds, grouped by the Capture it names."""
+
+    grouped: dict[str, set[str]] = {}
+    for citation in claim.backing.citations:
+        grouped.setdefault(citation.capture_digest, set()).add(citation.citation_id)
+    return {digest: frozenset(ids) for digest, ids in grouped.items()}
+
+
+def inherited_capture_digests(
+    claim: ClaimArtifact,
+    *,
+    path: str,
+    predecessor: AcceptedClaim | None,
+) -> frozenset[str]:
+    """Captures a successor inherits unchanged from its exact accepted predecessor.
+
+    The projection-window law is forward-looking. It refuses NEW evidence taken
+    from a projection block; it must not strand state an instance already
+    accepted, because the only exits from a Claim -- retiring it, revising it --
+    are themselves Claim successions the same gate would refuse, leaving the
+    artifact unretirable and unrevisable. A successor is exempt for exactly the
+    Captures it inherits: the Capture was already in the predecessor's backing
+    AND the successor adds no association to it the predecessor did not hold. A
+    Capture cited a new way, or cited for the first time, is new evidence and is
+    gated like any other.
+
+    A retirement carries its predecessor's backing verbatim by construction
+    (``_is_attributed_retirement``), so it is exempt outright.
+    """
+
+    if predecessor is None or predecessor.path != path:
+        return frozenset()
+    if claim.lifecycle.predecessor_digest != predecessor.artifact_digest:
+        return frozenset()
+    previous = predecessor.claim
+    accepted_captures = frozenset(previous.backing.capture_digests)
+    if claim.lifecycle.state == "retired":
+        return accepted_captures
+    previous_citations = _citation_ids_by_capture(previous)
+    current_citations = _citation_ids_by_capture(claim)
+    return frozenset(
+        digest
+        for digest in claim.backing.capture_digests
+        if digest in accepted_captures
+        and current_citations.get(digest, frozenset())
+        <= previous_citations.get(digest, frozenset())
+    )
+
+
+def projection_window_cited(
+    envelope: CaptureEnvelopeAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+    memo: VerifiedCaptureMemo | None = None,
+) -> tuple[CitedSourceWindow, ProjectionWindow] | None:
+    """The stamped block window a capture's span touches, if its source resolves and it does."""
+
+    resolved = resolve_cited_source_window(envelope, store=store, memo=memo)
+    if resolved is None:
+        return None
+    window = projection_window_intersecting(
+        resolved.content,
+        start_byte=resolved.start_byte,
+        end_byte=resolved.end_byte,
+    )
+    if window is None:
+        return None
+    return resolved, window
+
+
+def _capture_is_explicitly_eligible(
+    claim: ClaimArtifact,
+    *,
+    capture_digest: str,
+) -> bool:
+    """Whether an independent evidence citation names this Capture."""
+
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    return any(item.role == "evidence" and item.origin == "independent" for item in associations)
+
+
+def _policy_needs_verified_shape(
+    policy: ClaimEvidenceAdmissionPolicy, *, identity: str | None
+) -> bool:
+    """Whether any rule's ``capture_contract_families`` could still matter.
+
+    A cheap, lookup-free check: a rule with no family entries never needs a
+    verified shape, and a rule whose exact ``capture_contracts`` already name
+    this identity resolves on that alone (shape is consulted only once the
+    exact match misses). Only when some rule has a family AND its exact
+    names miss is the accepted-state verification below ever worth running.
+    """
+
+    return any(
+        bool(rule.capture_contract_families) and not rule.names_capture_contract(identity=identity)
+        for rule in policy.rules
+    )
+
+
+def _verified_catalog_bound_shape(
+    capture_contract: AcceptedCaptureContract,
+    *,
+    envelope: CaptureEnvelopeAny | None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+) -> CaptureShape | Literal["coordinator_self_source"] | None:
+    """The contract's own declared shape, but only once verified catalog-bound.
+
+    Byte-identity with ``foreign_source_capture_contract``'s deterministic
+    output proves only that the contract is a well-formed PUBLIC PROFILE for
+    its claimed source -- any proposer can self-assert any source id and
+    receive one, catalogued or not (D1 review round 2, F1): with no catalog
+    at all, an uploaded, never-catalogued span built under its unmodified
+    built-in contract would pass that check. A shape literal cannot prove
+    catalog membership; acceptance can. A workspace file's source enters
+    accepted state only through a governed change -- its write's
+    working-selection lowering installs that source's foreign-source
+    CaptureContract as a dependency (``install_builtin_capture_dependencies``);
+    an uploaded or otherwise self-asserted source is never separately
+    accepted that way. So membership here is two keyed checks, never a
+    catalog walk: the Capture's contract identity is the one its claimed
+    logical source would be governed under (a cheap, pure name check,
+    ``foreign_source_contract_id``, never the whole contract), AND that
+    EXACT digest is itself an accepted CaptureContract of that identity --
+    current or a valid, still-accepted successor
+    (``historical_capture_contract``, the daemon's own keyed, per-digest,
+    accepted-history lookup -- the same resolver
+    ``instance.accepted_capture_contract_version`` already answers "even if
+    superseded"; it is never enumerated, only ever looked up by this one
+    digest). Without a resolver (no accepted-state access at all), nothing
+    can be proven, so nothing matches -- fail closed, same as no envelope.
+    """
+
+    contract = capture_contract.contract
+    if isinstance(contract, CaptureContractV1) or envelope is None:
+        return None
+    shape = contract.shape
+    logical_source = (
+        envelope.source.source_identity
+        if isinstance(envelope.source, ExternalSourceReference)
+        else None
+    )
+    if logical_source is None:
+        return None
+    try:
+        expected_identity = foreign_source_contract_id(logical_source)
+    except FormatError:
+        return None
+    if expected_identity != contract.identity.name:
+        return None
+    if historical_capture_contract is None:
+        return None
+    accepted = historical_capture_contract(capture_contract.artifact_digest)
+    if accepted is None or accepted.contract.identity.name != expected_identity:
+        return None
+    return shape
+
+
+def _lazily_verified_shape(
+    policy: ClaimEvidenceAdmissionPolicy,
+    capture_contract: AcceptedCaptureContract,
+    *,
+    envelope: CaptureEnvelopeAny | None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+) -> CaptureShape | Literal["coordinator_self_source"] | None:
+    """``_verified_catalog_bound_shape``, skipped unless some rule could need it.
+
+    The guard (``_policy_needs_verified_shape``) is a lookup-free scan of
+    ``policy.rules``; it is what makes this call safe to make unconditionally
+    at every admission and eligibility site without paying an accepted-state
+    lookup for a policy that names no family at all.
+    """
+
+    if not _policy_needs_verified_shape(
+        policy, identity=capture_contract.contract.identity.qualified
+    ):
+        return None
+    return _verified_catalog_bound_shape(
+        capture_contract,
+        envelope=envelope,
+        historical_capture_contract=historical_capture_contract,
+    )
+
+
+def _self_source_capture_admitted_by_rule(
+    claim: ClaimArtifact,
+    *,
+    claim_type: ClaimType,
+    capture_contract: AcceptedCaptureContract,
+    capture_digest: str,
+    envelope: CaptureEnvelopeAny | None = None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+) -> bool:
+    """Let a ClaimType's admission policy decide a coordinator self-source citation.
+
+    Text authored inside a governed page is captured bytes like any other
+    source. A prose ClaimType may name the coordinator self-source contract in
+    its evidence-admission policy and so cover a Claim over its own authored
+    body; a domain ClaimType that does not name that contract still reads such
+    a Claim as uncovered, because the citation is skipped exactly as before.
+    The rule decides, not the citation's shape.
+    """
+
+    if not is_coordinator_self_source_contract(capture_contract.contract):
+        return False
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    if not associations or any(item.origin != "self_source" for item in associations):
+        return False
+    verified_shape = _lazily_verified_shape(
+        claim_type.evidence_admission_policy,
+        capture_contract,
+        envelope=envelope,
+        historical_capture_contract=historical_capture_contract,
+    )
+    return any(
+        claim.statement.role in rule.claim_roles
+        and rule.names_capture_contract(
+            identity=capture_contract.contract.identity.qualified, shape=verified_shape
+        )
+        for rule in claim_type.evidence_admission_policy.rules
+    )
+
+
+_COMPILER_SELF_ASSERTION_CONTRACT_IDS: frozenset[str] = frozenset(
+    {DIRECT_SELF_ASSERTED_CONTRACT_ID, COORDINATOR_SELF_SOURCE_CONTRACT_ID}
+)
+"""The two contracts whose bytes a Claim's own authoring produced."""
+
+
+def _copy_capture_admitted_by_rule(
+    claim: ClaimArtifact,
+    *,
+    claim_type: ClaimType,
+    capture_contract: AcceptedCaptureContract,
+    capture_digest: str,
+    envelope: CaptureEnvelopeAny | None = None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+) -> bool:
+    """Let a ClaimType's admission policy decide an independent copy citation.
+
+    `copy` is the vocabulary's own word for the relation a page block has to the
+    capture of its page: the object bytes ARE the cited bytes. It was also the
+    one relation that could never cover anything, because the eligibility gate
+    admitted `evidence` alone and ran one citation-role earlier than the
+    ClaimType's policy. So the honest spelling made a Claim uncoverable, and the
+    only way to be covered was to describe a copy as evidence -- the door and
+    the vocabulary disagreeing, silently.
+
+    The same shape as the coordinator self-source carve-out, and the same limit:
+    the rule has to NAME the capture's contract for the Claim's role. A domain
+    ClaimType whose policy does not name it still reads such a Claim as
+    uncovered, exactly as before, so this is not a way for any citation to
+    become evidence by relabelling itself.
+
+    Two further gates keep it from being one, because unlike the self-source
+    carve-out there is no single contract that marks the case.
+
+    The compiler's own self-assertion contracts are excluded outright. Their
+    bytes are produced by this Claim's own authoring -- a direct value, a
+    coordinator body -- so a copy of them is the Claim quoting itself, and every
+    domain ClaimType names the direct contract already. A page, by contrast, is
+    captured under a DECLARED source contract: bytes that exist whether or not
+    this Claim is authored, which is what makes the ruling's `copy` relation
+    something a rule can honestly admit.
+
+    `origin` stays `independent` throughout. A copy of bytes this Claim itself
+    published is the attest-everything-into-concrete move the pages-are-sources
+    ruling refused, and it is still skipped here.
+    """
+
+    if capture_contract.contract.identity.name in _COMPILER_SELF_ASSERTION_CONTRACT_IDS:
+        return False
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    if not associations:
+        return False
+    if any(item.role != "copy" or item.origin != "independent" for item in associations):
+        return False
+    verified_shape = _lazily_verified_shape(
+        claim_type.evidence_admission_policy,
+        capture_contract,
+        envelope=envelope,
+        historical_capture_contract=historical_capture_contract,
+    )
+    return any(
+        claim.statement.role in rule.claim_roles
+        and rule.names_capture_contract(
+            identity=capture_contract.contract.identity.qualified, shape=verified_shape
+        )
+        for rule in claim_type.evidence_admission_policy.rules
+    )
+
+
+def capture_citation_eligible(
+    claim: ClaimArtifact,
+    *,
+    claim_type: ClaimType,
+    capture_contract: AcceptedCaptureContract,
+    capture_digest: str,
+    envelope: CaptureEnvelopeAny | None = None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+) -> bool:
+    """Whether the verdict law reads this cited Capture as evidence at all.
+
+    The one eligibility gate: an independent evidence citation, a coordinator
+    self-source citation its ClaimType's rule names,
+    or a page copy its rule names. The verdict and every account of a Claim's
+    citations ask this, so a citation the law admits never reads otherwise.
+    ``envelope`` lets a family rule (D1) verify catalog-bound membership;
+    without it only exact-identity rules match, same as before D1.
+    ``historical_capture_contract`` is the keyed, accepted-state lookup that
+    verification needs (D1 review round 2): without it, a family rule can
+    never match, same as without ``envelope``.
+    """
+
+    return (
+        _capture_is_explicitly_eligible(claim, capture_digest=capture_digest)
+        or _self_source_capture_admitted_by_rule(
+            claim,
+            claim_type=claim_type,
+            capture_contract=capture_contract,
+            capture_digest=capture_digest,
+            envelope=envelope,
+            historical_capture_contract=historical_capture_contract,
+        )
+        or _copy_capture_admitted_by_rule(
+            claim,
+            claim_type=claim_type,
+            capture_contract=capture_contract,
+            capture_digest=capture_digest,
+            envelope=envelope,
+            historical_capture_contract=historical_capture_contract,
+        )
+    )
+
+
+@dataclass(frozen=True)
+class CaptureEvidenceKindEvaluation:
+    evidence_kind: str | None
+    trace: ClaimEvidenceAdmissionTrace
+
+
+@sealed_memo
+def _evidence_admission_policy_key(policy: ClaimEvidenceAdmissionPolicy) -> bytes:
+    """Exact policy content; a mutable copy is encoded afresh, never remembered."""
+    return canonical_bytes(policy.model_dump(mode="json"))
+
+
+def evaluate_capture_evidence_admissions(
+    claim: ClaimArtifact,
+    *,
+    claim_type: ClaimType,
+    capture_digest: str,
+    capture_contract: AcceptedCaptureContract,
+    envelope: CaptureEnvelopeAny,
+    verified_attestations: tuple[VerifiedClaimAttestationV1, ...],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+) -> tuple[CaptureEvidenceKindEvaluation, ...]:
+    """Run the shared evidence-admission evaluator for every declared evidence kind.
+
+    ``historical_capture_contract`` is the keyed, accepted-state lookup a
+    capture_contract_families entry needs to verify catalog-bound membership
+    (D1 review round 2); without it, a family rule can never match, same as
+    before D1.
+    """
+
+    relevant_spans = tuple(
+        span
+        for mapping in claim.backing.source_mappings
+        for span in mapping.spans
+        if span.content_digest == envelope.commitment.digest
+    )
+    exact_claim_subject_bound = bool(relevant_spans) or (
+        getattr(envelope.source, "selector_type", None)
+        in {"direct-claim-source-v1", "direct-claim-external-selector-v1"}
+        and isinstance(getattr(envelope.source, "selector", None), dict)
+        and getattr(envelope.source, "selector", {}).get("claim_id") == claim.identity.name
+    )
+    contract_source_bound = _verified_contract_subject_binding(
+        envelope.source,
+        contract=capture_contract.contract,
+        subject=claim.statement.subject,
+    )
+    subject_binding_by_rule = {
+        rule.rule_id: (
+            exact_claim_subject_bound
+            if rule.subject_binding == "exact_claim_subject"
+            else contract_source_bound
+        )
+        for rule in claim_type.evidence_admission_policy.rules
+    }
+    capture_attestations = tuple(
+        item for item in verified_attestations if capture_digest in item.statement.capture_digests
+    )
+    if any(item.attestation_grade == "verified_provider" for item in capture_attestations):
+        attestation_grade: VerifiedAttestationGrade = "verified_provider"
+    elif any(item.attestation_grade == "verified_principal" for item in capture_attestations):
+        attestation_grade = "verified_principal"
+    else:
+        attestation_grade = "none"
+    decisions: list[CaptureEvidenceKindEvaluation] = []
+    # Legacy pairs retain every historical kind verdict. New contracts have one
+    # admission question, keyed by the source already present in the envelope.
+    kinds: tuple[str | None, ...] = (
+        capture_contract.contract.evidence_kinds
+        if isinstance(capture_contract.contract, CaptureContractV1)
+        else (None,)
+    )
+    logical_source = (
+        envelope.source.source_identity
+        if isinstance(envelope.source, ExternalSourceReference)
+        else None
+    )
+    # The contract's own declared shape, never its name -- and never trusted
+    # alone: verified against accepted state (not just byte-identity with the
+    # public builder) before a capture_contract_families entry may match it
+    # (D1 review F1, round 2). Skipped entirely (no accepted-state lookup at
+    # all) unless some rule in this policy actually declares a family the
+    # exact names did not already satisfy (D1 review settle-cost follow-up).
+    contract_shape = _lazily_verified_shape(
+        claim_type.evidence_admission_policy,
+        capture_contract,
+        envelope=envelope,
+        historical_capture_contract=historical_capture_contract,
+    )
+    has_extracted_inputs = (
+        claim.backing.procedure_evidence is not None
+        and claim.backing.procedure_evidence.value.basis == "derived"
+        and bool(claim.backing.procedure_evidence.value.extractions)
+    )
+    for kind in kinds:
+        matching_rules = tuple(
+            rule
+            for rule in claim_type.evidence_admission_policy.rules
+            if claim.statement.role in rule.claim_roles
+            and rule.names_capture_contract(
+                identity=capture_contract.contract.identity.qualified, shape=contract_shape
+            )
+            and rule.admits_source(
+                identity=capture_contract.contract.identity.qualified,
+                logical_source=logical_source,
+                shape=contract_shape,
+            )
+        )
+        source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
+        # The law and lowering can ask the same policy question, and many
+        # Claims ask it of the same Capture. Only these derived inputs affect
+        # admission; Claim identity, path and the source bytes do not. The policy
+        # bytes bind the complete policy, including rules that did not match.
+        key = (
+            "claims.evidence_admission",
+            _evidence_admission_policy_key(claim_type.evidence_admission_policy),
+            claim.statement.role,
+            capture_contract.artifact_digest,
+            capture_contract.contract.identity.qualified,
+            kind,
+            logical_source,
+            claim.backing.reducer_digest,
+            claim.backing.input_claim_digests,
+            has_extracted_inputs,
+            attestation_grade,
+            source_bound,
+            tuple(sorted(subject_binding_by_rule.items())),
+        )
+
+        def derive(
+            kind: str | None = kind, source_bound: bool = source_bound
+        ) -> CaptureEvidenceKindEvaluation:
+            trace = evaluate_claim_evidence_admission_trace(
+                claim_type.evidence_admission_policy,
+                EvidenceAdmissionInput(
+                    claim_role=claim.statement.role,
+                    capture_contract_digest=capture_contract.artifact_digest,
+                    capture_contract_identity=capture_contract.contract.identity.qualified,
+                    capture_contract_shape=contract_shape,
+                    evidence_kind=kind,
+                    logical_source=logical_source,
+                    reducer_digest=claim.backing.reducer_digest,
+                    input_claim_artifact_digests=claim.backing.input_claim_digests,
+                    has_extracted_inputs=has_extracted_inputs,
+                    attestation_grade=attestation_grade,
+                    source_subject_bound=source_bound,
+                ),
+                subject_binding_by_rule=subject_binding_by_rule,
+            )
+            if not seal(trace):
+                raise TypeError("evidence admission traces must be immutable")
+            return CaptureEvidenceKindEvaluation(evidence_kind=kind, trace=trace)
+
+        decisions.append(
+            request_derive(key, derive, retain=lambda item: item.trace.result.verdict == "eligible")
+        )
+    return tuple(decisions)
+
+
+def _citation_origin_refusal(
+    claim: ClaimArtifact,
+    *,
+    capture_digest: str,
+    envelope: CaptureEnvelopeAny,
+    contract: CaptureContract,
+    store: CaptureObjectStoreProtocol,
+) -> tuple[str, str] | None:
+    """Validate caller-authored origin against mechanically proven Capture shape."""
+
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    if not associations:
+        return None
+    reuse_class = classify_capture_reuse(
+        envelope,
+        contract=contract,
+        store=store,
+        claim_id=claim.identity.name,
+    )
+    if reuse_class == "claim_bound_mismatch":
+        return (
+            "cruxible.claim.self_source_capture_unbound",
+            "The Claim-bound Capture belongs to another Claim or has mismatched family signals.",
+        )
+    if reuse_class == "not_shareable":
+        return (
+            "cruxible.authoring.capture_not_shareable",
+            "Only a verified observed Capture may be shared across Claims.",
+        )
+    direct_self_source = capture_is_direct_self_source(
+        envelope,
+        contract=contract,
+        store=store,
+        claim_id=claim.identity.name,
+    )
+    direct_selection_bound = capture_is_direct_selection_bound(
+        envelope,
+        contract=contract,
+        claim_id=claim.identity.name,
+    )
+    coordinator_contract = is_coordinator_self_source_contract(contract)
+    coordinator_self_source = capture_is_coordinator_self_source(
+        envelope,
+        contract=contract,
+        claim_id=claim.identity.name,
+    )
+    if coordinator_contract and not coordinator_self_source:
+        return (
+            "cruxible.claim.self_source_capture_unbound",
+            "The coordinator self-source Capture is not bound to this Claim.",
+        )
+    verified_self_source = direct_self_source or coordinator_self_source
+    self_source_origin_permitted = verified_self_source or direct_selection_bound
+    for association in associations:
+        if verified_self_source and association.origin != "self_source":
+            return (
+                "cruxible.claim.self_source_origin_mismatch",
+                "A direct self-source tied to this Claim must declare self_source origin.",
+            )
+        if not self_source_origin_permitted and association.origin == "self_source":
+            return (
+                "cruxible.claim.self_source_origin_mismatch",
+                "self_source origin requires a verified self-source Capture tied to this Claim.",
+            )
+    return None
+
+
+def _request_verdict_capture(**fields: Any) -> CaptureVerdictEvidence:
+    """Share identical verdict inputs only inside the current artifact request.
+
+    The key contains every constructor field, including freshly recomputed
+    admission, provenance and availability. No Claim verdict is retained.
+    """
+    key = ("claim.verdict_capture", *sorted(fields.items()))
+    try:
+        hash(key)
+    except TypeError:
+        return CaptureVerdictEvidence(**fields)
+    return request_derive(key, lambda: CaptureVerdictEvidence(**fields), retain=seal)
+
+
+def _is_claim_type_rederivation(
+    claim: ClaimArtifact,
+    *,
+    predecessor: ClaimArtifact,
+    claim_type_digest: str,
+    claim_type_identity: ArtifactIdentity,
+) -> bool:
+    """Recognize the exact machine-generated delta for ClaimType succession."""
+
+    expected_statement = _statement_with_claim_type_digest(predecessor.statement, claim_type_digest)
+    expected_pins = tuple(
+        pin.model_copy(update={"artifact_digest": claim_type_digest})
+        if pin.role == "claim-type"
+        and pin.target == claim_type_identity
+        and pin.artifact_digest != claim_type_digest
+        else pin
+        for pin in predecessor.pins
+    )
+    retirement_matches = claim.retirement == predecessor.retirement
+    return (
+        claim.artifact_format == predecessor.artifact_format
+        and claim.statement == expected_statement
+        and claim.backing == predecessor.backing
+        and claim.pins == expected_pins
+        and claim.lifecycle.state == predecessor.lifecycle.state
+        and retirement_matches
+    )
+
+
+def _statement_with_claim_type_digest(statement: ClaimStatement, digest: str) -> ClaimStatement:
+    """Keep an unchanged validated statement when comparing revision deltas."""
+    return (
+        statement
+        if statement.claim_type_digest == digest
+        else statement.model_copy(update={"claim_type_digest": digest})
+    )
+
+
+def _is_attributed_retirement(
+    claim: ClaimArtifact,
+    *,
+    predecessor: ClaimArtifact,
+) -> bool:
+    if claim.retirement is None or predecessor.lifecycle.state != "live":
+        return False
+    expected_statement = predecessor.statement.model_copy(
+        update={"effective_until": claim.statement.effective_until}
+    )
+    effective_until_preserved_or_replaced = not (
+        predecessor.statement.effective_until is not None
+        and claim.statement.effective_until is None
+    )
+    pins_preserve_shape = len(claim.pins) == len(predecessor.pins) and all(
+        current.role == previous.role
+        and current.target == previous.target
+        and (current.artifact_digest == previous.artifact_digest or current.target.kind == "Claim")
+        for previous, current in zip(predecessor.pins, claim.pins, strict=True)
+    )
+    return (
+        claim.identity == predecessor.identity
+        and claim.statement == expected_statement
+        and effective_until_preserved_or_replaced
+        and claim.backing == predecessor.backing
+        and pins_preserve_shape
+        and claim.lifecycle.state == "retired"
+    )
+
+
+def _is_claim_type_attributed_retirement(
+    claim: ClaimArtifact,
+    *,
+    predecessor: ClaimArtifact,
+    claim_type_digest: str,
+    claim_type_identity: ArtifactIdentity,
+) -> bool:
+    if claim.retirement is None or predecessor.lifecycle.state != "live":
+        return False
+    expected_statement = predecessor.statement.model_copy(
+        update={
+            "claim_type_digest": claim_type_digest,
+            "effective_until": claim.statement.effective_until,
+        }
+    )
+    expected_pins = tuple(
+        pin.model_copy(update={"artifact_digest": claim_type_digest})
+        if pin.role == "claim-type" and pin.target == claim_type_identity
+        else pin
+        for pin in predecessor.pins
+    )
+    pins_preserve_shape = len(claim.pins) == len(expected_pins) and all(
+        current.role == previous.role
+        and current.target == previous.target
+        and (current.artifact_digest == previous.artifact_digest or current.target.kind == "Claim")
+        for previous, current in zip(expected_pins, claim.pins, strict=True)
+    )
+    return (
+        claim.identity == predecessor.identity
+        and claim.statement == expected_statement
+        and not (
+            predecessor.statement.effective_until is not None
+            and claim.statement.effective_until is None
+        )
+        and claim.backing == predecessor.backing
+        and pins_preserve_shape
+        and claim.lifecycle.state == "retired"
+    )
+
+
+def claim_retirement_pin_digest_updates(
+    claim: ClaimArtifact,
+    *,
+    predecessor: ClaimArtifact,
+) -> tuple[tuple[ArtifactPin, ArtifactPin], ...]:
+    """Return the Claim-target digest deltas admitted only for closure-carried retirement."""
+
+    if claim.retirement is None or len(claim.pins) != len(predecessor.pins):
+        return ()
+    return tuple(
+        (previous, current)
+        for previous, current in zip(predecessor.pins, claim.pins, strict=True)
+        if previous.role == current.role
+        and previous.target == current.target
+        and previous.target.kind == "Claim"
+        and previous.artifact_digest != current.artifact_digest
+    )
+
+
+def claim_preserves_derivation(claim: ClaimArtifact, *, predecessor: ClaimArtifact) -> bool:
+    """Recognize existing succession/retirement deltas without a new computation.
+
+    Live admission uses this AFTER the Claim law passes. These exact machine
+    deltas preserve the assertion and its execution backing; a manually revised
+    result or new evidence must instead come from another Procedure execution.
+    """
+
+    return claim.identity == predecessor.identity and (
+        _is_claim_type_rederivation(
+            claim,
+            predecessor=predecessor,
+            claim_type_digest=claim.statement.claim_type_digest,
+            claim_type_identity=claim.statement.claim_type,
+        )
+        or _is_attributed_retirement(claim, predecessor=predecessor)
+        or _is_claim_type_attributed_retirement(
+            claim,
+            predecessor=predecessor,
+            claim_type_digest=claim.statement.claim_type_digest,
+            claim_type_identity=claim.statement.claim_type,
+        )
+    )
+
+
+def _named_capture_contract(store: CaptureObjectStoreProtocol, digest: str) -> str | None:
+    """The contract digest a Capture envelope names, or None when unreadable."""
+
+    try:
+        CasDigest.from_tagged(digest)
+        content = store.read(
+            digest,
+            access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
+        )
+        return parse_capture_envelope(content).capture_contract_digest
+    except (FormatError, ValueError):
+        # The same failures verification treats as "this contract does not verify".
+        return None
+
+
+def _backing_absence(claim: ClaimArtifact) -> AbsenceWitness | None:
+    """The absence witness an inverse's procedure evidence carries, if any."""
+
+    receipt = getattr(claim.backing, "procedure_evidence", None)
+    return None if receipt is None else receipt.absence
+
+
+def absence_witness_refusal(
+    witness: AbsenceWitness,
+    *,
+    capture_store: CaptureObjectStoreProtocol,
+    contracts_by_digest: Mapping[str, Sequence[AcceptedCaptureContract]] | None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+    ledger_resolver: LedgerMaterialResolverProtocol | None,
+    producer_artifact_digests: Mapping[str, str] | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    verified: MutableMapping[object, None] | None = None,
+) -> str | None:
+    """Why an absence witness does not stand on its Captures, or ``None`` when it does.
+
+    Every Capture the enumeration read (``witness.captures``: one, or every
+    member of a list, D-R37 a6) must be retained, verify under its exact
+    accepted CaptureContract with daemon proof that a run produced it, and
+    name the witness's logical source.
+
+    ``verified`` is the evaluation's record of witnesses it already found
+    standing, shared by every Claim one evaluation judges: many Claims on one
+    witness verify its members once. A record answers only under the
+    request's body-change epoch it was made in (the producer receipt
+    resolver's), so no warm answer outlives a body landing or erasure; with
+    no epoch nothing is recorded and every witness is verified afresh.
+    """
+
+    epoch = (
+        producer_receipt_resolver._capture_proof_epoch()
+        if isinstance(producer_receipt_resolver, _RequestCaptureProofEpoch)
+        else None
+    )
+    key = (
+        None
+        if verified is None or epoch is None
+        else (epoch, witness.captures, witness.logical_source)
+    )
+    if key is not None and key in verified:
+        return None
+    for capture in witness.captures:
+        memo = (
+            None
+            if producer_receipt_resolver is None
+            else producer_receipt_resolver.recall_verified(capture)
+        )
+        try:
+            named = (
+                memo.envelope.capture_contract_digest
+                if memo is not None
+                else _named_capture_contract(capture_store, capture)
+            )
+        except CasError:
+            # A missing or corrupt envelope (cold context): the same answer as
+            # missing or corrupt bytes below, never an escaping storage error.
+            return "Absence witness bytes are no longer retained; acquire the source again."
+        choices = (
+            ()
+            if contracts_by_digest is None or named is None
+            else contracts_by_digest.get(named, ())
+        )
+        contract = next(iter(choices), None)
+        if contract is None and named is not None and historical_capture_contract is not None:
+            contract = historical_capture_contract(named)
+        if contract is None:
+            return "The absence witness CaptureContract is unavailable; acquire the source again."
+        try:
+            envelope = verify_capture(
+                capture,
+                store=capture_store,
+                contract=contract.contract,
+                ledger_resolver=ledger_resolver,
+                producer_artifact_digests=producer_artifact_digests,
+                producer_receipt_resolver=producer_receipt_resolver,
+                require_production_proof=True,
+            )
+            retained = all(
+                capture_store.verify(body) for body in capture_retained_body_digests(envelope)
+            )
+        except (CasError, FormatError, ValueError):
+            # Missing, corrupt (the store refuses bytes that do not match their
+            # address) or unproduced: the witness does not stand on it.
+            retained = False
+        if not retained:
+            return "Absence witness bytes are no longer retained; acquire the source again."
+        if getattr(envelope.source, "source_identity", None) != witness.logical_source:
+            return (
+                "The absence witness names a different logical source; acquire the declared source."
+            )
+    if key is not None and verified is not None:
+        verified[key] = None
+    return None
+
+
+def _citation_contract(
+    capture_digest: str,
+    *,
+    store: CaptureObjectStoreProtocol,
+    capture_contracts: Mapping[str, AcceptedCaptureContract],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+) -> str | None:
+    """The CaptureContract identity a Capture was taken under, live or historical."""
+
+    named = _named_capture_contract(store, capture_digest)
+    if named is None:
+        return None
+    for candidate in capture_contracts.values():
+        if capture_contract_digest(candidate.contract).tagged == named:
+            return candidate.contract.identity.qualified
+    found = None if historical_capture_contract is None else historical_capture_contract(named)
+    return None if found is None else found.contract.identity.qualified
+
+
+def _rebind_replaces(
+    dropped: Sequence[ClaimCitation],
+    current: Sequence[ClaimCitation],
+    previous: Sequence[ClaimCitation],
+    *,
+    store: CaptureObjectStoreProtocol,
+    capture_contracts: Mapping[str, AcceptedCaptureContract],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+) -> bool:
+    """Whether each dropped citation has a new one of its role, origin and contract.
+
+    Reads the envelopes of the dropped and the newly added citations only: the
+    cost is this Claim's change, never its whole history.
+    """
+
+    inherited = {item.citation_id for item in previous}
+    added = [item for item in current if item.citation_id not in inherited]
+
+    def contract(item: ClaimCitation) -> str | None:
+        return _citation_contract(
+            item.capture_digest,
+            store=store,
+            capture_contracts=capture_contracts,
+            historical_capture_contract=historical_capture_contract,
+        )
+
+    offered = {(item.role, item.origin, contract(item)) for item in added}
+    return all(
+        (identity := contract(item)) is not None and (item.role, item.origin, identity) in offered
+        for item in dropped
+    )
+
+
+def _stored_capture_envelope(
+    store: CaptureObjectStoreProtocol, digest: str
+) -> CaptureEnvelopeAny | None:
+    """The envelope a Capture digest names, or None when the store cannot give it."""
+
+    try:
+        return parse_capture_envelope(
+            store.read(
+                digest,
+                access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
+            )
+        )
+    except (FormatError, ValueError):
+        return None
+
+
+def _governed_erasures(
+    envelope: CaptureEnvelopeAny,
+    *,
+    records: Callable[[tuple[str, ...]], Mapping[str, RecordedCaptureErasure]],
+    contracts_by_digest: Mapping[str, list[AcceptedCaptureContract]],
+    erasure_contract: Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None] | None,
+) -> frozenset[str]:
+    """This Capture's retained bodies an authorized erasure record names.
+
+    One keyed lookup per retained body (the latest record naming it: bodies are
+    content-addressed, so one Capture's erasure names the same bytes for every
+    Capture holding them), and one authority check per record found: made
+    under the erasure authority of the contract version it names (this
+    Capture's own, or, for a shared body, another Capture's), resolved as of the
+    erasure's own accepted head (``erasure_contract``) or, failing that, in this
+    judgment's dependencies.
+    """
+
+    retained = capture_retained_body_digests(envelope)
+    if not retained:
+        return frozenset()
+    authorized: dict[int, bool] = {}
+    destroyed: set[str] = set()
+    for body, item in records(retained).items():
+        if body not in retained:
+            continue
+        if item.sequence not in authorized:
+            record = item.record
+            candidates = list(contracts_by_digest.get(record.capture_contract_digest, ()))
+            if erasure_contract is not None and (authority := erasure_contract(item)) is not None:
+                candidates.append(authority)
+            authorized[item.sequence] = any(
+                capture_erasure_authorized(
+                    record, found.contract, contract_digest=found.artifact_digest
+                )
+                for found in candidates
+            )
+        if authorized[item.sequence]:
+            destroyed.add(body)
+    return frozenset(destroyed)
+
+
+def _inverse_object_refusal(
+    value: NoneClaimObject,
+    *,
+    contract: ClaimType,
+    claim_types: Mapping[str, AcceptedClaimType],
+    path: str,
+) -> ClaimLawResult | None:
+    """Refuse an inverse its ClaimType does not declare, or whose ``of`` misses the key."""
+
+    inverse = contract.inverse
+    if inverse is None:
+        return _diagnostic(
+            "cruxible.claim.inverse_undeclared",
+            f"ClaimType {contract.predicate!r} declares no inverse, so a Claim of it cannot "
+            "state that its value is none; declare `inverse` on the ClaimType, or retire the "
+            "values that no longer hold.",
+            path=path,
+            field="object",
+        )
+    key = inverse.key
+    if isinstance(key, ClaimInverseObjectKeyPart):
+        key_type = claim_types.get(f"ClaimType:{key.predicate}")
+        if not isinstance(value.of, LiteralClaimObject):
+            problem = f"names its unit by the key {key.predicate!r}: `of` is that key's value"
+        elif key_type is None:
+            problem = f"is keyed by {key.predicate!r}, which does not resolve"
+        elif claim_literal_problem(value.of.value, key_type.claim_type.value) is not None:
+            problem = f"names a key value {value.of.value!r} that {key.predicate!r} does not admit"
+        elif not is_canonical_literal(value.of.value, key_type.claim_type.canonical_form or ()):
+            problem = (
+                f"names the key value {value.of.value!r}, which is not in the canonical form "
+                f"{key.predicate!r} declares; store its canonical value"
+            )
+        else:
+            return None
+    elif isinstance(key, ClaimInverseObjectKey):
+        if value.of is not None:
+            return None
+        problem = "is keyed by object: `of` is the object it says is absent"
+    else:
+        if value.of is None:
+            return None
+        problem = "is keyed by slot: the whole slot holds nothing, so `of` is omitted"
+    return _diagnostic(
+        "cruxible.claim.inverse_key_mismatch",
+        f"The inverse of {contract.predicate!r} {problem}.",
+        path=path,
+        field="object",
+    )
+
+
+def _flip_unit_moved(
+    statement: ClaimStatement, previous: ClaimStatement, contract: ClaimType
+) -> str | None:
+    """Why a flip leaves the unit it revises, or None when it provably stays.
+
+    Subject and predicate are held by the revision checks; a flip also keeps
+    its qualifier, and under an inverse keyed by object the absent object is
+    the positive's own. An object_key flip names a key value whose holder is
+    read from state, so the candidate boundary judges it.
+    """
+
+    if statement.qualifier != previous.qualifier:
+        return "A flip keeps the qualifier of the Claim it revises."
+    inverse = contract.inverse
+    if inverse is None or not isinstance(inverse.key, ClaimInverseObjectKey):
+        return None
+    new_unit = claim_unit_key(statement, inverse)
+    old_unit = claim_unit_key(previous, inverse)
+    if new_unit is None or new_unit != old_unit:
+        return (
+            "A flip stays in its unit: an inverse keyed by object names the object the positive "
+            "held. Write the none for that object, or retire this Claim and state the other."
+        )
+    return None
+
+
+def _inverse_rules_admit(
+    claim: ClaimArtifact,
+    *,
+    contract: ClaimType,
+    inverse: ClaimInverse,
+    capture_digest: str,
+    capture_contract: AcceptedCaptureContract,
+    envelope: CaptureEnvelopeAny,
+    verified_attestations: tuple[VerifiedClaimAttestationV1, ...],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+) -> bool:
+    """Whether one of the inverse's own evidence rules admits this Capture as evidence."""
+
+    rules = tuple(
+        rule
+        for rule in contract.evidence_admission_policy.rules
+        if rule.rule_id in inverse.evidence_rules
+    )
+    if not rules:
+        return False
+    restricted = contract.model_copy(
+        update={
+            "evidence_admission_policy": contract.evidence_admission_policy.model_copy(
+                update={"rules": rules}
+            )
+        }
+    )
+    if not capture_citation_eligible(
+        claim,
+        claim_type=restricted,
+        capture_contract=capture_contract,
+        capture_digest=capture_digest,
+        envelope=envelope,
+        historical_capture_contract=historical_capture_contract,
+    ):
+        return False
+    # Only evidential admission establishes a negative: origin-only admission
+    # (a Claim's own words standing for themselves) never does.
+    return any(
+        decision.trace.result.verdict == "eligible"
+        and decision.trace.result.admission in {"direct", "derivational"}
+        for decision in evaluate_capture_evidence_admissions(
+            claim,
+            claim_type=restricted,
+            capture_digest=capture_digest,
+            capture_contract=capture_contract,
+            envelope=envelope,
+            verified_attestations=verified_attestations,
+            historical_capture_contract=historical_capture_contract,
+        )
+    )
+
+
+class _ProviderHeadDigests(Mapping[str, str]):
+    """Each resolved Provider's head digest, computed only for a looked-up key.
+
+    ``providers`` is often a lazily-resolving Mapping over every Provider this
+    evaluation resolved; ``provider_digest`` is only ever charged for a
+    Provider a cited Capture's envelope actually names (F08), never the whole
+    resolved population.
+    """
+
+    def __init__(self, providers: Mapping[str, ProviderV1]) -> None:
+        self._providers = providers
+
+    def __getitem__(self, key: str) -> str:
+        return provider_digest(self._providers[key]).tagged
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._providers)
+
+    def __len__(self) -> int:
+        return len(self._providers)
+
+
+def evaluate_claim_law(
+    claim: ClaimArtifact,
+    *,
+    path: str,
+    principals: PrincipalRegistrySnapshot,
+    predecessor: AcceptedClaim | None,
+    subjects: Mapping[str, AcceptedSubject],
+    claim_types: Mapping[str, AcceptedClaimType],
+    capture_contracts: Mapping[str, AcceptedCaptureContract],
+    capture_store: CaptureObjectStoreProtocol,
+    law_digest: str,
+    instance_id: str | None = None,
+    accepted_coordinate: AcceptedCoordinate | None = None,
+    accepted_referent_coordinates: frozenset[AcceptedCoordinate] | None = None,
+    providers: Mapping[str, ProviderV1] | None = None,
+    producer_artifact_digests: Mapping[str, str] | None = None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
+    ledger_resolver: LedgerMaterialResolverProtocol | None = None,
+    evaluation_time: datetime | None = None,
+    allow_claim_type_retirement_shape_exemption: bool = False,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+    claim_type_v7_semantics: bool = False,
+    require_new_citation_proof: bool = True,
+    subject_lifecycle_retirement: bool = False,
+    accepted_subject_version: Callable[[str, str], bool] | None = None,
+    subject_creation_key: bool = False,
+    claim_rebind: bool = False,
+    erasure_records: Callable[[tuple[str, ...]], Mapping[str, RecordedCaptureErasure]]
+    | None = None,
+    erasure_contract: Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None]
+    | None = None,
+    origin_replay_exempt: bool = False,
+    value_contracts: ContractResolver | None = None,
+    value_enums: EnumResolver | None = None,
+    value_keys: KeyCanonicalizer | None = None,
+    verified_absence_witnesses: MutableMapping[object, None] | None = None,
+) -> ClaimLawResult:
+    """Evaluate one Claim against exact resolved dependencies and immutable Captures.
+
+    `erasure_records` answers, per retained body, the latest erasure record
+    naming it (one erasure can name bodies other Captures hold too: bodies are
+    content-addressed), with the accepted head it was recorded under. A Capture
+    whose envelope does not verify, which the Claim inherits from its accepted
+    predecessor or which accepted history replays (no new-citation proof), and
+    whose missing bodies an erasure record names that was made under the
+    erasure authority of the contract version it names (resolved as of the
+    erasure's own head, `erasure_contract`, or in this judgment's
+    dependencies), verifies on its envelope, and its citation keeps the origin
+    and binding verified when it was first accepted; a Capture cited anew still
+    needs its body. An erasure never enters the verdict: the Claim stands on its
+    evidence digest and source pointer, and reads derive whether the body is
+    present now, so a judgment reproduces whenever its bytes were erased.
+    With `origin_replay_exempt` (revision 10) a ``none`` type compiles
+    adjudication rule v3, whose origin-only entries need no current replay.
+
+    An inverse Claim (object ``none``) is judged by the type's
+    inverse: its object names the unit the inverse is keyed by, it cites at least
+    one Capture an inverse evidence rule admits, and a revision that changes
+    polarity (a flip) stays in its unit and carries exactly the evidence it cites,
+    as under ``replace``. No Claim accepted before compiler revision 35 names a v9
+    ClaimType, so every earlier Claim is judged as before.
+
+    With `claim_rebind` (Claim law v2 revision 10, with compiler revision 35) a
+    revision that keeps its statement may drop a citation by replacing it: the
+    same revision adds a new, non-inherited citation of the same role and
+    origin under the same CaptureContract identity. Such a re-bind drops the
+    Captures only the replaced citations named, and, as under `replace`, every
+    capture-contract pin must name the version of a Capture it cites. Every
+    other check is revision 9's.
+
+    With `historical_capture_contract` (the revision-9 law), a backing Capture
+    verifies against the exact contract version it names even after that
+    contract has a successor: the Claim's capture-contract pins are provenance,
+    resolved in accepted history, never required to be the live head.
+
+    An absence witness, a retirement's or an inverse's, owes every Capture it
+    read the proof a new citation owes (``absence_witness_refusal``).
+    `verified_absence_witnesses` is the evaluation's record of witnesses
+    already found standing, shared by every Claim it judges.
+
+    With `claim_type_v7_semantics` (Claim law v2 revision 8, v3 revision 10) a
+    v7 ClaimType's rules apply; every earlier ClaimType means `accumulate` and
+    `self`, so it is judged exactly as before. Off, this is the earlier law.
+
+    - A successor whose backing is byte-identical to its predecessor's is a
+      carry, not a revision: every check it had still applies, and it keeps all
+      of its backing whatever the rules say.
+    - Under `replace`, a revision that changes its statement carries exactly the
+      evidence it cites: nothing it inherited has to stay, and every
+      capture-contract pin must name the version of a Capture it cites. An
+      unchanged statement keeps accruing evidence, as under `accumulate`.
+    - `captured` refuses a new Claim or revision with no admitted Capture under a
+      declared contract; `none` records the Claim's own origin as support.
+
+    With `subject_creation_key` (Claim law v2 revision 9 alone, and only for a key
+    Claim core writes as part of creating its Subject: new in the change, about a
+    Subject the change creates, its predicate a key of that Subject's kind) the
+    creation covers the Claim: it is judged as requirement `none` whatever its
+    ClaimType states, so its origin supports it and no evidence rule needs to
+    admit it.
+    """
+
+    try:
+        validate_claim_path(claim, path)
+    except ClaimFormatError as exc:
+        return _diagnostic("cruxible.claim.path_mismatch", str(exc), path=path)
+    statement = claim.statement
+    evaluated_at = evaluation_time or claim.backing.referent_context.observed_at
+    claim_type = claim_types.get(statement.claim_type.qualified)
+    if claim_type is None or claim_type.artifact_digest != statement.claim_type_digest:
+        return _diagnostic(
+            "cruxible.claim.claim_type_unresolved",
+            "The exact ClaimType dependency does not resolve.",
+            path=path,
+        )
+    contract: ClaimType = claim_type.claim_type
+    revision_evidence = (
+        effective_revision_evidence(contract) if claim_type_v7_semantics else "accumulate"
+    )
+    # Only a new Claim: a revision of a key Claim is judged by its ClaimType.
+    creation_covered = subject_creation_key and predecessor is None
+    evidence_requirement: EvidenceRequirement = (
+        "none"
+        if creation_covered
+        else effective_evidence_requirement(contract)
+        if claim_type_v7_semantics
+        else "self"
+    )
+    carry = predecessor is not None and claim.backing == predecessor.claim.backing
+    # A flip: the revision changes polarity (positive to inverse, or back). It is
+    # a flip whatever its backing, so a carry of the same backing never skips the
+    # flip's unit and inverse-evidence checks.
+    polarity_changed = bool(
+        predecessor is not None
+        and claim_polarity(claim.statement) != claim_polarity(predecessor.claim.statement)
+    )
+    flipping = polarity_changed and not carry
+    replacing = bool(
+        (revision_evidence == "replace" or flipping)
+        and predecessor is not None
+        and not carry
+        and claim.statement
+        != _statement_with_claim_type_digest(
+            predecessor.claim.statement, claim.statement.claim_type_digest
+        )
+    )
+    # A re-bind: the same statement, some inherited citations replaced (rev 10).
+    rebound_captures: frozenset[str] = frozenset()
+    rebinding = False
+    if (
+        claim_rebind
+        and predecessor is not None
+        and not carry
+        and not replacing
+        and claim.statement
+        == _statement_with_claim_type_digest(
+            predecessor.claim.statement, claim.statement.claim_type_digest
+        )
+    ):
+        current_ids = {item.citation_id for item in claim.backing.citations}
+        dropped = [
+            item
+            for item in predecessor.claim.backing.citations
+            if item.citation_id not in current_ids
+        ]
+        if dropped:
+            if not _rebind_replaces(
+                dropped,
+                claim.backing.citations,
+                predecessor.claim.backing.citations,
+                store=capture_store,
+                capture_contracts=capture_contracts,
+                historical_capture_contract=historical_capture_contract,
+            ):
+                return _diagnostic(
+                    "cruxible.claim.rebind_unmatched",
+                    "A re-bind drops a citation only by replacing it: the same revision cites "
+                    "new text in the same role and origin under the same CaptureContract.",
+                    path=path,
+                )
+            rebinding = True
+            kept = {item.capture_digest for item in claim.backing.citations}
+            rebound_captures = frozenset(
+                item.capture_digest for item in dropped if item.capture_digest not in kept
+            )
+    descriptor = statement.predicate in {
+        "semantic.alias",
+        "semantic.distinct_from",
+        "semantic.related_to",
+        "semantic.tag",
+    }
+    if not _required_pin(
+        claim,
+        role="claim-type",
+        identity=contract.identity,
+        digest=claim_type.artifact_digest,
+    ):
+        return _diagnostic(
+            "cruxible.claim.claim_type_pin_missing",
+            "The Claim does not pin its exact ClaimType artifact.",
+            path=path,
+        )
+    claim_type_attributed_retirement = bool(
+        predecessor is not None
+        and predecessor.path == path
+        and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
+        and (
+            _is_claim_type_attributed_retirement(
+                claim,
+                predecessor=predecessor.claim,
+                claim_type_digest=claim_type.artifact_digest,
+                claim_type_identity=contract.identity,
+            )
+            or (
+                predecessor.claim.lifecycle.state == "retired"
+                and _is_claim_type_rederivation(
+                    claim,
+                    predecessor=predecessor.claim,
+                    claim_type_digest=claim_type.artifact_digest,
+                    claim_type_identity=contract.identity,
+                )
+            )
+        )
+    )
+    claim_type_retirement_shape_exempt = (
+        allow_claim_type_retirement_shape_exemption and claim_type_attributed_retirement
+    )
+    subject = _resolved_referent(
+        statement.subject,
+        subjects,
+        claim_types,
+        descriptor=descriptor,
+    )
+    if subject is None:
+        return _diagnostic(
+            "cruxible.claim.subject_unresolved",
+            "The Claim subject does not resolve to an exact Subject shell.",
+            path=path,
+            field="subject",
+        )
+    if not claim_type_retirement_shape_exempt and not claim_type_accepts_subject(
+        contract, subject.semantic_kind
+    ):
+        return _diagnostic(
+            "cruxible.claim.subject_kind_forbidden",
+            f"Subject kind {subject.semantic_kind!r} is not admitted by ClaimType "
+            f"{contract.predicate!r}; admitted kinds: "
+            f"{', '.join(contract.allowed_subject_kinds) or 'none'}.",
+            path=path,
+            field="subject",
+        )
+    # Revision 11: an attributed retirement (unchanged otherwise) still names the
+    # Subject version it was accepted about -- the retired Subject's predecessor,
+    # or any earlier version of that same Subject when a successor carried it (a
+    # keyed Subject's key Claims, maintainer ruling). ``accepted_subject_version``
+    # says whether a digest is an accepted version of the Subject at a path.
+    observed_subject_digest = subject.artifact_digest
+    accepted_about = claim.backing.referent_context.subject_content_digest
+    held_subject = subjects.get(statement.subject.artifact_path)
+    if (
+        subject_lifecycle_retirement
+        and accepted_about != subject.artifact_digest
+        and held_subject is not None
+        and predecessor is not None
+        and predecessor.path == path
+        and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
+        and _is_attributed_retirement(claim, predecessor=predecessor.claim)
+        and (
+            (
+                held_subject.shell.lifecycle.state == "retired"
+                and held_subject.shell.lifecycle.predecessor_digest == accepted_about
+            )
+            or (
+                accepted_subject_version is not None
+                and accepted_subject_version(statement.subject.artifact_path, accepted_about)
+            )
+        )
+    ):
+        observed_subject_digest = accepted_about
+    if claim.backing.referent_context.subject_content_digest != observed_subject_digest:
+        return _diagnostic(
+            "cruxible.claim.subject_context_mismatch",
+            "The proposer-observed Subject shell digest does not resolve.",
+            path=path,
+        )
+    if not _required_pin(
+        claim,
+        role="subject",
+        identity=subject.identity,
+        digest=observed_subject_digest,
+    ):
+        return _diagnostic(
+            "cruxible.claim.subject_pin_missing",
+            "The Claim does not pin its exact Subject shell.",
+            path=path,
+        )
+
+    object_subject: _ResolvedReferent | None = None
+    # What the object section judges: an inverse keyed by object is judged as the
+    # object it says is absent; any other inverse has no object to judge.
+    judged_object: LiteralClaimObject | SubjectClaimObject | None
+    if isinstance(statement.object, NoneClaimObject):
+        if not claim_type_retirement_shape_exempt:
+            refusal = _inverse_object_refusal(
+                statement.object, contract=contract, claim_types=claim_types, path=path
+            )
+            if refusal is not None:
+                return refusal
+        # A Subject `of` names an object only an object-keyed inverse carries, so
+        # it is judged as that object even after the type drops its inverse (an
+        # attributed retirement keeps the object context it was accepted with).
+        absent = statement.object.of
+        judged_object = (
+            absent
+            if isinstance(absent, SubjectClaimObject)
+            or (
+                contract.inverse is not None
+                and isinstance(contract.inverse.key, ClaimInverseObjectKey)
+            )
+            else None
+        )
+    else:
+        judged_object = statement.object
+    if (
+        judged_object is not None
+        and not claim_type_retirement_shape_exempt
+        and judged_object.kind != claim_value_kind(contract.value)
+    ):
+        return _diagnostic(
+            "cruxible.claim.object_kind_mismatch",
+            f"The Claim object kind {judged_object.kind!r} differs from ClaimType "
+            f"{contract.predicate!r}, which states {claim_value_kind(contract.value)!r}.",
+            path=path,
+            field="object",
+        )
+    if isinstance(judged_object, LiteralClaimObject):
+        if (
+            not claim_type_retirement_shape_exempt
+            and (
+                problem := claim_literal_problem(
+                    judged_object.value,
+                    contract.value,
+                    resolve=value_contracts,
+                    enums=value_enums,
+                    keys=value_keys,
+                )
+            )
+            is not None
+        ):
+            return _diagnostic(
+                "cruxible.claim.value_invalid",
+                f"Claim value fails {render_type(contract.value)}: "
+                f"{claim_literal_detail(judged_object.value, contract.value, problem)}; "
+                "use an enum, a key, a subject<K> link, or cite a Document section",
+                path=path,
+                field="object",
+            )
+        # A stored literal is always in its declared canonical form.
+        # No Claim accepted before v8 names a v8 ClaimType, so every earlier
+        # Claim is judged exactly as before.
+        if not claim_type_retirement_shape_exempt and not is_canonical_literal(
+            judged_object.value, contract.canonical_form or ()
+        ):
+            return _diagnostic(
+                "cruxible.claim.literal_not_canonical",
+                f"The Claim literal {judged_object.value!r} is not in the canonical form "
+                f"ClaimType {contract.predicate!r} declares "
+                f"({', '.join(contract.canonical_form or ())}); store its canonical value.",
+                path=path,
+                field="object",
+            )
+        if claim.backing.referent_context.object_content_digest is not None:
+            return _diagnostic(
+                "cruxible.claim.object_context_unexpected",
+                "Literal Claims cannot name an object Subject shell digest.",
+                path=path,
+            )
+    elif isinstance(judged_object, SubjectClaimObject):
+        object_subject = _resolved_referent(
+            judged_object.address,
+            subjects,
+            claim_types,
+            descriptor=descriptor,
+        )
+        if object_subject is None:
+            return _diagnostic(
+                "cruxible.claim.object_subject_unresolved",
+                "The Claim object Subject does not resolve.",
+                path=path,
+                field="object",
+            )
+        if (
+            not claim_type_retirement_shape_exempt
+            and object_subject.semantic_kind not in subject_value_kinds(contract.value)
+        ):
+            return _diagnostic(
+                "cruxible.claim.object_subject_kind_forbidden",
+                f"Object Subject kind {object_subject.semantic_kind!r} is not admitted by "
+                f"ClaimType {contract.predicate!r}; admitted kinds: "
+                f"{', '.join(subject_value_kinds(contract.value)) or 'none'}.",
+                path=path,
+                field="object",
+            )
+        # The object side of revision 11: an attributed retirement whose object
+        # Subject the same change retires (a pair's endpoint Claim, retired with
+        # the pair and its end, R5) names the object version it was accepted with.
+        observed_object_digest = object_subject.artifact_digest
+        accepted_object = claim.backing.referent_context.object_content_digest
+        held_object = subjects.get(judged_object.address.artifact_path)
+        if (
+            subject_lifecycle_retirement
+            and accepted_object is not None
+            and accepted_object != observed_object_digest
+            and held_object is not None
+            and predecessor is not None
+            and predecessor.path == path
+            and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
+            and _is_attributed_retirement(claim, predecessor=predecessor.claim)
+            and (
+                (
+                    held_object.shell.lifecycle.state == "retired"
+                    and held_object.shell.lifecycle.predecessor_digest == accepted_object
+                )
+                or (
+                    accepted_subject_version is not None
+                    and accepted_subject_version(
+                        judged_object.address.artifact_path, accepted_object
+                    )
+                )
+            )
+        ):
+            observed_object_digest = accepted_object
+        if claim.backing.referent_context.object_content_digest != observed_object_digest:
+            return _diagnostic(
+                "cruxible.claim.object_context_mismatch",
+                "The proposer-observed object Subject shell digest does not resolve.",
+                path=path,
+            )
+        if not _required_pin(
+            claim,
+            role="object-subject",
+            identity=object_subject.identity,
+            digest=observed_object_digest,
+        ):
+            return _diagnostic(
+                "cruxible.claim.object_subject_pin_missing",
+                "The Claim does not pin its exact object Subject shell.",
+                path=path,
+            )
+    elif claim.backing.referent_context.object_content_digest is not None:
+        return _diagnostic(
+            "cruxible.claim.object_context_unexpected",
+            "Exact-content Claims and inverses without an object cannot name an object "
+            "Subject shell digest.",
+            path=path,
+        )
+
+    if statement.predicate != contract.predicate:
+        return _diagnostic(
+            "cruxible.claim.statement_contract_mismatch",
+            f"The Claim predicate {statement.predicate!r} differs from its pinned ClaimType "
+            f"predicate {contract.predicate!r}.",
+            path=path,
+            field="predicate",
+        )
+    if not claim_type_retirement_shape_exempt and statement.role not in contract.permitted_roles:
+        return _diagnostic(
+            "cruxible.claim.role_not_permitted",
+            f"Role {statement.role!r} is not permitted by ClaimType {contract.predicate!r}; "
+            f"permitted roles: {', '.join(contract.permitted_roles)}.",
+            path=path,
+            field="role",
+        )
+    expected_shell_digest = claim_referent_context_digest(claim.backing.referent_context).tagged
+    if claim_type_retirement_shape_exempt:
+        pass
+    elif contract.referent_sensitivity == "shell":
+        if statement.shell_context_digest != expected_shell_digest:
+            return _diagnostic(
+                "cruxible.claim.shell_context_mismatch",
+                "A shell-sensitive Claim must bind the exact referent-context digest.",
+                path=path,
+            )
+    elif statement.shell_context_digest is not None:
+        return _diagnostic(
+            "cruxible.claim.shell_context_forbidden",
+            "An identity-sensitive Claim cannot add shell bytes to statement identity.",
+            path=path,
+        )
+    # F08: ``providers`` may be a lazily-resolving Mapping over every Provider
+    # this evaluation resolved (e.g. SelectedRows); ``or {}`` would call its
+    # __bool__/__len__, enumerating the whole population just to test for
+    # None. An explicit identity check never does.
+    resolved_providers: Mapping[str, ProviderV1] = {} if providers is None else providers
+    verified_attestations: list[VerifiedClaimAttestationV1] = []
+    if claim.backing.attestation_digests:
+        if instance_id is None or accepted_coordinate is None:
+            return _diagnostic(
+                "cruxible.claim.attestation_context_missing",
+                "ClaimAttestationV1 verification requires the exact accepted base coordinate.",
+                path=path,
+            )
+        candidate_claim = AcceptedClaim(
+            path=path,
+            claim=claim,
+            statement_digest=claim_statement_digest(claim.statement).tagged,
+            artifact_digest=claim_artifact_digest(claim).tagged,
+        )
+        for attestation_digest in claim.backing.attestation_digests:
+            try:
+                attestation = read_claim_attestation(
+                    attestation_digest,
+                    store=capture_store,
+                )
+                referent_coordinate = attestation.referent_coordinate
+                allowed_coordinates = accepted_referent_coordinates or frozenset(
+                    (accepted_coordinate,)
+                )
+                if referent_coordinate not in allowed_coordinates:
+                    raise FormatError(
+                        "ClaimAttestationV1 referent coordinate is not proven accepted"
+                    )
+                verified_attestations.append(
+                    verify_claim_attestation(
+                        attestation,
+                        verification_time=evaluated_at,
+                        expected_instance_id=instance_id,
+                        expected_coordinate=referent_coordinate,
+                        claim=candidate_claim,
+                        referent_subject_content_digest=subject.artifact_digest,
+                        referent_object_content_digest=(
+                            None if object_subject is None else object_subject.artifact_digest
+                        ),
+                        principals=principals.model_copy(
+                            update={"semantic_root": referent_coordinate.semantic_root}
+                        ),
+                        providers=resolved_providers,
+                        store=capture_store,
+                        current_subject_content_digest=subject.artifact_digest,
+                        current_object_content_digest=(
+                            None if object_subject is None else object_subject.artifact_digest
+                        ),
+                    )
+                )
+            except FormatError as exc:
+                return _diagnostic(
+                    "cruxible.claim.attestation_unverified",
+                    str(exc),
+                    path=path,
+                )
+    digest = claim_artifact_digest(claim).tagged
+    if {item.capture_digest for item in claim.backing.citations} != set(
+        claim.backing.capture_digests
+    ):
+        return _diagnostic(
+            "cruxible.claim.citation_set_incomplete",
+            "Every backing Capture must have an explicit citation association.",
+            path=path,
+        )
+    if predecessor is None:
+        if claim.retirement is not None:
+            return _diagnostic(
+                "cruxible.claim.retirement_predecessor_required",
+                "An attributed retirement requires an exact live Claim predecessor.",
+                path=path,
+            )
+        if claim.lifecycle.state != "live" or claim.lifecycle.predecessor_digest is not None:
+            return _diagnostic(
+                "cruxible.claim.unexpected_predecessor",
+                "A new Claim must begin live without a predecessor.",
+                path=path,
+            )
+    else:
+        if predecessor.path != path or predecessor.claim.identity != claim.identity:
+            return _diagnostic(
+                "cruxible.claim.predecessor_identity_mismatch",
+                "The live predecessor belongs to a different Claim lineage.",
+                path=path,
+            )
+        if claim.lifecycle.predecessor_digest != predecessor.artifact_digest:
+            return _diagnostic(
+                "cruxible.claim.stale_predecessor",
+                "The Claim successor does not name the exact live predecessor.",
+                path=path,
+            )
+        # A revision is one Claim said again, so the one thing it may not do is
+        # become a Claim about something else. Nothing above checks that: the
+        # lineage is bound by artifact path and predecessor digest alone, so a
+        # revision could state a different Subject under a different predicate,
+        # keep the identity, the history and the slot in every projection, and
+        # lower, preflight and accept clean. The succession road already refuses
+        # the same move for a re-authored dependent; the general road did not.
+        #
+        # The predicate is checked with the Subject because the statement's own
+        # invariant ties it to the ClaimType identity, and a succession cannot
+        # change that identity -- so a moved predicate is never the machinery
+        # working, it is always a different Claim wearing this one's lineage.
+        # The machine deltas below are unaffected: each of them reproduces the
+        # predecessor's statement modulo one named field, and neither field is
+        # one of these.
+        if claim.statement.subject != predecessor.claim.statement.subject:
+            return _diagnostic(
+                "cruxible.claim.revision_subject_moved",
+                "A Claim revision keeps the Subject it revises. The accepted Claim is about "
+                f"{predecessor.claim.statement.subject.artifact_path!r} and this revision "
+                f"states {claim.statement.subject.artifact_path!r}. Replace the subject with "
+                "the accepted one, or retire this Claim and author a new lineage about the "
+                "Subject you mean.",
+                path=path,
+            )
+        if polarity_changed:
+            moved = _flip_unit_moved(claim.statement, predecessor.claim.statement, contract)
+            if moved is not None:
+                return _diagnostic("cruxible.claim.flip_unit_moved", moved, path=path)
+        if claim.statement.predicate != predecessor.claim.statement.predicate:
+            return _diagnostic(
+                "cruxible.claim.revision_predicate_moved",
+                "A Claim revision keeps the predicate it revises. The accepted Claim states "
+                f"{predecessor.claim.statement.predicate!r} and this revision states "
+                f"{claim.statement.predicate!r}. Replace the predicate with the accepted one, "
+                "or retire this Claim and author a new lineage under the predicate you mean.",
+                path=path,
+            )
+        claim_type_rederivation = _is_claim_type_rederivation(
+            claim,
+            predecessor=predecessor.claim,
+            claim_type_digest=claim_type.artifact_digest,
+            claim_type_identity=contract.identity,
+        )
+        attributed_retirement = _is_attributed_retirement(
+            claim,
+            predecessor=predecessor.claim,
+        )
+        if claim.retirement is not None and not (
+            attributed_retirement or claim_type_rederivation or claim_type_attributed_retirement
+        ):
+            return _diagnostic(
+                "cruxible.claim.retirement_delta_invalid",
+                "An attributed retirement permits only the retirement delta or exact retired "
+                "ClaimType rederivation.",
+                path=path,
+            )
+        if predecessor.claim.lifecycle.state == "retired" and not claim_type_rederivation:
+            return _diagnostic(
+                "cruxible.claim.lifecycle_invalid",
+                "A retired Claim lineage cannot be revived.",
+                path=path,
+            )
+        old = predecessor.claim.backing
+        if not replacing and not (
+            (set(old.capture_digests) - rebound_captures).issubset(claim.backing.capture_digests)
+            and set(old.attestation_digests).issubset(claim.backing.attestation_digests)
+            and set(old.input_claim_digests).issubset(claim.backing.input_claim_digests)
+        ):
+            return _diagnostic(
+                "cruxible.claim.required_backing_dropped",
+                "Claim succession cannot silently drop accepted backing.",
+                path=path,
+            )
+        predecessor_citation_ids = {
+            item.citation_id for item in predecessor.claim.backing.citations
+        }
+        if not (replacing or rebinding) and not predecessor_citation_ids.issubset(
+            item.citation_id for item in claim.backing.citations
+        ):
+            return _diagnostic(
+                "cruxible.claim.required_citation_dropped",
+                "Claim succession cannot silently drop accepted citation associations.",
+                path=path,
+            )
+        if digest == predecessor.artifact_digest:
+            return _diagnostic(
+                "cruxible.claim.no_semantic_change",
+                "Claim succession must produce a new artifact digest.",
+                path=path,
+            )
+
+    statement_address = claim_statement_address(path)
+    if any(mapping.subject != statement_address for mapping in claim.backing.source_mappings):
+        return _diagnostic(
+            "cruxible.claim.source_mapping_subject_mismatch",
+            "Every Claim source mapping must target its exact statement address.",
+            path=path,
+        )
+    evidence_basis: set[Literal["origin_only", "direct", "derivational"]] = set()
+    verdict_capture_evidence: list[CaptureVerdictEvidence] = []
+    verified_commitments: dict[str, EvidenceCommitment] = {}
+    capture_contract_pin_digests = {
+        pin.artifact_digest for pin in claim.pins if pin.role == "capture-contract"
+    }
+    if historical_capture_contract is not None:
+        # Provenance pins are not closure edges, so the law proves each one names
+        # an accepted version of its contract -- live now or merely historical.
+        live_contracts = {item.artifact_digest: item for item in capture_contracts.values()}
+        for pin in claim.pins:
+            if pin.role != "capture-contract":
+                continue
+            resolved_version = live_contracts.get(pin.artifact_digest) or (
+                historical_capture_contract(pin.artifact_digest)
+            )
+            # The exact identity/version pair must be real, live or historical.
+            if resolved_version is None or resolved_version.contract.identity != pin.target:
+                return _diagnostic(
+                    "cruxible.claim.capture_contract_pin_unresolved",
+                    "A capture-contract pin names no accepted version of its CaptureContract.",
+                    path=path,
+                )
+    inherited_captures = inherited_capture_digests(claim, path=path, predecessor=predecessor)
+
+    # Computed once per law: the producer digests every verification consults,
+    # and the contracts grouped by the contract digest a Capture names.
+    known_producer_digests: Mapping[str, str] | None = None
+    contracts_by_digest: dict[str, list[AcceptedCaptureContract]] | None = None
+    cited_contract_versions: set[str] = set()
+    captured_evidence = False
+    inverse_evidence = False
+    for capture_digest_value in claim.backing.capture_digests:
+        envelope = None
+        resolved_contract = None
+        if known_producer_digests is None:
+            # F08: resolved_providers may be a lazy Mapping over every
+            # Provider this evaluation resolved; neither it nor
+            # producer_artifact_digests is enumerated here -- only a cited
+            # identity's digest is ever actually computed, by LazyKeyedOverlay
+            # resolving each key on demand.
+            provider_heads = _ProviderHeadDigests(resolved_providers)
+            known_producer_digests = (
+                producer_artifact_digests.overlay(provider_heads)
+                if isinstance(producer_artifact_digests, ProducerVersions)
+                else LazyKeyedOverlay(
+                    provider_heads,
+                    {} if producer_artifact_digests is None else producer_artifact_digests,
+                )
+            )
+        if contracts_by_digest is None:
+            contracts_by_digest = {}
+            for candidate in capture_contracts.values():
+                contracts_by_digest.setdefault(
+                    capture_contract_digest(candidate.contract).tagged, []
+                ).append(candidate)
+        # The envelope names its exact contract digest, which verification
+        # requires to match; only contracts with that digest can verify it.
+        verified = (
+            None
+            if producer_receipt_resolver is None
+            else producer_receipt_resolver.recall_verified(capture_digest_value)
+        )
+        named = (
+            verified.envelope.capture_contract_digest
+            if verified is not None
+            else _named_capture_contract(capture_store, capture_digest_value)
+        )
+        require_proof = (
+            require_new_citation_proof and capture_digest_value not in inherited_captures
+        )
+        if (
+            claim.backing.procedure_evidence is not None
+            and require_new_citation_proof
+            and verified is not None
+        ):
+            if not all(
+                capture_store.verify(body)
+                for body in capture_retained_body_digests(verified.envelope)
+            ):
+                return _diagnostic(
+                    "cruxible.claim.evidence_unavailable",
+                    "Cited Capture bytes are no longer retained; acquire evidence again.",
+                    path=path,
+                )
+        production_gap: CaptureProductionUnproven | None = None
+        if (
+            named
+            and named not in contracts_by_digest
+            and historical_capture_contract is not None
+            and (historical := historical_capture_contract(named)) is not None
+        ):
+            contracts_by_digest[named] = [historical]
+        for contract_candidate in contracts_by_digest.get(named, []) if named else ():
+            try:
+                candidate_envelope = verify_capture(
+                    capture_digest_value,
+                    store=capture_store,
+                    contract=contract_candidate.contract,
+                    ledger_resolver=ledger_resolver,
+                    producer_artifact_digests=known_producer_digests,
+                    producer_receipt_resolver=producer_receipt_resolver,
+                    require_production_proof=require_proof,
+                )
+            except CaptureProductionUnproven as exc:
+                production_gap = exc
+                continue
+            except (FormatError, ValueError):
+                continue
+            envelope = candidate_envelope
+            resolved_contract = contract_candidate
+            break
+        if (envelope is None or resolved_contract is None) and production_gap is not None:
+            return _diagnostic(
+                "cruxible.claim.capture_production_unproven",
+                "A newly cited Capture has no daemon proof that a run produced it: "
+                + str(production_gap),
+                path=path,
+            )
+        destroyed: frozenset[str] = frozenset()
+        if (
+            (envelope is None or resolved_contract is None)
+            and erasure_records is not None
+            and named
+            # Inherited (a retirement or revision after the erasure), or accepted
+            # history replayed after it; a Capture cited anew needs its body.
+            and (capture_digest_value in inherited_captures or not require_new_citation_proof)
+            # The envelope stays when bodies are erased; read it to name them.
+            and (examined := _stored_capture_envelope(capture_store, capture_digest_value))
+            is not None
+        ):
+            destroyed = _governed_erasures(
+                examined,
+                records=erasure_records,
+                contracts_by_digest=contracts_by_digest,
+                erasure_contract=erasure_contract,
+            )
+            if destroyed:
+                for contract_candidate in contracts_by_digest.get(named, []):
+                    try:
+                        envelope = verify_capture(
+                            capture_digest_value,
+                            store=capture_store,
+                            contract=contract_candidate.contract,
+                            ledger_resolver=ledger_resolver,
+                            producer_artifact_digests=known_producer_digests,
+                            producer_receipt_resolver=producer_receipt_resolver,
+                            require_production_proof=False,
+                            erased_bodies=destroyed,
+                        )
+                    except (FormatError, ValueError):
+                        continue
+                    resolved_contract = contract_candidate
+                    break
+        if envelope is None or resolved_contract is None:
+            return _diagnostic(
+                (
+                    "cruxible.claim.evidence_unavailable"
+                    if claim.backing.procedure_evidence is not None and require_new_citation_proof
+                    else "cruxible.claim.capture_unverified"
+                ),
+                "A backing Capture or its exact CaptureContract cannot be verified.",
+                path=path,
+            )
+        if claim.backing.procedure_evidence is not None and require_new_citation_proof:
+            if not all(
+                capture_store.verify(body) for body in capture_retained_body_digests(envelope)
+            ):
+                return _diagnostic(
+                    "cruxible.claim.evidence_unavailable",
+                    "Cited Capture bytes are no longer retained; acquire evidence again.",
+                    path=path,
+                )
+        if resolved_contract.artifact_digest not in capture_contract_pin_digests:
+            return _diagnostic(
+                "cruxible.claim.capture_contract_pin_missing",
+                "A backing CaptureContract is not pinned by the Claim.",
+                path=path,
+            )
+        cited_contract_versions.add(resolved_contract.artifact_digest)
+        # An exact inherited citation of a Capture whose body a governed erasure
+        # destroyed keeps the origin and binding its predecessor's acceptance
+        # verified (as does a replay of the acceptance that verified them):
+        # re-deriving them would read the bytes that are gone. Anything cited
+        # anew or relabeled is not inherited and is verified afresh.
+        origin_refusal = (
+            None
+            if destroyed
+            and (capture_digest_value in inherited_captures or not require_new_citation_proof)
+            else _citation_origin_refusal(
+                claim,
+                capture_digest=capture_digest_value,
+                envelope=envelope,
+                contract=resolved_contract.contract,
+                store=capture_store,
+            )
+        )
+        if origin_refusal is not None:
+            return _diagnostic(
+                origin_refusal[0],
+                origin_refusal[1],
+                path=path,
+            )
+        # Evidence never comes from a projection window, whatever the role or
+        # origin of the citation. The cited capture's own bytes are the
+        # manifest of its windows; the client guard is only the fast path.
+        # A Capture inherited unchanged from the accepted predecessor is not
+        # new evidence, so the law never strands what it did not admit: the
+        # retirement and the revision of an already-accepted Claim stay open.
+        cited = (
+            None
+            if capture_digest_value in inherited_captures
+            else projection_window_cited(
+                envelope,
+                store=capture_store,
+                memo=(
+                    None
+                    if producer_receipt_resolver is None
+                    else producer_receipt_resolver.recall_verified(capture_digest_value)
+                ),
+            )
+        )
+        if cited is not None:
+            resolved, window = cited
+            return _diagnostic(
+                "cruxible.projection.evidence_from_projection",
+                "A citation reaches into a projection block: bytes "
+                f"[{resolved.start_byte}, {resolved.end_byte}) of source "
+                f"{resolved.source_id or envelope.commitment.digest!r} intersect stamped "
+                f"block {window.block_id!r}. A projection block is never evidence; cite "
+                "the Claims it reflects, or prose outside the block.",
+                path=path,
+            )
+        verified_commitments[envelope.commitment.digest] = envelope.commitment
+        producer_provider = resolved_providers.get(envelope.producer.qualified)
+        executable_provider = resolved_providers.get(
+            envelope.run_coordinate.executable_identity.qualified
+        )
+        required_providers = {
+            item.identity.qualified: item
+            for item in (producer_provider, executable_provider)
+            if item is not None
+        }
+        executable = envelope.run_coordinate
+        for required_provider in required_providers.values():
+            # F03: the exact build version that ran is the only acceptable
+            # pin once it is known (retirement, a build move, or any other
+            # head change never unpins it, F08); the provider's current head
+            # is never an alternative to it.
+            versions = (
+                {executable.executable_digest}
+                if required_provider.identity == executable.executable_identity
+                else {provider_digest(required_provider).tagged}
+            )
+            if not any(
+                _required_pin(
+                    claim, role="provider", identity=required_provider.identity, digest=version
+                )
+                for version in versions
+            ):
+                return _diagnostic(
+                    "cruxible.claim.provider_pin_missing",
+                    "A Provider-produced Capture requires every exact accepted Provider pin.",
+                    path=path,
+                )
+        for procedure_identity in {
+            identity
+            for identity in (envelope.producer, envelope.run_coordinate.executable_identity)
+            if identity.kind == "Procedure"
+        }:
+            # F03: the exact Procedure version the envelope records, verified
+            # admitted by retained accepted history, is the only acceptable
+            # pin once it is known; a successor's head is never an
+            # alternative to it (F08). The head is the only version ever
+            # available to pin only for an identity this envelope names
+            # without an executable digest of its own (a self-asserted v1
+            # Capture's producer, distinct from its executable).
+            procedure_versions = (
+                {executable.executable_digest}
+                if procedure_identity == executable.executable_identity
+                and producer_version_admitted(
+                    producer_artifact_digests,
+                    procedure_identity.qualified,
+                    executable.executable_digest,
+                )
+                else {
+                    version
+                    for version in (
+                        None
+                        if producer_artifact_digests is None
+                        else producer_artifact_digests.get(procedure_identity.qualified),
+                    )
+                    if version is not None
+                }
+            )
+            if not any(
+                _required_pin(claim, role="procedure", identity=procedure_identity, digest=version)
+                for version in procedure_versions
+            ):
+                return _diagnostic(
+                    "cruxible.claim.procedure_pin_missing",
+                    "A Procedure-produced Capture requires its exact accepted Procedure pin.",
+                    path=path,
+                )
+        eligible = capture_citation_eligible(
+            claim,
+            claim_type=contract,
+            capture_contract=resolved_contract,
+            capture_digest=capture_digest_value,
+            envelope=envelope,
+            historical_capture_contract=historical_capture_contract,
+        )
+        # Under `none` the Claim's own origin supports it, so a Capture the rules
+        # do not admit still enters the verdict as origin-only evidence.
+        if not eligible and evidence_requirement != "none":
+            continue
+        capture_admissions: set[Literal["origin_only", "direct", "derivational"]] = set()
+        decisions = (
+            evaluate_capture_evidence_admissions(
+                claim,
+                claim_type=contract,
+                capture_digest=capture_digest_value,
+                capture_contract=resolved_contract,
+                envelope=envelope,
+                verified_attestations=tuple(verified_attestations),
+                historical_capture_contract=historical_capture_contract,
+            )
+            if eligible
+            else ()
+        )
+        if (
+            isinstance(statement.object, NoneClaimObject)
+            and contract.inverse is not None
+            and not inverse_evidence
+        ):
+            inverse_evidence = _inverse_rules_admit(
+                claim,
+                contract=contract,
+                inverse=contract.inverse,
+                capture_digest=capture_digest_value,
+                capture_contract=resolved_contract,
+                envelope=envelope,
+                historical_capture_contract=historical_capture_contract,
+                verified_attestations=tuple(verified_attestations),
+            )
+        for decision in decisions:
+            admission = decision.trace.result
+            if admission.verdict == "eligible" and admission.admission is not None:
+                evidence_basis.add(admission.admission)
+                capture_admissions.add(admission.admission)
+                if resolved_contract.contract.identity.name not in (
+                    _COMPILER_SELF_ASSERTION_CONTRACT_IDS
+                ):
+                    captured_evidence = True
+        if "derivational" in capture_admissions:
+            capture_admission: Literal["origin_only", "direct", "derivational"] = "derivational"
+        elif "direct" in capture_admissions:
+            capture_admission = "direct"
+        else:
+            capture_admission = "origin_only"
+        control_domain = (
+            producer_provider.control_domain
+            if producer_provider is not None
+            else f"{envelope.producer.kind.casefold()}.{envelope.producer.name}"
+        )
+        upstream = () if producer_provider is None else producer_provider.upstream_provenance
+        # Shared Captures produce the same immutable verdict input for sibling
+        # Claims. Admission was recomputed above; include every resulting field
+        # in the request key rather than caching a Claim's admission or verdict.
+        verdict_capture_evidence.append(
+            _request_verdict_capture(
+                capture_digest=capture_digest_value,
+                admission=capture_admission,
+                basis_kind=(
+                    "arithmetic_derived"
+                    if capture_admission == "derivational"
+                    else ("replay_verified" if capture_admission == "direct" else "origin_only")
+                ),
+                producer=envelope.producer,
+                control_domain=control_domain,
+                upstream_provenance=upstream,
+                epistemic_grade=resolved_contract.contract.epistemic_grade,
+                provenance_grade=(
+                    "self-asserted"
+                    if capture_contract_is_self_asserted(resolved_contract.contract)
+                    else "daemon-fetched"
+                ),
+                observed_at=envelope.observed_at,
+                source_effective_until=(
+                    None
+                    if envelope.source_effective_time is None
+                    else envelope.source_effective_time.effective_until
+                ),
+                current_replay_available=(
+                    envelope.commitment.materialization in {"ledger", "cas", "external"}
+                ),
+            )
+        )
+    # An absence witness owes every Capture it read the proof a new citation
+    # owes: retained bytes, its exact CaptureContract, daemon production proof
+    # and the declared logical source. That holds for a retirement's witness
+    # (a mirror's proof is attribution, not a changed assertion/backing) and
+    # for an inverse's backing witness alike, and over a list of Captures for
+    # every member, not only the one the receipt cites (D-R37 a6). A witness
+    # carried unchanged from the accepted predecessor is not new evidence;
+    # accepted historical witnesses remain readable after ordinary governed
+    # erasure, just like inherited backing.
+    for witness, previous_witness in (
+        (
+            None if claim.retirement is None else claim.retirement.absence,
+            None
+            if predecessor is None or predecessor.claim.retirement is None
+            else predecessor.claim.retirement.absence,
+        ),
+        (
+            _backing_absence(claim),
+            None if predecessor is None else _backing_absence(predecessor.claim),
+        ),
+    ):
+        if witness is None or witness == previous_witness or not require_new_citation_proof:
+            continue
+        witness_refusal = absence_witness_refusal(
+            witness,
+            capture_store=capture_store,
+            contracts_by_digest=contracts_by_digest,
+            historical_capture_contract=historical_capture_contract,
+            ledger_resolver=ledger_resolver,
+            producer_artifact_digests=(
+                known_producer_digests
+                if known_producer_digests is not None
+                else producer_artifact_digests
+            ),
+            producer_receipt_resolver=producer_receipt_resolver,
+            verified=verified_absence_witnesses,
+        )
+        if witness_refusal is not None:
+            return _diagnostic("cruxible.claim.evidence_unavailable", witness_refusal, path=path)
+    if (replacing or rebinding) and not capture_contract_pin_digests.issubset(
+        cited_contract_versions
+    ):
+        return _diagnostic(
+            "cruxible.claim.capture_contract_pin_unbacked",
+            "Under revision_evidence 'replace', a revision that changes its statement "
+            "carries exactly the evidence it cites, so every capture-contract pin must name "
+            "the contract version of a Capture it cites.",
+            path=path,
+        )
+    if (
+        isinstance(statement.object, NoneClaimObject)
+        and contract.inverse is not None
+        and (not carry or polarity_changed)
+        and not inverse_evidence
+    ):
+        return _diagnostic(
+            "cruxible.claim.inverse_evidence_required",
+            f"An inverse of {contract.predicate!r} states that its unit holds nothing, which "
+            "only evidence can establish: cite a Capture one of its inverse evidence rules "
+            f"({', '.join(contract.inverse.evidence_rules)}) admits.",
+            path=path,
+        )
+    if evidence_requirement == "captured" and not carry and not captured_evidence:
+        return _diagnostic(
+            "cruxible.claim.captured_evidence_required",
+            f"ClaimType {contract.predicate!r} requires captured evidence: cite a Capture "
+            "taken under a declared CaptureContract that one of its evidence rules admits; "
+            "the Claim's own words cannot back it.",
+            path=path,
+        )
+    for mapping in claim.backing.source_mappings:
+        for span in mapping.spans:
+            commitment = verified_commitments.get(span.content_digest)
+            if (
+                commitment is None
+                or getattr(commitment, "digest_kind", None) != "exact_bytes"
+                or getattr(commitment, "byte_length", None) is None
+                or span.end_byte > getattr(commitment, "byte_length")
+            ):
+                return _diagnostic(
+                    "cruxible.claim.source_mapping_unverified",
+                    "A source span is not bounded by an exact verified Capture commitment.",
+                    path=path,
+                )
+    if statement.role == "environment_binding":
+        return _diagnostic(
+            "cruxible.claim.environment_binding_not_exact",
+            "Environment-binding exact-content Claims are retired; "
+            "use typed observations or Documents.",
+            path=path,
+        )
+    if not claim.backing.capture_digests:
+        return _diagnostic(
+            "cruxible.claim.origin_capture_missing",
+            "Every accepted Claim requires inspectable origin Capture backing.",
+            path=path,
+        )
+    if statement.role == "derivation" and (
+        claim.backing.reducer_digest is None
+        or (
+            not claim.backing.input_claim_digests
+            and (
+                claim.backing.procedure_evidence is None
+                or claim.backing.procedure_evidence.value.basis != "derived"
+                or not claim.backing.procedure_evidence.value.extractions
+            )
+        )
+    ):
+        return _diagnostic(
+            "cruxible.claim.derivation_incomplete",
+            "A derivation Claim requires its pinned Procedure and exact Claim inputs "
+            "or core extraction receipts.",
+            path=path,
+        )
+    if statement.role != "derivation" and (
+        claim.backing.input_claim_digests or claim.backing.reducer_digest is not None
+    ):
+        return _diagnostic(
+            "cruxible.claim.derivation_forbidden",
+            "Only derivation Claims may name reducers and input Claims.",
+            path=path,
+        )
+    if not evidence_basis:
+        evidence_basis.add("origin_only")
+    statement_digest = claim_statement_digest(statement).tagged
+    rule = claim_adjudication_rule(
+        contract,
+        claim_type_digest=claim_type.artifact_digest,
+        origin_supports=creation_covered,
+        origin_replay_exempt=origin_replay_exempt,
+        inverse=isinstance(statement.object, NoneClaimObject),
+    )
+    adjudication_rule_digest = claim_adjudication_rule_digest(rule)
+    basis = tuple(sorted(evidence_basis, key=lambda item: item.encode("utf-8")))
+    verdict_result = evaluate_claim_verdict(
+        claim_statement_digest=statement_digest,
+        rule=rule,
+        evaluation_time=evaluated_at,
+        captures=tuple(verdict_capture_evidence),
+        attestations=tuple(verified_attestations),
+        providers=resolved_providers,
+        claim_effective_from=statement.effective_from,
+        claim_effective_until=statement.effective_until,
+    )
+    return ClaimLawResult(
+        verdict="accepted",
+        artifact_digest=digest,
+        statement_digest=statement_digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        evidence=(
+            ClaimLawEvidence(
+                law_digest=law_digest,
+                adjudication_rule_digest=adjudication_rule_digest,
+                statement_digest=statement_digest,
+                artifact_digest=digest,
+                initial_verdict=verdict_result.verdict,
+                evidence_basis=basis,
+                procedure_evidence=claim.backing.procedure_evidence,
+                evaluation_time=evaluated_at,
+                verdict_result=verdict_result,
+                verified_attestation_digests=tuple(
+                    sorted(item.attestation_digest for item in verified_attestations)
+                ),
+                verified_attestations=tuple(
+                    sorted(verified_attestations, key=lambda item: item.attestation_digest)
+                ),
+                verdict_captures=tuple(
+                    sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
+                ),
+            )
+        ),
+    )
+
+
+__all__ = [
+    "AcceptedClaim",
+    "ClaimArtifact",
+    "ClaimBacking",
+    "ClaimCitation",
+    "ClaimFormatError",
+    "ClaimLawEvidence",
+    "ClaimLawResult",
+    "ClaimObject",
+    "ClaimReferentContext",
+    "ClaimRetirementAttribution",
+    "ClaimRetireDependent",
+    "ClaimRetirementReason",
+    "ClaimStatement",
+    "ClaimStatementCard",
+    "ClaimUnsupportedFormatError",
+    "ClaimPolarity",
+    "ClaimUnitKey",
+    "LiteralClaimObject",
+    "NoneClaimObject",
+    "claim_polarity",
+    "claim_unit_key",
+    "SubjectClaimObject",
+    "claim_artifact_digest",
+    "build_claim_citation",
+    "capture_citation_eligible",
+    "claim_citation_id",
+    "claim_citation_references",
+    "claim_preserves_derivation",
+    "claim_retirement_pin_digest_updates",
+    "claim_path",
+    "claim_referent_context_digest",
+    "claim_statement_address",
+    "claim_statement_digest",
+    "claim_statement_card",
+    "absence_witness_refusal",
+    "evaluate_claim_law",
+    "new_claim_id",
+    "merge_claim_citations",
+    "parse_claim",
+    "parse_claim_law_evidence",
+    "render_claim",
+    "validate_claim_path",
+]

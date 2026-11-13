@@ -1,0 +1,68 @@
+"""Typed result for the daemon's advisory workspace Git advertisement."""
+
+from __future__ import annotations
+
+from typing import Literal, TypeAlias
+
+from pydantic import BaseModel, ConfigDict, model_validator
+
+WorkspaceAdvertisementFailureCode: TypeAlias = Literal[
+    "workspace_missing",
+    "workspace_not_git",
+    "workspace_path_invalid",
+    "git_unavailable",
+    "remote_conflict",
+    "object_format_mismatch",
+    "fetch_failed",
+    "unexpected_failure",
+]
+
+
+class WorkspaceAdvertisement(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-workspace-advertisement-v1"] = "playbill-workspace-advertisement-v1"
+    #: ``scheduled`` means a write queued the refresh; it runs after the
+    #: response. Proposal inspection waits for it and reports the outcome.
+    #: ``not_git`` means the attached folder is no Git repository, so the ledger
+    #: mirror into it is skipped; ``git init`` and a workspace attach turn it on.
+    status: Literal["updated", "scheduled", "not_attached", "not_git", "failed"]
+    workspace_path: str | None
+    remote_name: Literal["cruxible-ledger"] = "cruxible-ledger"
+    advertised_refs: tuple[str, ...] = ()
+    failure_code: WorkspaceAdvertisementFailureCode | None = None
+
+    @model_validator(mode="after")
+    def _status_shape(self) -> "WorkspaceAdvertisement":
+        if self.status == "updated" and (
+            self.workspace_path is None or self.failure_code is not None
+        ):
+            raise ValueError("updated workspace advertisement has an invalid result shape")
+        if self.status == "scheduled" and (
+            self.workspace_path is None or self.advertised_refs or self.failure_code is not None
+        ):
+            raise ValueError("scheduled workspace advertisement has an invalid result shape")
+        if self.status == "not_attached" and (
+            self.workspace_path is not None or self.advertised_refs or self.failure_code is not None
+        ):
+            raise ValueError("not-attached workspace advertisement has an invalid result shape")
+        if self.status == "not_git" and (
+            self.workspace_path is None or self.advertised_refs or self.failure_code is not None
+        ):
+            raise ValueError("not-git workspace advertisement has an invalid result shape")
+        if self.status == "failed" and (self.failure_code is None or self.advertised_refs):
+            raise ValueError("failed workspace advertisement has an invalid result shape")
+        return self
+
+
+NOT_ATTACHED_ADVERTISEMENT = WorkspaceAdvertisement(
+    status="not_attached",
+    workspace_path=None,
+)
+
+
+__all__ = [
+    "NOT_ATTACHED_ADVERTISEMENT",
+    "WorkspaceAdvertisement",
+    "WorkspaceAdvertisementFailureCode",
+]

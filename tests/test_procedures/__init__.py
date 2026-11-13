@@ -1,1 +1,1 @@
-"""Focused Stage A procedure coverage."""
+"""Test procedures package."""

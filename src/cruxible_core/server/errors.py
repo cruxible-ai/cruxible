@@ -4,41 +4,75 @@ from __future__ import annotations
 
 from typing import Any
 
+from cruxible_client.contracts.capture_erasure import CaptureEraseRefusedError
+from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
+    BootstrapError,
+    CanonicalEncodingError,
+    ClaimNotFoundError,
+    DocumentFormatError,
+    DocumentNotFoundError,
+    FormatError,
+    InstanceDecommissioned,
+    ObjectFormatConflict,
+    PrincipalIntegrityError,
+    ProjectionCoordinateError,
+    ProposalAdmissionError,
+    ProposalEvaluationIntegrityError,
+    ProposalIntegrityError,
+    ProposalNotFoundError,
+    ProposalReadmitAlreadyAccepted,
+    ProposalReadmitNotStale,
+    ProposalSelectorAmbiguousError,
+    ProposalStale,
+    SettlementIntegrityError,
+    SinceRequestInvalid,
+    SubjectNotFoundError,
+)
+from cruxible_client.contracts.repairs import (
+    HandEditRepair,
+    RepairOperation,
+    ServedRepair,
+    hand_edit_repair,
+)
 from cruxible_client.errors import ErrorResponse, response_to_error
+from cruxible_core.curation.review_operational import (
+    ReviewOperationalConcurrentChangeError,
+    ReviewOperationalStoreError,
+)
+from cruxible_core.derived.derived_runtime import BuildCapacityError
 from cruxible_core.errors import (
     AuthenticationError,
-    CitationHandleResolutionError,
-    ConcurrentStateDriftError,
+    BootstrapClaimRefusedError,
+    ChangeRefusedError,
     ConfigError,
-    ConstraintViolationError,
     CoreError,
     CustomerCodeExecutionUnsupportedError,
+    DaemonOperationScopeError,
     DataValidationError,
-    DirectWriteRefusedError,
-    EntityNotFoundError,
-    EntityTypeNotFoundError,
-    GroupNotFoundError,
-    IngestionError,
+    FloorAdmissionMisuse,
+    HostedProfileUnknownError,
+    InstanceLocationRefusedError,
     InstanceNotFoundError,
     InstanceScopeError,
-    InvalidContinuationError,
-    MutationError,
-    OutcomeNotFoundError,
-    OwnershipError,
-    PendingEdgeWriteRefusedError,
     PermissionDeniedError,
-    ProcedureNotFoundError,
-    ProcedureWithdrawalRefusedError,
-    QueryExecutionError,
-    QueryNotFoundError,
-    ReceiptNotFoundError,
-    RelationshipAmbiguityError,
-    RelationshipNotFoundError,
+    PrincipalRefusedError,
+    ProviderLaneRefusedError,
     RuntimeCredentialNotFoundError,
-    SourceArtifactNotFoundError,
-    StaleContinuationError,
-    TerminalLifecycleWriteRefusedError,
-    TraceNotFoundError,
+)
+from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
+from cruxible_core.service.claims.claim_types import ClaimTypeNotFoundError
+from cruxible_core.service.discovery.audit import AuditError
+from cruxible_core.service.discovery.curation import CurationError
+from cruxible_core.service.discovery.next import NextError
+from cruxible_core.service.discovery.since import SinceError
+from cruxible_core.service.procedures.predictions import PredictionRefused
+from cruxible_core.service.procedures.procedure_runs import ProcedureNotFound, ProcedureSurfaceError
+from cruxible_core.service.read_refusals import ReadRefusalError
+from cruxible_core.service.refusals import (
+    ALL_SERVED_REFUSAL_CODES,
+    repair_for_refusal,
 )
 
 STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -58,153 +92,247 @@ __all__ = [
     "response_to_error",
 ]
 
+_DAEMON_OPERATION_LABELS = {
+    "cruxible_host_create": "cruxible host create",
+    "cruxible_server_info": "server status",
+    "cruxible_server_restart": "server restart",
+    "cruxible_server_stop": "server stop",
+}
+
+
+CREDENTIAL_REPAIR_OPERATION = "credential.mint"
+
+# A refused bootstrap claim is repaired either by claiming again with the right
+# secret (or after a race) or by recovering ADMIN from local state, because the
+# instance is already bootstrapped.
+_BOOTSTRAP_REPAIR_OPERATIONS = {
+    "runtime_bootstrap.secret_invalid": "credential.claim-bootstrap",
+    "runtime_bootstrap.secret_already_claimed": "credential.recover-admin",
+    "runtime_bootstrap.admin_exists": "credential.recover-admin",
+    "runtime_bootstrap.claim_conflict": "credential.claim-bootstrap",
+}
+
 
 def _message_for_error(exc: CoreError) -> str:
+    if isinstance(exc, DaemonOperationScopeError):
+        operation = _DAEMON_OPERATION_LABELS.get(exc.operation, exc.operation)
+        return (
+            f"The bearer token is instance-scoped; `{operation}` is a daemon-scope "
+            "operation. Use the operator credential (the bootstrap secret or a "
+            "daemon-scope token) in CRUXIBLE_SERVER_BEARER_TOKEN. The daemon's "
+            "runtime bootstrap secret keeps authorizing daemon-scope operations "
+            "after `credential claim-bootstrap` has consumed its one-time claim."
+        )
     if exc.args:
         return str(exc.args[0])
     return exc.__class__.__name__
 
 
+def _repair_for_error(exc: CoreError) -> ServedRepair:
+    carried = getattr(exc, "repair", None)
+    if isinstance(carried, RepairOperation | HandEditRepair):
+        return carried
+    # Both credential refusals are repaired by minting the credential the
+    # operation requires, which is one served CLI leaf; the refused operation
+    # and the accepted credential kinds travel as its arguments.
+    if isinstance(exc, DaemonOperationScopeError):
+        return RepairOperation(
+            operation=CREDENTIAL_REPAIR_OPERATION,
+            arguments={
+                "refused_operation": exc.operation,
+                "credential_env": "CRUXIBLE_SERVER_BEARER_TOKEN",
+                "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
+            },
+        )
+    if isinstance(exc, ProposalNotFoundError):
+        return RepairOperation(operation="cruxible.proposal.list")
+    if isinstance(exc, BootstrapClaimRefusedError):
+        return RepairOperation(
+            operation=_BOOTSTRAP_REPAIR_OPERATIONS[exc.error_code],
+            arguments={"instance_id": exc.instance_id},
+        )
+    if isinstance(exc, AuthenticationError):
+        return RepairOperation(
+            operation=CREDENTIAL_REPAIR_OPERATION,
+            arguments={
+                "credential_options": [
+                    "CRUXIBLE_SERVER_BEARER_TOKEN",
+                    "bootstrap-secret file",
+                ]
+            },
+        )
+    # A refusal whose code is a registered member of a closed served vocabulary
+    # renders the repair the catalog declares for it, so the wire carries the
+    # same runnable operation the refusal detail would have carried.
+    error_code = getattr(exc, "error_code", None)
+    if isinstance(error_code, str) and normalize_code(error_code) in ALL_SERVED_REFUSAL_CODES:
+        return repair_for_refusal(error_code)
+    code = error_code or getattr(exc, "code", None)
+    return hand_edit_repair(str(code or exc.__class__.__name__))
+
+
 def _status_for_error(exc: CoreError) -> int:
+    if isinstance(exc, BuildCapacityError):
+        return 503
+    if isinstance(exc, ReadRefusalError):
+        # A read refusal is a request fault with its own coded status: an
+        # unknown name is 404, an ambiguous one 409, anything else 400.
+        return exc.http_status
+    if isinstance(exc, CaptureEraseRefusedError):
+        # The Capture's state refuses the erase (a conflict, not a malformed
+        # request); nothing was destroyed or recorded.
+        return exc.http_status
+    if isinstance(exc, ProcedureSurfaceError):
+        # A served Procedure/Line surface refusal is a request fault the caller
+        # can repair, never a daemon fault: the class declares its own 4xx so
+        # the code and the repair the envelope carries are actionable.
+        return exc.http_status
+    if isinstance(exc, PrincipalRefusedError):
+        return exc.http_status
+    if isinstance(exc, ProviderLaneRefusedError):
+        # The daemon's environment cannot serve Provider work; the repair is
+        # the operator's, not the caller's request.
+        return exc.http_status
+    if isinstance(exc, ChangeRefusedError):
+        return exc.http_status
     if isinstance(exc, AuthenticationError):
         return 401
-    if isinstance(exc, CustomerCodeExecutionUnsupportedError):
+    if isinstance(exc, (CustomerCodeExecutionUnsupportedError, HostedProfileUnknownError)):
+        # A misconfigured profile is still a refusal to execute, not a request
+        # fault and not a crash: the caller must see the same 403 shape.
         return 403
-    if isinstance(exc, CitationHandleResolutionError):
-        return 409 if exc.failure_kind == "stale" else 400
-    if isinstance(exc, (ConfigError, DataValidationError, QueryExecutionError, IngestionError)):
-        return 400
+    if isinstance(exc, ClaimAttestationStoreError):
+        if exc.error_code in {
+            "cruxible.claim_attestation.attestation_head_unknown",
+            "cruxible.claim_attestation.idempotency_payload_mismatch",
+        }:
+            return 400
+        return 500
+    if isinstance(exc, ProposalEvaluationIntegrityError | FloorAdmissionMisuse):
+        return 500
     if isinstance(
         exc,
         (
-            PermissionDeniedError,
-            OwnershipError,
-            InstanceScopeError,
-            DirectWriteRefusedError,
-            TerminalLifecycleWriteRefusedError,
-            ProcedureWithdrawalRefusedError,
+            ConfigError,
+            DataValidationError,
+            CanonicalEncodingError,
+            DocumentFormatError,
+            FormatError,
+            AuditError,
+            CurationError,
+            NextError,
+            SinceError,
+            ReviewOperationalStoreError,
+            ProposalAdmissionError,
         ),
     ):
+        return 400
+    if isinstance(exc, (PermissionDeniedError, InstanceScopeError)):
         return 403
     if isinstance(
         exc,
         (
-            EntityTypeNotFoundError,
-            RelationshipNotFoundError,
-            QueryNotFoundError,
-            EntityNotFoundError,
-            ReceiptNotFoundError,
-            OutcomeNotFoundError,
-            TraceNotFoundError,
             InstanceNotFoundError,
-            GroupNotFoundError,
-            ProcedureNotFoundError,
-            SourceArtifactNotFoundError,
             RuntimeCredentialNotFoundError,
+            DocumentNotFoundError,
+            ProposalNotFoundError,
+            ClaimNotFoundError,
+            SubjectNotFoundError,
         ),
     ):
         return 404
     if isinstance(
         exc,
         (
-            RelationshipAmbiguityError,
-            StaleContinuationError,
-            PendingEdgeWriteRefusedError,
-            ConcurrentStateDriftError,
+            ApprovalIntegrityError,
+            InstanceLocationRefusedError,
+            BootstrapError,
+            PrincipalIntegrityError,
+            ProjectionCoordinateError,
+            SettlementIntegrityError,
+            ProposalIntegrityError,
+            ReviewOperationalConcurrentChangeError,
+            ProposalSelectorAmbiguousError,
+            ProposalStale,
         ),
     ):
-        # 409: a pending-edge refusal is a STATE conflict, not a policy or tier
-        # denial -- the same write succeeds once the proposal is resolved.
         return 409
-    if isinstance(exc, (ConstraintViolationError, InvalidContinuationError)):
-        return 422
-    if isinstance(exc, MutationError):
-        return 500
     return 500
 
 
 def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     """Convert a CoreError into an HTTP status code and structured payload."""
     context: dict[str, Any] = {}
+    if isinstance(exc, BuildCapacityError):
+        context["retryable"] = True
     errors: list[str] = []
     error_code = getattr(exc, "error_code", None)
 
     if isinstance(exc, ConfigError | DataValidationError):
         errors = list(exc.errors)
-    if isinstance(exc, ConstraintViolationError):
-        context["violations"] = list(exc.violations)
-    if isinstance(exc, OwnershipError):
-        context["blocked_types"] = exc.blocked_types
     if isinstance(exc, PermissionDeniedError):
         context["tool_name"] = exc.tool_name
         context["current_mode"] = exc.current_mode
         context["required_mode"] = exc.required_mode
         if exc.ceiling_mode is not None:
             context["ceiling_mode"] = exc.ceiling_mode
-    if isinstance(exc, DirectWriteRefusedError):
-        context["kind"] = exc.kind
-        context["type_name"] = exc.type_name
-        context["source"] = exc.source
-    if isinstance(exc, TerminalLifecycleWriteRefusedError):
-        context["kind"] = exc.kind
-        context["status"] = exc.status
-        context["writable"] = exc.writable
-    if isinstance(exc, PendingEdgeWriteRefusedError):
-        context["relationship_type"] = exc.relationship_type
-        context["from_type"] = exc.from_type
-        context["from_id"] = exc.from_id
-        context["to_type"] = exc.to_type
-        context["to_id"] = exc.to_id
-    if isinstance(exc, EntityTypeNotFoundError):
-        context["entity_type"] = exc.entity_type
-        context["known_entity_types"] = exc.known_entity_types
-    if isinstance(exc, RelationshipNotFoundError):
-        context["relationship_name"] = exc.relationship_name
-    if isinstance(exc, QueryNotFoundError):
-        context["query_name"] = exc.query_name
-    if isinstance(exc, EntityNotFoundError):
-        context["entity_type"] = exc.entity_type
-        context["entity_id"] = exc.entity_id
-    if isinstance(exc, RelationshipAmbiguityError):
-        context["from_type"] = exc.from_type
-        context["from_id"] = exc.from_id
-        context["to_type"] = exc.to_type
-        context["to_id"] = exc.to_id
-        context["relationship_type"] = exc.relationship_type
-    if isinstance(exc, ReceiptNotFoundError | OutcomeNotFoundError):
-        context["receipt_id"] = exc.receipt_id
-    if isinstance(exc, TraceNotFoundError):
-        context["trace_id"] = exc.trace_id
+    if isinstance(exc, HostedProfileUnknownError):
+        context["profile"] = exc.profile
+    if isinstance(exc, CustomerCodeExecutionUnsupportedError) and exc.detail is not None:
+        context["detail"] = exc.detail
+    if isinstance(exc, ObjectFormatConflict):
+        if exc.workspace_format is not None:
+            context["workspace_format"] = exc.workspace_format
+    if isinstance(exc, InstanceDecommissioned):
+        context["instance_id"] = exc.instance_id
+        context["reason"] = exc.reason
+        context["decommissioned_at"] = exc.decommissioned_at
     if isinstance(exc, InstanceNotFoundError):
         context["instance_id"] = exc.instance_id
-    if isinstance(exc, InstanceScopeError):
+    if isinstance(exc, InstanceLocationRefusedError):
+        context["instance_id"] = exc.instance_id
+        context["location"] = exc.location
+        context["state_root"] = exc.state_root
+    if isinstance(exc, DaemonOperationScopeError):
+        context["operation"] = exc.operation
+        context["credential_scope"] = exc.credential_scope
+    elif isinstance(exc, InstanceScopeError):
         context["instance_id"] = exc.instance_id
         context["credential_scope"] = exc.credential_scope
-    if isinstance(exc, GroupNotFoundError):
-        context["group_id"] = exc.group_id
-    if isinstance(exc, ProcedureNotFoundError):
-        context["procedure_id"] = exc.procedure_id
-    if isinstance(exc, ProcedureWithdrawalRefusedError):
-        context["procedure_id"] = exc.procedure_id
-        context["current_mode"] = exc.current_mode
-        context["required_mode"] = exc.required_mode
-    if isinstance(exc, SourceArtifactNotFoundError):
-        context["source_artifact_id"] = exc.source_artifact_id
-    if isinstance(exc, CitationHandleResolutionError):
-        context["handle"] = exc.handle
-        context["failure_kind"] = exc.failure_kind
-        context["detail"] = exc.detail
+    if isinstance(exc, SinceRequestInvalid):
+        context["field_path"] = exc.field_path
     if isinstance(exc, RuntimeCredentialNotFoundError):
         context["credential_id"] = exc.credential_id
-    if isinstance(exc, InvalidContinuationError):
-        context["reason"] = exc.reason
-    if isinstance(exc, ConcurrentStateDriftError):
-        context["opening_revision"] = exc.opening_revision
-        context["closing_revision"] = exc.closing_revision
-    if isinstance(exc, StaleContinuationError):
-        context["reason"] = exc.reason
-        context["token_read_revision"] = exc.token_read_revision
-        context["current_read_revision"] = exc.current_read_revision
+    if isinstance(exc, ProposalNotFoundError):
+        context["selector"] = exc.selector
+        context["accepted_forms"] = list(exc.accepted_forms)
+        context["repair_commands"] = list(exc.repair_commands)
+    if isinstance(exc, ReadRefusalError | CaptureEraseRefusedError):
+        context.update(exc.context)
+    if isinstance(exc, PredictionRefused):
+        context.update(exc.details)
+    if isinstance(exc, ClaimTypeNotFoundError):
+        context["predicate"] = exc.predicate
+        context["nearest"] = list(exc.nearest)
+    if isinstance(exc, ProcedureNotFound):
+        context["procedure"] = exc.name
+        context["nearest"] = list(exc.nearest)
+    if isinstance(exc, ProposalSelectorAmbiguousError):
+        context["selector"] = exc.selector
+        context["candidates"] = list(exc.candidates)
+        context["repair_commands"] = list(exc.repair_commands)
+    if isinstance(exc, ProposalReadmitAlreadyAccepted):
+        context["proposal_id"] = exc.proposal_id
+        context["accepted_as"] = exc.accepted_as
+    if isinstance(exc, ProposalStale):
+        context["proposal_id"] = exc.proposal_id
+        if exc.reason is not None:
+            context["recompile_reason"] = exc.reason
+        if exc.detail is not None:
+            context["detail"] = exc.detail
+    if isinstance(exc, ProposalReadmitNotStale):
+        context["proposal_id"] = exc.proposal_id
+        context["status"] = exc.status
 
     body = ErrorResponse(
         error_type=exc.__class__.__name__,
@@ -212,6 +340,12 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         error_code=error_code if isinstance(error_code, str) else None,
         errors=errors,
         context=context,
-        mutation_receipt_id=exc.mutation_receipt_id,
+        # Admission misuse is an internal programming fault, not caller input
+        # with a client-side repair.
+        repair=(
+            None
+            if isinstance(exc, BuildCapacityError | FloorAdmissionMisuse)
+            else _repair_for_error(exc)
+        ),
     )
     return _status_for_error(exc), body

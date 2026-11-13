@@ -1,0 +1,6365 @@
+"""Authenticated proposal admission and deterministic PB-C candidate evaluation."""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import re
+from collections.abc import Iterable, Mapping
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from functools import cache
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Final, Literal, Protocol, cast
+
+from pydantic import (
+    BaseModel,
+    ValidationError,
+    field_validator,
+)
+
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_PATH,
+    ApprovalPolicyFormatError,
+    approval_policy_digest,
+    parse_approval_policy,
+)
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring_profiles import (
+    AuthoringProfileError,
+    ClaimTypeExpansionEvidence,
+    verify_claim_type_expansion_evidence,
+)
+from cruxible_client.contracts.candidates import (
+    CandidateMemberLawEvidence,
+    CandidateRecord,
+    ClosureProof,
+    LawEvaluationCoordinate,
+    MemberLawEvaluation,
+    SemanticCandidate,
+    candidate_digest,
+    candidate_member_evidence_digest,
+    member_law_evidence_digest,
+    validate_candidate_timestamp,
+)
+from cruxible_client.contracts.canonical import (
+    SemanticDiffDigest,
+    Sha256Value,
+    canonical_bytes,
+    file_digest,
+    manifest_for_tree,
+    manifest_for_tree_carrying,
+    normalize_manifest_paths,
+    semantic_diff,
+    semantic_diff_from_members,
+    semantic_projection,
+    typed_digest,
+)
+from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
+from cruxible_client.contracts.capture_layouts import LAYOUT_REF_UNRESOLVED
+from cruxible_client.contracts.captures import (
+    AcceptedCaptureContract,
+    CaptureContractV1,
+    CaptureErasureLookupProtocol,
+    CaptureFormatError,
+    CaptureObjectStoreProtocol,
+    ProducerReceiptResolverProtocol,
+    ProducerVersions,
+    capture_contract_digest,
+    evaluate_capture_contract_law,
+    parse_capture_contract,
+)
+from cruxible_client.contracts.claim_attestations import (
+    accepted_referent_coordinates_from_tree,
+)
+from cruxible_client.contracts.claim_types import (
+    AcceptedClaimType,
+    ClaimInverseObjectKeyPart,
+    ClaimType,
+    ClaimTypeFormatError,
+    ClaimTypeFreshnessHorizonInvalid,
+    claim_type_accepts_subject,
+    claim_type_digest,
+    claim_type_path,
+    evaluate_claim_type_law,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claims import (
+    AcceptedClaim,
+    ClaimArtifact,
+    ClaimFormatError,
+    ClaimLawEvidence,
+    LiteralClaimObject,
+    NoneClaimObject,
+    SubjectClaimObject,
+    claim_artifact_digest,
+    claim_preserves_derivation,
+    claim_retirement_pin_digest_updates,
+    claim_statement_digest,
+    evaluate_claim_law,
+    parse_claim,
+)
+from cruxible_client.contracts.codes import CurrentCode
+from cruxible_client.contracts.content_memo import seal, sealed_derive
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.documents import (
+    AcceptedDocument,
+    BodyVerifierProtocol,
+    DocumentShell,
+    document_digest,
+    evaluate_document_law,
+    parse_document,
+)
+from cruxible_client.contracts.errors import (
+    CruxibleError,
+    DocumentFormatError,
+    FormatError,
+    PrincipalIntegrityError,
+    ProposalAdmissionError,
+    ProposalEvaluationIntegrityError,
+    ProposalIntegrityError,
+    SubjectFormatError,
+)
+from cruxible_client.contracts.governance import (
+    INDEPENDENT_APPROVAL_REQUIREMENTS,
+    ActivationPolicy,
+    ApprovalRequirement,
+    PermissionTier,
+)
+from cruxible_client.contracts.laws import (
+    ACCEPTANCE_LAWS,
+    APPROVAL_POLICY_ACCEPTANCE_LAW,
+    DOCUMENT_LAW_V3,
+    PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+    PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
+    AcceptanceLawRegistry,
+    InstalledAcceptanceLaw,
+)
+from cruxible_client.contracts.merkle import (
+    MerkleManifest,
+    build_merkle_manifest,
+    update_merkle_manifest,
+)
+from cruxible_client.contracts.notes import NOTE_PATH_RE
+from cruxible_client.contracts.persistent import PersistentMap
+from cruxible_client.contracts.policies import (
+    ClaimAdmissionCandidateContext,
+    ClaimAdmissionCandidateResult,
+    ClaimAdmissionEvaluationAccount,
+    ClaimAdmissionPolicy,
+    ClaimCorroborationResult,
+    ClaimEvidenceAdmissionRule,
+    evaluate_claim_admission_candidate,
+)
+from cruxible_client.contracts.principals import (
+    PrincipalRegistrySnapshot,
+    parse_principal_record,
+    principal_registry_from_tree,
+)
+from cruxible_client.contracts.procedure_mandates import (
+    AcceptedProcedureMandate,
+    ProcedureMandate,
+    ProcedureMandateError,
+    ScopedClaimType,
+    evaluate_procedure_mandate_v2_law,
+    parse_procedure_mandate_any,
+    procedure_mandate_digest,
+)
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicyFormatError,
+    parse_procedure_runtime_policy,
+    procedure_runtime_policy_digest,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
+    ProcedureFormatError,
+    evaluate_procedure_law,
+    parse_procedure,
+    procedure_artifact_digest,
+    procedure_runnability,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpec,
+    LineSpec,
+    LineSpecFormatError,
+    evaluate_line_spec_law,
+    line_spec_digest,
+    parse_line_spec,
+)
+from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+from cruxible_client.contracts.proposal_models import (
+    AuthenticatedActor,
+    OriginatingLine,
+    ProposalAdmissionRecord,
+    ProposalAdmissionRequest,
+    ProposalEvaluationRecord,
+    ProposalPreview,
+    ProposalPreviewEvaluation,
+    ProposalReadmissionLink,
+    ProposalReceiveLimits,
+    ProposalResult,
+    ProposalSettleSubmission,
+    ProposalTransportProtocol,
+    ProposalWithdrawalRecord,
+    _StrictProposalModel,
+    claim_admission_account_order_key,
+)
+from cruxible_client.contracts.providers import (
+    AcceptedProvider,
+    ProviderAny,
+    ProviderFormatError,
+    evaluate_provider_law,
+    parse_provider,
+    provider_builds_prefix,
+    provider_digest,
+    provider_path,
+)
+from cruxible_client.contracts.query.definitions import (
+    AcceptedQueryDefinition,
+    QueryDefinition,
+    QueryDefinitionFormatError,
+    evaluate_query_definition_law,
+    parse_query_definition,
+    query_definition_digest,
+)
+from cruxible_client.contracts.query.grammar import QueryPairStep
+from cruxible_client.contracts.resolution_contracts import (
+    ResolutionContract,
+    parse_resolution_contract,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import (
+    claim_value_kind,
+    subject_value_kinds,
+    tree_contract_resolver,
+)
+from cruxible_client.contracts.subject_kinds import (
+    AcceptedSubjectKind,
+    SubjectKindFormatError,
+    evaluate_subject_kind_law,
+    live_subject_kind,
+    parse_subject_kind,
+    subject_kind_digest,
+)
+from cruxible_client.contracts.subjects import (
+    AcceptedSubject,
+    evaluate_subject_law,
+    parse_subject,
+    subject_digest,
+)
+from cruxible_client.contracts.triggers import (
+    AcceptedTrigger,
+    CaptureEventInput,
+    NoTriggerInput,
+    TriggerInputRecord,
+    evaluate_trigger_law,
+    parse_trigger,
+    schedule_satisfies_input,
+    trigger_digest,
+)
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    WorkspaceAdvertisement,
+)
+from cruxible_core.claims.closure import (
+    ArtifactDependencyStateV1,
+    ClosureEvaluationV3,
+    DependencyIndexV1,
+    IncompleteClosureItemV1,
+    UnresolvedArtifactPinV1,
+    build_dependency_index,
+    closure_evaluation_v3,
+    dependency_artifacts,
+    judge_dependency_closure,
+    update_dependency_index,
+)
+from cruxible_core.claims.enum_resolution import tree_enum_resolver
+from cruxible_core.claims.key_claims import (
+    carried_key_claim,
+    derive_key_claim_retirements,
+    is_subject_creation_key_claim,
+    retired_claim_names_subject_version,
+    subject_versions,
+)
+from cruxible_core.derived.derived_state import SnapshotTree, paths_with_prefix, snapshot_against
+from cruxible_core.exhaust.promotions import (
+    AcceptedExhaustPromotionV1,
+    ExhaustPromotionError,
+    ExhaustPromotionLawResultV1,
+    ExhaustPromotionV1,
+    evaluate_exhaust_promotion_acceptance,
+    exhaust_promotion_digest,
+    parse_exhaust_promotion,
+)
+from cruxible_core.governance.principal_lifecycle import evaluate_principal_lifecycle
+from cruxible_core.indexes.claims.claim_subject_index import (
+    CLAIM_PATH_RE as _CLAIM_PATH_RE,
+)
+from cruxible_core.indexes.claims.claim_subject_index import (
+    ClaimSubjectIndex,
+    build_claim_subject_index,
+    update_claim_subject_index,
+)
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.proposals.proposal_note_projection import (
+    ProposalNoteIndex,
+)
+from cruxible_core.indexes.subject_aliases import (
+    SUBJECT_CREATION_COLLISION,
+    SubjectReferenceResolver,
+    candidate_creation_collisions,
+    subject_collision_message,
+    tree_reference_resolver,
+)
+from cruxible_core.indexes.subject_identity import (
+    SubjectAssignmentAuthority,
+    candidate_identity_issues,
+    key_claim_type_shape,
+    tree_subject_kind_reader,
+)
+from cruxible_core.proposals.candidate_cards import (
+    CARD_RENDERER_DIGEST,
+    derive_candidate_cards,
+    is_candidate_card_path,
+)
+from cruxible_core.proposals.prepared_evaluation import (
+    PreparedEvaluationAdapter,
+    PreparedEvaluationScope,
+    SettlementHandoff,
+)
+from cruxible_core.proposals.proposal_message import proposal_commit_message
+from cruxible_core.proposals.proposal_notes import proposal_admission_id
+from cruxible_core.query.backends import ClaimQueryFactsV1
+from cruxible_core.query.engine import (
+    evaluate_claim_query,
+    query_execution_receipt,
+)
+from cruxible_core.runtime.phase_timing import timed_operation, timed_phase
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
+from cruxible_core.storage.read_positions import unpositioned_operation
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.shapes import Contract, ContractRef
+    from cruxible_core.evidence.attestation_verification import CaptureContractVersions
+    from cruxible_core.proposals.delegated_authority import DelegatedAuthorityVerdict
+
+_DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.json$")
+_APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.json$")
+_PROCEDURE_RUNTIME_POLICY_PATH_RE = re.compile(r"^governance/procedure-runtime-policy\.json$")
+_PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.json$")
+_SUBJECT_PATH_RE = re.compile(
+    r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
+    r"[a-z][a-z0-9_.-]{0,255}\.json$"
+)
+_CLAIM_TYPE_PATH_RE = re.compile(
+    r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
+    r"[a-z][a-z0-9_]{0,63}\.json$"
+)
+
+ClaimLawEvidenceProvider = Callable[[AcceptedCoordinate, str, str], ClaimLawEvidence | None]
+
+AcceptedReferentsProvider = Callable[[AcceptedProjectionCoordinate], frozenset[AcceptedCoordinate]]
+AttestationPrincipalProvider = Callable[[AcceptedCoordinate, str], PrincipalRecord]
+
+
+class HistoricalArtifactProvider(Protocol):
+    """One exact accepted artifact version within an accepted prefix, even if superseded.
+
+    Returns ``(path, bytes)`` for the version with ``artifact_digest`` whose path
+    lies under ``family`` (e.g. ``"capture-contracts/"``), or None when the prefix
+    never accepted it. Nothing ever substitutes a later version.
+    """
+
+    def __call__(
+        self, coordinate: AcceptedCoordinate, artifact_digest: str, *, family: str
+    ) -> tuple[str, bytes] | None: ...
+
+
+@dataclass(frozen=True)
+class _AttestationPrincipalReader:
+    coordinate: AcceptedCoordinate
+    lookup: AttestationPrincipalProvider
+
+    def require_active(self, principal_id: str) -> PrincipalRecord:
+        return self.lookup(self.coordinate, principal_id)
+
+
+#: The removed nouns' paths, each refused naming its replacement (ruling C12).
+REMOVED_NOUNS: Final[Mapping[str, str]] = {
+    "blueprints/": (
+        "Blueprints are removed; author a Procedure whose provider-calling nodes name "
+        "slots, and a Line that binds them."
+    ),
+    "provider-interfaces/": (
+        "ProviderInterfaces are removed; a provider build declares typed operations, and "
+        "a Procedure slot names the signature {in, out, effect} it needs."
+    ),
+    "source-acquisition-policies/": (
+        "SourceAcquisitionPolicies are removed; declare acquisition per capture output "
+        "(<alias>.<field>) on the Line."
+    ),
+}
+
+
+_ATTESTATION_PATH_RE = re.compile(r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$")
+_CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.json$")
+# A single-path Provider (the built-in) or one build.
+_PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$")
+_PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
+_PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
+_LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
+_TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
+_NOTE_PATH_RE = NOTE_PATH_RE
+_RUNBOOK_PATH_RE = re.compile(r"^runbooks/[a-z][a-z0-9_.-]{0,255}\.json$")
+_SUBJECT_KIND_PATH_RE = re.compile(
+    r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
+)
+_CONTRACT_PATH_RE = re.compile(r"^contracts/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$")
+_CAPABILITY_PATH_RE = re.compile(r"^capabilities/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$")
+_QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
+_EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
+
+_DEPENDENCY_CLOSED_PATTERNS: Final = (
+    re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
+    _CLAIM_TYPE_PATH_RE,
+    _CAPTURE_CONTRACT_PATH_RE,
+    _ATTESTATION_PATH_RE,
+    _PROVIDER_PATH_RE,
+    _PROCEDURE_MANDATE_PATH_RE,
+    _CLAIM_PATH_RE,
+    _PROCEDURE_PATH_RE,
+    _LINE_PATH_RE,
+    _TRIGGER_PATH_RE,
+    _NOTE_PATH_RE,
+    _RUNBOOK_PATH_RE,
+    _SUBJECT_KIND_PATH_RE,
+    _QUERY_DEFINITION_PATH_RE,
+    _EXHAUST_PROMOTION_PATH_RE,
+    _CONTRACT_PATH_RE,
+    _CAPABILITY_PATH_RE,
+)
+"""The member kinds whose three-way rebase reports exact per-member conflicts.
+
+One list, one meaning. It used to be spelled out twice inside the evaluator --
+once to pick a rebase and once to pick an evaluator -- and a member kind added to
+one spelling but not the other would have been rebased one way and judged
+another. There is only one evaluator now, so only the rebase still asks.
+"""
+
+_SEMANTIC_MEMBER_PATTERNS: Final = (
+    _APPROVAL_POLICY_PATH_RE,
+    _PROCEDURE_RUNTIME_POLICY_PATH_RE,
+    _DOCUMENT_PATH_RE,
+    _SUBJECT_PATH_RE,
+    *_DEPENDENCY_CLOSED_PATTERNS,
+)
+"""Every member kind that participates in dependency closure, in one place."""
+
+_UNINDEXED_MEMBER_FORMATS: Final[
+    Mapping[str, tuple[Callable[..., object], type[CruxibleError], str]]
+] = {
+    "approval-policy": (
+        parse_approval_policy,
+        ApprovalPolicyFormatError,
+        "cruxible.approval_policy.format_invalid",
+    ),
+    "procedure-runtime-policy": (
+        parse_procedure_runtime_policy,
+        ProcedureRuntimePolicyFormatError,
+        "cruxible.procedure_runtime_policy.format_invalid",
+    ),
+    "principal": (
+        parse_principal_record,
+        PrincipalIntegrityError,
+        "cruxible.principal.format_invalid",
+    ),
+}
+"""Member kinds the dependency parse does not read: parser, its error, the law's code.
+
+Advancing the carried index parses every scoped member, so each of these is
+proven parseable first and a malformed one refused under its own law's code.
+"""
+
+_AUTHORABLE_MEMBER_PATTERNS: Final = (
+    re.compile(r"^compiler-upgrade\.json$"),
+    _PRINCIPAL_PATH_RE,
+    *_SEMANTIC_MEMBER_PATTERNS,
+)
+"""Every path an authenticated proposal may add, change, or drop.
+
+Admission asks this in both directions -- may the proposal write this path, and
+may it remove that one -- and a kind that were authorable in one direction but
+not the other would be admissible to create and impossible to retire. One list
+answers both.
+"""
+
+
+def _authorable(path: str) -> bool:
+    return any(pattern.fullmatch(path) for pattern in _AUTHORABLE_MEMBER_PATTERNS)
+
+
+_LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
+
+
+class ExhaustPromotionVerifierProtocol(Protocol):
+    """Operational verification seam shared by proposal, settlement, and recovery."""
+
+    def verify_promotion(
+        self,
+        promotion: ExhaustPromotionV1,
+    ) -> ExhaustPromotionLawResultV1: ...
+
+
+class ProposalEvidenceProtocol(Protocol):
+    """Daemon persistence seam consumed by the pure proposal service."""
+
+    def publication(self) -> AbstractContextManager[None]: ...
+
+    def write_admission(self, record: ProposalAdmissionRecord) -> object: ...
+
+    def write_evaluation(self, record: ProposalEvaluationRecord) -> object: ...
+
+    def write_candidate(self, record: CandidateRecord) -> object: ...
+
+
+def validate_proposal_tree(
+    tree: Mapping[str, bytes],
+    *,
+    limits: ProposalReceiveLimits,
+    base_tree: Mapping[str, bytes] | None = None,
+) -> Mapping[str, bytes]:
+    from cruxible_core.derived.derived_state import row_size, row_values, same_row
+
+    if _receives_as_fork(tree, limits=limits, base_tree=base_tree):
+        return tree
+    if len(tree) > limits.max_files:
+        raise ProposalAdmissionError("proposal exceeds its file-count limit")
+    # A tree held as blob references is compared and sized by reference; only a
+    # path whose bytes actually differ from the base is read.
+    rows = row_values(tree)
+    base_rows = row_values(base_tree) if base_tree is not None else None
+
+    def unchanged(path: str) -> bool:
+        if base_tree is None or path not in base_tree:
+            return False
+        if rows is not None and base_rows is not None:
+            return same_row(rows[path], base_rows[path])
+        return base_tree.get(path) == tree[path]
+
+    if base_tree is not None:
+        # Counted before any member is parsed, and counted in both directions so
+        # that dropping ten thousand members is bounded exactly as adding them is.
+        # Derivative cards are excluded: nobody authors them, the compiler emits
+        # one per authored member, and counting them halved the members an author
+        # was actually allowed to change.
+        changed = sum(
+            1 for path in tree if not is_candidate_card_path(path) and not unchanged(path)
+        )
+        changed += sum(
+            1 for path in base_tree if path not in tree and not is_candidate_card_path(path)
+        )
+        if changed > limits.max_changed_members:
+            raise ProposalAdmissionError("proposal exceeds its changed-member limit")
+    for raw_path in tree:
+        if raw_path.count("/") + 1 > limits.max_path_depth:
+            raise ProposalAdmissionError(f"proposal exceeds its path-depth limit: {raw_path}")
+    normalized = normalize_manifest_paths(list(tree))
+    if set(normalized) != set(tree):
+        raise ProposalAdmissionError("proposal paths must already be canonical")
+    total = 0
+    result: dict[str, bytes] = {}
+    for path in normalized:
+        same = unchanged(path)
+        if rows is not None and same:
+            # Byte-identical to the accepted base, which passed every check below.
+            size = row_size(rows[path])
+        else:
+            content = tree[path]
+            if not isinstance(content, bytes):
+                raise ProposalAdmissionError("proposal tree values must be exact bytes")
+            if not same and not is_candidate_card_path(path) and not _authorable(path):
+                removed = next(
+                    (text for prefix, text in REMOVED_NOUNS.items() if path.startswith(prefix)),
+                    None,
+                )
+                if removed is not None:
+                    raise ProposalAdmissionError(f"{path}: {removed}")
+                raise ProposalAdmissionError(
+                    f"proposal changed a daemon-controlled or unregistered path: {path}"
+                )
+            if content.startswith(_LFS_PREFIX):
+                raise ProposalAdmissionError(f"proposal refuses Git LFS pointer: {path}")
+            size = len(content)
+            if rows is None:
+                result[path] = content
+        # Only what the proposal writes is bounded per file. An unchanged path was
+        # accepted already, and a daemon-written record (a change set carrying a
+        # large closure) is bounded by its own record limit when it is written.
+        if not same and size > limits.max_file_bytes:
+            raise ProposalAdmissionError(f"proposal blob exceeds its byte limit: {path}")
+        total += size
+        if total > limits.max_total_bytes:
+            raise ProposalAdmissionError("proposal exceeds its total-byte limit")
+    base = base_tree or {}
+    for path in normalize_manifest_paths(list(base)):
+        if path not in tree and not is_candidate_card_path(path) and not _authorable(path):
+            raise ProposalAdmissionError(
+                f"proposal removed a daemon-controlled or unregistered path: {path}"
+            )
+    if rows is not None:
+        return tree
+    return tree if isinstance(tree, SnapshotTree) else result
+
+
+def _receives_as_fork(
+    tree: Mapping[str, bytes],
+    *,
+    limits: ProposalReceiveLimits,
+    base_tree: Mapping[str, bytes] | None,
+) -> bool:
+    """Whether a fork of ``base_tree`` passes every receive check, judged from its edits.
+
+    A tree that is the base (or the base's card-free view) plus edits passes
+    exactly when the whole-tree checks below would pass it: path facts carried
+    by the root answer the checks over every path, and only edited paths are
+    read. Any failure answers False, so the whole-tree pass reports the exact
+    refusal.
+    """
+    from cruxible_core.derived.derived_state import (
+        fork_of,
+        path_facts,
+        resolve_blobs,
+        row_size,
+        row_values,
+        same_row,
+    )
+
+    if base_tree is None or len(tree) > limits.max_files:
+        return False
+    found = fork_of(tree, base_tree)
+    rows, base_rows = row_values(tree), row_values(base_tree)
+    if found is None or rows is None or base_rows is None:
+        return False
+    root, edits = found
+    facts = path_facts(root).advanced(row_values(root) or {}, edits)
+    if (
+        facts.noncanonical
+        or facts.colliding
+        or facts.max_depth > limits.max_path_depth
+        or facts.content_bytes > limits.max_total_bytes
+    ):
+        return False
+    changed = 0
+    written: list[str] = []
+    for path in edits:
+        new, old = rows.get(path), base_rows.get(path)
+        if (
+            new is None
+            and old is None
+            or (new is not None and old is not None and same_row(new, old))
+        ):
+            continue
+        card = is_candidate_card_path(path)
+        if not card:
+            changed += 1
+            if not _authorable(path):
+                return False
+        if new is not None:
+            written.append(path)
+    if changed > limits.max_changed_members:
+        return False
+    if any(row_size(rows[path]) > limits.max_file_bytes for path in written):
+        return False
+    contents = resolve_blobs([rows[path] for path in written])
+    return not any(content.startswith(_LFS_PREFIX) for content in contents)
+
+
+@dataclass(frozen=True)
+class CandidateEvaluation:
+    """One evaluated proposal, plus the candidate tree's state when it passed.
+
+    `state` is the derived state of the tree the candidate commits to -- its
+    member manifest, its manifest trie, and its dependency index -- handed back
+    so a caller walking a chain of generations can seed the next evaluation with
+    it instead of rebuilding it. It is present only on an accepted candidate: a
+    refused evaluation has no tree worth carrying forward.
+    """
+
+    tree: Mapping[str, bytes]
+    candidate: CandidateRecord | None
+    diagnostics: tuple[CompilerDiagnostic, ...]
+    rebased: bool
+    state: "EvaluatedTreeState | None" = None
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] = ()
+
+
+def claim_type_expansions_from_candidate(
+    candidate: CandidateRecord,
+) -> tuple[ClaimTypeExpansionEvidence, ...]:
+    """Recover and revalidate authoring-only evidence committed by member law output."""
+
+    expansions: list[ClaimTypeExpansionEvidence] = []
+    for evidence in candidate.law_evidence:
+        raw = evidence.result.get("authoring_expansion")
+        if raw is None:
+            continue
+        try:
+            expansions.append(ClaimTypeExpansionEvidence.model_validate(raw))
+        except (CruxibleError, ValidationError) as exc:
+            raise ProposalIntegrityError(
+                "candidate contains invalid ClaimType authoring expansion evidence"
+            ) from exc
+    return tuple(
+        sorted(
+            expansions,
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
+
+
+def claim_admission_accounts_from_candidate(
+    candidate: CandidateRecord,
+) -> tuple[ClaimAdmissionEvaluationAccount, ...]:
+    """Recover the daemon-produced admission accounts committed by member evidence."""
+
+    accounts: dict[tuple[str, str, str], ClaimAdmissionEvaluationAccount] = {}
+    committed_query_digests: set[str] = set()
+    for evidence in candidate.law_evidence:
+        committed_query_digests.update(evidence.query_receipt_digests)
+        raw_entries = evidence.result.get("claim_admission", ())
+        if not isinstance(raw_entries, list):
+            continue
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict):
+                raise ProposalIntegrityError("candidate Claim admission entry is malformed")
+            raw_account = raw_entry.get("admission_account")
+            if raw_account is None:
+                continue
+            try:
+                account = ClaimAdmissionEvaluationAccount.model_validate(raw_account)
+            except ValidationError as exc:
+                raise ProposalIntegrityError(
+                    "candidate contains invalid Claim admission account"
+                ) from exc
+            key = (account.claim_path, account.claim_type_identity, account.policy_digest)
+            if key in accounts and accounts[key] != account:
+                raise ProposalIntegrityError("candidate Claim admission account is ambiguous")
+            accounts[key] = account
+    recovered_query_digests = {
+        result.result_digest
+        for account in accounts.values()
+        for result in account.corroboration_results
+    }
+    if recovered_query_digests != committed_query_digests:
+        raise ProposalIntegrityError(
+            "candidate Claim admission accounts differ from query receipt commitments"
+        )
+    return tuple(sorted(accounts.values(), key=claim_admission_account_order_key))
+
+
+def _diagnostic(code: str, message: str, path: str | None = None) -> CompilerDiagnostic:
+    return CompilerDiagnostic(
+        code=code,
+        severity="error",
+        message=message,
+        subject=SemanticAddress.whole_artifact(path) if path is not None else None,
+    )
+
+
+def deterministic_rebase(
+    *,
+    base_tree: Mapping[str, bytes],
+    current_tree: Mapping[str, bytes],
+    proposed_tree: Mapping[str, bytes],
+) -> tuple[dict[str, bytes], tuple[str, ...]]:
+    """Apply the exact base→proposal delta over current or return conflicting paths."""
+
+    paths = normalize_manifest_paths(
+        list({*base_tree.keys(), *current_tree.keys(), *proposed_tree.keys()})
+    )
+    rebased = dict(current_tree)
+    conflicts: list[str] = []
+    for path in paths:
+        base = base_tree.get(path)
+        proposed = proposed_tree.get(path)
+        if base == proposed:
+            continue
+        current = current_tree.get(path)
+        if current != base and current != proposed:
+            conflicts.append(path)
+            continue
+        if proposed is None:
+            rebased.pop(path, None)
+        else:
+            rebased[path] = proposed
+    return rebased, tuple(conflicts)
+
+
+class RebaseMemberConflictV2(_StrictProposalModel):
+    tag: Literal["playbill-rebase-member-conflict-v2"] = "playbill-rebase-member-conflict-v2"
+    code: Annotated[Literal["cruxible.rebase.member_conflict"], CurrentCode] = (
+        "cruxible.rebase.member_conflict"
+    )
+    path: str
+    old_parent_digest: str | None
+    proposed_digest: str | None
+    new_parent_digest: str | None
+
+    @field_validator("old_parent_digest", "proposed_digest", "new_parent_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+
+class RebaseResultV2(_StrictProposalModel):
+    tag: Literal["playbill-rebase-result-v2"] = "playbill-rebase-result-v2"
+    tree: dict[str, bytes]
+    conflicts: tuple[RebaseMemberConflictV2, ...]
+    approvals_invalidated: Literal[True] = True
+
+
+def _optional_file_digest(content: bytes | None) -> str | None:
+    return None if content is None else file_digest(content).tagged
+
+
+def deterministic_rebase_v2(
+    *,
+    old_parent_tree: Mapping[str, bytes],
+    new_parent_tree: Mapping[str, bytes],
+    proposed_tree: Mapping[str, bytes],
+) -> RebaseResultV2:
+    """Three-way member rebase with exact, canonically ordered conflicts."""
+
+    paths = normalize_manifest_paths(
+        list({*old_parent_tree.keys(), *new_parent_tree.keys(), *proposed_tree.keys()})
+    )
+    rebased = dict(new_parent_tree)
+    conflicts: list[RebaseMemberConflictV2] = []
+    for path in paths:
+        old = old_parent_tree.get(path)
+        proposed = proposed_tree.get(path)
+        if old == proposed:
+            continue
+        new = new_parent_tree.get(path)
+        if new == proposed:
+            continue
+        if new != old:
+            conflicts.append(
+                RebaseMemberConflictV2(
+                    path=path,
+                    old_parent_digest=_optional_file_digest(old),
+                    proposed_digest=_optional_file_digest(proposed),
+                    new_parent_digest=_optional_file_digest(new),
+                )
+            )
+            continue
+        if proposed is None:
+            rebased.pop(path, None)
+        else:
+            rebased[path] = proposed
+    return RebaseResultV2(tree=rebased, conflicts=tuple(conflicts))
+
+
+@dataclass(frozen=True)
+class _ForkRebase:
+    """A stale-base rebase answered from two deltas instead of three whole trees.
+
+    ``proposed`` is a fork of the accepted ``base`` root, and
+    ``current_changed`` holds every path whose bytes differ from ``base`` to
+    ``current`` (Git's structural diff between their commits). Every path
+    outside the proposal's own changes keeps the head's bytes in either rebase,
+    and a changed path's head bytes are the base's unless the head diff names
+    it, so both rebases visit only the proposal's changes. The trees' path union
+    -- which the whole-tree rebases refuse when it is non-canonical or case-fold
+    colliding -- is checked from the head's carried path facts plus the few
+    paths the head lacks; any doubt answers ``None`` and the whole-tree rebase
+    runs, refusal and all.
+    """
+
+    base: SnapshotTree
+    current: SnapshotTree
+    proposed: Mapping[str, bytes]
+    changed: tuple[str, ...]
+    current_changed: frozenset[str]
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        base_tree: Mapping[str, bytes],
+        current_tree: Mapping[str, bytes],
+        proposed_tree: Mapping[str, bytes],
+        current_changed: frozenset[str] | None,
+    ) -> _ForkRebase | None:
+        from cruxible_core.derived.derived_state import (
+            path_facts,
+            root_and_edits,
+            row_values,
+            same_row,
+        )
+
+        found = root_and_edits(proposed_tree)
+        if (
+            current_changed is None
+            or found is None
+            or not isinstance(base_tree, SnapshotTree)
+            or not isinstance(current_tree, SnapshotTree)
+            or found[0] is not base_tree
+            or base_tree._parent is not None
+            or current_tree._parent is not None
+        ):
+            return None
+        base_rows, proposed_rows, current_rows = (
+            row_values(base_tree),
+            row_values(proposed_tree),
+            row_values(current_tree),
+        )
+        if base_rows is None or proposed_rows is None or current_rows is None:
+            return None
+        changed: list[str] = []
+        for path in found[1]:
+            old, new = base_rows.get(path), proposed_rows.get(path)
+            if old is None and new is None:
+                continue
+            if old is not None and new is not None and same_row(old, new):
+                continue
+            changed.append(path)
+        # The path union: the head's paths, plus base paths the head dropped and
+        # paths the proposal adds that the head lacks.
+        extra = {
+            path
+            for path in (*current_changed, *changed)
+            if path not in current_rows and (path in base_rows or path in proposed_rows)
+        }
+        facts = path_facts(current_tree).advanced(current_rows, dict.fromkeys(extra, b""))
+        if facts.noncanonical or facts.colliding:
+            return None
+        return cls(
+            base=base_tree,
+            current=current_tree,
+            proposed=proposed_tree,
+            changed=tuple(sorted(changed, key=lambda item: item.encode("utf-8"))),
+            current_changed=current_changed,
+        )
+
+    @property
+    def semantic_scope(self) -> tuple[str, ...]:
+        """What ``semantic_diff(base, proposed)`` scopes: changed non-record, non-card paths."""
+        return tuple(
+            path
+            for path in self.changed
+            if not path.startswith("changesets/") and not is_candidate_card_path(path)
+        )
+
+    def _values(self, path: str) -> tuple[bytes | None, bytes | None, bytes | None]:
+        old = self.base.get(path)
+        return (
+            old,
+            self.proposed.get(path),
+            self.current.get(path) if path in self.current_changed else old,
+        )
+
+    def rebase_v1(self) -> tuple[SnapshotTree, tuple[str, ...]]:
+        """``deterministic_rebase`` over these deltas."""
+        builder = self.current.fork()
+        conflicts: list[str] = []
+        for path in self.changed:
+            old, proposed, current = self._values(path)
+            if current != old and current != proposed:
+                conflicts.append(path)
+                continue
+            if proposed is None:
+                if path in builder:
+                    del builder[path]
+            else:
+                builder[path] = proposed
+        return builder.snapshot(), tuple(conflicts)
+
+    def rebase_v2(self) -> tuple[SnapshotTree, tuple[RebaseMemberConflictV2, ...]]:
+        """``deterministic_rebase_v2`` over these deltas."""
+        builder = self.current.fork()
+        conflicts: list[RebaseMemberConflictV2] = []
+        for path in self.changed:
+            old, proposed, new = self._values(path)
+            if new == proposed:
+                continue
+            if new != old:
+                conflicts.append(
+                    RebaseMemberConflictV2(
+                        path=path,
+                        old_parent_digest=_optional_file_digest(old),
+                        proposed_digest=_optional_file_digest(proposed),
+                        new_parent_digest=_optional_file_digest(new),
+                    )
+                )
+                continue
+            if proposed is None:
+                if path in builder:
+                    del builder[path]
+            else:
+                builder[path] = proposed
+        return builder.snapshot(), tuple(conflicts)
+
+
+def _canonical_model_digest(domain: str, model: BaseModel) -> str:
+    """One policy's digest under ``domain``, taken once per sealed model (a ClaimType's)."""
+
+    def derive() -> str:
+        payload = model.model_dump(mode="json")
+        payload.pop("tag", None)
+        return typed_digest(Sha256Value, domain, payload).tagged
+
+    return sealed_derive(model, ("proposals._canonical_model_digest", domain), derive)
+
+
+def _member_disposition(
+    *,
+    predecessor_digest: str | None,
+    candidate_digest_value: str | None,
+    retired: bool,
+) -> Literal["create", "replace", "retire", "delete"]:
+    if predecessor_digest is None:
+        return "create"
+    if candidate_digest_value is None:
+        return "delete"
+    return "retire" if retired else "replace"
+
+
+def _aggregate_tier(values: list[PermissionTier]) -> PermissionTier:
+    order: dict[PermissionTier, int] = {
+        "governed_write": 0,
+        "graph_write": 1,
+        "admin": 2,
+    }
+    return max(values, key=order.__getitem__)
+
+
+def _aggregate_activation(values: list[ActivationPolicy]) -> ActivationPolicy:
+    order: dict[ActivationPolicy, int] = {
+        "snapshot": 0,
+        "drain": 1,
+        "epoch-check": 2,
+        "abort": 3,
+    }
+    return max(values, key=order.__getitem__)
+
+
+def _claim_policy_value(
+    value: LiteralClaimObject | SubjectClaimObject,
+) -> object:
+    if isinstance(value, LiteralClaimObject):
+        return value.value
+    return value.model_dump(mode="json")
+
+
+def _effective_claim_values(
+    tree: Mapping[str, bytes],
+    *,
+    evaluation_time: str,
+    parsed_claims: dict[tuple[str, bytes], ClaimArtifact] | None = None,
+) -> dict[str, dict[str, tuple[object, ...]]]:
+    """Project live Claim objects by exact Subject and predicate for policy law.
+
+    A single evaluation may share parsed bytes between its parent and candidate
+    views. The memo is request-local and includes both path and exact content;
+    lifecycle and effective-time filtering are always performed for this view.
+    """
+
+    at = datetime.strptime(evaluation_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    collected: dict[str, dict[str, dict[bytes, object]]] = {}
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not _CLAIM_PATH_RE.fullmatch(path):
+            continue
+        key = (path, tree[path])
+        claim = None if parsed_claims is None else parsed_claims.get(key)
+        if claim is None:
+            claim = parse_claim(tree[path], path=path)
+            if parsed_claims is not None:
+                parsed_claims[key] = claim
+        if claim.lifecycle.state != "live":
+            continue
+        statement = claim.statement
+        if statement.effective_from is not None and statement.effective_from > at:
+            continue
+        if statement.effective_until is not None and statement.effective_until <= at:
+            continue
+        if isinstance(statement.object, NoneClaimObject):
+            # An inverse holds no value: it never projects one into a policy.
+            continue
+        value = _claim_policy_value(statement.object)
+        predicate_values = collected.setdefault(statement.subject.artifact_path, {}).setdefault(
+            statement.predicate,
+            {},
+        )
+        predicate_values[canonical_bytes(value)] = value
+    return {
+        subject_path: {
+            predicate: tuple(values[key] for key in sorted(values))
+            for predicate, values in sorted(
+                predicates.items(),
+                key=lambda item: item[0].encode("utf-8"),
+            )
+        }
+        for subject_path, predicates in sorted(
+            collected.items(),
+            key=lambda item: item[0].encode("utf-8"),
+        )
+    }
+
+
+class ClaimQueryFactsProvider(Protocol):
+    """Accepted query facts at a coordinate, optionally only for some predicates.
+
+    A QueryDefinition's referenced predicates are its complete read inventory,
+    so facts restricted to them evaluate it exactly as unrestricted facts do.
+    """
+
+    def __call__(
+        self,
+        coordinate: AcceptedProjectionCoordinate,
+        *,
+        predicates: tuple[str, ...] | None = None,
+        subject_kinds: tuple[str, ...] | None = None,
+    ) -> ClaimQueryFactsV1: ...
+
+
+_CORROBORATION_BINDING_TYPES = {
+    "claim_predicate": "string",
+    "claim_subject_id": "string",
+    "claim_subject_identity": "subject_reference",
+    "claim_subject_kind": "string",
+}
+
+
+def _accepted_query(
+    tree: Mapping[str, bytes],
+    digest: str,
+) -> AcceptedQueryDefinition | None:
+    reader = getattr(tree, "_accepted_reader", None)
+    if reader is not None:
+        with reader() as projection:
+            paths = projection._connection.execute(
+                "SELECT path FROM query_definitions WHERE artifact_digest=? AND lifecycle='live'",
+                (digest,),
+            ).fetchall()
+            if len(paths) > 1:
+                raise ProposalIntegrityError("accepted QueryDefinition digest is not unique")
+            sources = [(path, projection.typed.member_bytes(path)) for (path,) in paths]
+    else:
+        # Full source reconstruction is the cold compiler path.
+        sources = [
+            (path, tree[path])
+            for path in tree
+            if path.startswith("query-definitions/") and path.endswith(".json")
+        ]
+    matched = []
+    for path, content in sources:
+        query = parse_query_definition(content, path=path)
+        if query.lifecycle.state == "live" and query_definition_digest(query).tagged == digest:
+            matched.append(AcceptedQueryDefinition(path=path, query=query, artifact_digest=digest))
+    if len(matched) > 1:
+        raise ProposalIntegrityError("accepted QueryDefinition digest is not unique")
+    return matched[0] if matched else None
+
+
+def _corroboration_parameters(
+    definition: AcceptedQueryDefinition,
+    *,
+    subject: AcceptedSubject,
+    predicate: str,
+) -> tuple[dict[str, object] | None, tuple[str, str, str] | None]:
+    if definition.query.result_shape == "artifact_definition":
+        return None, ("result_shape", "Claim query", "artifact_definition")
+    values: dict[str, object] = {
+        "claim_predicate": predicate,
+        "claim_subject_id": subject.shell.subject_id,
+        "claim_subject_identity": subject.shell.identity.qualified,
+        "claim_subject_kind": subject.shell.subject_kind,
+    }
+    parameters: dict[str, object] = {}
+    for declaration in definition.query.parameters:
+        expected = _CORROBORATION_BINDING_TYPES.get(declaration.name)
+        if expected is None:
+            continue
+        if declaration.value_type != expected:
+            return None, (declaration.name, expected, declaration.value_type)
+        parameters[declaration.name] = values[declaration.name]
+    return parameters, None
+
+
+def _run_corroboration_requirements(
+    *,
+    policy: ClaimAdmissionPolicy,
+    accepted_type: AcceptedClaimType,
+    subject: AcceptedSubject,
+    definition_for_digest: Callable[[str], AcceptedQueryDefinition | None],
+    facts_for: Callable[[AcceptedQueryDefinition], ClaimQueryFactsV1],
+    current: AcceptedProjectionCoordinate,
+    timestamp: str,
+    resolve_reference: SubjectReferenceResolver | None = None,
+) -> tuple[
+    tuple[ClaimCorroborationResult, ...],
+    tuple[tuple[str, str], ...],
+]:
+    evaluated_at = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+        tzinfo=timezone.utc
+    )
+    results: list[ClaimCorroborationResult] = []
+    issues: list[tuple[str, str]] = []
+    for requirement in policy.corroboration_requirements:
+        definition = definition_for_digest(requirement.query_definition_digest)
+        if definition is None:
+            issues.append(
+                (
+                    "cruxible.claim.corroboration_query_unresolved",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} pins unresolved accepted "
+                    f"QueryDefinition {requirement.query_definition_digest}.",
+                )
+            )
+            continue
+        parameters, invalid = _corroboration_parameters(
+            definition,
+            subject=subject,
+            predicate=accepted_type.claim_type.predicate,
+        )
+        if invalid is not None:
+            name, expected, declared = invalid
+            issues.append(
+                (
+                    "cruxible.claim.corroboration_parameter_contract_invalid",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} declares reserved parameter {name!r} "
+                    f"as {declared!r}; the daemon binding requires {expected!r}.",
+                )
+            )
+            continue
+        result = evaluate_claim_query(
+            definition,
+            facts=facts_for(definition),
+            coordinate=current,
+            evaluation_time=evaluated_at,
+            parameters=parameters,
+            resolve_reference=resolve_reference,
+        )
+        receipt = query_execution_receipt(result)
+        observed_count = len(result.rows)
+        satisfied = result.verdict == "completed" and observed_count >= requirement.min_count
+        requirement_result = ClaimCorroborationResult(
+            requirement_id=requirement.requirement_id,
+            query_definition_digest=requirement.query_definition_digest,
+            parameter_digest=receipt.parameter_digest,
+            result_digest=receipt.result_digest,
+            query_verdict=result.verdict,
+            query_refusal_code=receipt.refusal_code,
+            observed_count=observed_count,
+            truncated=result.truncation.truncated,
+            satisfied=satisfied,
+        )
+        results.append(requirement_result)
+        if result.verdict == "refused":
+            issues.append(
+                (
+                    "cruxible.claim.corroboration_query_refused",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} ({requirement.query_definition_digest}) "
+                    f"was refused by query code {receipt.refusal_code!r}.",
+                )
+            )
+        elif not satisfied:
+            issues.append(
+                (
+                    "cruxible.claim.corroboration_insufficient",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} requires {requirement.min_count} rows "
+                    f"but observed {observed_count} from "
+                    f"{requirement.query_definition_digest}.",
+                )
+            )
+    return tuple(results), tuple(issues)
+
+
+def _claim_admission_evaluations(
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+    timestamp: str,
+    subjects: Mapping[str, AcceptedSubject],
+    claim_types: Mapping[str, AcceptedClaimType],
+    current: AcceptedProjectionCoordinate,
+    query_facts_provider: ClaimQueryFactsProvider | None,
+    replay_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None,
+    parent_claim_index: ClaimSubjectIndex | None = None,
+    candidate_claim_index: ClaimSubjectIndex | None = None,
+) -> tuple[
+    dict[str, tuple[dict[str, object], ...]],
+    dict[str, tuple[str, ...]],
+    dict[str, tuple[str, ...]],
+    tuple[ClaimAdmissionEvaluationAccount, ...],
+    tuple[CompilerDiagnostic, ...],
+]:
+    """Evaluate the authored ClaimType policy for each changed Claim member."""
+
+    changed_by_subject: dict[str, list[tuple[str, ClaimArtifact]]] = {}
+    for path in scope:
+        if not _CLAIM_PATH_RE.fullmatch(path) or path not in candidate_tree:
+            continue
+        claim = parse_claim(candidate_tree[path], path=path)
+        changed_by_subject.setdefault(claim.statement.subject.artifact_path, []).append(
+            (path, claim)
+        )
+    if not changed_by_subject:
+        return {}, {}, {}, (), ()
+
+    policy_values: (
+        tuple[
+            dict[str, dict[str, tuple[object, ...]]],
+            dict[str, dict[str, tuple[object, ...]]],
+        ]
+        | None
+    ) = None
+    subject_policy_values: dict[
+        str, tuple[dict[str, tuple[object, ...]], dict[str, tuple[object, ...]]]
+    ] = {}
+    entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
+    digests_by_path: dict[str, tuple[str, ...]] = {}
+    query_digests_by_path: dict[str, tuple[str, ...]] = {}
+    accounts: list[ClaimAdmissionEvaluationAccount] = []
+    diagnostics: list[CompilerDiagnostic] = []
+    facts_by_predicates: dict[tuple[str, ...], ClaimQueryFactsV1] = {}
+    # Subject references a corroboration query compares resolve at the parent.
+    resolve_reference = tree_reference_resolver(current_tree)
+
+    def facts_for(definition: AcceptedQueryDefinition) -> ClaimQueryFactsV1:
+        if query_facts_provider is None:
+            raise ProposalIntegrityError("Claim corroboration requires accepted query facts")
+        predicates = definition.query.referenced_predicates
+        facts = facts_by_predicates.get(predicates)
+        if facts is None:
+            facts = query_facts_provider(current, predicates=predicates)
+            if facts.coordinate != current:
+                raise ProposalIntegrityError(
+                    "accepted query facts coordinate differs from proposal coordinate"
+                )
+            facts_by_predicates[predicates] = facts
+        return facts
+
+    for subject_path, changed_claims in sorted(
+        changed_by_subject.items(),
+        key=lambda item: item[0].encode("utf-8"),
+    ):
+        subject = subjects.get(subject_path)
+        if subject is None:
+            continue  # Claim law emits the exact unresolved-subject diagnostic.
+        declared_predicates = tuple(
+            sorted(
+                {
+                    item.claim_type.predicate
+                    for item in claim_types.values()
+                    if claim_type_accepts_subject(item.claim_type, subject.shell.subject_kind)
+                },
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+
+        Evaluation = tuple[
+            AcceptedClaimType,
+            str,
+            ClaimAdmissionCandidateResult,
+            tuple[ClaimCorroborationResult, ...],
+            tuple[tuple[str, str], ...],
+            bool,
+        ]
+
+        def evaluate_type_policy(
+            accepted_type: AcceptedClaimType,
+            policy: ClaimAdmissionPolicy,
+            *,
+            carries_corroboration: bool,
+        ) -> Evaluation:
+            nonlocal policy_values
+            parent_values: dict[str, dict[str, tuple[object, ...]]] = {}
+            candidate_values: dict[str, dict[str, tuple[object, ...]]] = {}
+            if (
+                policy.freeze_requirements
+                and parent_claim_index is not None
+                and candidate_claim_index is not None
+            ):
+                if subject_path not in subject_policy_values:
+                    parsed_claims: dict[tuple[str, bytes], ClaimArtifact] = {}
+                    parent_view = _effective_claim_values(
+                        {
+                            path: current_tree[path]
+                            for path in parent_claim_index.claims_by_subject.get(subject_path, ())
+                        },
+                        evaluation_time=timestamp,
+                        parsed_claims=parsed_claims,
+                    )
+                    candidate_view = _effective_claim_values(
+                        {
+                            path: candidate_tree[path]
+                            for path in candidate_claim_index.claims_by_subject.get(
+                                subject_path, ()
+                            )
+                        },
+                        evaluation_time=timestamp,
+                        parsed_claims=parsed_claims,
+                    )
+                    subject_policy_values[subject_path] = (
+                        parent_view.get(subject_path, {}),
+                        candidate_view.get(subject_path, {}),
+                    )
+                    parsed_claims.clear()
+                parent_subject, candidate_subject = subject_policy_values[subject_path]
+                parent_values = {subject_path: parent_subject}
+                candidate_values = {subject_path: candidate_subject}
+            elif policy.freeze_requirements:
+                # Only freeze law reads these values. Empty and corroboration-only
+                # policies need no Claim scan; corroboration still uses the complete
+                # accepted query facts below. Build both full policy views once on
+                # demand, retaining unchanged and cross-ClaimType Subject values.
+                if policy_values is None:
+                    parsed_claims = {}
+                    policy_values = (
+                        _effective_claim_values(
+                            current_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
+                        ),
+                        _effective_claim_values(
+                            candidate_tree, evaluation_time=timestamp, parsed_claims=parsed_claims
+                        ),
+                    )
+                    # Full parsed Claims live only while constructing these views.
+                    parsed_claims.clear()
+                parent_values, candidate_values = policy_values
+            policy_digest = _canonical_model_digest(
+                "playbill-claim-admission-policy-v1",
+                accepted_type.claim_type.admission_policy,
+            )
+            results: tuple[ClaimCorroborationResult, ...] = ()
+            issues: tuple[tuple[str, str], ...] = ()
+            if policy.corroboration_requirements:
+                if query_facts_provider is None:
+                    raise ProposalIntegrityError(
+                        "Claim corroboration requires accepted query facts"
+                    )
+                results, issues = _run_corroboration_requirements(
+                    policy=policy,
+                    accepted_type=accepted_type,
+                    subject=subject,
+                    definition_for_digest=lambda digest: _accepted_query(current_tree, digest),
+                    facts_for=facts_for,
+                    current=current,
+                    timestamp=timestamp,
+                    resolve_reference=resolve_reference,
+                )
+            context = ClaimAdmissionCandidateContext(
+                evaluation_time=timestamp,
+                declared_predicates=declared_predicates,
+                parent_values=parent_values.get(subject_path, {}),
+                candidate_values=candidate_values.get(subject_path, {}),
+                corroboration_results=results,
+            )
+            return (
+                accepted_type,
+                policy_digest,
+                evaluate_claim_admission_candidate(policy, context),
+                results,
+                issues,
+                carries_corroboration,
+            )
+
+        # Freeze is deliberately Subject-scoped: a policy may freeze predicates
+        # owned by other ClaimTypes accepting this Subject kind. Corroboration is
+        # deliberately ClaimType-scoped and enters only through the authored
+        # type below.
+        freeze_evaluations: dict[str, Evaluation] = {}
+        for freeze_type in sorted(
+            claim_types.values(),
+            key=lambda item: item.claim_type.identity.qualified.encode("utf-8"),
+        ):
+            policy = freeze_type.claim_type.admission_policy
+            if not (
+                claim_type_accepts_subject(
+                    freeze_type.claim_type,
+                    subject.shell.subject_kind,
+                )
+                and policy.freeze_requirements
+            ):
+                continue
+            freeze_evaluations[freeze_type.claim_type.identity.qualified] = evaluate_type_policy(
+                freeze_type,
+                policy.model_copy(update={"corroboration_requirements": ()}),
+                carries_corroboration=False,
+            )
+        authored_evaluations: dict[str, Evaluation] = {}
+        for changed_path, parsed_claim in sorted(
+            changed_claims,
+            key=lambda item: item[0].encode("utf-8"),
+        ):
+            # The Claim law emits the exact unresolved or mismatched ClaimType
+            # diagnostic. Corroboration belongs only to the authored type;
+            # Subject-scoped freeze evaluations remain additional gates.
+            claim_type_identity = parsed_claim.statement.claim_type.qualified
+            accepted_type = claim_types.get(claim_type_identity)
+            if accepted_type is None:
+                continue
+            policy = accepted_type.claim_type.admission_policy
+            evaluations = dict(freeze_evaluations)
+            if policy.corroboration_requirements:
+                # The full authored policy evaluates its corroboration and its
+                # own freeze exactly once for this (Subject, ClaimType). Replace
+                # the freeze-only projection to avoid evaluating that freeze twice.
+                authored = authored_evaluations.get(claim_type_identity)
+                if authored is None:
+                    authored = evaluate_type_policy(
+                        accepted_type,
+                        policy,
+                        carries_corroboration=True,
+                    )
+                    authored_evaluations[claim_type_identity] = authored
+                evaluations[claim_type_identity] = authored
+            if not evaluations:
+                continue
+            entries: list[dict[str, object]] = []
+            policy_digests: set[str] = set()
+            query_digests: set[str] = set()
+            for (
+                governing_type,
+                policy_digest,
+                evaluated,
+                results,
+                issues,
+                carries_corroboration,
+            ) in sorted(
+                evaluations.values(),
+                key=lambda item: item[0].claim_type.identity.qualified.encode("utf-8"),
+            ):
+                account: ClaimAdmissionEvaluationAccount | None = None
+                if carries_corroboration:
+                    requirements = (
+                        governing_type.claim_type.admission_policy.corroboration_requirements
+                    )
+                    complete = len(results) == len(requirements)
+                    account = ClaimAdmissionEvaluationAccount(
+                        claim_path=changed_path,
+                        claim_type_identity=governing_type.claim_type.identity.qualified,
+                        claim_type_digest=governing_type.artifact_digest,
+                        policy_digest=policy_digest,
+                        corroboration_results=results,
+                        satisfied=complete and all(item.satisfied for item in results),
+                    )
+                    accounts.append(account)
+                    query_digests.update(item.result_digest for item in results)
+                entries.append(
+                    {
+                        "admission_account": (
+                            None if account is None else account.model_dump(mode="json")
+                        ),
+                        "claim_type_digest": governing_type.artifact_digest,
+                        "claim_type_identity": governing_type.claim_type.identity.qualified,
+                        "policy_digest": policy_digest,
+                        "candidate_result": evaluated.model_dump(mode="json"),
+                    }
+                )
+                policy_digests.add(policy_digest)
+                for code, message in issues:
+                    diagnostics.append(_diagnostic(code, message, changed_path))
+                issue_codes = {item[0] for item in issues}
+                for code in evaluated.refusal_codes:
+                    if code in issue_codes:
+                        continue
+                    diagnostics.append(
+                        _diagnostic(
+                            code,
+                            "A governing ClaimType admission policy refused "
+                            "this closed change set.",
+                            changed_path,
+                        )
+                    )
+            entries_by_path[changed_path] = tuple(
+                sorted(entries, key=lambda item: canonical_bytes(item))
+            )
+            digests_by_path[changed_path] = tuple(sorted(policy_digests))
+            query_digests_by_path[changed_path] = tuple(sorted(query_digests))
+    ordered_diagnostics = tuple(
+        sorted(
+            diagnostics,
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
+    ordered_accounts = tuple(sorted(accounts, key=claim_admission_account_order_key))
+    if replay_accounts is not None:
+        committed_accounts = tuple(sorted(replay_accounts, key=claim_admission_account_order_key))
+        if ordered_accounts != committed_accounts:
+            raise ProposalIntegrityError(
+                "Claim corroboration replay account differs from accepted query re-derivation"
+            )
+    return (
+        entries_by_path,
+        digests_by_path,
+        query_digests_by_path,
+        ordered_accounts,
+        ordered_diagnostics,
+    )
+
+
+@dataclass(frozen=True)
+class EvaluatedTreeState:
+    """One tree's derived state: its members, their trie, and its dependencies.
+
+    Every field is a pure function of the tree's exact member bytes, and every
+    field can be reached two ways: built from scratch over the whole tree, or
+    advanced from the state of a predecessor tree by applying only the members
+    whose bytes differ. `advance_tree_state` is the second way and is what makes
+    per-generation verification cost track the change set instead of the
+    instance; `build_tree_state` is the first, is what every cold start takes,
+    and is the oracle the second is tested against.
+    """
+
+    members: Mapping[str, str]
+    merkle: MerkleManifest
+    dependencies: DependencyIndexV1
+    claim_subjects: ClaimSubjectIndex
+
+
+TreeStateProvider = Callable[[Mapping[str, bytes]], EvaluatedTreeState]
+
+
+def build_tree_state(tree: Mapping[str, bytes], *, by_name: bool = False) -> EvaluatedTreeState:
+    """Derive one tree's whole state by hashing and parsing every member."""
+
+    projected = semantic_projection(tree)
+    members = PersistentMap(manifest_for_tree(projected))
+    return EvaluatedTreeState(
+        members=members,
+        merkle=build_merkle_manifest(members),
+        dependencies=build_dependency_index(projected, by_name=by_name),
+        claim_subjects=build_claim_subject_index(projected),
+    )
+
+
+@dataclass(frozen=True)
+class AdvancedMembers:
+    """One change set's member commitments, decided before anything is parsed.
+
+    Advancing the manifest and its trie reads member bytes only to hash the ones
+    that changed; it never asks what a member *is*. Keeping that separate from
+    the dependency index is what lets a malformed member be refused as a format
+    error, by the evaluator, in the order it always was -- rather than escaping
+    as a parse failure from a cache update the caller never asked for.
+    """
+
+    members: Mapping[str, str]
+    merkle: MerkleManifest
+    diff_digest: SemanticDiffDigest
+    scope: tuple[str, ...]
+
+
+def advance_tree_members(
+    state: EvaluatedTreeState,
+    *,
+    previous_tree: Mapping[str, bytes],
+    tree: Mapping[str, bytes],
+) -> AdvancedMembers:
+    """Advance a predecessor's manifest and trie over one change set.
+
+    The semantic diff names exactly the members whose digests moved, so it is
+    both the candidate's committed scope and the change set every carried index
+    is updated by: one traversal decides what changed, and the manifest trie, the
+    dependency index, and the scope all follow from it. The returned digest and
+    scope equal `semantic_diff(previous_tree, tree)` by construction.
+    """
+
+    edits = tree.edits_from(previous_tree) if isinstance(tree, SnapshotTree) else None
+    if edits is None:
+        members = PersistentMap(
+            manifest_for_tree_carrying(
+                semantic_projection(tree),
+                previous_tree=semantic_projection(previous_tree),
+                previous_manifest=state.members,
+            )
+        )
+        diff_digest, scope = semantic_diff_from_members(state.members, members)
+    else:
+        try:
+            return advance_member_delta(state, edits)
+        except (CruxibleError, ValueError):
+            # Invalid path combinations retain the cold validator's exact
+            # refusal and ordering; valid deltas never enumerate this fallback.
+            return advance_tree_members(state, previous_tree=dict(previous_tree), tree=dict(tree))
+    return AdvancedMembers(
+        members=members,
+        merkle=update_merkle_manifest(
+            state.merkle,
+            updated={path: members[path] for path in scope if path in members},
+            removed=[path for path in scope if path not in members],
+        ),
+        diff_digest=diff_digest,
+        scope=scope,
+    )
+
+
+def advance_member_delta(
+    state: EvaluatedTreeState, edits: Mapping[str, bytes | None]
+) -> AdvancedMembers:
+    """Commit a complete internal prospective or verified physical delta."""
+    # Complete private prospective edits, including generated dispositions.
+    # Raw bytes are committed before any changed artifact is parsed.
+    from cruxible_core.indexes.evaluated_state import ChangedMembers, MerkleMembers
+
+    indexed = isinstance(state.members, MerkleMembers)
+    members = state.members if indexed else PersistentMap(state.members)
+    updates: dict[str, str | None] = {}
+    changed = []
+    for path, content in edits.items():
+        if path.startswith("changesets/") or is_candidate_card_path(path):
+            continue
+        digest = None if content is None else file_digest(content).value
+        if members.get(path) == digest:
+            continue
+        changed.append(path)
+        if indexed:
+            updates[path] = digest
+        else:
+            assert isinstance(members, PersistentMap)
+            members = members.delete(path) if digest is None else members.set(path, digest)
+    if indexed:
+        members = ChangedMembers(state.members, updates)
+    # Preserve the frozen diff encoding using only the proven complete scope.
+    diff_digest, scope = semantic_diff_from_members(
+        {p: state.members[p] for p in changed if p in state.members},
+        {p: members[p] for p in changed if p in members},
+    )
+    return AdvancedMembers(
+        members=members,
+        merkle=update_merkle_manifest(
+            state.merkle,
+            updated={path: members[path] for path in scope if path in members},
+            removed=[path for path in scope if path not in members],
+        ),
+        diff_digest=diff_digest,
+        scope=scope,
+    )
+
+
+def advance_tree_state(
+    state: EvaluatedTreeState,
+    *,
+    tree: Mapping[str, bytes],
+    advanced: AdvancedMembers,
+) -> EvaluatedTreeState:
+    """Complete an advanced manifest with the dependency index over the same change."""
+
+    advance = getattr(state, "advance", None)
+    if advance is not None:
+        return cast(EvaluatedTreeState, advance(tree, advanced))
+
+    return EvaluatedTreeState(
+        members=advanced.members,
+        merkle=advanced.merkle,
+        dependencies=update_dependency_index(
+            state.dependencies,
+            tree=tree,
+            changed=advanced.scope,
+        ),
+        claim_subjects=update_claim_subject_index(
+            state.claim_subjects, tree=tree, changed=advanced.scope
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class _AcceptedMember:
+    """One scoped member that passed its own acceptance law.
+
+    This is the whole hand-off between a member kind's law and the candidate the
+    evaluator assembles. It used to be an unnamed twelve-tuple destructured by
+    position two hundred lines away from where it was built.
+    """
+
+    path: str
+    artifact_kind: str
+    predecessor_artifact_digest: str | None
+    candidate_artifact_digest: str
+    required_tier: PermissionTier
+    # Historical law output retained for canonical compatibility. G12e demoted
+    # role-based approval scope, so candidate construction deliberately ignores it.
+    approval_scope: tuple[str, ...]
+    activation_policy: ActivationPolicy
+    law_identifier: str
+    law_digest: str
+    result: dict[str, object]
+    policy_digests: tuple[str, ...] = ()
+    query_receipt_digests: tuple[str, ...] = ()
+    retired: bool = False
+    # Only removes authority (a narrowing, suspended or retired ProcedureMandate).
+    # A candidate made only of such members takes the approval fast path; it is
+    # recomputed by re-running the laws, never read back from a record.
+    approval_exempt: bool = False
+
+
+@dataclass(frozen=True)
+class _MemberVerdict:
+    """A member kind's answer: one accepted member, or exact refusal evidence."""
+
+    member: _AcceptedMember | None = None
+    diagnostics: tuple[CompilerDiagnostic, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ResolvedArtifacts:
+    """Candidate-state artifacts a member law may need to read outside its own path."""
+
+    subjects: Mapping[str, AcceptedSubject]
+    claim_types: Mapping[str, AcceptedClaimType]
+    capture_contracts: Mapping[str, AcceptedCaptureContract]
+    providers: Mapping[str, AcceptedProvider]
+    procedures: Mapping[str, AcceptedProcedure]
+    resolution_contracts: Mapping[str, ResolutionContract]
+    lines: Mapping[str, AcceptedLineSpec]
+    triggers: Mapping[str, AcceptedTrigger]
+
+
+@dataclass(frozen=True)
+class _MemberContext:
+    """Everything one member kind's law is allowed to read, and nothing else."""
+
+    path: str
+    content: bytes
+    parent_content: bytes | None
+    current: AcceptedProjectionCoordinate
+    scope: tuple[str, ...]
+    timestamp: str
+    actor_id: str | None
+    principals: PrincipalRegistrySnapshot
+    bodies: BodyVerifierProtocol
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None
+    accepted_referent_coordinates: frozenset[AcceptedCoordinate]
+    candidate_tree: Mapping[str, bytes]
+    current_tree: Mapping[str, bytes]
+    retained_tree: Callable[[str], Mapping[str, bytes]] | None
+    claim_law_provider: ClaimLawEvidenceProvider | None
+    attestation_principal_provider: AttestationPrincipalProvider | None
+    historical_artifact_provider: HistoricalArtifactProvider | None
+    candidate_states: Mapping[str, ArtifactDependencyStateV1]
+    candidate_dependencies: DependencyIndexV1
+    candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]]
+    resolved: _ResolvedArtifacts
+    #: This change's own newly-proposed CaptureContract members, by exact
+    #: digest -- computed once per change (``_changed_capture_contracts_by_digest``
+    #: over ``scope``), never per Claim and never a walk of ``resolved``.
+    staged_capture_contracts: Mapping[str, AcceptedCaptureContract]
+    claim_admission_by_path: Mapping[str, tuple[dict[str, object], ...]]
+    claim_admission_digests_by_path: Mapping[str, tuple[str, ...]]
+    claim_admission_query_digests_by_path: Mapping[str, tuple[str, ...]]
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...]
+    used_expansions: set[str]
+    acceptance_laws: AcceptanceLawRegistry
+    historical_law_coordinate: tuple[str, str] | None
+    #: Recovery re-deriving a generation main already holds. Settling a pending
+    #: candidate is not this: what it cites for the first time still needs proof.
+    replaying_accepted: bool = False
+    rechecking: bool = False
+    #: Absence witnesses this evaluation already found standing, shared by every
+    #: Claim it judges: N Claims on one witness verify its Captures once.
+    verified_absence_witnesses: dict[object, None] = dataclasses.field(default_factory=dict)
+
+    def accepted_coordinate(self) -> AcceptedCoordinate:
+        return AcceptedCoordinate.from_internal(self.current)
+
+
+@dataclass(frozen=True)
+class _MemberKind:
+    """One registered member kind: how to recognize it and how to judge it.
+
+    Recognition, the refusal a removal earns, the refusal a malformed member
+    earns, and the law itself travel together, so adding a kind is one entry
+    rather than an edit in four places, and no kind can be recognized by one part
+    of the evaluator and unknown to another.
+
+    A kind that had its own format or removal refusal when it was a single-member
+    special case keeps it; a kind that never had one takes the change set's.
+    """
+
+    name: str
+    pattern: re.Pattern[str]
+    removal_code: str
+    removal_message: str
+    evaluate: Callable[[_MemberContext], _MemberVerdict]
+    format_code: str = "cruxible.proposal.member_format_invalid"
+
+
+def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
+    if context.historical_law_coordinate is None and not context.rechecking:
+        from cruxible_client.contracts.laws import NAMED_REFERENCE_FORMATS
+
+        kind = _member_kind(context.path)
+        if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
+            named = NAMED_REFERENCE_FORMATS[kind.name]
+            if artifact_tag != named and not (
+                kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
+            ):
+                raise FormatError(f"New {kind.name} artifacts require {named}.")
+    if context.historical_law_coordinate is None:
+        return context.acceptance_laws.resolve_member(artifact_tag=artifact_tag)
+    identifier, digest = context.historical_law_coordinate
+    installed = context.acceptance_laws.require_historical(
+        identifier=identifier,
+        digest=digest,
+    )
+    if installed.artifact_tag != artifact_tag:
+        raise ProposalIntegrityError(
+            "recorded acceptance law does not govern the candidate member artifact tag"
+        )
+    return installed
+
+
+def _accepted(
+    context: _MemberContext,
+    installed: InstalledAcceptanceLaw,
+    *,
+    predecessor_artifact_digest: str | None,
+    candidate_artifact_digest: str,
+    required_tier: PermissionTier,
+    approval_scope: tuple[str, ...],
+    activation_policy: ActivationPolicy,
+    result: dict[str, object],
+    policy_digests: tuple[str, ...] = (),
+    query_receipt_digests: tuple[str, ...] = (),
+    retired: bool = False,
+    approval_exempt: bool = False,
+) -> _MemberVerdict:
+    return _MemberVerdict(
+        member=_AcceptedMember(
+            approval_exempt=approval_exempt,
+            path=context.path,
+            artifact_kind=installed.artifact_kind,
+            predecessor_artifact_digest=predecessor_artifact_digest,
+            candidate_artifact_digest=candidate_artifact_digest,
+            required_tier=required_tier,
+            approval_scope=approval_scope,
+            activation_policy=activation_policy,
+            law_identifier=installed.coordinate.identifier,
+            law_digest=installed.coordinate.digest,
+            result=result,
+            policy_digests=policy_digests,
+            query_receipt_digests=query_receipt_digests,
+            retired=retired,
+        )
+    )
+
+
+def _reserved_provider_refusal_codes() -> frozenset[str]:
+    from cruxible_core.providers.provider_runtime_contract import (
+        PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
+    )
+
+    return PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES
+
+
+#: The codes the provider runtime reserves: no operation may declare one.
+_RESERVED_PROVIDER_REFUSAL_CODES: Final = _reserved_provider_refusal_codes()
+
+_PRODUCER_FAMILIES: Final = {"Procedure": "procedures/", "Provider": "providers/", "Line": "lines/"}
+
+
+def _producer_versions(context: _MemberContext, head: Mapping[str, str]) -> ProducerVersions:
+    """Producer heads, plus each exact version accepted history retains (F08).
+
+    A Capture verifies against the producer version its envelope records, read
+    from retained accepted history only when it is not the head: O(1) per cited
+    producer version, never a scan.
+    """
+
+    from cruxible_client.contracts.artifacts import parse_artifact_identity
+    from cruxible_client.contracts.procedures.artifacts import procedure_path
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path
+
+    provider = context.historical_artifact_provider
+    coordinate = context.accepted_coordinate()
+
+    def admits(qualified: str, digest: str) -> bool:
+        if provider is None:
+            return False
+        identity = parse_artifact_identity(qualified)
+        family = _PRODUCER_FAMILIES.get(identity.kind)
+        if family is None:
+            return False
+        found = provider(coordinate, digest, family=family)
+        if found is None:
+            return False
+        expected = {
+            "Procedure": procedure_path,
+            "Provider": provider_path,
+            "Line": line_spec_path,
+        }[identity.kind](identity.name)
+        return found[0] == expected
+
+    return ProducerVersions(head, admits)
+
+
+def _candidate_contract(context: _MemberContext, identity_name: str) -> Any:
+    """The candidate Contract at ``<name>/v<N>``, or ``None``."""
+
+    from cruxible_client.contracts.shapes import contract_path_for_identity, parse_contract
+
+    path = contract_path_for_identity(identity_name)
+    content = context.candidate_tree.get(path)
+    return None if content is None else parse_contract(content, path=path)
+
+
+def _candidate_contract_digests(
+    context: _MemberContext, refs: Iterable[Any]
+) -> dict[tuple[str, int], str]:
+    """Each named Contract version's candidate digest: O(refs), never a scan."""
+
+    from cruxible_client.contracts.shapes import contract_digest
+
+    found: dict[tuple[str, int], str] = {}
+    for ref in refs:
+        key = (ref.name, ref.version)
+        if key in found:
+            continue
+        contract = _candidate_contract(context, f"{ref.name}/v{ref.version}")
+        if contract is not None:
+            found[key] = contract_digest(contract).tagged
+    return found
+
+
+def _procedure_member(context: _MemberContext) -> _MemberVerdict:
+    procedure = parse_procedure(context.content, path=context.path)
+    installed = _installed(context, procedure.artifact_format)
+
+    predecessor: AcceptedProcedure | None = None
+    if context.parent_content is not None:
+        previous = parse_procedure(context.parent_content, path=context.path)
+        predecessor = AcceptedProcedure(
+            path=context.path,
+            procedure=previous,
+            artifact_digest=procedure_artifact_digest(previous).tagged,
+        )
+    from cruxible_client.contracts.captures import capture_contract_path
+    from cruxible_client.contracts.procedures.artifacts import procedure_contract_refs
+
+    def candidate_contract(ref: Any) -> Any:
+        return _candidate_contract(context, f"{ref.name}/v{ref.version}")
+
+    def candidate_capture_contract(name: str) -> Any:
+        path = capture_contract_path(name)
+        content = context.candidate_tree.get(path)
+        return None if content is None else parse_capture_contract(content, path=path)
+
+    from cruxible_core.procedures.claims_typing import tree_claims_lookup, validate_claims_templates
+
+    if procedure.lifecycle.state == "live":
+        try:
+            validate_claims_templates(
+                procedure.definition, tree_claims_lookup(context.candidate_tree)
+            )
+        except ValueError as exc:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        getattr(exc, "code", "cruxible.procedure.claims_type_invalid"),
+                        str(exc),
+                        path=context.path,
+                    ),
+                )
+            )
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+
+    law = evaluate_procedure_law(
+        procedure,
+        path=context.path,
+        predecessor=predecessor,
+        contracts=_candidate_contract_digests(
+            context, procedure_contract_refs(procedure.definition)
+        ),
+        contract_lookup=candidate_contract,
+        capture_lookup=candidate_capture_contract,
+        enum_members=tree_enum_resolver(context.candidate_tree),
+        capability_lookup=tree_capability_resolver(context.candidate_tree),
+        builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted Procedure law result is incomplete")
+    return _accepted(
+        context,
+        installed,
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy=procedure.activation_policy,
+        result={
+            "artifact_digest": law.artifact_digest,
+            "definition_digest": procedure.definition_digest,
+            "runnable": procedure_runnability(procedure.definition)[0],
+            "verdict": "accepted",
+        },
+        retired=procedure.lifecycle.state == "retired",
+    )
+
+
+def _exhaust_promotion_member(context: _MemberContext) -> _MemberVerdict:
+    promotion = parse_exhaust_promotion(context.content, path=context.path)
+    predecessor: AcceptedExhaustPromotionV1 | None = None
+    if context.parent_content is not None:
+        previous = parse_exhaust_promotion(context.parent_content, path=context.path)
+        predecessor = AcceptedExhaustPromotionV1(
+            path=context.path,
+            promotion=previous,
+            artifact_digest=exhaust_promotion_digest(previous),
+            accepted_coordinate=context.accepted_coordinate(),
+        )
+    if context.promotion_verifier is None:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.promotion.verifier_unavailable",
+                    "ExhaustPromotion evaluation requires the exact journal/reducer verifier.",
+                    context.path,
+                ),
+            )
+        )
+    law = evaluate_exhaust_promotion_acceptance(
+        promotion,
+        path=context.path,
+        predecessor=predecessor,
+        operational_result=context.promotion_verifier.verify_promotion(promotion),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    law.refusal_code or "cruxible.promotion.refused",
+                    law.message or "ExhaustPromotion law refused.",
+                    context.path,
+                ),
+            )
+        )
+    if law.artifact_digest is None or law.required_tier is None or law.activation_policy is None:
+        raise ProposalIntegrityError("accepted ExhaustPromotion law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, promotion.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy=law.activation_policy,
+        result=law.model_dump(mode="json"),
+        retired=promotion.lifecycle.state == "retired",
+    )
+
+
+def _line_trigger_input(line: LineSpec) -> TriggerInputRecord:
+    """The event a Line accepts: exactly its declared one when it binds its Capture."""
+
+    if line.trigger_input is None:
+        return NoTriggerInput()
+    return CaptureEventInput(event=line.trigger_event)
+
+
+def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[str, ...]:
+    """Live Triggers a Line change would strand, read in the final candidate.
+
+    A Trigger retired or retargeted in the same ChangeSet no longer counts. A
+    retired Line strands every live Trigger aimed at it; a Line that binds its
+    triggering Capture strands every Trigger that does not fire on the exact
+    event it accepts.
+    """
+
+    identity = line.identity.qualified
+    stranded: set[str] = set()
+    triggers: Iterable[AcceptedTrigger | None] = (
+        context.resolved.triggers.get(context.candidate_states[edge.source_path].identity.qualified)
+        for edge in context.candidate_dependencies.edges_by_target.get(context.path, ())
+    )
+    for accepted in triggers:
+        if accepted is None:
+            continue
+        trigger = accepted.trigger
+        if (
+            trigger.lifecycle.state != "live"
+            or trigger.line is None
+            or trigger.line.qualified != identity
+        ):
+            continue
+        if line.lifecycle.state == "retired" or not schedule_satisfies_input(
+            trigger.schedule,
+            _line_trigger_input(line),
+        ):
+            stranded.add(trigger.identity.qualified)
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
+def _line_member(context: _MemberContext) -> _MemberVerdict:
+    line = parse_line_spec(context.content, path=context.path)
+    accepted_procedure = context.resolved.procedures.get(line.procedure.target.qualified)
+    if accepted_procedure is None:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.line.procedure_unavailable",
+                    "LineSpec's exact Procedure is unavailable in candidate state.",
+                    context.path,
+                ),
+            )
+        )
+    predecessor: AcceptedLineSpec | None = None
+    if context.parent_content is not None:
+        previous = parse_line_spec(context.parent_content, path=context.path)
+        predecessor = AcceptedLineSpec(
+            path=context.path,
+            line=previous,
+            artifact_digest=line_spec_digest(previous).tagged,
+        )
+    if accepted_procedure.artifact_digest != line.procedure.artifact_digest:
+        # A Line pins one exact Procedure version; a Procedure successor leaves it
+        # pinning the version history retains until a Line successor moves it.
+        pinned = _line_procedure(context, line.procedure)
+        if pinned is None:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.line.procedure_pin_mismatch",
+                        "A Line pins an exact accepted Procedure version; author the Line "
+                        f"against {line.procedure.target.qualified}@"
+                        f"{accepted_procedure.artifact_digest}.",
+                        context.path,
+                    ),
+                )
+            )
+        accepted_procedure = pinned
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.providers.operation_index import line_capture_output_map, line_slot_map
+
+    def child(identity: ArtifactIdentity) -> Any:
+        accepted = context.resolved.procedures.get(identity.qualified)
+        return None if accepted is None else accepted.procedure.definition
+
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_client.contracts.procedures.line_specs import SlotCapabilityUnresolved
+
+    try:
+        slots = line_slot_map(
+            accepted_procedure.procedure.definition,
+            child,
+            tree_capability_resolver(context.candidate_tree),
+        )
+        capture_outputs = line_capture_output_map(accepted_procedure.procedure.definition, child)
+    except RequestRefusedError as exc:
+        return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
+    except SlotCapabilityUnresolved as exc:
+        return _MemberVerdict(diagnostics=(_diagnostic(exc.code, str(exc), context.path),))
+    law = evaluate_line_spec_law(
+        line,
+        path=context.path,
+        procedure=accepted_procedure,
+        predecessor=predecessor,
+        slots=slots,
+        providers={
+            binding.build.target.qualified: provider
+            for binding in line.bindings.values()
+            if (provider := context.resolved.providers.get(binding.build.target.qualified))
+            is not None
+        },
+        capture_outputs=capture_outputs,
+        contracts=_candidate_contract_resolver(context.candidate_tree),
+        enum_members=tree_enum_resolver(context.candidate_tree),
+        by_name=True,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted LineSpec law result is incomplete")
+    stranded = _line_trigger_dependents(context, line)
+    if stranded:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.line.triggers_not_settled",
+                    "This Line change would strand live Triggers aimed at it; retire "
+                    "or retarget them in the same ChangeSet: " + ", ".join(stranded),
+                    context.path,
+                ),
+            )
+        )
+    return _accepted(
+        context,
+        _installed(context, line.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": law.artifact_digest,
+            "occurrence_epoch": line.occurrence_epoch,
+            "procedure_digest": accepted_procedure.artifact_digest,
+            "verdict": "accepted",
+        },
+        retired=line.lifecycle.state == "retired",
+    )
+
+
+def _trigger_member(context: _MemberContext) -> _MemberVerdict:
+    trigger = parse_trigger(context.content, path=context.path)
+    predecessor: AcceptedTrigger | None = None
+    if context.parent_content is not None:
+        previous = parse_trigger(context.parent_content, path=context.path)
+        predecessor = AcceptedTrigger(
+            path=context.path, trigger=previous, artifact_digest=trigger_digest(previous).tagged
+        )
+    line_live: bool | None = None
+    line_input: TriggerInputRecord | None = None
+    if trigger.line is not None:
+        target = context.resolved.lines.get(trigger.line.qualified)
+        line_live = (
+            target is not None
+            and isinstance(target.line, LineSpec)
+            and target.line.lifecycle.state == "live"
+        )
+        if target is not None and isinstance(target.line, LineSpec):
+            line_input = _line_trigger_input(target.line)
+    runbook_live: bool | None = None
+    if trigger.runbook is not None:
+        from cruxible_core.runbooks.law import candidate_runbook_live
+
+        runbook_live = candidate_runbook_live(context.candidate_tree, trigger.runbook.name)
+    law = evaluate_trigger_law(
+        trigger,
+        path=context.path,
+        predecessor=predecessor,
+        target_line_live=line_live,
+        target_line_input=line_input,
+        target_runbook_live=runbook_live,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted Trigger law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, trigger.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=trigger.lifecycle.state == "retired",
+    )
+
+
+def _runbook_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Runbook: its succession, and the Lines and actions it names (O(steps))."""
+
+    from cruxible_core.runbooks.law import judge_runbook_member
+
+    verdict = judge_runbook_member(
+        context.content,
+        path=context.path,
+        parent_content=context.parent_content,
+        lines=context.resolved.lines,
+    )
+    if verdict.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(verdict.diagnostics))
+    if verdict.artifact_digest is None or verdict.required_tier is None:
+        raise ProposalIntegrityError("accepted Runbook law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, "cruxible-runbook-v1"),
+        predecessor_artifact_digest=verdict.predecessor_digest,
+        candidate_artifact_digest=verdict.artifact_digest,
+        required_tier=verdict.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": verdict.artifact_digest, "verdict": "accepted"},
+        retired=verdict.retired,
+    )
+
+
+def _note_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one note: its succession, its live Subjects, and its section Capture.
+
+    O(the note's Subjects): each is one path lookup in the candidate, and the
+    cited Capture is one envelope read.
+    """
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_client.contracts.cas_contracts import BodyAccessContext
+    from cruxible_client.contracts.notes import (
+        AcceptedNote,
+        capture_section,
+        evaluate_note_law,
+        note_digest,
+        parse_note,
+    )
+    from cruxible_client.contracts.subjects import subject_path as subject_shell_path
+
+    note = parse_note(context.content, path=context.path)
+    predecessor: AcceptedNote | None = None
+    if context.parent_content is not None:
+        previous = parse_note(context.parent_content, path=context.path)
+        predecessor = AcceptedNote(
+            path=context.path, note=previous, artifact_digest=note_digest(previous).tagged
+        )
+    live: set[str] = set()
+    section = None
+    if note.lifecycle.state == "live":
+        for target in note.about:
+            kind, _, subject_id = target.name.partition("/")
+            try:
+                shell_path = subject_shell_path(kind, subject_id)
+            except ValueError:
+                continue
+            accepted = context.resolved.subjects.get(shell_path)
+            if accepted is not None and accepted.shell.lifecycle.state == "live":
+                live.add(target.qualified)
+        if isinstance(context.bodies, CaptureObjectStoreProtocol):
+            try:
+                envelope = parse_capture_envelope(
+                    context.bodies.read(
+                        note.capture_digest,
+                        access=BodyAccessContext(
+                            principal_id="playbill-note-law", can_read_body=True
+                        ),
+                    )
+                )
+            except (CruxibleError, ValueError):
+                envelope = None
+            section = None if envelope is None else capture_section(envelope)
+    law = evaluate_note_law(
+        note,
+        path=context.path,
+        predecessor=predecessor,
+        live_subjects=frozenset(live),
+        capture_section=section,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted note law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, note.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=note.lifecycle.state == "retired",
+    )
+
+
+def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one SubjectKind: its succession, and the key ClaimTypes it names.
+
+    A key ClaimType is read from the candidate, so one accepted in the same
+    change counts.
+    """
+
+    subject_kind = parse_subject_kind(context.content, path=context.path)
+    predecessor: AcceptedSubjectKind | None = None
+    if context.parent_content is not None:
+        previous = parse_subject_kind(context.parent_content, path=context.path)
+        predecessor = AcceptedSubjectKind(
+            path=context.path,
+            subject_kind=previous,
+            artifact_digest=subject_kind_digest(previous).tagged,
+        )
+    law = evaluate_subject_kind_law(
+        subject_kind,
+        path=context.path,
+        predecessor=predecessor,
+        key_claim_types={
+            predicate: key_claim_type_shape(context.candidate_tree, predicate)
+            for predicate in subject_kind.keys
+        },
+        # A pair kind's end kinds and their keys, as the candidate holds them.
+        subject_kind_of=tree_subject_kind_reader(context.candidate_tree),
+        key_shape_of=lambda predicate: key_claim_type_shape(context.candidate_tree, predicate),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted SubjectKind law result is incomplete")
+    if predecessor is not None:
+        kept = set(subject_kind.keys) if subject_kind.lifecycle.state == "live" else set()
+        dropped = set(predecessor.subject_kind.keys) - kept
+        stranded = _inverse_key_dependents(context, subject_kind.subject_kind, dropped)
+        if stranded:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.subject_kind.inverse_dependents_not_settled",
+                        "This SubjectKind change drops a key that live inverse ClaimTypes name "
+                        "as their unit; revise their inverse (or retire them) in the same "
+                        "ChangeSet: " + ", ".join(stranded),
+                        context.path,
+                    ),
+                )
+            )
+    return _accepted(
+        context,
+        _installed(context, subject_kind.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=subject_kind.lifecycle.state == "retired",
+    )
+
+
+def _contract_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Contract version: immutable, succeeding exactly, every pin exact.
+
+    A refused field type earns ``cruxible.contract.contract_type_refused``.
+    """
+
+    from cruxible_client.contracts.shapes import (
+        ContractTypeRefused,
+        contract_digest,
+        evaluate_contract_law,
+        parse_contract,
+    )
+
+    try:
+        contract = parse_contract(context.content, path=context.path)
+    except ContractTypeRefused as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("cruxible.contract.contract_type_refused", str(exc), context.path),
+            )
+        )
+    problems = evaluate_contract_law(
+        contract,
+        path=context.path,
+        lookup=context.candidate_tree.get,
+        parent_content=context.parent_content,
+        content=context.content,
+    )
+    if problems:
+        return _MemberVerdict(
+            diagnostics=tuple(
+                _diagnostic(problem.code, problem.message, context.path) for problem in problems
+            )
+        )
+    digest = contract_digest(contract).tagged
+    return _accepted(
+        context,
+        _installed(context, contract.artifact_format),
+        predecessor_artifact_digest=None,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": digest, "verdict": "accepted"},
+    )
+
+
+def _capability_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Capability version: immutable, succeeding exactly with the same
+    effect, both Contract pins exact, and ``workspace.`` only for core's builtin.
+
+    Reads the one capability, its predecessor and its two Contracts, by path.
+    """
+
+    from cruxible_client.contracts.capabilities import (
+        capability_digest,
+        evaluate_capability_law,
+        parse_capability,
+    )
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+
+    capability = parse_capability(context.content, path=context.path)
+    problems = evaluate_capability_law(
+        capability,
+        path=context.path,
+        lookup=context.candidate_tree.get,
+        parent_content=context.parent_content,
+        content=context.content,
+        builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
+    )
+    if problems:
+        return _MemberVerdict(
+            diagnostics=tuple(
+                _diagnostic(problem.code, problem.message, context.path) for problem in problems
+            )
+        )
+    digest = capability_digest(capability).tagged
+    return _accepted(
+        context,
+        _installed(context, capability.artifact_format),
+        predecessor_artifact_digest=None,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": digest, "verdict": "accepted"},
+    )
+
+
+def _literal_object_traversal(
+    query: QueryDefinition,
+    *,
+    claim_types: Mapping[str, AcceptedClaimType],
+) -> CompilerDiagnostic | None:
+    """Refuse a traversal whose predicate cannot carry a Subject-typed edge.
+
+    A relation traversal walks Claim objects, so only ``object_kind="subject"``
+    ClaimTypes can produce an edge. Forward traversal refused this at run time
+    once a row reached it; reverse traversal simply returned nothing, so the
+    definition looked healthy and answered every run with silence. The
+    ClaimType is only knowable here, where the pinned artifacts are resolved,
+    so this is the one place that can name it.
+    """
+    for step in query.traversal:
+        if isinstance(step, QueryPairStep):
+            continue
+        accepted = claim_types.get(f"ClaimType:{step.predicate}")
+        if accepted is None:
+            # The pin law resolves every referenced ClaimType before this runs, so
+            # an unresolved one here means the two disagree about what was pinned.
+            raise ProposalIntegrityError(
+                "QueryDefinition traversal names a ClaimType the pin closure did not "
+                f"resolve: {step.predicate}"
+            )
+        if claim_value_kind(accepted.claim_type.value) == "subject":
+            continue
+        return CompilerDiagnostic(
+            code="cruxible.query_definition.traversal_object_not_subject",
+            severity="error",
+            message=(
+                f"Traversal step {step.binding!r} walks predicate {step.predicate!r}, "
+                f"whose ClaimType declares value="
+                f"{claim_value_kind(accepted.claim_type.value)!r}: relation traversal requires "
+                "object_kind='subject'."
+            ),
+            subject=SemanticAddress.whole_artifact(accepted.path),
+        )
+    return None
+
+
+def _pair_hop_issue(
+    query: QueryDefinition,
+    *,
+    path: str,
+    tree: Mapping[str, bytes],
+    claim_types: Mapping[str, AcceptedClaimType],
+) -> CompilerDiagnostic | None:
+    """Refuse a pair hop that does not name its pair kind's key as the law requires.
+
+    Each part is a Subject-valued key part of a live keyed kind; a hop without
+    a fact names the whole key, one with a fact names one part and a fact
+    that is not a key part. A pair kind's key is frozen for life (R13), so
+    what is checked here holds for as long as the definition does.
+    """
+
+    from cruxible_client.contracts.subject_kinds import live_subject_kind
+
+    for step in query.traversal:
+        if not isinstance(step, QueryPairStep):
+            continue
+        declared = live_subject_kind(tree, step.subject_kind)
+        keys = () if declared is None else declared.keys
+        parts = tuple(item.part for item in step.parts)
+        problem: str | None = None
+        if not keys:
+            problem = f"{step.subject_kind!r} is not a live keyed Subject kind"
+        elif not set(parts).issubset(keys):
+            problem = f"parts {list(parts)} are not all key parts of {step.subject_kind}"
+        elif step.fact is None and set(parts) != set(keys):
+            problem = f"a whole-key hop names every key part of {step.subject_kind}"
+        elif step.fact is not None and step.fact in keys:
+            problem = f"fact {step.fact!r} is a key part of {step.subject_kind}"
+        else:
+            for part in parts:
+                accepted = claim_types.get(f"ClaimType:{part}")
+                if accepted is None or claim_value_kind(accepted.claim_type.value) != "subject":
+                    problem = f"key part {part!r} is not Subject-valued"
+                    break
+        if problem is not None:
+            return CompilerDiagnostic(
+                code="cruxible.query.pair_hop_invalid",
+                severity="error",
+                message=f"Pair hop {step.binding!r}: {problem}.",
+                subject=SemanticAddress.whole_artifact(path),
+            )
+    return None
+
+
+def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
+    requirements = claim_type.admission_policy.corroboration_requirements
+    return frozenset(item.query_definition_digest for item in requirements)
+
+
+def _candidate_contract_resolver(
+    tree: Mapping[str, bytes],
+) -> Callable[[ContractRef], Contract | None]:
+    """Read a pinned Contract version from the candidate tree, which includes this set.
+
+    A reference that pins a digest resolves only to the Contract with that digest.
+    """
+
+    from cruxible_client.contracts.shapes import contract_digest, contract_path, parse_contract
+
+    def resolve(ref: ContractRef) -> Contract | None:
+        path = contract_path(ref.name, ref.version)
+        content = tree.get(path)
+        if content is None:
+            return None
+        contract = parse_contract(content, path=path)
+        if ref.digest is not None and contract_digest(contract).tagged != ref.digest:
+            return None
+        return contract
+
+    return resolve
+
+
+def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
+    query = parse_query_definition(context.content, path=context.path)
+    try:
+        installed = _installed(context, query.artifact_format)
+    except FormatError as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("cruxible.proposal.member_format_invalid", str(exc), context.path),
+            )
+        )
+    predecessor: AcceptedQueryDefinition | None = None
+    if context.parent_content is not None:
+        previous = parse_query_definition(context.parent_content, path=context.path)
+        predecessor = AcceptedQueryDefinition(
+            path=context.path,
+            query=previous,
+            artifact_digest=query_definition_digest(previous).tagged,
+        )
+    law = evaluate_query_definition_law(
+        query,
+        path=context.path,
+        predecessor=predecessor,
+        accepted_artifacts=context.candidate_identities,
+        by_name=True,
+        contracts=_candidate_contract_resolver(context.candidate_tree),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    literal_traversal = _literal_object_traversal(query, claim_types=context.resolved.claim_types)
+    if literal_traversal is not None:
+        return _MemberVerdict(diagnostics=(literal_traversal,))
+    pair_hop = _pair_hop_issue(
+        query,
+        path=context.path,
+        tree=context.candidate_tree,
+        claim_types=context.resolved.claim_types,
+    )
+    if pair_hop is not None:
+        return _MemberVerdict(diagnostics=(pair_hop,))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
+    if predecessor is not None and predecessor.artifact_digest != law.artifact_digest:
+        # Corroboration names its query by exact digest, so moving the query
+        # would silently leave every ClaimType that corroborates through it
+        # unable to admit a Claim. Read in the final candidate: a ClaimType
+        # revised in this ChangeSet to the new digest no longer counts.
+        stranded = sorted(
+            (
+                accepted.claim_type.identity.qualified
+                for accepted in context.resolved.claim_types.values()
+                if accepted.claim_type.lifecycle.state == "live"
+                and predecessor.artifact_digest in _corroboration_digests(accepted.claim_type)
+            ),
+            key=lambda item: item.encode("utf-8"),
+        )
+        if stranded:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.query_definition.corroboration_dependents_not_settled",
+                        "Live ClaimTypes corroborate through this exact QueryDefinition; revise "
+                        "them to the new digest or retire them in the same ChangeSet: "
+                        + ", ".join(stranded),
+                        context.path,
+                    ),
+                )
+            )
+    return _accepted(
+        context,
+        installed,
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": law.artifact_digest,
+            "result_cardinality": query.result_cardinality,
+            "verdict": "accepted",
+        },
+        retired=query.lifecycle.state == "retired",
+    )
+
+
+def _sibling_control_domains(
+    tree: Mapping[str, bytes],
+    provider: ProviderAny,
+    path: str,
+    states: Mapping[str, ArtifactDependencyStateV1],
+) -> frozenset[str]:
+    """The control domains of the other builds of ``provider``'s name in ``tree``.
+
+    Served evaluation reads maintained counts plus changed providers. Cold
+    source-only replay uses one prefix range plus the name's single path.
+    """
+
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+    name = provider.provider_name
+    owner = getattr(states, "owner", None)
+    if owner is not None:
+        return (
+            owner.provider_sibling_domains(name, path)
+            if isinstance(owner, EvaluationRows)
+            else owner.call(lambda rows: rows.provider_sibling_domains(name, path))
+        )
+    # Cold source-only replay retains the full oracle.
+    paths = [*paths_with_prefix(tree, provider_builds_prefix(name)), provider_path(name)]
+    return frozenset(
+        parse_provider(content, path=sibling).control_domain
+        for sibling in paths
+        if sibling != path and (content := tree.get(sibling)) is not None
+    )
+
+
+def _provider_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.governance.seed_artifacts.workspace_file import (
+        WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+    )
+
+    provider = parse_provider(context.content, path=context.path)
+    if (
+        context.parent_content is None
+        and not context.rechecking
+        and "/" not in provider.identity.name
+        and provider.identity.name != WORKSPACE_FILE_BUILTIN_PROVIDER_ID
+    ):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.provider.single_path_closed",
+                    "New package Providers use a build-qualified identity; "
+                    "install a provider build.",
+                    context.path,
+                ),
+            )
+        )
+    predecessor: AcceptedProvider | None = None
+    if context.parent_content is not None:
+        previous = parse_provider(context.parent_content, path=context.path)
+        predecessor = AcceptedProvider(
+            path=context.path,
+            provider=previous,
+            artifact_digest=provider_digest(previous).tagged,
+        )
+    law = evaluate_provider_law(
+        provider,
+        path=context.path,
+        predecessor=predecessor,
+        reserved_refusal_codes=_RESERVED_PROVIDER_REFUSAL_CODES,
+        by_name=True,
+        # Only core's builtin (its single-path genesis lineage) serves a
+        # ``workspace.`` capability; every package build is build-qualified.
+        serves_reserved=provider.identity.name == WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+        sibling_control_domains=(
+            _sibling_control_domains(
+                context.candidate_tree, provider, context.path, context.candidate_states
+            )
+            if predecessor is None and not context.rechecking
+            else frozenset()
+        ),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted Provider law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, provider.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=provider.lifecycle.state == "retired",
+    )
+
+
+def _line_procedure(context: _MemberContext, pin: ArtifactPin) -> AcceptedProcedure | None:
+    """The exact Procedure version a Line pins: current, or a retained predecessor."""
+
+    current = context.resolved.procedures.get(pin.target.qualified)
+    if current is not None and current.artifact_digest == pin.artifact_digest:
+        return current
+    if context.historical_artifact_provider is None:
+        return None
+    found = context.historical_artifact_provider(
+        context.accepted_coordinate(), pin.artifact_digest, family="procedures/"
+    )
+    if found is None:
+        return None
+    path, content = found
+    return AcceptedProcedure(
+        path=path,
+        procedure=parse_procedure(content, path=path),
+        artifact_digest=pin.artifact_digest,
+    )
+
+
+def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
+    mandate = parse_procedure_mandate_any(context.content, path=context.path)
+    accepted_line = context.resolved.lines.get(mandate.line.target.qualified)
+    accepted_procedure = (
+        None if accepted_line is None else _line_procedure(context, accepted_line.line.procedure)
+    )
+    if accepted_line is None or accepted_procedure is None:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.procedure_mandate.line_mismatch",
+                    "A Mandate must pin an exact candidate Line whose Procedure version "
+                    "is accepted.",
+                    context.path,
+                ),
+            )
+        )
+    predecessor: AcceptedProcedureMandate | None = None
+    if context.parent_content is not None:
+        previous = parse_procedure_mandate_any(context.parent_content, path=context.path)
+        predecessor = AcceptedProcedureMandate(
+            path=context.path,
+            mandate=previous,
+            artifact_digest=procedure_mandate_digest(previous).tagged,
+        )
+    law = evaluate_procedure_mandate_v2_law(
+        mandate,
+        path=context.path,
+        predecessor=predecessor,
+        line=accepted_line,
+        procedure=accepted_procedure,
+        claim_types=_scoped_claim_types(context, mandate),
+        condition_query=_condition_query(context, mandate),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted ProcedureMandate law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, mandate.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=mandate.lifecycle.state == "retired",
+        approval_exempt=law.narrowing,
+    )
+
+
+def _scoped_claim_types(
+    context: _MemberContext, mandate: ProcedureMandate
+) -> dict[ArtifactIdentity, ScopedClaimType]:
+    """The candidate-state ClaimTypes a settle scope pins, reduced to what its law reads."""
+
+    scoped: dict[ArtifactIdentity, ScopedClaimType] = {}
+    for item in mandate.scope:
+        accepted = context.resolved.claim_types.get(item.claim_type.target.qualified)
+        if accepted is None:
+            continue
+        claim_type = accepted.claim_type
+        scoped[item.claim_type.target] = ScopedClaimType(
+            identity=claim_type.identity,
+            artifact_digest=accepted.artifact_digest,
+            value=claim_type.value,
+            allowed_subject_kinds=claim_type.allowed_subject_kinds,
+        )
+    return scoped
+
+
+def _condition_query(
+    context: _MemberContext, mandate: ProcedureMandate
+) -> AcceptedQueryDefinition | None:
+    """The candidate-state query a settle condition pins, or None when it is absent."""
+
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_digest,
+        query_definition_path,
+    )
+
+    if mandate.condition is None:
+        return None
+    path = query_definition_path(mandate.condition.query.target.name)
+    content = context.candidate_tree.get(path)
+    if content is None:
+        return None
+    query = parse_query_definition(content, path=path)
+    return AcceptedQueryDefinition(
+        path=path, query=query, artifact_digest=query_definition_digest(query).tagged
+    )
+
+
+def _resolution_contract_member(context: _MemberContext) -> _MemberVerdict:
+    try:
+        return _verified_resolution_contract_member(context)
+    except (CruxibleError, ValueError) as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("cruxible.resolution_contract.binding_invalid", str(exc), context.path),
+            )
+        )
+
+
+def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.claims import claim_path
+    from cruxible_client.contracts.resolution_contracts import (
+        parse_resolution_contract,
+        resolution_contract_digest,
+    )
+
+    value = parse_resolution_contract(context.content, path=context.path)
+    previous = (
+        None
+        if context.parent_content is None
+        else parse_resolution_contract(context.parent_content, path=context.path)
+    )
+    predecessor = None if previous is None else resolution_contract_digest(previous).tagged
+    if value.lifecycle.predecessor_digest != predecessor or (
+        previous is not None and value.identity != previous.identity
+    ):
+        raise FormatError("resolution contract predecessor does not match the accepted version")
+    h = value.hypothesis
+    if h.coordinate not in context.accepted_referent_coordinates:
+        raise FormatError("resolution hypothesis coordinate is not accepted")
+    tree = (
+        context.current_tree
+        if h.coordinate == context.accepted_coordinate()
+        else (
+            None if context.retained_tree is None else context.retained_tree(h.coordinate.git_oid)
+        )
+    )
+    if tree is None:
+        raise FormatError("resolution hypothesis requires retained history")
+    raw = tree.get(claim_path(h.identity.name))
+    if raw is None:
+        raise FormatError("resolution hypothesis Claim is absent at its bound coordinate")
+    value.verify_hypothesis(parse_claim(raw, path=claim_path(h.identity.name)))
+    digest = resolution_contract_digest(value).tagged
+    return _accepted(
+        context,
+        _installed(context, value.artifact_format),
+        predecessor_artifact_digest=predecessor,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": digest, "verdict": "accepted"},
+        retired=value.lifecycle.state == "retired",
+    )
+
+
+def _attestation_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.evidence.attestation_verification import ClaimAttestationRefusal
+
+    try:
+        return _verified_attestation_member(context)
+    except ClaimAttestationRefusal as exc:
+        return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
+    except (CruxibleError, ValueError) as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("cruxible.attestation.binding_invalid", str(exc), context.path),
+            )
+        )
+
+
+def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.accepted_attestations import (
+        attestation_artifact_digest,
+        parse_accepted_attestation,
+    )
+    from cruxible_client.contracts.claims import claim_path, parse_claim_law_evidence
+    from cruxible_core.evidence.attestation_verification import verify_attestation_binding
+    from cruxible_core.proposals.settlement import parse_change_set_record
+
+    value = parse_accepted_attestation(context.content, path=context.path)
+    s = value.statement
+    if context.parent_content is not None and context.parent_content != context.content:
+        raise ProposalIntegrityError("accepted attestation bytes are immutable")
+    if s.referent_coordinate not in context.accepted_referent_coordinates:
+        raise ProposalIntegrityError("attestation referent is not an accepted coordinate")
+    if not isinstance(context.bodies, CaptureObjectStoreProtocol):
+        raise ProposalIntegrityError("attestation validation requires managed captures")
+    if s.referent_coordinate == context.accepted_coordinate():
+        referent_tree = context.current_tree
+    elif context.retained_tree is not None:
+        referent_tree = context.retained_tree(s.referent_coordinate.git_oid)
+    else:
+        raise ProposalIntegrityError("historical attestation requires a retained source reader")
+    # Retained law evidence is needed only for new-capture eligibility; ordinary
+    # examined-existing statements do not scan history or load unrelated laws.
+    law = None
+    if s.attestation_basis == "new_capture":
+        path = claim_path(s.claim_identity.name)
+        if context.claim_law_provider is not None:
+            law = context.claim_law_provider(
+                s.referent_coordinate, s.claim_identity.qualified, s.claim_artifact_digest
+            )
+        else:
+            # Cold replay has no served SQL. Verify the exact retained member;
+            # normal proposal and settlement callers use the C history locator.
+            for record_path in sorted(
+                (p for p in referent_tree if p.startswith("changesets/")), reverse=True
+            ):
+                record = parse_change_set_record(referent_tree[record_path], path=record_path)
+                if not any(
+                    member.path == path
+                    and getattr(member, "candidate_artifact_digest", None)
+                    == s.claim_artifact_digest
+                    for member in record.members
+                ):
+                    continue
+                for evidence in getattr(record, "law_evidence", ()):
+                    if evidence.path == path:
+                        raw = evidence.result.get("claim_evidence")
+                        if raw is not None:
+                            law = parse_claim_law_evidence(raw)
+                            break
+                if law is not None:
+                    break
+    admitted, resolved = verify_attestation_binding(
+        value,
+        instance_id=context.current.instance_id,
+        referent_tree=referent_tree,
+        referent_principals=(
+            context.principals
+            if s.referent_coordinate == context.accepted_coordinate()
+            else (
+                _AttestationPrincipalReader(
+                    s.referent_coordinate, context.attestation_principal_provider
+                )
+                if context.attestation_principal_provider is not None
+                else principal_registry_from_tree(
+                    referent_tree, semantic_root=s.referent_coordinate.semantic_root
+                )
+            )
+        ),
+        current_tree=context.current_tree,
+        current_principals=context.principals,
+        at=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
+        bodies=context.bodies,
+        law=law,
+        producer_receipt_resolver=context.producer_receipt_resolver,
+        # Evidence under a since-succeeded contract version verifies against that
+        # version, accepted at or before the signed referent.
+        historical_capture_contract=historical_capture_contract_resolver(
+            context.historical_artifact_provider,
+            s.referent_coordinate,
+            indexed=True,
+        ),
+        # New evidence needs daemon proof a run produced it, at admission and
+        # again at settlement; only recovery of accepted state re-derives it.
+        require_production_proof=not context.replaying_accepted,
+    )
+    digest = attestation_artifact_digest(value).tagged
+    return _accepted(
+        context,
+        _installed(context, value.tag),
+        predecessor_artifact_digest=None,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "verdict": "accepted",
+            "artifact_digest": digest,
+            "admitted_capture_digests": list(admitted),
+            "resolved_artifacts": [v.model_dump(mode="json") for v in resolved],
+        },
+    )
+
+
+def _same_admission(first: object, second: object) -> bool:
+    """Whether two evidence rules demand the same of the evidence they admit."""
+
+    return all(
+        getattr(first, name, None) == getattr(second, name, None)
+        for name in (
+            "admission",
+            "subject_binding",
+            "attestation_requirement",
+            "allowed_reducer_digests",
+        )
+    )
+
+
+def _capture_contract_dependents(
+    context: _MemberContext,
+    *,
+    identity: str,
+    previous_digest: str,
+    successor_digest: str | None,
+    previous_contract: CaptureContractV1 | None = None,
+) -> tuple[str, ...]:
+    """Live definitions a CaptureContract change would silently strand.
+
+    Read in the final candidate, so a dependent revised or retired in the same
+    ChangeSet no longer counts. An identity rule follows every
+    compatible successor and is stranded only by retirement (`successor_digest`
+    None). An exact-digest evidence rule is stranded unless every (role, evidence
+    kind) it admits is admitted under the replacing version by exactly one rule
+    with the same requirements; a ResolutionContract capture-event
+    window matches one exact version, so naming the previous one strands it.
+    Claims are never listed: the contract a Claim cites is provenance.
+    """
+
+    stranded: set[str] = set()
+    for accepted in context.resolved.claim_types.values():
+        claim_type = accepted.claim_type
+        if claim_type.lifecycle.state != "live":
+            continue
+        rules = claim_type.evidence_admission_policy.rules
+
+        def follows(rule: ClaimEvidenceAdmissionRule) -> bool:
+            """Whether this rule admits evidence under the replacing version."""
+
+            if successor_digest is None:
+                return False
+            return any(item.target.qualified == identity for item in rule.capture_contracts)
+
+        for rule in rules:
+            names_moving = any(item.target.qualified == identity for item in rule.capture_contracts)
+            if not names_moving:
+                continue
+            # Every (role, logical source) the rule admits must be admitted under
+            # the replacing version by exactly one rule with the same requirements;
+            # a stricter or ambiguous successor rule refuses what used to pass.
+            sources = next(
+                (
+                    item.logical_sources
+                    for item in rule.capture_contracts
+                    if item.target.qualified == identity
+                ),
+                (),
+            )
+            for role in rule.claim_roles:
+                # Check each explicit source separately. Empty source sets mean
+                # all sources, including CAS (None).
+                for value in sources or (None,):
+                    covering = []
+                    for other in rules:
+                        if not follows(other) or role not in other.claim_roles:
+                            continue
+                        other_sources = next(
+                            (
+                                item.logical_sources
+                                for item in other.capture_contracts
+                                if item.target.qualified == identity
+                            ),
+                            (),
+                        )
+                        if other_sources and (not sources or value not in other_sources):
+                            continue
+                        covering.append(other)
+                    if len(covering) != 1 or not _same_admission(rule, covering[0]):
+                        stranded.add(claim_type.identity.qualified)
+    for resolution in context.resolved.resolution_contracts.values():
+        window = resolution.window
+        if (
+            resolution.lifecycle.state == "live"
+            and isinstance(window, CaptureEventWindow)
+            and window.event.capture_contract_identity.qualified == identity
+            and window.event.capture_contract_digest == previous_digest
+        ):
+            stranded.add(resolution.identity.qualified)
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
+def _candidate_pinned_contract(context: _MemberContext, ref: Any) -> Any:
+    """The candidate Contract ``ref`` names, at its pinned digest when it pins one."""
+
+    from cruxible_client.contracts.shapes import contract_digest
+
+    found = _candidate_contract(context, f"{ref.name}/v{ref.version}")
+    if found is None or (ref.digest is not None and contract_digest(found).tagged != ref.digest):
+        return None
+    return found
+
+
+def _candidate_capture_kind_exists(context: _MemberContext, name: str) -> bool:
+    from cruxible_client.contracts.captures import capture_contract_path
+
+    try:
+        return capture_contract_path(name) in context.candidate_tree
+    except CaptureFormatError:
+        return False
+
+
+def _layout_key_problems(context: _MemberContext, layout: Any) -> tuple[str, ...]:
+    """Every key type a layout rule states names a live keyed SubjectKind (and its part).
+
+    Every effective rule is read: header fields, record key parts and record
+    field rules, with key types nested in lists and field results. Each is
+    judged by the rule a Contract field's key type follows
+    (``cruxible.contract.key_kind_invalid``), through direct candidate-tree
+    reads: O(rules), never a scan.
+    """
+
+    from cruxible_client.contracts.capture_layouts import layout_rule_types
+    from cruxible_client.contracts.shapes import key_type_problem, key_types
+
+    problems: list[str] = []
+    for entry, field_type in layout_rule_types(layout):
+        for found in key_types(field_type):
+            problem = key_type_problem(found, context.candidate_tree.get)
+            if problem is not None:
+                problems.append(f"{entry}: {problem}")
+    return tuple(dict.fromkeys(problems))
+
+
+def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
+    contract = parse_capture_contract(context.content, path=context.path)
+    if (
+        context.historical_law_coordinate is None
+        and not context.rechecking
+        and contract.artifact_format != "cruxible-capture-contract-v4"
+    ):
+        raise FormatError("new CaptureContracts require cruxible-capture-contract-v4")
+    predecessor: AcceptedCaptureContract | None = None
+    if context.parent_content is not None:
+        previous = parse_capture_contract(context.parent_content, path=context.path)
+        predecessor = AcceptedCaptureContract(
+            path=context.path,
+            contract=previous,
+            artifact_digest=capture_contract_digest(previous).tagged,
+        )
+    installed = _installed(context, contract.artifact_format)
+    law = evaluate_capture_contract_law(
+        contract,
+        path=context.path,
+        predecessor=predecessor,
+        contract_lookup=lambda ref: _candidate_pinned_contract(context, ref),
+        capture_kind_exists=lambda name: _candidate_capture_kind_exists(context, name),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    layout = getattr(contract, "layout", None)
+    if layout is not None and contract.lifecycle.state == "live":
+        key_problems = _layout_key_problems(context, layout)
+        if key_problems:
+            return _MemberVerdict(
+                diagnostics=tuple(
+                    _diagnostic(LAYOUT_REF_UNRESOLVED, message, context.path)
+                    for message in key_problems
+                )
+            )
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted CaptureContract law result is incomplete")
+    if predecessor is not None:
+        stranded = _capture_contract_dependents(
+            context,
+            identity=contract.identity.qualified,
+            previous_digest=predecessor.artifact_digest,
+            successor_digest=(
+                None if contract.lifecycle.state == "retired" else law.artifact_digest
+            ),
+            previous_contract=(
+                predecessor.contract
+                if isinstance(predecessor.contract, CaptureContractV1)
+                and not isinstance(contract, CaptureContractV1)
+                else None
+            ),
+        )
+        if stranded:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.capture_contract.dependents_not_settled",
+                        "This CaptureContract change would strand live definitions that name "
+                        "it; revise or retire them in the same ChangeSet: " + ", ".join(stranded),
+                        context.path,
+                    ),
+                )
+            )
+    return _accepted(
+        context,
+        installed,
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=contract.lifecycle.state == "retired",
+    )
+
+
+def _subject_versions(
+    provider: HistoricalArtifactProvider | None,
+    at: AcceptedCoordinate,
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> Callable[[str, str], bool]:
+    """Subject lineage membership within the accepted prefix ending at ``at``."""
+
+    def accepted_path_of(digest: str) -> str | None:
+        found = None if provider is None else provider(at, digest, family="subjects/")
+        return None if found is None else found[0]
+
+    return subject_versions(
+        current_tree=current_tree,
+        candidate_tree=candidate_tree,
+        accepted_path_of=accepted_path_of,
+    )
+
+
+def _changed_capture_contracts_by_digest(
+    scope: Iterable[str], candidate_tree: Mapping[str, bytes]
+) -> dict[str, AcceptedCaptureContract]:
+    """This change's own newly-proposed CaptureContract members, by exact digest.
+
+    ``scope`` is the change set's own changed paths -- never the full
+    candidate or accepted CaptureContract table -- so this parses at most a
+    handful of members once per change (review F1, round 2): the first cut
+    re-keyed ``_ResolvedArtifacts.capture_contracts``, a mapping lazily
+    backed by every CaptureContract the candidate can resolve (named-rule
+    lookups need that reach); calling ``.values()`` on it forced a full
+    accepted-state enumeration -- O(every contract in the instance) -- for
+    every Claim, family rule or not. Walking ``scope`` instead touches only
+    the paths this exact change proposes.
+    """
+
+    staged: dict[str, AcceptedCaptureContract] = {}
+    for path in scope:
+        if not _CAPTURE_CONTRACT_PATH_RE.match(path):
+            continue
+        content = candidate_tree.get(path)
+        if content is None:
+            continue
+        contract = parse_capture_contract(content, path=path)
+        digest = capture_contract_digest(contract).tagged
+        staged[digest] = AcceptedCaptureContract(
+            path=path, contract=contract, artifact_digest=digest
+        )
+    return staged
+
+
+def historical_capture_contract_resolver(
+    provider: HistoricalArtifactProvider | None,
+    at: AcceptedCoordinate,
+    *,
+    indexed: bool = False,
+    staged: Mapping[str, AcceptedCaptureContract] | None = None,
+) -> "CaptureContractVersions":
+    """Resolve exact CaptureContract versions accepted within the prefix ending at ``at``.
+
+    Bounded by one accepted coordinate, so replaying a generation reads exactly
+    what its first evaluation read. Without a provider nothing historical
+    resolves and only live contracts verify. The answer is authoritative (a
+    None means no such version was accepted) only with a provider over an
+    index of every accepted generation, genesis included (``indexed``).
+
+    ``staged`` is this same change's own not-yet-accepted CaptureContracts
+    (digest-keyed, e.g. a foreign-source contract a Claim's first citation of
+    a source installs as its own dependency): a keyed lookup checked before
+    the accepted-history provider, never a catalog walk, so a contract this
+    change installs counts as accepted-state membership on the same write
+    that installs it. Anything neither staged here nor accepted at ``at``
+    still resolves to None -- fail closed, unchanged.
+    """
+    from cruxible_core.evidence.attestation_verification import CaptureContractVersions
+
+    cache: dict[str, AcceptedCaptureContract | None] = {}
+
+    def resolve(digest: str) -> AcceptedCaptureContract | None:
+        if digest in cache:
+            return cache[digest]
+        staged_contract = None if staged is None else staged.get(digest)
+        if staged_contract is not None:
+            cache[digest] = staged_contract
+            return staged_contract
+        found = None if provider is None else provider(at, digest, family="capture-contracts/")
+        accepted = None
+        if found is not None:
+            path, raw = found
+            contract = parse_capture_contract(raw, path=path)
+            if capture_contract_digest(contract).tagged == digest:
+                accepted = AcceptedCaptureContract(
+                    path=path, contract=contract, artifact_digest=digest
+                )
+        cache[digest] = accepted
+        return accepted
+
+    return CaptureContractVersions(resolve=resolve, authoritative=provider is not None and indexed)
+
+
+def _claim_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.compiler.sealed_members import sealed_claim_member
+    from cruxible_core.indexes.evaluated_state import mapped_values
+
+    claim = sealed_claim_member(context.content, path=context.path).claim
+    if claim.backing.attestation_digests:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.claim.embedded_attestations_retired",
+                    "Propose standalone signed attestation artifacts; "
+                    "Claim-backed attestations are no longer authored.",
+                    context.path,
+                ),
+            )
+        )
+    predecessor: AcceptedClaim | None = None
+    if context.parent_content is not None:
+        previous = parse_claim(context.parent_content, path=context.path)
+        predecessor = AcceptedClaim(
+            path=context.path,
+            claim=previous,
+            statement_digest=claim_statement_digest(previous.statement).tagged,
+            artifact_digest=claim_artifact_digest(previous).tagged,
+        )
+    installed = _installed(context, claim.artifact_format)
+    if not isinstance(context.bodies, CaptureObjectStoreProtocol):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.claim.capture_store_unavailable",
+                    "Claim evaluation requires the managed evidence CAS.",
+                    context.path,
+                ),
+            )
+        )
+    # The one Claim law reads which behaviours apply off the Claim itself: an
+    # attributed retirement, or a live Claim.
+    retiring = claim.retirement is not None
+    from cruxible_core.indexes.subject_identity import tree_key_rules
+
+    law = evaluate_claim_law(
+        claim,
+        path=context.path,
+        principals=context.principals,
+        predecessor=predecessor,
+        subjects=context.resolved.subjects,
+        claim_types=context.resolved.claim_types,
+        capture_contracts=context.resolved.capture_contracts,
+        capture_store=context.bodies,
+        value_contracts=tree_contract_resolver(context.candidate_tree),
+        value_enums=tree_enum_resolver(context.candidate_tree),
+        value_keys=tree_key_rules(context.candidate_tree),
+        providers=mapped_values(context.resolved.providers, lambda accepted: accepted.provider),
+        producer_artifact_digests=_producer_versions(
+            context,
+            mapped_values(context.resolved.procedures, lambda accepted: accepted.artifact_digest),
+        ),
+        producer_receipt_resolver=context.producer_receipt_resolver,
+        law_digest=installed.coordinate.digest,
+        instance_id=context.current.instance_id,
+        accepted_coordinate=context.accepted_coordinate(),
+        accepted_referent_coordinates=context.accepted_referent_coordinates,
+        evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
+        allow_claim_type_retirement_shape_exemption=retiring,
+        historical_capture_contract=historical_capture_contract_resolver(
+            context.historical_artifact_provider,
+            context.accepted_coordinate(),
+            staged=context.staged_capture_contracts,
+        ),
+        claim_type_v7_semantics=True,
+        # An attributed retirement alone: a Claim retired with its Subject, or
+        # after a successor carried it, names a version of that Subject's lineage.
+        subject_lifecycle_retirement=retiring,
+        accepted_subject_version=(
+            _subject_versions(
+                context.historical_artifact_provider,
+                context.accepted_coordinate(),
+                current_tree=context.current_tree,
+                candidate_tree=context.candidate_tree,
+            )
+            if retiring
+            else None
+        ),
+        # A live Claim: a key Claim written with its Subject's creation is
+        # covered by the creation (no evidence rule must admit it).
+        subject_creation_key=(
+            not retiring
+            and is_subject_creation_key_claim(
+                context.current_tree,
+                context.candidate_tree,
+                claim,
+                new_claim=context.parent_content is None,
+            )
+        ),
+        # A Capture cited for the first time needs daemon proof a run produced
+        # it, at admission and again at settlement: an admission recorded under
+        # an earlier law is not an accepted citation. Only recovery of a
+        # generation main already holds re-derives it without the proof.
+        require_new_citation_proof=not context.replaying_accepted,
+        # A live Claim: a same-statement revision may replace a citation with
+        # one of the text it rests on now.
+        claim_rebind=not retiring,
+        # A live Claim: a `none` type's origin-only evidence needs no current
+        # replay (adjudication rule v3).
+        origin_replay_exempt=not retiring,
+        erasure_records=_erasure_records(context),
+        erasure_contract=_erasure_authority(context),
+        verified_absence_witnesses=context.verified_absence_witnesses,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted Claim law result is incomplete")
+    claim_type = context.resolved.claim_types[claim.statement.claim_type.qualified].claim_type
+    governing_policy_digests = {
+        *context.claim_admission_digests_by_path.get(context.path, ()),
+        _canonical_model_digest(
+            "playbill-claim-admission-policy-v1",
+            claim_type.admission_policy,
+        ),
+        _canonical_model_digest(
+            claim_type.evidence_admission_policy.tag,
+            claim_type.evidence_admission_policy,
+        ),
+        _canonical_model_digest(
+            "playbill-claim-resolution-policy-v1",
+            claim_type.resolution_policy,
+        ),
+    }
+    return _accepted(
+        context,
+        installed,
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": law.artifact_digest,
+            "claim_evidence": (
+                None if law.evidence is None else law.evidence.model_dump(mode="json")
+            ),
+            "claim_admission": list(context.claim_admission_by_path.get(context.path, ())),
+            "statement_digest": law.statement_digest,
+            "verdict": "accepted",
+        },
+        policy_digests=tuple(sorted(governing_policy_digests)),
+        query_receipt_digests=context.claim_admission_query_digests_by_path.get(context.path, ()),
+        retired=claim.lifecycle.state == "retired",
+    )
+
+
+def _inverse_key_dependents(
+    context: _MemberContext, kind: str, dropped: set[str]
+) -> tuple[str, ...]:
+    """Live inverse ClaimTypes keyed by one of ``dropped`` keys of ``kind``, in the candidate.
+
+    Found through the ClaimType-name index (kind -> the live ClaimTypes naming
+    it), so only ClaimTypes that name the kind are read; a cold replay without
+    the index reads the materialized definitions, as the source-binding read does.
+    """
+
+    if not dropped:
+        return ()
+    from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
+
+    states = context.candidate_states
+    if isinstance(states, SelectedRows) and states.owner is not None:
+        owner = states.owner
+        identities = (
+            owner.claim_types_naming_subject_kind(kind)
+            if isinstance(owner, EvaluationRows)
+            else owner.call(lambda rows: rows.claim_types_naming_subject_kind(kind))
+        )
+        claim_types: list[ClaimType] = []
+        for identity in identities:
+            path = claim_type_path(identity.removeprefix("ClaimType:"))
+            content = context.candidate_tree.get(path)
+            if content is not None:
+                claim_types.append(parse_claim_type(content, path=path))
+    else:
+        claim_types = [accepted.claim_type for accepted in context.resolved.claim_types.values()]
+    stranded = {
+        claim_type.identity.qualified
+        for claim_type in claim_types
+        if claim_type.lifecycle.state == "live"
+        and claim_type.inverse is not None
+        and isinstance(claim_type.inverse.key, ClaimInverseObjectKeyPart)
+        and claim_type.inverse.key.predicate in dropped
+        and kind in subject_value_kinds(claim_type.value)
+    }
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
+def _inverse_subject_kind_keys(
+    context: _MemberContext, claim_type: ClaimType
+) -> dict[str, tuple[str, ...] | None] | None:
+    """Each object SubjectKind's declared keys in the candidate, for an object_key inverse.
+
+    Read only when the ClaimType declares one: one SubjectKind per object kind.
+    """
+
+    inverse = claim_type.inverse
+    if inverse is None or inverse.key.kind != "object_key":
+        return None
+    keys: dict[str, tuple[str, ...] | None] = {}
+    for kind in subject_value_kinds(claim_type.value):
+        try:
+            declared = live_subject_kind(context.candidate_tree, kind)
+        except SubjectKindFormatError:
+            declared = None
+        keys[kind] = None if declared is None else tuple(declared.keys)
+    return keys
+
+
+def _erasure_authority(
+    context: _MemberContext,
+) -> Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None]:
+    """The contract version an erasure names, resolved as of the erasure's own head.
+
+    An erasure made under a contract accepted after a replayed generation still
+    explains why that generation's bytes are gone: its authority is checked in
+    the prefix that ends where the erasure was recorded, never in the replayed
+    judgment's own dependency prefix. A head this ledger does not hold resolves
+    nothing.
+    """
+
+    def authority(item: RecordedCaptureErasure) -> AcceptedCaptureContract | None:
+        if context.historical_artifact_provider is None:
+            return None
+        try:
+            return historical_capture_contract_resolver(
+                context.historical_artifact_provider, item.coordinate
+            )(item.record.capture_contract_digest)
+        except (CruxibleError, ValueError, KeyError):
+            return None
+
+    return authority
+
+
+def _erasure_records(
+    context: _MemberContext,
+) -> Callable[[tuple[str, ...]], Mapping[str, RecordedCaptureErasure]] | None:
+    """The erasure lookup the Claim law consults, when the context can answer it.
+
+    A retirement or revision of a Claim whose inherited evidence was erased
+    verifies, and replay verifies storage through it: what was recorded
+    reproduces exactly, though the bytes it read are gone.
+    """
+
+    resolver = context.producer_receipt_resolver
+    if isinstance(resolver, CaptureErasureLookupProtocol):
+        return resolver.body_erasures
+    return None
+
+
+def _claim_type_unresolved_contracts(
+    context: _MemberContext, claim_type: ClaimType
+) -> tuple[str, ...]:
+    """Retired contracts a live ClaimType still names in the final candidate.
+
+    A rule may name a contract that is not accepted yet: a foreign source's
+    contract is installed by the first Claim bound to it, and until then the
+    rule simply admits nothing. What it may not name is a retired contract.
+    """
+
+    retired: set[str] = set()
+    for rule in claim_type.evidence_admission_policy.rules:
+        for item in rule.capture_contracts:
+            accepted = context.resolved.capture_contracts.get(item.target.qualified)
+            if accepted is not None and accepted.contract.lifecycle.state == "retired":
+                retired.add(item.target.qualified)
+    return tuple(sorted(retired, key=lambda item: item.encode("utf-8")))
+
+
+def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
+    # Parseability was decided by the pre-pass, which reports this kind's own
+    # format refusal; reaching a law means the member already parsed.
+    claim_type = parse_claim_type(context.content, path=context.path)
+    predecessor: AcceptedClaimType | None = None
+    if context.parent_content is not None:
+        previous = parse_claim_type(context.parent_content, path=context.path)
+        predecessor = AcceptedClaimType(
+            path=context.path,
+            claim_type=previous,
+            artifact_digest=claim_type_digest(previous).tagged,
+        )
+    law = evaluate_claim_type_law(
+        claim_type,
+        path=context.path,
+        predecessor=predecessor,
+        accepted_artifacts=context.candidate_identities,
+        subject_kind_keys=_inverse_subject_kind_keys(context, claim_type),
+        resolve_contract=_candidate_contract_resolver(context.candidate_tree),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
+    if claim_type.lifecycle.state == "live":
+        from cruxible_client.contracts.shapes import Contract, ContractField, evaluate_contract_law
+
+        # The same native field law validates references and key kinds. This
+        # synthetic Contract exists only during definition acceptance.
+        value_contract = Contract(
+            name="cruxible.claim-value-check",
+            version=1,
+            fields={"value": ContractField(type=claim_type.value)},
+        )
+        problems = evaluate_contract_law(
+            value_contract,
+            path="",
+            lookup=context.candidate_tree.get,
+            parent_content=None,
+            content=b"",
+        )
+        if problems:
+            return _MemberVerdict(
+                diagnostics=tuple(
+                    _diagnostic("cruxible.claim_type.value_invalid", p.message, context.path)
+                    for p in problems
+                )
+            )
+        unresolved = _claim_type_unresolved_contracts(context, claim_type)
+        if unresolved:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.claim_type.reference_unresolved",
+                        "A ClaimType's evidence rules name retired CaptureContracts: "
+                        + ", ".join(unresolved),
+                        context.path,
+                    ),
+                )
+            )
+    installed = _installed(context, claim_type.artifact_format)
+    expansion = next(
+        (
+            item
+            for item in context.claim_type_expansions
+            if item.expanded_artifact_digest == law.artifact_digest
+        ),
+        None,
+    )
+    if expansion is not None:
+        try:
+            verify_claim_type_expansion_evidence(
+                expansion,
+                claim_type=claim_type,
+                compiler_digest=context.current.compiler.rule_digest,
+            )
+        except AuthoringProfileError as exc:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.claim_type.profile_evidence_invalid",
+                        str(exc),
+                        context.path,
+                    ),
+                )
+            )
+        context.used_expansions.add(expansion.expanded_artifact_digest)
+    return _accepted(
+        context,
+        installed,
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": law.artifact_digest,
+            "authoring_expansion": (
+                None if expansion is None else expansion.model_dump(mode="json")
+            ),
+            "expanded_claim_type": claim_type.model_dump(mode="json"),
+            "verdict": "accepted",
+        },
+        policy_digests=tuple(
+            sorted(
+                (
+                    _canonical_model_digest(
+                        "playbill-claim-admission-policy-v1",
+                        claim_type.admission_policy,
+                    ),
+                    _canonical_model_digest(
+                        "playbill-claim-evidence-admission-policy-v1",
+                        claim_type.evidence_admission_policy,
+                    ),
+                    _canonical_model_digest(
+                        "playbill-claim-resolution-policy-v1",
+                        claim_type.resolution_policy,
+                    ),
+                )
+            )
+        ),
+        retired=claim_type.lifecycle.state == "retired",
+    )
+
+
+def _subject_member(context: _MemberContext) -> _MemberVerdict:
+    shell = parse_subject(context.content, path=context.path)
+    predecessor: AcceptedSubject | None = None
+    if context.parent_content is not None:
+        try:
+            previous = parse_subject(context.parent_content, path=context.path)
+        except SubjectFormatError as exc:
+            raise ProposalIntegrityError("current accepted Subject cannot be parsed") from exc
+        predecessor = AcceptedSubject(
+            path=context.path,
+            shell=previous,
+            artifact_digest=subject_digest(previous).tagged,
+        )
+    law = evaluate_subject_law(
+        shell,
+        path=context.path,
+        predecessor=predecessor,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted Subject law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, shell.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=shell.lifecycle.state == "retired",
+    )
+
+
+def _unavailable_link_targets(context: _MemberContext, shell: DocumentShell) -> list[str]:
+    """The indexed links (about, guides) whose target is not live in the candidate.
+
+    O(the Document's indexed links): each is one keyed lookup. Labels (any
+    other relation) are carried as written.
+    """
+
+    from cruxible_client.contracts.subjects import subject_path as subject_shell_path
+
+    missing: list[str] = []
+    for link in shell.links:
+        if not link.indexed:
+            continue
+        kind, _, name = link.target_identity.partition(":")
+        live = False
+        try:
+            if kind == "Subject":
+                subject_kind, _, subject_id = name.partition("/")
+                accepted_subject = context.resolved.subjects.get(
+                    subject_shell_path(subject_kind, subject_id)
+                )
+                live = (
+                    accepted_subject is not None
+                    and accepted_subject.shell.lifecycle.state == "live"
+                )
+            elif kind == "ClaimType":
+                accepted_type = context.resolved.claim_types.get(link.target_identity)
+                live = (
+                    accepted_type is not None and accepted_type.claim_type.lifecycle.state == "live"
+                )
+            elif kind == "Procedure":
+                accepted_procedure = context.resolved.procedures.get(link.target_identity)
+                live = (
+                    accepted_procedure is not None
+                    and accepted_procedure.procedure.lifecycle.state == "live"
+                )
+        except ValueError:
+            live = False
+        if not live:
+            missing.append(link.target_identity)
+    return missing
+
+
+def _document_member(context: _MemberContext) -> _MemberVerdict:
+    shell = parse_document(context.content, path=context.path)
+    predecessor: AcceptedDocument | None = None
+    if context.parent_content is not None:
+        try:
+            previous = parse_document(context.parent_content, path=context.path)
+        except DocumentFormatError as exc:  # accepted-state corruption, not author refusal
+            raise ProposalIntegrityError("current accepted Document cannot be parsed") from exc
+        predecessor = AcceptedDocument(
+            path=context.path,
+            shell=previous,
+            envelope_digest=document_digest(previous).tagged,
+        )
+    installed = _installed(context, shell.tag)
+    # Revision 4 closes the indexed link vocabulary; a receipt recorded under
+    # revision 3 replays without those rules.
+    link_rules = installed.coordinate != DOCUMENT_LAW_V3
+    law = evaluate_document_law(
+        shell,
+        path=context.path,
+        bodies=context.bodies,
+        predecessor=predecessor,
+        link_rules=link_rules,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    unavailable = _unavailable_link_targets(context, shell) if link_rules else []
+    if unavailable:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.document.link_target_unavailable",
+                    "A Document's about/guides links name live artifacts; not live here: "
+                    + ", ".join(unavailable[:5])
+                    + ".",
+                    context.path,
+                ),
+            )
+        )
+    if (
+        law.envelope_digest is None or law.required_tier is None or law.activation_policy is None
+    ):  # pragma: no cover - guarded by DocumentLawResult
+        raise ProposalIntegrityError("accepted Document law result is incomplete")
+    return _accepted(
+        context,
+        installed,
+        predecessor_artifact_digest=None if predecessor is None else predecessor.envelope_digest,
+        candidate_artifact_digest=law.envelope_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy=law.activation_policy,
+        result={"artifact_digest": law.envelope_digest, "verdict": "accepted"},
+    )
+
+
+def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
+    if context.path != APPROVAL_POLICY_PATH or context.scope != (APPROVAL_POLICY_PATH,):
+        return _MemberVerdict(diagnostics=(_unregistered(context.path),))
+    if context.parent_content is None:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.approval_policy.successor_required",
+                    "Approval policy is a genesis singleton and may only change by successor.",
+                    context.path,
+                ),
+            )
+        )
+    try:
+        policy = parse_approval_policy(context.content, path=context.path)
+    except ApprovalPolicyFormatError as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.approval_policy.format_invalid",
+                    str(exc),
+                    context.path,
+                ),
+            )
+        )
+    try:
+        predecessor = parse_approval_policy(context.parent_content, path=context.path)
+    except ApprovalPolicyFormatError as exc:
+        raise ProposalIntegrityError("accepted approval policy cannot be reproduced") from exc
+    if policy.mode == "independent_approval_required":
+        active_ordinary_count = sum(
+            record.kind == "ordinary" and record.status == "active"
+            for record in context.principals.principals
+        )
+        if active_ordinary_count < 2:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.approval_policy.independent_approval_minimum",
+                        "independent_approval_required mode needs at least two active ordinary "
+                        "principals; register the missing approver before tightening the policy.",
+                        context.path,
+                    ),
+                )
+            )
+    return _accepted(
+        context,
+        APPROVAL_POLICY_ACCEPTANCE_LAW,
+        predecessor_artifact_digest=approval_policy_digest(predecessor).tagged,
+        candidate_artifact_digest=approval_policy_digest(policy).tagged,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": approval_policy_digest(policy).tagged,
+            "mode": policy.mode,
+            "verdict": "accepted",
+        },
+    )
+
+
+def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
+    if context.path != PROCEDURE_RUNTIME_POLICY_PATH or context.scope != (
+        PROCEDURE_RUNTIME_POLICY_PATH,
+    ):
+        return _MemberVerdict(diagnostics=(_unregistered(context.path),))
+    try:
+        policy = parse_procedure_runtime_policy(context.content, path=context.path)
+    except ProcedureRuntimePolicyFormatError as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.procedure_runtime_policy.format_invalid",
+                    str(exc),
+                    context.path,
+                ),
+            )
+        )
+    predecessor_digest: str | None = None
+    if context.parent_content is not None:
+        try:
+            predecessor = parse_procedure_runtime_policy(
+                context.parent_content,
+                path=context.path,
+            )
+        except ProcedureRuntimePolicyFormatError as exc:
+            raise ProposalIntegrityError(
+                "accepted Procedure runtime policy cannot be reproduced"
+            ) from exc
+        predecessor_digest = procedure_runtime_policy_digest(predecessor).tagged
+    return _accepted(
+        context,
+        PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
+        predecessor_artifact_digest=predecessor_digest,
+        candidate_artifact_digest=procedure_runtime_policy_digest(policy).tagged,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": procedure_runtime_policy_digest(policy).tagged,
+            "provider_output_bytes_cap": policy.provider_output_bytes_cap,
+            "verdict": "accepted",
+        },
+    )
+
+
+def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_client.contracts.compiler_upgrade import (
+        COMPILER_UPGRADE_PATH,
+        parse_compiler_upgrade,
+    )
+    from cruxible_core.compiler.upgrades import upgrade_law, validate_upgrade
+
+    try:
+        if context.scope != (COMPILER_UPGRADE_PATH,):
+            raise ValueError("compiler upgrade must be the entire proposal")
+        value = parse_compiler_upgrade(context.content)
+        validate_upgrade(value, context.current)
+        if context.actor_id is None:
+            raise ValueError("compiler upgrade requires an authenticated principal")
+        if context.principals.require_active(context.actor_id).kind != "ordinary":
+            raise ValueError("compiler upgrade requires an ordinary client principal")
+    except ValueError as exc:
+        return _MemberVerdict(
+            diagnostics=(_diagnostic("cruxible.compiler_upgrade.invalid", str(exc), context.path),)
+        )
+    return _accepted(
+        context,
+        upgrade_law(context.current.compiler, value.target),
+        predecessor_artifact_digest=(
+            None if context.parent_content is None else file_digest(context.parent_content).tagged
+        ),
+        candidate_artifact_digest=file_digest(context.content).tagged,
+        required_tier="admin",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "target_compiler": value.target.model_dump(mode="json"),
+            "governance_operation": "compiler-upgrade",
+            "verdict": "accepted",
+        },
+    )
+
+
+def _principal_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one control-plane principal transition as an ordinary scoped member.
+
+    A principal record is not a dependency-closed artifact -- nothing pins it and
+    it pins nothing -- so it reaches this law without a parsed dependency state,
+    and closure has nothing to say about it. What closure cannot supply, the
+    scope rule does: a principal transition is only recognized when it is the
+    whole change set, exactly as it was when it had its own evaluator. Bundling a
+    key rotation with artifact edits would move it out of the principal-lifecycle
+    approval purpose, and that widening is refused here rather than survived.
+    """
+
+    if context.scope != (context.path,):
+        return _MemberVerdict(diagnostics=(_unregistered(context.path),))
+    lifecycle = evaluate_principal_lifecycle(
+        candidate_content=context.content,
+        parent_content=context.parent_content,
+        principals=context.principals,
+        candidate_tree=context.candidate_tree,
+        current=context.current,
+        path=context.path,
+        actor_id=context.actor_id,
+    )
+    if lifecycle.action is None:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    lifecycle.error_code or "cruxible.principal.transition_refused",
+                    lifecycle.error_message or "Principal transition was refused.",
+                    context.path,
+                ),
+            )
+        )
+    return _accepted(
+        context,
+        PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+        predecessor_artifact_digest=(
+            None if context.parent_content is None else file_digest(context.parent_content).tagged
+        ),
+        candidate_artifact_digest=file_digest(context.content).tagged,
+        required_tier="admin",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": file_digest(context.content).tagged,
+            "governance_operation": lifecycle.action,
+            "verdict": "accepted",
+        },
+        retired=lifecycle.action == "revoke",
+    )
+
+
+_MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
+    _MemberKind(
+        name="compiler-upgrade",
+        pattern=re.compile(r"^compiler-upgrade\.json$"),
+        removal_code="cruxible.compiler_upgrade.removal_unsupported",
+        removal_message="Compiler history cannot be removed.",
+        evaluate=_compiler_upgrade_member,
+    ),
+    _MemberKind(
+        name="resolution-contract",
+        pattern=re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
+        removal_code="cruxible.resolution_contract.removal_unsupported",
+        removal_message="Retire a resolution contract through an explicit successor.",
+        evaluate=_resolution_contract_member,
+    ),
+    _MemberKind(
+        name="attestation",
+        pattern=_ATTESTATION_PATH_RE,
+        removal_code="cruxible.attestation.removal_unsupported",
+        removal_message="Signed attestations are immutable retained statements.",
+        evaluate=_attestation_member,
+    ),
+    _MemberKind(
+        name="approval-policy",
+        pattern=_APPROVAL_POLICY_PATH_RE,
+        removal_code="cruxible.approval_policy.removal_unsupported",
+        removal_message="Approval policy is a genesis singleton and cannot be removed.",
+        evaluate=_approval_policy_member,
+        format_code="cruxible.approval_policy.format_invalid",
+    ),
+    _MemberKind(
+        name="procedure-runtime-policy",
+        pattern=_PROCEDURE_RUNTIME_POLICY_PATH_RE,
+        removal_code="cruxible.procedure_runtime_policy.removal_unsupported",
+        removal_message=("Procedure runtime policy is a governed singleton and cannot be removed."),
+        evaluate=_procedure_runtime_policy_member,
+        format_code="cruxible.procedure_runtime_policy.format_invalid",
+    ),
+    _MemberKind(
+        name="procedure",
+        pattern=_PROCEDURE_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_procedure_member,
+    ),
+    _MemberKind(
+        name="exhaust-promotion",
+        pattern=_EXHAUST_PROMOTION_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_exhaust_promotion_member,
+    ),
+    _MemberKind(
+        name="line",
+        pattern=_LINE_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_line_member,
+    ),
+    _MemberKind(
+        name="trigger",
+        pattern=_TRIGGER_PATH_RE,
+        removal_code="cruxible.trigger.removal_unsupported",
+        removal_message="Triggers are retired by successor, never removed.",
+        evaluate=_trigger_member,
+    ),
+    _MemberKind(
+        name="note",
+        pattern=_NOTE_PATH_RE,
+        removal_code="cruxible.note.removal_unsupported",
+        removal_message="Notes are retired by successor, never removed.",
+        evaluate=_note_member,
+        format_code="cruxible.note.format_invalid",
+    ),
+    _MemberKind(
+        name="runbook",
+        pattern=_RUNBOOK_PATH_RE,
+        removal_code="cruxible.runbook.removal_unsupported",
+        removal_message="Runbooks are retired by successor, never removed.",
+        evaluate=_runbook_member,
+        format_code="cruxible.runbook.format_invalid",
+    ),
+    _MemberKind(
+        name="subject-kind",
+        pattern=_SUBJECT_KIND_PATH_RE,
+        removal_code="cruxible.subject_kind.removal_unsupported",
+        removal_message="SubjectKinds are retired by successor, never removed.",
+        evaluate=_subject_kind_member,
+        format_code="cruxible.subject_kind.format_invalid",
+    ),
+    _MemberKind(
+        name="contract",
+        pattern=_CONTRACT_PATH_RE,
+        removal_code="cruxible.contract.removal_unsupported",
+        removal_message="Contracts are immutable; author the next version instead.",
+        evaluate=_contract_member,
+        format_code="cruxible.contract.format_invalid",
+    ),
+    _MemberKind(
+        name="capability",
+        pattern=_CAPABILITY_PATH_RE,
+        removal_code="cruxible.capability.removal_unsupported",
+        removal_message="Capabilities are immutable; author the next version instead.",
+        evaluate=_capability_member,
+        format_code="cruxible.capability.format_invalid",
+    ),
+    _MemberKind(
+        name="query-definition",
+        pattern=_QUERY_DEFINITION_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_query_definition_member,
+    ),
+    _MemberKind(
+        name="provider",
+        pattern=_PROVIDER_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_provider_member,
+    ),
+    _MemberKind(
+        name="procedure-mandate",
+        pattern=_PROCEDURE_MANDATE_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="ProcedureMandates are retired by successor, never removed.",
+        evaluate=_procedure_mandate_member,
+    ),
+    _MemberKind(
+        name="capture-contract",
+        pattern=_CAPTURE_CONTRACT_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_capture_contract_member,
+    ),
+    _MemberKind(
+        name="claim",
+        pattern=_CLAIM_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_claim_member,
+    ),
+    _MemberKind(
+        name="claim-type",
+        pattern=_CLAIM_TYPE_PATH_RE,
+        removal_code="cruxible.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_claim_type_member,
+        format_code="cruxible.claim_type.format_invalid",
+    ),
+    _MemberKind(
+        name="subject",
+        pattern=_SUBJECT_PATH_RE,
+        removal_code="cruxible.subject.removal_unsupported",
+        removal_message="Subjects are retired by successor, never removed from accepted state.",
+        evaluate=_subject_member,
+        format_code="cruxible.subject.format_invalid",
+    ),
+    _MemberKind(
+        name="document",
+        pattern=_DOCUMENT_PATH_RE,
+        removal_code="cruxible.document.removal_unsupported",
+        removal_message="PB-C does not activate Document removal semantics.",
+        evaluate=_document_member,
+        format_code="cruxible.document.format_invalid",
+    ),
+    _MemberKind(
+        name="principal",
+        pattern=_PRINCIPAL_PATH_RE,
+        removal_code="cruxible.principal.removal_unsupported",
+        removal_message="Principal records are revoked, never removed from accepted state.",
+        evaluate=_principal_member,
+    ),
+)
+ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
+    "compiler-upgrade",
+    "resolution-contract",
+    "attestation",
+    "approval-policy",
+    "procedure-runtime-policy",
+    "procedure",
+    "exhaust-promotion",
+    "line",
+    "trigger",
+    "note",
+    "runbook",
+    "subject-kind",
+    "contract",
+    "capability",
+    "query-definition",
+    "provider",
+    "procedure-mandate",
+    "capture-contract",
+    "claim",
+    "claim-type",
+    "subject",
+    "document",
+    "principal",
+)
+if tuple(kind.name for kind in _MEMBER_KINDS) != ROLE_DEMOTED_MEMBER_FAMILIES:
+    raise RuntimeError("role-demotion inventory must enumerate every candidate member family")
+"""Every member kind one change set may contain, and the law that judges it.
+
+The order is the order the evaluator tries patterns in, which is the order the
+old if/elif chain tried them in, so a path that two patterns could match is
+still claimed by the same kind.
+"""
+
+
+def _member_kind(path: str) -> _MemberKind | None:
+    for kind in _MEMBER_KINDS:
+        if kind.pattern.fullmatch(path):
+            return kind
+    return None
+
+
+def _unregistered(path: str) -> CompilerDiagnostic:
+    return _diagnostic(
+        "cruxible.proposal.unregistered_semantic_kind",
+        "No PC-A2 acceptance law is registered for this changed path.",
+        path,
+    )
+
+
+def _refused_closure(
+    missing_dependents: tuple[IncompleteClosureItemV1, ...],
+    unresolved_pins: tuple[UnresolvedArtifactPinV1, ...],
+) -> tuple[CompilerDiagnostic, ...]:
+    diagnostics: list[CompilerDiagnostic] = []
+    if missing_dependents:
+        diagnostics.append(
+            _diagnostic(
+                "cruxible.change_set.incomplete_closure",
+                canonical_bytes(
+                    {"missing": [item.model_dump(mode="json") for item in missing_dependents]}
+                ).decode("utf-8"),
+            )
+        )
+    if unresolved_pins:
+        diagnostics.append(
+            _diagnostic(
+                "cruxible.change_set.unresolved_pin",
+                canonical_bytes(
+                    {"pins": [item.model_dump(mode="json") for item in unresolved_pins]}
+                ).decode("utf-8"),
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _resolved_artifacts(
+    candidate_tree: Mapping[str, bytes],
+    states: Mapping[str, ArtifactDependencyStateV1],
+) -> _ResolvedArtifacts:
+    """Resolve selected owner contracts lazily; cold replay keeps its full oracle."""
+    from cruxible_core.indexes.evaluated_state import SelectedRows
+
+    def rows(
+        kind: str, convert: Callable[[str, bytes, str], Any], *, path_key: bool = False
+    ) -> Any:
+        if isinstance(states, SelectedRows) and states.owner is not None:
+            return states.owner.artifact_rows(kind, convert, path_key=path_key)
+        return {
+            state.path if path_key else state.identity.qualified: convert(
+                state.path, candidate_tree[state.path], state.artifact_digest
+            )
+            for state in states.values()
+            if state.artifact_kind == kind
+        }
+
+    return _ResolvedArtifacts(
+        rows(
+            "subject",
+            lambda path, content, digest: AcceptedSubject(
+                path=path, shell=parse_subject(content, path=path), artifact_digest=digest
+            ),
+            path_key=True,
+        ),
+        rows(
+            "claim-type",
+            lambda path, content, digest: AcceptedClaimType(
+                path=path, claim_type=parse_claim_type(content, path=path), artifact_digest=digest
+            ),
+        ),
+        rows(
+            "capture-contract",
+            lambda path, content, digest: AcceptedCaptureContract(
+                path=path,
+                contract=parse_capture_contract(content, path=path),
+                artifact_digest=digest,
+            ),
+        ),
+        rows(
+            "provider",
+            lambda path, content, digest: AcceptedProvider(
+                path=path, provider=parse_provider(content, path=path), artifact_digest=digest
+            ),
+        ),
+        rows(
+            "procedure",
+            lambda path, content, digest: AcceptedProcedure(
+                path=path, procedure=parse_procedure(content, path=path), artifact_digest=digest
+            ),
+        ),
+        rows(
+            "resolution-contract",
+            lambda path, content, digest: parse_resolution_contract(content, path=path),
+            path_key=True,
+        ),
+        rows(
+            "line",
+            lambda path, content, digest: AcceptedLineSpec(
+                path=path, line=parse_line_spec(content, path=path), artifact_digest=digest
+            ),
+        ),
+        rows(
+            "trigger",
+            lambda path, content, digest: AcceptedTrigger(
+                path=path, trigger=parse_trigger(content, path=path), artifact_digest=digest
+            ),
+        ),
+    )
+
+
+def _line_pin(state: ArtifactDependencyStateV1) -> ArtifactPin | None:
+    return next(
+        (pin for pin in state.pins if isinstance(pin, ArtifactPin) and pin.role == "line"),
+        None,
+    )
+
+
+def _line_mandate_pair_diagnostics(
+    *,
+    parent: DependencyIndexV1,
+    candidate: DependencyIndexV1,
+    scope: tuple[str, ...],
+    candidate_tree: Mapping[str, bytes],
+) -> tuple[CompilerDiagnostic, ...]:
+    """Enforce exact Line/Mandate succession in both directions (ruling C3).
+
+    Ordinary closure proves every pin resolves in the candidate tree. This
+    relation proves that a Mandate retargets only with its Line's successor in
+    the same ChangeSet, that a changed Line carries every live Mandate granting
+    it, and that a carried Mandate is propose-only: a grant never follows a
+    changed Line, so settle is renewed by a later governed Mandate change.
+    """
+
+    scoped = frozenset(scope)
+    diagnostics: dict[tuple[str, str], CompilerDiagnostic] = {}
+
+    def refuse(code: str, message: str, path: str) -> None:
+        diagnostics[(code, path)] = _diagnostic(code, message, path)
+
+    for path in scope:
+        before = parent.states.get(path)
+        after = candidate.states.get(path)
+        if (
+            before is None
+            or after is None
+            or before.artifact_kind != "procedure-mandate"
+            or after.artifact_kind != "procedure-mandate"
+        ):
+            continue
+        before_pin = _line_pin(before)
+        after_pin = _line_pin(after)
+        if before_pin is None or after_pin is None or before_pin == after_pin:
+            continue
+        before_target_path = parent.paths_by_identity.get(before_pin.target.qualified)
+        after_target_path = candidate.paths_by_identity.get(after_pin.target.qualified)
+        if before_target_path not in scoped or after_target_path not in scoped:
+            refuse(
+                "cruxible.procedure_mandate.successor_pair_required",
+                "A Mandate may retarget authority only with the exact Line successor in the "
+                "same ChangeSet.",
+                path,
+            )
+            continue
+        content = candidate_tree.get(path)
+        if content is not None and after.lifecycle.state == "live":
+            mandate = parse_procedure_mandate_any(content, path=path)
+            if mandate.grants != "propose":
+                refuse(
+                    "cruxible.procedure_mandate.carried_grant_must_propose",
+                    "A Mandate carried to a Line successor is propose-only; renew settle in a "
+                    "separate governed Mandate change.",
+                    path,
+                )
+
+    for path in scope:
+        before = parent.states.get(path)
+        after = candidate.states.get(path)
+        if (
+            before is None
+            or after is None
+            or before.artifact_kind != "line"
+            or after.artifact_kind != "line"
+            or before.artifact_digest == after.artifact_digest
+        ):
+            continue
+        for mandate_path in parent.sources_by_pinned_identity.get(
+            before.identity.qualified, frozenset()
+        ):
+            prior_mandate = parent.states[mandate_path]
+            if (
+                prior_mandate.artifact_kind != "procedure-mandate"
+                or prior_mandate.lifecycle.state != "live"
+            ):
+                continue
+            prior_pin = _line_pin(prior_mandate)
+            if (
+                prior_pin is None
+                or prior_pin.target != before.identity
+                or prior_pin.artifact_digest != before.artifact_digest
+            ):
+                continue
+            successor = candidate.states.get(mandate_path)
+            successor_pin = None if successor is None else _line_pin(successor)
+            if (
+                mandate_path not in scoped
+                or successor is None
+                or successor.artifact_kind != "procedure-mandate"
+                or successor.lifecycle.predecessor_digest != prior_mandate.artifact_digest
+                or (
+                    successor.lifecycle.state == "live"
+                    and (
+                        successor_pin is None
+                        or successor_pin.target != after.identity
+                        or successor_pin.artifact_digest != after.artifact_digest
+                    )
+                )
+            ):
+                refuse(
+                    "cruxible.procedure_mandate.successor_pair_required",
+                    "A Line with accepted Mandate authority must carry an exact Mandate "
+                    "successor (propose-only) or retire it in the same ChangeSet.",
+                    path,
+                )
+    return tuple(
+        diagnostics[key]
+        for key in sorted(diagnostics, key=lambda item: (item[0].encode(), item[1].encode()))
+    )
+
+
+def _evaluate_scoped_members(
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    current: AcceptedProjectionCoordinate,
+    bodies: BodyVerifierProtocol,
+    timestamp: str,
+    advanced: AdvancedMembers,
+    parent: EvaluatedTreeState,
+    actor_id: str | None,
+    rebased: bool,
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...],
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    query_facts_provider: ClaimQueryFactsProvider | None,
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None,
+    acceptance_laws: AcceptanceLawRegistry,
+    principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
+    | None,
+    historical_law_coordinates: Mapping[str, tuple[str, str]],
+    replaying_accepted: bool,
+    retained_tree: Callable[[str], Mapping[str, bytes]] | None,
+    claim_law_provider: ClaimLawEvidenceProvider | None,
+    attestation_principal_provider: AttestationPrincipalProvider | None,
+    accepted_referents_provider: AcceptedReferentsProvider | None,
+    delegated_mandate_digest: str | None = None,
+    historical_artifact_provider: HistoricalArtifactProvider | None = None,
+    subject_assignment_authority: SubjectAssignmentAuthority | None = None,
+    settle_condition: DelegatedAuthorityVerdict | None = None,
+    base_tree: Mapping[str, bytes] | None = None,
+    base_changes: frozenset[str] | None = None,
+) -> CandidateEvaluation:
+    """Judge every scoped member under its own law and close the change set.
+
+    ``base_tree`` is the head the change was made against, for a rebased
+    evaluation (None: its base is ``current_tree``), and ``base_changes`` the
+    paths that differ between the two, when known.
+
+    One pipeline, in one order: refuse a member this build cannot parse, close
+    the dependency graph, then dispatch each scoped path to the single law
+    registered for its kind and assemble what they returned. There is no second
+    evaluator and no single-member special case -- a change set of one Document
+    is a change set, judged by the Document law, exactly as a change set of two
+    hundred Claims is judged by the Claim law.
+    """
+
+    scope = advanced.scope
+    diff_digest = advanced.diff_digest
+    if historical_law_coordinates and set(historical_law_coordinates) != set(scope):
+        raise ProposalIntegrityError(
+            "historical acceptance-law coordinates do not cover the candidate scope"
+        )
+    for path in scope:
+        proposed = candidate_tree.get(path)
+        kind = _member_kind(path)
+        if proposed is None or kind is None:
+            continue
+        unindexed = _UNINDEXED_MEMBER_FORMATS.get(kind.name)
+        if unindexed is not None:
+            parse, format_error, format_code = unindexed
+            try:
+                parse(proposed, path=path)
+            except format_error as exc:
+                # Each of these laws refuses a member that is not the whole
+                # change set before it reads the bytes; keep that order.
+                return CandidateEvaluation(
+                    candidate_tree,
+                    None,
+                    (
+                        _unregistered(path)
+                        if tuple(scope) != (path,)
+                        else _diagnostic(format_code, str(exc), path),
+                    ),
+                    rebased,
+                )
+        try:
+            if any(pattern.fullmatch(path) for pattern in _SEMANTIC_MEMBER_PATTERNS):
+                dependency_artifacts({path: proposed})
+        except ClaimTypeFreshnessHorizonInvalid as exc:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "cruxible.claim_type.freshness_horizon_invalid",
+                        str(exc),
+                        path,
+                    ),
+                ),
+                rebased,
+            )
+        except (
+            ApprovalPolicyFormatError,
+            CaptureFormatError,
+            ClaimFormatError,
+            DocumentFormatError,
+            ProviderFormatError,
+            ProcedureMandateError,
+            SubjectFormatError,
+            ClaimTypeFormatError,
+            ProcedureFormatError,
+            LineSpecFormatError,
+            QueryDefinitionFormatError,
+            ExhaustPromotionError,
+            SubjectKindFormatError,
+        ) as exc:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (_diagnostic(kind.format_code, str(exc), path),),
+                rebased,
+            )
+
+        except FormatError as exc:
+            if kind.name not in {
+                "attestation",
+                "resolution-contract",
+                "trigger",
+                "runbook",
+                "capability",
+            }:
+                raise
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (_diagnostic(f"cruxible.{kind.name}.format_invalid", str(exc), path),),
+                rebased,
+            )
+
+    # Only now, with every scoped member proven parseable, is the carried
+    # dependency index advanced: a malformed member must be refused as one.
+    candidate_state = advance_tree_state(parent, tree=candidate_tree, advanced=advanced)
+    candidate_dependencies = candidate_state.dependencies
+    pair_diagnostics = _line_mandate_pair_diagnostics(
+        parent=parent.dependencies,
+        candidate=candidate_dependencies,
+        scope=scope,
+        candidate_tree=candidate_tree,
+    )
+    if pair_diagnostics:
+        return CandidateEvaluation(
+            candidate_tree,
+            None,
+            pair_diagnostics,
+            rebased,
+        )
+    facts = judge_dependency_closure(
+        parent=parent.dependencies,
+        candidate=candidate_dependencies,
+        scope=scope,
+        by_name=True,
+    )
+    if facts.verdict == "refused":
+        # Key Claims follow their keyed Subject (maintainer ruling): a succeeded
+        # Subject carries them unchanged, so they are not dependents the change
+        # must disposition; a Claim retired with its Subject keeps the pin on the
+        # Subject version it was accepted about.
+        facts = dataclasses.replace(
+            facts,
+            missing_dependents=tuple(
+                item
+                for item in facts.missing_dependents
+                if not (
+                    item.dependency_edge_role == "subject"
+                    and carried_key_claim(
+                        current_tree=current_tree,
+                        candidate_tree=candidate_tree,
+                        dependent_path=item.path,
+                        subject_path=item.triggering_dependency_path,
+                    )
+                )
+            ),
+            unresolved_pins=tuple(
+                item
+                for item in facts.unresolved_pins
+                if not (
+                    item.target_identity.kind == "Subject"
+                    and retired_claim_names_subject_version(
+                        candidate_tree=candidate_tree,
+                        source_path=item.source_path,
+                        target_name=item.target_identity.name,
+                        pin_role=item.pin_role,
+                        expected_digest=item.expected_target_digest or "",
+                        accepted_version=_subject_versions(
+                            historical_artifact_provider,
+                            AcceptedCoordinate.from_internal(current),
+                            current_tree=current_tree,
+                            candidate_tree=candidate_tree,
+                        ),
+                    )
+                )
+            ),
+        )
+    if facts.verdict == "refused":
+        return CandidateEvaluation(
+            candidate_tree,
+            None,
+            _refused_closure(
+                facts.missing_dependents,
+                facts.unresolved_pins,
+            ),
+            rebased,
+        )
+
+    principals = (
+        principal_registry_from_tree(current_tree, semantic_root=current.semantic_root)
+        if principal_registry_provider is None
+        else principal_registry_provider(current)
+    )
+    if principals.semantic_root != current.semantic_root:
+        raise ProposalIntegrityError("principal registry differs from evaluation coordinate")
+    if actor_id is not None:
+        try:
+            principals.require_active(actor_id)
+        except PrincipalIntegrityError:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "cruxible.proposal.creator_principal_invalid",
+                        "Authenticated actor does not resolve to an active Principal at the "
+                        "accepted coordinate.",
+                        scope[0],
+                    ),
+                ),
+                rebased,
+            )
+    candidate_states = candidate_dependencies.states
+    resolved = _resolved_artifacts(candidate_tree, candidate_states)
+    staged_capture_contracts = _changed_capture_contracts_by_digest(scope, candidate_tree)
+    claim_admission_by_path: dict[str, tuple[dict[str, object], ...]] = {}
+    claim_admission_digests_by_path: dict[str, tuple[str, ...]] = {}
+    claim_admission_query_digests_by_path: dict[str, tuple[str, ...]] = {}
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] = ()
+    diagnostics: list[CompilerDiagnostic] = []
+    for path in scope:
+        parent_content = current_tree.get(path)
+        candidate_content = candidate_tree.get(path)
+        if parent_content is None or candidate_content is None or not path.startswith("claims/"):
+            continue
+        previous_claim = parse_claim(parent_content, path=path)
+        candidate_claim = parse_claim(candidate_content, path=path)
+        if candidate_claim.retirement is None:
+            continue
+        for previous_pin, candidate_pin in claim_retirement_pin_digest_updates(
+            candidate_claim,
+            predecessor=previous_claim,
+        ):
+            target_path = candidate_dependencies.paths_by_identity.get(
+                candidate_pin.target.qualified
+            )
+            target = None if target_path is None else candidate_states.get(target_path)
+            parent_target_path = parent.dependencies.paths_by_identity.get(
+                previous_pin.target.qualified
+            )
+            parent_target = (
+                None
+                if parent_target_path is None
+                else parent.dependencies.states.get(parent_target_path)
+            )
+            # Exact parent/candidate artifact correspondence below implies
+            # same-ChangeSet membership because scope is the canonical tree
+            # diff. A separate target_path-in-scope predicate was redundant
+            # and could not fail independently of these digest equalities.
+            if (
+                target is None
+                or target.artifact_kind != "claim"
+                or target.lifecycle.state != "retired"
+                or target.lifecycle.predecessor_digest != previous_pin.artifact_digest
+                or target.artifact_digest != candidate_pin.artifact_digest
+                or parent_target is None
+                or parent_target.artifact_digest != previous_pin.artifact_digest
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "cruxible.claim.retirement_pin_delta_invalid",
+                        "A retirement may update a Claim-target pin digest only when the "
+                        "exact target retires by one succession hop in the same complete "
+                        "ChangeSet.",
+                        path,
+                    )
+                )
+    if actor_id is not None:
+        (
+            claim_admission_by_path,
+            claim_admission_digests_by_path,
+            claim_admission_query_digests_by_path,
+            claim_admission_accounts,
+            claim_admission_diagnostics,
+        ) = _claim_admission_evaluations(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+            timestamp=timestamp,
+            subjects=resolved.subjects,
+            claim_types=resolved.claim_types,
+            current=current,
+            query_facts_provider=query_facts_provider,
+            replay_accounts=replay_claim_admission_accounts,
+            parent_claim_index=parent.claim_subjects,
+            candidate_claim_index=candidate_state.claim_subjects,
+        )
+        diagnostics.extend(claim_admission_diagnostics)
+
+    if attestation_principal_provider is not None:
+        # Bound to this evaluation only; never carry authorization across writes.
+        attestation_principal_provider = cache(attestation_principal_provider)
+    used_expansions: set[str] = set()
+    verified_absence_witnesses: dict[object, None] = {}
+    accepted: list[_AcceptedMember] = []
+    accepted_referents: frozenset[AcceptedCoordinate] | None = None
+    candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]] | None = None
+    for path in scope:
+        kind = _member_kind(path)
+        proposed = candidate_tree.get(path)
+        if proposed is None:
+            # A removal is refused by the kind that owns the path, so the member
+            # law states what its own artifacts may never do; a path no kind
+            # claims was never acceptable to remove either.
+            diagnostics.append(
+                _unregistered(path)
+                if kind is None
+                else _diagnostic(kind.removal_code, kind.removal_message, path)
+            )
+            continue
+        if kind is None:
+            diagnostics.append(_unregistered(path))
+            continue
+        if accepted_referents is None:
+            accepted_referents = (
+                accepted_referent_coordinates_from_tree(
+                    current_tree, current=AcceptedCoordinate.from_internal(current)
+                )
+                if accepted_referents_provider is None
+                else accepted_referents_provider(current)
+            )
+            from cruxible_core.indexes.evaluated_state import SelectedRows
+
+            candidate_identities = SelectedRows(
+                lambda identity: (
+                    candidate_states[candidate_dependencies.paths_by_identity[identity]].identity,
+                    candidate_states[
+                        candidate_dependencies.paths_by_identity[identity]
+                    ].artifact_digest,
+                ),
+                lambda: candidate_dependencies.paths_by_identity,
+            )
+        assert candidate_identities is not None
+        member_context = _MemberContext(
+            path=path,
+            content=proposed,
+            parent_content=current_tree.get(path),
+            current=current,
+            scope=scope,
+            timestamp=timestamp,
+            actor_id=actor_id,
+            principals=principals,
+            bodies=bodies,
+            promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=producer_receipt_resolver,
+            accepted_referent_coordinates=accepted_referents,
+            candidate_tree=candidate_tree,
+            current_tree=current_tree,
+            retained_tree=retained_tree,
+            claim_law_provider=claim_law_provider,
+            attestation_principal_provider=attestation_principal_provider,
+            historical_artifact_provider=historical_artifact_provider,
+            candidate_states=candidate_states,
+            candidate_dependencies=candidate_dependencies,
+            candidate_identities=candidate_identities,
+            resolved=resolved,
+            staged_capture_contracts=staged_capture_contracts,
+            claim_admission_by_path=claim_admission_by_path,
+            claim_admission_digests_by_path=claim_admission_digests_by_path,
+            claim_admission_query_digests_by_path=(claim_admission_query_digests_by_path),
+            claim_type_expansions=claim_type_expansions,
+            used_expansions=used_expansions,
+            acceptance_laws=acceptance_laws,
+            historical_law_coordinate=historical_law_coordinates.get(path),
+            replaying_accepted=replaying_accepted,
+            verified_absence_witnesses=verified_absence_witnesses,
+        )
+        try:
+            verdict = kind.evaluate(member_context)
+        except (FormatError, ValueError) as exc:
+            verdict = _MemberVerdict(diagnostics=(_diagnostic(kind.format_code, str(exc), path),))
+        diagnostics.extend(verdict.diagnostics)
+        if verdict.member is not None:
+            accepted.append(verdict.member)
+
+    # The reverse index is maintained from changed paths. Recheck only live
+    # governed referrers, never Claims or mandate authority pins.
+    from cruxible_client.contracts.canonical import pretty_canonical_bytes
+    from cruxible_client.contracts.dependencies import dependency_follows_name
+
+    # Annotation is consensus evidence, so replay computes it too. The
+    # unchanged referrers retain their references in the candidate; reuse
+    # this one incoming bucket read for both rechecks and review evidence.
+    referrers_by_target: dict[str, set[str]] = {}
+    for changed_path in scope:
+        incoming = parent.dependencies.edges_by_target.get(changed_path, ())
+        paths = set()
+        for edge in incoming:
+            state = candidate_states.get(edge.source_path)
+            if (
+                edge.source_path not in scope
+                and state is not None
+                and state.lifecycle.state == "live"
+                and dependency_follows_name(
+                    state.artifact_kind,
+                    state.pins,
+                    parent.dependencies.states[changed_path].identity,
+                    edge.pin_role,
+                )
+            ):
+                paths.add(edge.source_path)
+        referrers_by_target[changed_path] = paths
+    referrers = {path for paths in referrers_by_target.values() for path in paths}
+    # A refused changed member already prevents acceptance. Rechecking
+    # unchanged referrers would only duplicate its domain-law repair.
+    refused_member = any(item.severity == "error" for item in diagnostics)
+    for referrer_path in () if replaying_accepted or refused_member else sorted(referrers):
+        state = candidate_states.get(referrer_path)
+        if state is None or state.lifecycle.state != "live":
+            continue
+        referrer_kind = _member_kind(referrer_path)
+        if referrer_kind is None:
+            continue
+        payload = json.loads(candidate_tree[referrer_path])
+        payload["lifecycle"] = {"state": "live", "predecessor_digest": None}
+        if state.artifact_kind == "line":
+            payload["occurrence_epoch"] = 1
+        unresolved = judge_dependency_closure(
+            parent=candidate_dependencies,
+            candidate=candidate_dependencies,
+            scope=(referrer_path,),
+            by_name=True,
+        ).unresolved_pins
+        if unresolved:
+            diagnostics.extend(
+                d.model_copy(
+                    update={"message": f"Broken referrer {state.identity.qualified}: " + d.message}
+                )
+                for d in _refused_closure((), unresolved)
+            )
+            continue
+        content = pretty_canonical_bytes(payload)
+        if state.artifact_tag == "cruxible-procedure-v4":
+            from cruxible_client.contracts.procedures.artifacts import (
+                ProcedureArtifact,
+                render_procedure,
+            )
+
+            content = render_procedure(ProcedureArtifact.model_validate(payload))
+        elif state.artifact_tag == "cruxible-query-definition-v3":
+            from cruxible_client.contracts.query.definitions import (
+                QueryDefinition,
+                render_query_definition,
+            )
+
+            content = render_query_definition(QueryDefinition.model_validate(payload))
+        try:
+            recheck = referrer_kind.evaluate(
+                dataclasses.replace(
+                    member_context,
+                    path=referrer_path,
+                    content=content,
+                    parent_content=None,
+                    historical_law_coordinate=None,
+                    rechecking=True,
+                    replaying_accepted=True,
+                )
+            )
+        except (CruxibleError, ValueError) as exc:
+            recheck = _MemberVerdict(
+                diagnostics=(_diagnostic(referrer_kind.format_code, str(exc), referrer_path),)
+            )
+        for diagnostic in recheck.diagnostics:
+            diagnostics.append(
+                diagnostic.model_copy(
+                    update={
+                        "message": (
+                            f"Broken referrer {state.identity.qualified}: " + diagnostic.message
+                        ),
+                    }
+                )
+            )
+
+    accepted = [
+        dataclasses.replace(
+            member,
+            result={
+                **member.result,
+                "referrers": sorted(
+                    {
+                        candidate_states[path].identity.qualified
+                        for path in referrers_by_target.get(member.path, ())
+                    }
+                ),
+            },
+        )
+        for member in accepted
+    ]
+
+    if any(item.expanded_artifact_digest not in used_expansions for item in claim_type_expansions):
+        diagnostics.append(
+            _diagnostic(
+                "cruxible.claim_type.profile_output_mismatch",
+                "ClaimType profile evidence does not bind any expanded candidate artifact.",
+            )
+        )
+    if diagnostics:
+        return CandidateEvaluation(
+            candidate_tree,
+            None,
+            tuple(diagnostics),
+            rebased,
+            claim_admission_accounts=claim_admission_accounts,
+        )
+    if tuple(item.path for item in accepted) != scope:
+        raise ProposalIntegrityError("evaluator did not cover every scoped member")
+    if not replaying_accepted:
+        # The authoritative Subject-creation boundary (identity-design-1009): a
+        # Subject this change creates must not collide with a live one of its
+        # kind, read from the parent overlaid with this change. Admission and
+        # settlement both evaluate here, so every route is held to it. History
+        # accepted before the rule is not refused again on replay.
+        identity_issues = candidate_identity_issues(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+            assignment_authority=subject_assignment_authority,
+        )
+        if identity_issues:
+            # Identity is decided at this boundary (identity-design-1009, D1/D4/D6):
+            # a Subject is created only of a declared kind, named by its kind's rule.
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(
+                    _diagnostic(issue.code, issue.message, issue.path) for issue in identity_issues
+                ),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
+        collisions = candidate_creation_collisions(
+            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+        )
+        if collisions:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(
+                    _diagnostic(
+                        SUBJECT_CREATION_COLLISION,
+                        subject_collision_message(path, others),
+                        path,
+                    )
+                    for path, others in collisions
+                ),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
+        # The polarity law (inverse Claims): after the change set no unit holds
+        # a live value and a live none, or two nones, and an object_key flip
+        # stays in its unit. A one-valued dispute needs a contend the write
+        # declared; no candidate carries that declaration yet (the none verb
+        # does, slice I3), so every value-beside-none it would start refuses:
+        # seeing the opposite in the base is never the declaration. Judged
+        # here, at the head the change lands on, so two changes that each pass
+        # alone cannot both land; read from the parent's unit index for the
+        # units the change touches.
+        from cruxible_core.indexes.claim_units import candidate_polarity_issues
+
+        polarity = candidate_polarity_issues(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+            base_tree=base_tree,
+            base_changes=base_changes,
+        )
+        if polarity:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(_diagnostic(issue.code, issue.message, issue.path) for issue in polarity),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
+    if delegated_mandate_digest is not None:
+        # A settle mandate replaces candidate approval only when, read from the
+        # parent state, it covers every member and its condition holds for each.
+        from cruxible_core.proposals.delegated_authority import delegated_authority_issues
+
+        # The settle terminal checked this same condition at this head just
+        # before submitting; on exactly those inputs, while every fact build it
+        # consumed still stands, its answer stands.
+        issues = (
+            settle_condition.issues
+            if settle_condition is not None
+            and settle_condition.answers(
+                mandate_digest=delegated_mandate_digest,
+                current=current,
+                timestamp=timestamp,
+                scope=scope,
+                candidate_tree=candidate_tree,
+                facts=query_facts_provider,
+            )
+            else delegated_authority_issues(
+                mandate_digest=delegated_mandate_digest,
+                scope=scope,
+                current_tree=current_tree,
+                candidate_tree=candidate_tree,
+                current=current,
+                timestamp=timestamp,
+                facts=None
+                if query_facts_provider is None
+                else lambda predicates, subject_kinds: query_facts_provider(
+                    current, predicates=predicates, subject_kinds=subject_kinds
+                ),
+            )
+        )
+        if issues:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(_diagnostic(code, message) for code, message in issues),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
+    approval_requirements = (
+        ()
+        if delegated_mandate_digest is not None
+        or (accepted and all(item.approval_exempt for item in accepted))
+        else _approval_requirements(current_tree)
+    )
+    record = _candidate_record_v3(
+        accepted,
+        closure=closure_evaluation_v3(facts),
+        current=current,
+        scope=scope,
+        diff_digest=diff_digest,
+        manifest_root_value=candidate_state.merkle.root.tagged,
+        timestamp=timestamp,
+        approval_requirements=approval_requirements,
+    )
+    return CandidateEvaluation(
+        candidate_tree,
+        record,
+        (),
+        rebased,
+        candidate_state,
+        claim_admission_accounts,
+    )
+
+
+def _multi_member_evidence(
+    accepted: list[_AcceptedMember],
+    *,
+    closure: ClosureEvaluationV3,
+    current: AcceptedProjectionCoordinate,
+    timestamp: str,
+) -> tuple[tuple[CandidateMemberLawEvidence, ...], tuple[MemberLawEvaluation, ...]]:
+    """Render what the member laws returned as the member/law evidence pair."""
+
+    law_evidence: list[MemberLawEvaluation] = []
+    members: list[CandidateMemberLawEvidence] = []
+    evaluation_coordinate = LawEvaluationCoordinate(
+        git_oid=current.git_oid,
+        semantic_root=current.semantic_root,
+        generation_root=current.generation_root,
+        compiler_digest=current.compiler.rule_digest,
+    )
+    for item in accepted:
+        proofs = closure.proofs_for(item.path)
+        evidence = MemberLawEvaluation(
+            path=item.path,
+            law_identifier=item.law_identifier,
+            law_digest=item.law_digest,
+            evaluation_time=timestamp,
+            evaluation_coordinate=evaluation_coordinate,
+            dependency_proof_refs=proofs,
+            policy_digests=item.policy_digests,
+            query_receipt_digests=item.query_receipt_digests,
+            result=item.result,
+        )
+        # Validated entries are sealed (``MemberLawEvaluation._sealed``): each is
+        # encoded and digested once however often the candidate and its receipt
+        # are verified in-process.
+        law_evidence.append(evidence)
+        disposition = _member_disposition(
+            predecessor_digest=item.predecessor_artifact_digest,
+            candidate_digest_value=item.candidate_artifact_digest,
+            retired=item.retired,
+        )
+        member = CandidateMemberLawEvidence(
+            path=item.path,
+            artifact_kind=item.artifact_kind,
+            disposition=disposition,
+            predecessor_artifact_digest=item.predecessor_artifact_digest,
+            candidate_artifact_digest=item.candidate_artifact_digest,
+            law_identifier=item.law_identifier,
+            law_digest=item.law_digest,
+            law_evidence_digest=member_law_evidence_digest(evidence),
+            closure_role="invalidation" if disposition == "retire" else "authored",
+            dependency_proof_refs=proofs,
+        )
+        members.append(member)
+    return tuple(members), tuple(law_evidence)
+
+
+def _approval_requirements(
+    current_tree: Mapping[str, bytes],
+) -> tuple[ApprovalRequirement, ...]:
+    content = current_tree.get(APPROVAL_POLICY_PATH)
+    if content is None:
+        raise ProposalIntegrityError("accepted state is missing its governed approval policy")
+    try:
+        policy = parse_approval_policy(content, path=APPROVAL_POLICY_PATH)
+    except ApprovalPolicyFormatError as exc:
+        raise ProposalIntegrityError("accepted approval policy cannot be reproduced") from exc
+    if policy.mode == "independent_approval_required":
+        return INDEPENDENT_APPROVAL_REQUIREMENTS
+    return ()
+
+
+def _law_digests(accepted: list[_AcceptedMember]) -> dict[str, str]:
+    return {
+        identifier: digest
+        for identifier, digest in sorted(
+            {(item.law_identifier, item.law_digest) for item in accepted},
+            key=lambda item: item[0].encode("utf-8"),
+        )
+    }
+
+
+def _candidate_record_v3(
+    accepted: list[_AcceptedMember],
+    *,
+    closure: ClosureEvaluationV3,
+    current: AcceptedProjectionCoordinate,
+    scope: tuple[str, ...],
+    diff_digest: SemanticDiffDigest,
+    manifest_root_value: str,
+    timestamp: str,
+    approval_requirements: tuple[ApprovalRequirement, ...],
+) -> CandidateRecord:
+    """Assemble the candidate this build produces: merkle root, edge root.
+
+    The record is sealed (its members already are): the receipt that settles it
+    and every in-process re-verification reuse its encodings and digests.
+    """
+
+    semantic_candidate = SemanticCandidate(
+        parent_semantic_root=current.semantic_root,
+        candidate_manifest_root=manifest_root_value,
+        semantic_diff_digest=diff_digest.tagged,
+        scope=scope,
+        timestamp=timestamp,
+    )
+    seal(semantic_candidate)
+    members, law_evidence = _multi_member_evidence(
+        accepted,
+        closure=closure,
+        current=current,
+        timestamp=timestamp,
+    )
+    record = CandidateRecord(
+        candidate=semantic_candidate,
+        candidate_digest=candidate_digest(semantic_candidate).tagged,
+        required_tier=_aggregate_tier([item.required_tier for item in accepted]),
+        approval_requirements=approval_requirements,
+        activation_policy=_aggregate_activation([item.activation_policy for item in accepted]),
+        closure_proof=ClosureProof(
+            paths=scope,
+            dependency_edge_root=closure.dependency_edge_root,
+            member_evidence_digest=candidate_member_evidence_digest(members),
+        ),
+        members=members,
+        law_evidence=law_evidence,
+        law_digests=_law_digests(accepted),
+        compiler_digest=current.compiler.rule_digest,
+    )
+    seal(record)
+    return record
+
+
+@timed_phase("evaluate")
+def evaluate_proposal_tree(
+    *,
+    base_tree: Mapping[str, bytes],
+    current_tree: Mapping[str, bytes],
+    proposed_tree: Mapping[str, bytes],
+    current: AcceptedProjectionCoordinate,
+    bodies: BodyVerifierProtocol,
+    timestamp: str,
+    rebased: bool,
+    actor_id: str | None = None,
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...] = (),
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
+    parent_state: EvaluatedTreeState | None = None,
+    query_facts_provider: ClaimQueryFactsProvider | None = None,
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None = None,
+    acceptance_laws: AcceptanceLawRegistry = ACCEPTANCE_LAWS,
+    historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
+    replaying_accepted: bool = False,
+    candidate_card_renderer_digest: str | None = None,
+    principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
+    | None = None,
+    tree_state_provider: TreeStateProvider | None = None,
+    retained_tree: Callable[[str], Mapping[str, bytes]] | None = None,
+    claim_law_provider: ClaimLawEvidenceProvider | None = None,
+    attestation_principal_provider: AttestationPrincipalProvider | None = None,
+    accepted_referents_provider: AcceptedReferentsProvider | None = None,
+    delegated_mandate_digest: str | None = None,
+    historical_artifact_provider: HistoricalArtifactProvider | None = None,
+    subject_assignment_authority: SubjectAssignmentAuthority | None = None,
+    base_changes: frozenset[str] | None = None,
+    settle_condition: DelegatedAuthorityVerdict | None = None,
+) -> CandidateEvaluation:
+    """Rebase, scope, judge every member, and close: the whole evaluation.
+
+    ``base_changes``, for a rebased evaluation, is every path whose bytes differ
+    between the proposed base and the current head; with a proposal that is a
+    fork of the accepted base, the rebase then reads only the changed paths
+    (``_ForkRebase``) and yields the same tree and conflicts.
+
+    `parent_state` is the accepted parent's already-derived state -- its member
+    manifest, its manifest trie, and its dependency index. A caller that holds
+    one, which replay does for every generation after the first, hands it in and
+    the evaluation advances it over the change set instead of rebuilding it; a
+    caller without replay state may supply an exact-byte derivation provider.
+    Otherwise the state is built from scratch. All paths reach the same candidate:
+    the carried state is a cache of derivations, never a source of them. Laws,
+    bodies, approvals and current-coordinate query facts are never cached here.
+
+    `settle_condition` is a settle terminal's own check of its mandate's
+    condition, made at this head just before it submitted; it is used only
+    when its inputs are exactly this evaluation's and the fact builds it
+    consumed replay unchanged through `query_facts_provider`.
+
+    `replaying_accepted` is only for recovery, re-deriving a generation main
+    already holds: Captures it cites were admitted when it was accepted, so they
+    are not held again to the production proof a new citation needs. Settling
+    a pending candidate is not a replay, whatever law coordinates it carries.
+    """
+
+    candidate_tree = (
+        snapshot_against(proposed_tree, current_tree)
+        if not rebased and isinstance(current_tree, SnapshotTree)
+        else proposed_tree
+        if isinstance(proposed_tree, SnapshotTree)
+        else SnapshotTree(proposed_tree)
+    )
+    if rebased:
+        fork_rebase = _ForkRebase.of(
+            base_tree=base_tree,
+            current_tree=current_tree,
+            proposed_tree=proposed_tree,
+            current_changed=base_changes,
+        )
+        original_scope = (
+            fork_rebase.semantic_scope
+            if fork_rebase is not None
+            else semantic_diff(base_tree, proposed_tree)[1]
+        )
+        if len(original_scope) > 1 or any(
+            any(pattern.fullmatch(path) for pattern in _DEPENDENCY_CLOSED_PATTERNS)
+            for path in original_scope
+        ):
+            if fork_rebase is not None:
+                candidate_tree, member_conflicts = fork_rebase.rebase_v2()
+            else:
+                result = deterministic_rebase_v2(
+                    old_parent_tree=base_tree,
+                    new_parent_tree=current_tree,
+                    proposed_tree=proposed_tree,
+                )
+                candidate_tree, member_conflicts = SnapshotTree(result.tree), result.conflicts
+            if member_conflicts:
+                return CandidateEvaluation(
+                    candidate_tree,
+                    None,
+                    tuple(
+                        _diagnostic(
+                            conflict.code,
+                            canonical_bytes(conflict.model_dump(mode="json")).decode("utf-8"),
+                            conflict.path,
+                        )
+                        for conflict in member_conflicts
+                    ),
+                    True,
+                )
+        else:
+            if fork_rebase is not None:
+                candidate_tree, conflicts = fork_rebase.rebase_v1()
+            else:
+                rebased_tree, conflicts = deterministic_rebase(
+                    base_tree=base_tree,
+                    current_tree=current_tree,
+                    proposed_tree=proposed_tree,
+                )
+                candidate_tree = SnapshotTree(rebased_tree)
+            if conflicts:
+                return CandidateEvaluation(
+                    candidate_tree,
+                    None,
+                    tuple(
+                        _diagnostic(
+                            "cruxible.proposal.rebase_conflict",
+                            "The accepted artifact changed incompatibly after the proposed base.",
+                            path,
+                        )
+                        for path in conflicts
+                    ),
+                    True,
+                )
+
+    # A keyed Subject retired here takes its live key Claims with it, in this
+    # same change (maintainer ruling): derived before scoping, like cards.
+    derived = derive_key_claim_retirements(current_tree=current_tree, candidate_tree=candidate_tree)
+    if derived is not candidate_tree:
+        candidate_tree = derived if isinstance(derived, SnapshotTree) else SnapshotTree(derived)
+
+    if candidate_card_renderer_digest not in {None, CARD_RENDERER_DIGEST}:
+        raise ProposalIntegrityError("candidate card renderer differs from compiler coordinate")
+    candidate_tree = derive_candidate_cards(
+        base_tree=current_tree,
+        candidate_tree=candidate_tree,
+        coordinate=current.git_oid,
+    )
+
+    parent = (
+        parent_state
+        if parent_state is not None
+        else (
+            tree_state_provider(current_tree)
+            if tree_state_provider is not None
+            else build_tree_state(current_tree, by_name=True)
+        )
+    )
+    if not parent.dependencies.by_name:
+        # A compiler adoption changes dependency interpretation once. Rebuild
+        # only this derived index at that boundary; ordinary generations carry it.
+        parent = EvaluatedTreeState(
+            parent.members,
+            parent.merkle,
+            build_dependency_index(current_tree, by_name=True),
+            parent.claim_subjects,
+        )
+    with getattr(parent, "scope", nullcontext)():
+        advanced = advance_tree_members(parent, previous_tree=current_tree, tree=candidate_tree)
+        if not advanced.scope:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "cruxible.proposal.non_singleton_scope",
+                        "The proposal changes no registered semantic member.",
+                    ),
+                ),
+                rebased,
+            )
+        return _evaluate_scoped_members(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            current=current,
+            bodies=bodies,
+            timestamp=timestamp,
+            advanced=advanced,
+            parent=parent,
+            actor_id=actor_id,
+            rebased=rebased,
+            claim_type_expansions=claim_type_expansions,
+            promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=producer_receipt_resolver,
+            query_facts_provider=query_facts_provider,
+            replay_claim_admission_accounts=replay_claim_admission_accounts,
+            acceptance_laws=acceptance_laws,
+            historical_law_coordinates=historical_law_coordinates or {},
+            base_tree=base_tree if rebased else None,
+            base_changes=base_changes if rebased else None,
+            replaying_accepted=replaying_accepted,
+            retained_tree=retained_tree,
+            claim_law_provider=claim_law_provider,
+            attestation_principal_provider=attestation_principal_provider,
+            accepted_referents_provider=accepted_referents_provider,
+            historical_artifact_provider=historical_artifact_provider,
+            principal_registry_provider=principal_registry_provider,
+            delegated_mandate_digest=delegated_mandate_digest,
+            subject_assignment_authority=subject_assignment_authority,
+            settle_condition=settle_condition,
+        )
+
+
+@dataclass(frozen=True)
+class _AdmissionEvaluation:
+    current: AcceptedProjectionCoordinate
+    validated_tree: Mapping[str, bytes]
+    is_rebase: bool
+    outcome: CandidateEvaluation
+    #: The scope whose observations back ``outcome``, for a same-request settlement.
+    observer: PreparedEvaluationScope | None = None
+    delegated_mandate_digest: str | None = None
+
+
+class ProposalHeadMovedError(ProposalAdmissionError):
+    """Accepted main moved between the coordinate a submission evaluated at and its publication.
+
+    Raised under the activation lock before any ref moves or record is written,
+    so a caller can evaluate again at the new head or refuse; nothing of the
+    stale submission reaches the ledger.
+    """
+
+
+class ProposalCandidateMismatchError(ProposalAdmissionError):
+    """The candidate a submission evaluated is not the one its caller bound it to.
+
+    Raised after evaluation and before publication, so nothing reaches the
+    ledger: a caller that preflighted a candidate at one coordinate never has
+    a different candidate published in its name.
+    """
+
+
+def _require_executed_derivations(
+    outcome: CandidateEvaluation,
+    *,
+    current_tree: Mapping[str, bytes],
+    authorized: Mapping[str, bytes],
+) -> None:
+    """Gate new execution claims at the live door, including raw and cached candidates.
+
+    The terminal's fresh mandate callback vouches for exact output bytes. Neither
+    a wire payload nor an operation-looking ref confers that authority. Historical
+    law evaluation remains frozen; untouched Claims and their mechanical retirement
+    or ClaimType succession do not assert a new execution.
+    """
+
+    if outcome.candidate is None:
+        return
+    for member in outcome.candidate.members:
+        path = member.path
+        if not path.startswith("claims/") or not path.endswith(".json"):
+            continue
+        content = outcome.tree.get(path)
+        previous = current_tree.get(path)
+        if content is None or content == previous:
+            continue
+        claim = parse_claim(content, path=path)
+        if claim.backing.reducer_digest is None:
+            continue
+        if previous is not None and claim_preserves_derivation(
+            claim, predecessor=parse_claim(previous, path=path)
+        ):
+            continue
+        if authorized.get(path) != content:
+            raise ProposalAdmissionError(
+                "cruxible.authoring.derivation_requires_execution: "
+                f"{path} must be the exact output of an authorized Procedure terminal"
+            )
+
+
+class ProposalService:
+    """Daemon-only PB-C proposal service; it never updates main or accepted state."""
+
+    def __init__(
+        self,
+        transport: ProposalTransportProtocol,
+        *,
+        accepted: AcceptedProjectionCoordinate,
+        bodies: BodyVerifierProtocol,
+        evidence: ProposalEvidenceProtocol,
+        review_projection_lock: Callable[[], AbstractContextManager[None]],
+        note_index_provider: Callable[..., ProposalNoteIndex],
+        receive_limits: ProposalReceiveLimits = ProposalReceiveLimits(),
+        current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
+        promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+        producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
+        query_facts_provider: ClaimQueryFactsProvider | None = None,
+        workspace_advertiser: Callable[[], WorkspaceAdvertisement] | None = None,
+        require_writable: Callable[[], None] | None = None,
+        ledger_publisher: Callable[[], object] | None = None,
+        tree_state_provider: TreeStateProvider | None = None,
+        accepted_tree_provider: Callable[[str], Mapping[str, bytes]] | None = None,
+        claim_law_provider: ClaimLawEvidenceProvider | None = None,
+        attestation_principal_provider: AttestationPrincipalProvider | None = None,
+        accepted_referents_provider: AcceptedReferentsProvider | None = None,
+        historical_artifact_provider: HistoricalArtifactProvider | None = None,
+        subject_assignment_authority: SubjectAssignmentAuthority | None = None,
+        prepared_evaluations: PreparedEvaluationAdapter | None = None,
+        principal_registry_provider: Callable[
+            [AcceptedProjectionCoordinate], PrincipalRegistrySnapshot
+        ]
+        | None = None,
+        active_principal_provider: Callable[[AcceptedProjectionCoordinate, str], None]
+        | None = None,
+    ) -> None:
+        self.transport = transport
+        self.accepted = accepted
+        self.bodies = bodies
+        self.evidence = evidence
+        self._review_projection_lock = review_projection_lock
+        self._note_index = note_index_provider
+        self.receive_limits = receive_limits
+        self._current_coordinate = current_coordinate or (lambda: accepted)
+        self.promotion_verifier = promotion_verifier
+        self.producer_receipt_resolver = producer_receipt_resolver
+        self.query_facts_provider = query_facts_provider
+        self.workspace_advertiser = workspace_advertiser
+        # Instance-lifecycle gate. Reads bind this service too (preflight reads
+        # its limits and verifiers), so the terminal state is checked where the
+        # write happens, not where the service is constructed.
+        self._require_writable = require_writable or (lambda: None)
+        # Publication, not persistence: called after the last ledger write of a
+        # submission, and by contract it never raises.
+        self._ledger_publisher = ledger_publisher or (lambda: None)
+        self.claim_law_provider = claim_law_provider
+        self.attestation_principal_provider = attestation_principal_provider
+        self.accepted_referents_provider = accepted_referents_provider
+        self.historical_artifact_provider = historical_artifact_provider
+        self.subject_assignment_authority = subject_assignment_authority
+        self.tree_state_provider = tree_state_provider
+        self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
+        self._prepared_evaluations = prepared_evaluations
+        self.principal_registry_provider = principal_registry_provider
+        self._active_principal_provider = active_principal_provider
+
+    def _evaluate_admission(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        request: ProposalAdmissionRequest,
+        candidate_tree: Mapping[str, bytes],
+        timestamp: str,
+        authorize: Callable[
+            [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
+        ]
+        | None,
+        prepared: PreparedEvaluationScope | None,
+        settle_submission: ProposalSettleSubmission | None,
+        expected_candidate: tuple[str, str] | None,
+        readmits: ProposalReadmissionLink | None,
+        settlement: SettlementHandoff | None = None,
+    ) -> _AdmissionEvaluation:
+        """Everything a submission does before its first write: one shared path.
+
+        `submit` publishes what this returns; `preview` reports it and writes
+        nothing. Both reach the same verdict on the same tree because both run
+        exactly this.
+        """
+        delegated_mandate_digest = (
+            settle_submission.mandate_digest
+            if settle_submission is not None and settle_submission.mode == "delegated"
+            else None
+        )
+        validate_candidate_timestamp(timestamp)
+        if readmits is not None and request.source_compilation_digest != readmits.operation_digest:
+            raise ProposalAdmissionError(
+                "a readmission's source compilation digest must be its operation digest"
+            )
+        if "propose" not in actor.capabilities:
+            raise ProposalAdmissionError("authenticated actor lacks the propose capability")
+        current = self._current_coordinate()
+        namespace = request.target_ref.split("/")[2]
+        if namespace != actor.actor_id:
+            raise ProposalAdmissionError(
+                "proposal ref namespace differs from the authenticated actor"
+            )
+        expected_oid_length = 40 if self.transport.object_format() == "sha1" else 64
+        if len(request.proposed_base_oid) != expected_oid_length:
+            raise ProposalAdmissionError("proposed base OID length differs from object format")
+        if (
+            current.instance_id != self.accepted.instance_id
+            or current.repository_path != self.accepted.repository_path
+            or current.git_object_format != self.accepted.git_object_format
+        ):
+            raise ProposalAdmissionError("current coordinate names a different instance ledger")
+        if current.git_oid == self.accepted.git_oid and current != self.accepted:
+            raise ProposalAdmissionError("current coordinate contradicts the verified base")
+        if self.transport.read_main() != current.git_oid:
+            raise ProposalAdmissionError("current coordinate is not the accepted main ref")
+        current_tree = self._accepted_tree_provider(current.git_oid)
+        try:
+            if self._active_principal_provider is None:
+                principal_registry_from_tree(
+                    current_tree, semantic_root=current.semantic_root
+                ).require_active(actor.actor_id)
+            else:
+                self._active_principal_provider(current, actor.actor_id)
+        except PrincipalIntegrityError as exc:
+            raise ProposalAdmissionError(
+                "cruxible.proposal.creator_principal_invalid: authenticated actor does not "
+                "resolve to an active Principal at the accepted coordinate"
+            ) from exc
+        authorized_derivations = (
+            {} if authorize is None else (authorize(current, current_tree) or {})
+        )
+
+        # No rebase means both roles name the exact tree just read. Keep this
+        # operation-local proof instead of transferring every blob a second time.
+        base_tree = (
+            current_tree
+            if request.proposed_base_oid == current.git_oid
+            else self._stale_base_tree(request.proposed_base_oid)
+        )
+        validated_tree = validate_proposal_tree(
+            candidate_tree,
+            limits=self.receive_limits,
+            base_tree=base_tree,
+        )
+        is_rebase = current.git_oid != request.proposed_base_oid
+        # Evaluation runs BEFORE the ref moves. Two things depend on it: the
+        # commit message is the change set's own member summary, which only the
+        # evaluated candidate knows; and an evaluation that raises now leaves
+        # the actor's ref exactly where it was, instead of advancing it onto a
+        # commit no admission record will ever name.
+        outcome = (
+            None
+            if prepared is None
+            else prepared.take(
+                owner=self._prepared_evaluations,
+                current=current,
+                actor=actor,
+                request=request,
+                limits=self.receive_limits,
+                timestamp=timestamp,
+                tree=validated_tree,
+                bodies=self.bodies,
+            )
+        )
+        if delegated_mandate_digest is not None:
+            outcome = None
+        # What backs the outcome, for a settlement in this same request: the
+        # preflight scope it was taken from, or a fresh observer of this one.
+        observer = prepared if outcome is not None else None
+        if outcome is None:
+            observer = None if settlement is None else settlement.observer()
+            outcome = evaluate_proposal_tree(
+                base_tree=base_tree,
+                current_tree=current_tree,
+                proposed_tree=validated_tree,
+                current=current,
+                bodies=self.bodies if observer is None else observer.bodies(self.bodies),
+                timestamp=timestamp,
+                rebased=is_rebase,
+                base_changes=(
+                    self._changed_paths(request.proposed_base_oid, current.git_oid)
+                    if is_rebase
+                    else None
+                ),
+                actor_id=actor.actor_id,
+                claim_type_expansions=request.claim_type_expansions,
+                promotion_verifier=(
+                    self.promotion_verifier
+                    if observer is None
+                    else observer.promotion(self.promotion_verifier)
+                ),
+                producer_receipt_resolver=(
+                    self.producer_receipt_resolver
+                    if observer is None
+                    else observer.receipts(self.producer_receipt_resolver)
+                ),
+                query_facts_provider=(
+                    self.query_facts_provider
+                    if observer is None
+                    else observer.facts(self.query_facts_provider)
+                ),
+                tree_state_provider=self.tree_state_provider,
+                principal_registry_provider=self.principal_registry_provider,
+                retained_tree=self._accepted_tree_provider,
+                claim_law_provider=self.claim_law_provider,
+                attestation_principal_provider=self.attestation_principal_provider,
+                accepted_referents_provider=self.accepted_referents_provider,
+                historical_artifact_provider=self.historical_artifact_provider,
+                subject_assignment_authority=self.subject_assignment_authority,
+                delegated_mandate_digest=delegated_mandate_digest,
+                settle_condition=None if settlement is None else settlement.settle_condition,
+            )
+        _require_executed_derivations(
+            outcome, current_tree=current_tree, authorized=authorized_derivations
+        )
+        if (
+            expected_candidate is not None
+            and expected_candidate[0] == current.git_oid
+            and (
+                outcome.candidate is None
+                or outcome.candidate.candidate_digest != expected_candidate[1]
+            )
+        ):
+            raise ProposalCandidateMismatchError(
+                "the evaluated candidate differs from the one this submission was bound to"
+            )
+        return _AdmissionEvaluation(
+            current=current,
+            validated_tree=validated_tree,
+            is_rebase=is_rebase,
+            outcome=outcome,
+            observer=observer,
+            delegated_mandate_digest=delegated_mandate_digest,
+        )
+
+    def _stale_base_tree(self, oid: str) -> Mapping[str, bytes]:
+        """A proposed base behind the head, as the accepted snapshot a lowering forked.
+
+        An accepted generation's tree comes from the accepted-tree provider (shared,
+        advanced by deltas, the very root a lowering at that base forked), so
+        receive validation and the rebase can work from the proposal's edits.
+        Anything that provider cannot serve is read whole, exactly as before.
+        """
+        try:
+            return self._accepted_tree_provider(oid)
+        except CruxibleError:
+            return self.transport.read_tree(oid)
+
+    def _changed_paths(self, base_oid: str, head_oid: str) -> frozenset[str] | None:
+        """Every path whose bytes differ between two commits, from Git's structural diff."""
+        changed_entries = getattr(self.transport, "changed_entries", None)
+        if changed_entries is None:
+            return None
+        return frozenset(change.path for change in changed_entries(base_oid, head_oid))
+
+    def preview(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        request: ProposalAdmissionRequest,
+        candidate_tree: Mapping[str, bytes],
+        timestamp: str,
+        readmits: ProposalReadmissionLink | None = None,
+        authorize: Callable[
+            [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
+        ]
+        | None = None,
+        settle_submission: ProposalSettleSubmission | None = None,
+    ) -> ProposalPreview:
+        """Evaluate one candidate tree exactly as `submit` would, and write nothing.
+
+        The same admission checks, receive limits, rebase and evaluation run as
+        for a submission; what is skipped is everything from the first ref move
+        on (the commit, the records, the notes, publication and advertisement).
+        """
+        # A preview refuses exactly where the submission would.
+        self._require_writable()
+        evaluated = self._evaluate_admission(
+            actor=actor,
+            request=request,
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+            authorize=authorize,
+            prepared=None,
+            settle_submission=settle_submission,
+            expected_candidate=None,
+            readmits=readmits,
+        )
+        candidate = evaluated.outcome.candidate
+        return ProposalPreview(
+            evaluation=ProposalPreviewEvaluation(
+                verdict="candidate" if candidate is not None else "refused",
+                evaluated_base_oid=evaluated.current.git_oid,
+                rebased=evaluated.is_rebase,
+                candidate_digest=None if candidate is None else candidate.candidate_digest,
+                diagnostics=evaluated.outcome.diagnostics,
+            ),
+            candidate=candidate,
+        )
+
+    @timed_operation("propose")
+    @timed_phase("admission")
+    @unpositioned_operation
+    def submit(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        request: ProposalAdmissionRequest,
+        candidate_tree: Mapping[str, bytes],
+        timestamp: str,
+        authorize: Callable[
+            [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
+        ]
+        | None = None,
+        prepared: PreparedEvaluationScope | None = None,
+        settle_submission: ProposalSettleSubmission | None = None,
+        expected_candidate: tuple[str, str] | None = None,
+        readmits: ProposalReadmissionLink | None = None,
+        confirm_head: Callable[[str], None] | None = None,
+        procedure_operation: str | None = None,
+        originating_line: OriginatingLine | None = None,
+        handoff: SettlementHandoff | None = None,
+    ) -> ProposalResult:
+        """Admit one candidate tree under the actor's ref.
+
+        `authorize`, when given, is called with the exact current coordinate and
+        tree this submission evaluates against, after the actor is known to be
+        active there and before any ref moves or record is written. A caller
+        whose authority to propose lives in accepted state (a Procedure's
+        mandate) checks it there. That coordinate is then verified unchanged
+        under the activation lock immediately before the first ref moves, and
+        cannot change until the last record is written: the accepted authority
+        coordinate is verified atomically with first publication, and
+        contention raises `ProposalHeadMovedError` before any effect is
+        committed so the caller can evaluate again or refuse.
+
+        Only a Procedure terminal's callback returns a path-to-bytes mapping of
+        its computed Claim outputs. Those exact bytes may introduce derivation
+        provenance; ordinary callers and callbacks returning None may not.
+
+        `prepared` may reuse a same-call evaluation; it never replaces the
+        fresh authorization callback or the publication head check.
+
+        `expected_candidate`, when given, is ``(base_oid, candidate_digest)``:
+        the candidate the caller already evaluated at that accepted base. When
+        this submission evaluates at that same base, any other outcome raises
+        `ProposalCandidateMismatchError` before publication; at a head that has
+        since moved, the fresh evaluation stands on its own.
+
+        `settle_submission` is the settle terminal's alone, and is retained on
+        the admission. A `delegated` submission is evaluated under the named
+        mandate's delegated authority, so it carries no approval requirement and
+        only activation under the same mandate can reproduce it; a `fallback`
+        is evaluated as an ordinary proposal. No public door passes it.
+
+        `readmits` is the readmit service's alone, and is retained on the
+        admission: the stale proposal this one re-admits. The record refuses it
+        unless the request's `source_compilation_digest` is exactly its
+        operation digest. No public door passes it either.
+
+        `procedure_operation` is the Procedure terminal door's alone, and is
+        retained on the admission: the operation whose terminal submitted it,
+        the binding its item reasons require. No public door passes it.
+
+        `confirm_head`, when given, is called with the accepted head this
+        submission evaluated at, under the activation lock and after that head
+        is verified to still be main, before the first ref moves: a caller
+        pinned to the head its preview saw (R12 ``at``) refuses there, so a
+        head accepted after the caller's own check is never admitted against.
+
+        `handoff`, when given, receives the durable submission (its records,
+        evaluated tree and coordinate) for the caller's own activation in the
+        same request; nothing else ever reads it.
+        """
+        self._require_writable()
+        evaluated = self._evaluate_admission(
+            actor=actor,
+            request=request,
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+            authorize=authorize,
+            prepared=prepared,
+            settle_submission=settle_submission,
+            expected_candidate=expected_candidate,
+            readmits=readmits,
+            settlement=handoff,
+        )
+        refuse_write_while_previewing("proposal submission")
+        current = evaluated.current
+        validated_tree = evaluated.validated_tree
+        is_rebase = evaluated.is_rebase
+        outcome = evaluated.outcome
+        # A refused proposal has no members to summarize, so it keeps the bare
+        # subject the ledger has always written for it -- unless the author said
+        # why they proposed it, which is still true of a set that did not pass.
+        message = proposal_commit_message(
+            outcome.candidate.members if outcome.candidate is not None else (),
+            rationale=request.rationale,
+        )
+
+        # Publication is one critical section under the review lock and the
+        # ledger's activation lock, in that order (the order every existing
+        # nesting uses). Activation moves accepted main only under the same
+        # activation lock, so the head this submission evaluated at -- and, for
+        # a caller that passed `authorize`, was authorized at -- is verified
+        # unchanged here and cannot change until every record below is written.
+        # Evaluation stays outside: it is a pure function of `current_tree`.
+        with self._review_projection_lock(), self.transport.activation_lock():
+            if self.transport.read_main() != current.git_oid:
+                raise ProposalHeadMovedError(
+                    "accepted main moved between evaluation and publication; evaluate again "
+                    "at the current head"
+                )
+            if confirm_head is not None:
+                confirm_head(current.git_oid)
+            existing = self.transport.read_proposal_ref(request.target_ref)
+            # Finish retaining any complete prior active admission before reusing
+            # its author slot, including a crash after admission but before pinning.
+            if existing is not None:
+                prior = self._note_index(oids=(existing,))
+                for pid, admission in prior.admissions.items():
+                    evaluation = prior.evaluations[pid]
+                    summary = prior.candidates.get(evaluation.candidate_digest or "")
+                    if evaluation.verdict == "refused":
+                        self.transport.archive_proposal_commits((admission.candidate_commit_oid,))
+                    if (
+                        summary is not None
+                        and summary.parent_semantic_root == current.semantic_root
+                        and evaluation.evaluated_tree_oid is not None
+                    ):
+                        review_oid = self.transport.proposal_review_commit(
+                            tree_oid=evaluation.evaluated_tree_oid,
+                            base_oid=evaluation.evaluated_base_oid,
+                            actor_id=admission.actor_id,
+                            timestamp=admission.admitted_at,
+                            message=summary.message(rationale=admission.rationale),
+                        )
+                        self.transport.retain_proposal_review(pid, review_oid)
+            # One evaluated snapshot, parented on its accepted base. Neither a
+            # previous submission nor an intermediate authored tree is an ancestor.
+            commit_oid, tree_oid = self.transport.create_proposal_commit(
+                outcome.tree if outcome.candidate is not None else validated_tree,
+                base_oid=current.git_oid,
+                target_ref=request.target_ref,
+                actor_id=actor.actor_id,
+                timestamp=timestamp,
+                expected_ref_oid=existing,
+                message=message,
+            )
+            evaluated_tree_oid = tree_oid if outcome.candidate is not None else None
+            # The immutable admission names exactly the published candidate.
+            proposal_id = proposal_admission_id(
+                actor_id=actor.actor_id,
+                request=request,
+                candidate_commit_oid=commit_oid,
+                candidate_tree_oid=evaluated_tree_oid or tree_oid,
+                admitted_at=timestamp,
+                limits=self.receive_limits,
+                originating_line=originating_line,
+            )
+            admission = ProposalAdmissionRecord(
+                proposal_id=proposal_id,
+                actor_id=actor.actor_id,
+                target_ref=request.target_ref,
+                proposed_base_oid=request.proposed_base_oid,
+                candidate_commit_oid=commit_oid,
+                candidate_tree_oid=evaluated_tree_oid or tree_oid,
+                source_compilation_digest=request.source_compilation_digest,
+                claim_type_expansions=request.claim_type_expansions,
+                limits=self.receive_limits,
+                admitted_at=timestamp,
+                rationale=request.rationale,
+                settle_submission=settle_submission,
+                readmits=readmits,
+                procedure_operation=procedure_operation,
+                originating_line=originating_line,
+            )
+            candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
+            try:
+                evaluation = ProposalEvaluationRecord(
+                    proposal_id=proposal_id,
+                    verdict="candidate" if outcome.candidate is not None else "refused",
+                    evaluated_base_oid=current.git_oid,
+                    evaluated_tree_oid=(
+                        evaluated_tree_oid if outcome.candidate is not None else None
+                    ),
+                    rebased=is_rebase,
+                    candidate_digest=candidate_value,
+                    diagnostics=outcome.diagnostics,
+                    claim_admission_accounts=outcome.claim_admission_accounts,
+                    evaluated_at=timestamp,
+                )
+            except ValidationError as exc:
+                raise ProposalEvaluationIntegrityError(
+                    "proposal evaluation record failed deterministic validation"
+                ) from exc
+            affected = {commit_oid}
+            if outcome.candidate is not None and evaluated_tree_oid is not None:
+                affected.add(
+                    self.transport.proposal_review_commit_oid(
+                        tree_oid=evaluated_tree_oid,
+                        base_oid=current.git_oid,
+                        actor_id=actor.actor_id,
+                        timestamp=timestamp,
+                        message=message,
+                    )
+                )
+            before = self._note_index(oids=affected)
+            previous_notes = before.validate_and_snapshot(self.transport, affected)
+            # The admission is written LAST and is the group's commit point: an
+            # admission on disk always has its evaluation and candidate beside
+            # it. A crash before it leaves a ref no admission names (plus
+            # content-addressed records nothing points at), which a resubmission
+            # on the same ref completes; an admission without its evaluation is
+            # not a crash state but corrupt evidence, and reads as such.
+            with self.evidence.publication():
+                if outcome.candidate is not None:
+                    self.evidence.write_candidate(outcome.candidate)
+                self.evidence.write_evaluation(evaluation)
+                self.evidence.write_admission(admission)
+            if outcome.candidate is not None:
+                self.transport.retain_proposal_review(proposal_id, commit_oid)
+            else:
+                self.transport.archive_proposal_commits((commit_oid,))
+            # Original and advisory aliases use the same complete group, so a
+            # second admission sharing a commit cannot overwrite the first.
+            after = self._note_index(
+                oids=affected,
+                candidate_digests=() if candidate_value is None else (candidate_value,),
+            )
+            if candidate_value is not None:
+                # The candidate can complete older interrupted admissions with
+                # other aliases. Include their groups in the publication delta.
+                affected.update(after.oids_for_candidate(candidate_value))
+            after.publish(self.transport, affected, previous=previous_notes)
+            # Prove publication while activation is still excluded. Once the
+            # lock is released, a later acceptance may legitimately move main;
+            # that cannot turn this durable submission into a failed request.
+            if self.transport.read_main() != current.git_oid:
+                raise ProposalIntegrityError("proposal evaluation changed accepted main")
+        # Every byte this submission writes is durable, and the integrity proof
+        # above has passed. Publishing here rather than earlier means the mirror
+        # is only ever asked to carry a proposal the daemon has already kept.
+        self._ledger_publisher()
+        if self.workspace_advertiser is None:
+            advertisement = NOT_ATTACHED_ADVERTISEMENT
+        else:
+            try:
+                advertisement = self.workspace_advertiser()
+            except BaseException:
+                advertisement = WorkspaceAdvertisement(
+                    status="failed",
+                    workspace_path=None,
+                    failure_code="unexpected_failure",
+                )
+        result = ProposalResult(
+            admission=admission,
+            evaluation=evaluation,
+            candidate=outcome.candidate,
+            workspace_advertisement=advertisement,
+        )
+        if handoff is not None and outcome.candidate is not None:
+            handoff.submitted(
+                result=result,
+                tree=outcome.tree,
+                current=current,
+                evaluation=None
+                if evaluated.observer is None
+                else evaluated.observer.admitted(
+                    outcome,
+                    current=current,
+                    actor_id=actor.actor_id,
+                    timestamp=timestamp,
+                    mandate_digest=evaluated.delegated_mandate_digest,
+                    claim_type_expansions=request.claim_type_expansions,
+                ),
+            )
+        return result
+
+
+__all__ = [
+    "AuthenticatedActor",
+    "CandidateEvaluation",
+    "ProposalAdmissionRecord",
+    "ProposalAdmissionRequest",
+    "ProposalEvaluationRecord",
+    "ProposalEvidenceProtocol",
+    "ProposalCandidateMismatchError",
+    "ProposalHeadMovedError",
+    "ProposalReceiveLimits",
+    "ProposalWithdrawalRecord",
+    "ProposalPreview",
+    "ProposalResult",
+    "ProposalService",
+    "ProposalTransportProtocol",
+    "ExhaustPromotionVerifierProtocol",
+    "claim_type_expansions_from_candidate",
+    "deterministic_rebase",
+    "deterministic_rebase_v2",
+    "evaluate_proposal_tree",
+    "validate_proposal_tree",
+]

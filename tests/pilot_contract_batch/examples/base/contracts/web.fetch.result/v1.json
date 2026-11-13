@@ -1,0 +1,14 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "The exact body the origin sent, as one Capture. Its HTTP coordinate (method, URL, status, headers) and observation time are the Capture's own, never fields here.",
+  "fields": {
+    "capture": {
+      "type": {
+        "capture_kind": "*",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "web.fetch.result",
+  "version": 1
+}

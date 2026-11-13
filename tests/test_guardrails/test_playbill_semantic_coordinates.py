@@ -1,0 +1,458 @@
+"""Pin Cruxible's current semantic coordinates at the reviewed C1 cut.
+
+Update recipe: change an expected row only with a reviewed semantic-law change,
+increment its semantic revision (or add a post-release successor), recompute the
+``playbill-law-v1`` digest, and atomically review the compiler coordinate plus
+the authoring catalog/snapshot re-pins required by that change.
+"""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+
+import cruxible_client.contracts.captures as capture_contracts
+import cruxible_core.compiler.compiler as compiler_module
+from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_digest, typed_digest
+from cruxible_client.contracts.errors import ReseedRequired
+from cruxible_client.contracts.laws import (
+    ACCEPTANCE_LAWS,
+    APPROVAL_POLICY_ACCEPTANCE_LAW,
+    ATTESTATION_ACCEPTANCE_LAW,
+    CAPABILITY_ACCEPTANCE_LAW,
+    CAPTURE_CONTRACT_ACCEPTANCE_LAW,
+    CLAIM_ACCEPTANCE_LAW,
+    CLAIM_LAW,
+    CLAIM_TYPE_ACCEPTANCE_LAW,
+    CONTRACT_ACCEPTANCE_LAW,
+    DOCUMENT_ACCEPTANCE_LAW,
+    EXHAUST_PROMOTION_ACCEPTANCE_LAW,
+    LIGHT_CAPTURE_CONTRACT_LAW,
+    LINE_V6_ACCEPTANCE_LAW,
+    NAMED_PROVIDER_IDENTITY_LAW,
+    NAMED_REFERENCE_LAWS,
+    NOTE_ACCEPTANCE_LAW,
+    PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
+    PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
+    PROVIDER_ACCEPTANCE_LAW,
+    PROVIDER_BUILD_ACCEPTANCE_LAW,
+    PROVIDER_V2_ACCEPTANCE_LAW,
+    PROVIDER_V3_ACCEPTANCE_LAW,
+    RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
+    RUNBOOK_ACCEPTANCE_LAW,
+    SUBJECT_ACCEPTANCE_LAW,
+    SUBJECT_KIND_ACCEPTANCE_LAW,
+    InstalledAcceptanceLaw,
+)
+from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_core.compiler.compiler import (
+    CURRENT_COMPILER,
+    CURRENT_COMPILER_REVISION,
+    compiler_revision_label,
+    current_compiler_coordinate,
+    require_current_compiler,
+)
+from cruxible_core.proposals.candidate_cards import CARD_RENDERER_DIGEST
+
+LAW_COORDINATES: tuple[
+    tuple[InstalledAcceptanceLaw, str, str, int, str],
+    ...,
+] = (
+    (
+        PROVIDER_BUILD_ACCEPTANCE_LAW,
+        "cruxible.provider.v4",
+        "cruxible-provider-v4",
+        1,
+        "sha256:526170687d3add19411e11fc7d9cc7e74c7a6305e1ad564a8ba8b5c5c30de05f",
+    ),
+    (
+        LINE_V6_ACCEPTANCE_LAW,
+        "playbill.line.v6",
+        "playbill-line-v6",
+        1,
+        "sha256:4e145cfe2c8250d7851d9383137686cc6591d2b5219cd12b18e271db555b3b97",
+    ),
+    (
+        SUBJECT_KIND_ACCEPTANCE_LAW,
+        "cruxible.subject-kind.v2",
+        "cruxible-subject-kind-v2",
+        1,
+        "sha256:96d751b5c1a67e2ea7d437a5e309c303b82cb514373f3339d621a93f9f0d6cd8",
+    ),
+    (
+        CONTRACT_ACCEPTANCE_LAW,
+        "cruxible.contract.v1",
+        "cruxible-contract-v1",
+        1,
+        "sha256:ef15ee167046bf9d2a08e7df6a4690338aee8c48d65f606e964da7e00e778a37",
+    ),
+    (
+        CAPABILITY_ACCEPTANCE_LAW,
+        "cruxible.capability.v1",
+        "cruxible-capability-v1",
+        1,
+        "sha256:9be3b5f24927879011aa0ed3b65cce65e71208bbb7e4a31c3249738634fe9f90",
+    ),
+    (
+        PROVIDER_V3_ACCEPTANCE_LAW,
+        "playbill.provider.v3",
+        "playbill-provider-v3",
+        1,
+        "sha256:dd33e1374ee6427ca41698f405fdf580f3887e68edc37c2269fa7b7fba819f49",
+    ),
+    (
+        RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
+        "cruxible.resolution-contract.v1",
+        "playbill-resolution-contract-v1",
+        1,
+        "sha256:d2255339f91b465d0f98e7770e052adf08a1775cae7c670ed5d8884410685913",
+    ),
+    (
+        ATTESTATION_ACCEPTANCE_LAW,
+        "cruxible.accepted-claim-attestation.v1",
+        "playbill-claim-attestation-envelope-v2",
+        1,
+        "sha256:9dd4ea044be49926f2d5d82e5d265b83e10dafbd7868631ef4d95fc607effd2b",
+    ),
+    (
+        NOTE_ACCEPTANCE_LAW,
+        "cruxible.note.v1",
+        "playbill-note-v1",
+        1,
+        "sha256:e16424467bd4abb90aaa76ea25803ab5dc3d393e31c190eba38791536b0b22ac",
+    ),
+    (
+        RUNBOOK_ACCEPTANCE_LAW,
+        "cruxible.runbook.v1",
+        "cruxible-runbook-v1",
+        1,
+        "sha256:975f59d99e2562e152bf1741d221de34474e17456066fa2954b0005997e878a5",
+    ),
+    (
+        APPROVAL_POLICY_ACCEPTANCE_LAW,
+        "playbill.approval-policy.v1",
+        "playbill-approval-policy-v1",
+        1,
+        "sha256:027ad99ab0bde3c646371498d16ca8cd3005646fcfc9ac0f4ef3848fa2f2d631",
+    ),
+    (
+        PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
+        "playbill.procedure-runtime-policy.v1",
+        "playbill-procedure-runtime-policy-v1",
+        1,
+        "sha256:ed84565df9497e9beaf88eeba107ec540d18a18778b9d98086db12ac7e5164f1",
+    ),
+    (
+        DOCUMENT_ACCEPTANCE_LAW,
+        "playbill.document.v1",
+        "playbill-document-v1",
+        4,
+        "sha256:90c2549db6b3eb98722a2adab2d5dd5f0eecf87bc90b539fc70407f982dd32ab",
+    ),
+    (
+        PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+        "playbill.principal-lifecycle.v1",
+        "playbill-principal-v1",
+        6,
+        "sha256:21fcbf048960ddf7d9fc9ca51dfdb45e0a0e994708be32f81e946e18cc92eeb3",
+    ),
+    (
+        SUBJECT_ACCEPTANCE_LAW,
+        "playbill.subject.v1",
+        "playbill-subject-v1",
+        3,
+        "sha256:656b60c438b61bf018bd4ae2e473d71fe08a47c450edf261e2c4adf86339ecd2",
+    ),
+    (
+        CLAIM_TYPE_ACCEPTANCE_LAW,
+        "cruxible.claim-type.v10",
+        "cruxible-claim-type-v11",
+        1,
+        "sha256:dab54dd9366932014f2f396f3a178424dd996394a677fd6cfaecbbd5c61558db",
+    ),
+    (
+        CAPTURE_CONTRACT_ACCEPTANCE_LAW,
+        "playbill.capture-contract.v1",
+        "playbill-capture-contract-v1",
+        4,
+        "sha256:dafcf7d1104fec1da02c423478d801fe7e4060e78319ebe152d4789a41e2f25e",
+    ),
+    (
+        CLAIM_ACCEPTANCE_LAW,
+        "playbill.claim.v4",
+        "playbill-claim-v4",
+        2,
+        "sha256:690ecc226bcaf24f35c6f786b986c176359625dcd2b35b1a229edc7205afacf7",
+    ),
+    (
+        PROVIDER_ACCEPTANCE_LAW,
+        "playbill.provider.v1",
+        "playbill-provider-v1",
+        3,
+        "sha256:421299d256d325476114cd527325909c354aecab66eae748f380fd38d6158b51",
+    ),
+    (
+        PROVIDER_V2_ACCEPTANCE_LAW,
+        "playbill.provider.v2",
+        "playbill-provider-v2",
+        1,
+        "sha256:70cabd3f8e60587e32339678a041f906a0059f443451c6afb3478556f5ae0640",
+    ),
+    (
+        PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
+        "playbill.procedure-mandate.v2",
+        "playbill-procedure-mandate-v2",
+        1,
+        "sha256:5caa3dded0dc3c3c2c02eac605f95f8eb18ddd2a34b5701d18f9c20e10fc6124",
+    ),
+    (
+        PROCEDURE_MANDATE_ACCEPTANCE_LAW,
+        "playbill.procedure-mandate.v1",
+        "playbill-procedure-mandate-v1",
+        1,
+        "sha256:dc874c06567d0405554a80cbc12f2f586765b9c6fcbe03a60634b72a06312ae9",
+    ),
+    (
+        EXHAUST_PROMOTION_ACCEPTANCE_LAW,
+        "playbill.exhaust-promotion.v1",
+        "playbill-exhaust-promotion-v1",
+        3,
+        "sha256:8ec42cbce3d28a995832a9a255b7618ae4a4de7078d4d85047c180b56f869920",
+    ),
+)
+
+
+LAW_COORDINATES += (
+    (
+        LIGHT_CAPTURE_CONTRACT_LAW,
+        "cruxible.capture-contract.v2",
+        "cruxible-capture-contract-v2",
+        1,
+        "sha256:49b22140bec5b033c02b238e4be3c28fc665a93e5fc831aa6fb60febf2621830",
+    ),
+)
+
+
+LAW_COORDINATES += (
+    (
+        NAMED_REFERENCE_LAWS[0],
+        "cruxible.capture-contract.named.v1",
+        "cruxible-capture-contract-v4",
+        1,
+        "sha256:e2d78b0e54a0055bf9d100d1726f5fae6c32b1658532ab85ba093f4717c45be3",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[1],
+        "cruxible.procedure.named.v1",
+        "cruxible-procedure-v4",
+        1,
+        "sha256:cde6301632d7fd5a692b98987a82e88546e2e796f8f569f4c9e59ffed9e5b251",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[2],
+        "cruxible.query-definition.named.v1",
+        "cruxible-query-definition-v3",
+        1,
+        "sha256:f39c88c44f5fe5cf49a61413d7c754790229050de06b21b1e831c28d52a90562",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[3],
+        "cruxible.trigger.named.v1",
+        "cruxible-trigger-v2",
+        1,
+        "sha256:b3ec92b76ee0ccb89e8c3c22f67f6cd5f2faa2ba77a597fc2f274f4f149f15fe",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[4],
+        "cruxible.line.named.v1",
+        "cruxible-line-v8",
+        1,
+        "sha256:5a348c529ba5e86c6fe1e416fc0a06e04c9b6c382b9eca9c3ae1c18ad4226b98",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[5],
+        "cruxible.provider.named.v1",
+        "cruxible-provider-v6",
+        1,
+        "sha256:949d9d7219df87ef73187c23a5db31bb346c808b1f60e77680fcde6b3f38ddac",
+    ),
+    (
+        PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
+        "cruxible.procedure-mandate.v3",
+        "cruxible-procedure-mandate-v3",
+        1,
+        "sha256:dc26f33bab27da535fe802668a957e8218c5ce5c39347cee07992965255b0522",
+    ),
+    (
+        PROCEDURE_MANDATE_V4_ACCEPTANCE_LAW,
+        "cruxible.procedure-mandate.v4",
+        "cruxible-procedure-mandate-v4",
+        1,
+        "sha256:eada1592c6e4bd4e10f8b9935e0f1f273a7a5ca63916ced3bb0f38afe579797b",
+    ),
+    (
+        NAMED_PROVIDER_IDENTITY_LAW,
+        "cruxible.provider-identity.v3",
+        "cruxible-provider-identity-v3",
+        1,
+        "sha256:eeee10b2d9b95eea4bf55bd47a0500c63657ebb202b9e0c659faff3eb0644e5a",
+    ),
+)
+
+
+def test_playbill_acceptance_law_coordinates_are_exact() -> None:
+    """One installed law per artifact tag, and nothing else in the registry."""
+
+    assert CLAIM_LAW == CLAIM_ACCEPTANCE_LAW.coordinate
+    seen_coordinates: set[tuple[str, str]] = set()
+    seen_tags: set[str] = set()
+    for law, identifier, artifact_tag, revision, expected_digest in LAW_COORDINATES:
+        computed = typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": identifier,
+                "artifact_tag": artifact_tag,
+                "semantic_revision": revision,
+            },
+        ).tagged
+        assert computed == expected_digest
+        assert law.coordinate.identifier == identifier
+        assert law.coordinate.digest == expected_digest
+        assert law.artifact_tag == artifact_tag
+        seen_coordinates.add((identifier, expected_digest))
+        seen_tags.add(artifact_tag)
+
+    assert len(seen_coordinates) == len(seen_tags) == len(LAW_COORDINATES)
+    assert set(ACCEPTANCE_LAWS._by_coordinate) == seen_coordinates
+    assert set(ACCEPTANCE_LAWS._current_by_tag) == seen_tags
+    # Superseded coordinates retained for exact replay of their receipts only.
+    assert set(ACCEPTANCE_LAWS._historical) == {
+        (
+            "playbill.document.v1",
+            "sha256:1723c5d87c29634c6732091104bc93416fbfb2248165ec05b710d4aa20587ea8",
+        )
+    }
+
+
+def test_playbill_compiler_coordinate_is_exact() -> None:
+    expected = "sha256:3cb26c30a35e0a0918253fc93ef98c1cc54b59ebb7429545cb25d5439f8a02bc"
+    computed = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "schema_version": 1,
+            "projection_content": "claims-procedures-runtime-v1",
+            "semantic_revision": 68,
+            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+            "revision_name": "layout-extract-nodes",
+        },
+    )
+    assert computed == expected
+    assert CURRENT_COMPILER.rule_digest == expected
+    assert current_compiler_coordinate() == CURRENT_COMPILER
+
+
+def test_no_revision_literal_lives_outside_the_compiler_and_this_guard() -> None:
+    """One preimage, one place: a second copy is how the card path went dark.
+
+    Scoped to `src/cruxible_core`, which owns the semantic compiler lineage. The
+    client package carries its own `semantic_revision` literals for the
+    acceptance-law lineage, which is a different succession and not this guard's.
+    """
+
+    source_root = Path(compiler_module.__file__).resolve().parents[3]
+    offenders: list[str] = []
+    for path in sorted((source_root / "cruxible_core").rglob("*.py")):
+        if path.name == "compiler.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.keyword) and node.arg == "semantic_revision":
+                offenders.append(f"{path.name}:{node.value.lineno}")
+            if (
+                isinstance(node, ast.Constant)
+                and node.value == "semantic_revision"
+                and path.name != "compiler.py"
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert offenders == []
+
+
+def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
+    assert capture_contracts._RUN_ID_RE.pattern == (  # noqa: SLF001
+        r"^[a-z0-9][a-z0-9_.:-]{0,255}$"
+    )
+    assert capture_contracts._RUN_ID_V2_RE.pattern == (  # noqa: SLF001
+        r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$"
+    )
+
+
+def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
+    """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
+
+    assert CURRENT_COMPILER_REVISION == "layout-extract-nodes"
+    assert compiler_revision_label(CURRENT_COMPILER) == "layout-extract-nodes"
+    for earlier_digest in (
+        # Revision 67: before a Procedure stored only the thin EXTRACT node (slice 5).
+        "sha256:db6f0e64564d6af0084d9c3f8ad37a1aac36377572a700ecf281b7f260986345",
+        # Revision 66: before a provider build carried its declares (registration schema 3).
+        "sha256:c58a2438ab707a12b31eeb49c92b0d198e34769b06f812235e1ddb9767c9b035",
+        # Revision 65: before a Procedure slot named a capability.
+        "sha256:193ad7ec66d05de3353f6f386a4ca1b25da91df8cbae3798d8d334b453fa0b0d",
+        # Revision 64: before a capability pinned one Contract once (request = result).
+        "sha256:f0e44122d95b078dd9f15964ad5b1214c93d6bd1f8a55102af478a9baae1dd46",
+        # Revision 63: before the CaptureKind layout and the layout laws (contract batch, slice 5).
+        "sha256:014d047d52e15415e0967c74a301e4c17aeb1753f739b6f8da66964119425da3",
+        # Revision 62: before the Capability artifact kind.
+        "sha256:368468b4786521ebebeb2b8a9de53d9ceb2a3f9e83985cad4d613895cc59eaaf",
+        # Revision 61: before the Runbook artifact kind and Runbook Trigger targets (D-R36).
+        "sha256:fefac7fe86cb132fcc7fca35a69438dd33fffe1dba8b8f3f919cf72030ab4f85",
+        # Revision 60: before list Captures and the absence witness's members (D-R37 a).
+        "sha256:c7c4c581b7fd7de54bd8bb6afc4993f24c819dc6d87339771f08929e1993061a",
+        # Revision 59: before the Procedure template's derived-kind law (D-R37).
+        "sha256:f126a25485167dddbf38eaf6e21e3a25ca65effc9bd3428233ddc4a9b7aa2913",
+        # Revision 58: before CaptureKind body_access (C14) entered the schema set.
+        "sha256:1c690af33bd01df7f7d384705cf86e67ea8b8b4f14f99cd3dbf204bd9ce7b024",
+        # Revision 56: before the note artifact kind (workspace section about links).
+        "sha256:a0d23030f719c5467d73ee01b6c0cf9efe1b9da5ea0d2383eced21e370eb5d07",
+        # Revision 54 (settle-scope-basis-v1): Captures still wrapped, before capture = payload.
+        "sha256:ae9bfa79ced58d272e46a8b752554951905c85956697a75c2f7a0133a30ce816",
+        # Revision 53: Mandate scope by change kind only, before basis-scoped grants.
+        "sha256:d41c727371f5f1c98a883ff7aa34c1bf5d88de77853466bd79aa4c73f6a8acf4",
+        # Revision 52: authored enumeration + covers, before D-R19..D-R24.
+        "sha256:ea86ed754f352c9dc58025cc6625ce9b3a3b42915664e2d380dde531838a4ac5",
+        # Revision 49: before proposal Line attribution entered admission identity.
+        "sha256:fad4443891a10bab14a88adaf41c70db7086e6f8017c4836b2480fb92fdca046",
+        # Revision 48: native Claim prose closure, before D-R14–16.
+        "sha256:bb51555f8355fd2d3b960c259ced2217db6298d2921312ef4381fbc97c9dbaaa",
+        "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
+        # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.
+        "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924",
+        # Revision 37 (merkle-genesis-v1): the versioned admitted-run carriers.
+        "sha256:db1e61201a7691c12fd5a1e269040455ba4505dd4341ada115a4f2a790c8e942",
+        # Revision 38 (admitted-run-v1): the versioned Claim and authoring grammar.
+        "sha256:68fd35df011eb6aea18919148845925264983efa12dd558f8d611a7b03efca9f",
+        # Revision 39 (claim-grammar-v1): C4's Claim and authoring grammar alone.
+        "sha256:014d2d38585615a14144eda7f57ff500421d98a411b25014f10f0b64f405dd90",
+        # Revision 39 (nodes-extract-v1): B3's node union and extract alone.
+        "sha256:1b6fc46fd55f755f6974866cb22703a58d27ebff523efb74e0761b6514886279",
+        # Revision 40 (claim-grammar-nodes-v1): C4's grammar with B3's nodes.
+        "sha256:d190704d4c9b2a48f778902f1222b1c97640800aca52f354bd30499cd760c7db",
+        # Revision 41 (typed-authoring-foundations-v1): D10 and limits, before R12.
+        "sha256:69b0cf5b8b0f9397311bd7516369ef0952364801a45f50966f8a307ad73a8e78",
+    ):
+        earlier = CompilerCoordinate(rule_digest=earlier_digest)
+        assert compiler_revision_label(earlier) is None
+        with pytest.raises(ReseedRequired):
+            require_current_compiler(earlier)
+    assert {
+        name
+        for name, value in vars(compiler_module).items()
+        if isinstance(value, CompilerCoordinate)
+    } == {"CURRENT_COMPILER"}

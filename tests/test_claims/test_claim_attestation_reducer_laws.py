@@ -1,0 +1,459 @@
+"""Killing tests for the attestation door's immutable reducer laws."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.captures import build_coordinator_self_source_capture
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimRetirementAttribution,
+    claim_artifact_digest,
+    claim_path,
+    parse_claim,
+)
+from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.indexes.history.history_index import ArtifactVersionLocation
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.service.claims.claims import (
+    CaptureAdmissionAccountV1,
+    _claim_law_evidence,
+)
+from cruxible_core.service.discovery.next import (
+    MAX_DEPENDENCY_LINEAGE_NODES,
+    NextRequest,
+    _attestation_claim_lineage,
+    _AttestationLineageArtifact,
+)
+from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
+from tests.core_support._next_support import unfolded_next
+from tests.test_claims.test_claim_attestation_service import RECORDED_AT, SELF_SOURCE, _request
+from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
+
+
+def _access() -> CoverageAccessProfile:
+    return CoverageAccessProfile(
+        profile_id="attestation-reducer-laws",
+        permitted_access_classes=("instance", "public"),
+    )
+
+
+def _door_world(
+    root: Path,
+    *,
+    stance: str = "contradict",
+    capture_count: int = 1,
+):  # type: ignore[no-untyped-def]
+    instance, claim_id, owner = _accepted_claim_world(root)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    captures = tuple(
+        sorted(
+            (
+                build_coordinator_self_source_capture(
+                    store=instance.body_store(),
+                    accepted_contract=SELF_SOURCE,
+                    actor_id="owner",
+                    claim_id=claim_id,
+                    body=f"new observation {index}\n".encode(),
+                    observed_at=RECORDED_AT,
+                    accepted_coordinate=coordinate,
+                ).capture_digest
+                for index in range(capture_count)
+            ),
+            key=lambda item: item.encode("ascii"),
+        )
+    )
+    service_append_claim_attestation(
+        instance,
+        request=_request(
+            instance,
+            owner,
+            claim_id,
+            root,
+            basis="new_capture",
+            stance=stance,
+            captures=captures,
+        ),
+        actor_id="owner",
+        recorded_at=RECORDED_AT,
+    )
+    return instance, claim_id, owner, captures
+
+
+def _door_rows(instance):  # type: ignore[no-untyped-def]
+    reasons = {
+        "claim_contradicting_evidence_available",
+        "claim_new_evidence_supporting",
+        "claim_new_evidence_unreviewed",
+    }
+    return tuple(
+        item
+        for item in unfolded_next(
+            instance,
+            request=NextRequest(
+                evaluation_time=RECORDED_AT,
+                access_profile=_access(),
+            ),
+        ).items
+        if item.reason in reasons
+    )
+
+
+def _account(capture: str, status: str, suffix: str) -> CaptureAdmissionAccountV1:
+    return CaptureAdmissionAccountV1(
+        citation_id="sha256:" + suffix * 64,
+        capture_digest=capture,
+        citation_role="evidence" if status != "not_evidence" else "copy",
+        citation_origin="independent",
+        capture_contract_identity="CaptureContract:test",
+        capture_contract_digest="sha256:" + "d" * 64,
+        status=status,  # type: ignore[arg-type]
+    )
+
+
+def test_mechanical_rederivation_inherits_authority_until_authored_successor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, _owner, captures = _door_world(tmp_path)
+    capture = captures[0]
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    base = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
+    mechanical = base.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_artifact_digest(base).tagged,
+            )
+        }
+    )
+    authored = mechanical.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_artifact_digest(mechanical).tagged,
+            )
+        }
+    )
+    digests = ("sha256:" + "1" * 64, "sha256:" + "2" * 64, "sha256:" + "3" * 64)
+    artifacts = tuple(
+        _AttestationLineageArtifact(claim=claim, artifact_digest=digest, tree=tree)
+        for claim, digest in zip((base, mechanical, authored), digests, strict=True)
+    )
+    law = _claim_law_evidence(
+        instance,
+        path=claim_path(claim_id),
+        at=instance.accepted_coordinate(),
+    )
+    stage = 1
+
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._attestation_claim_lineage",
+        lambda *_args, **_kwargs: (artifacts[:stage], False),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._claim_law_evidence_by_artifact_index",
+        lambda *_args, **_kwargs: {(claim_path(claim_id), digest): law for digest in digests},
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._is_claim_type_rederivation",
+        lambda claim, **_kwargs: claim is mechanical,
+    )
+
+    def accounts(_instance, *, claim, tree, law):  # type: ignore[no-untyped-def]
+        del tree, law
+        return (
+            _account(
+                capture,
+                "not_admitted" if claim is base else "admitted",
+                "a" if claim is base else "b",
+            ),
+        )
+
+    monkeypatch.setattr("cruxible_core.service.discovery.next._claim_admission_accounts", accounts)
+    assert len(_door_rows(instance)) == 1
+    stage = 2
+    assert len(_door_rows(instance)) == 1
+    stage = 3
+    assert _door_rows(instance) == ()
+
+
+@pytest.mark.parametrize(
+    ("statuses", "resolved"),
+    [
+        (("admitted", "not_evidence"), True),
+        (("not_admitted", "not_evidence"), False),
+        (("not_admitted", "not_admitted"), False),
+    ],
+)
+def test_capture_resolution_is_admitted_if_any_and_never_copy_if_any(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    statuses: tuple[str, str],
+    resolved: bool,
+) -> None:
+    instance, claim_id, _owner, captures = _door_world(tmp_path)
+    capture = captures[0]
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claim = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
+    digest = claim_artifact_digest(claim).tagged
+    artifact = _AttestationLineageArtifact(claim=claim, artifact_digest=digest, tree=tree)
+    law = _claim_law_evidence(
+        instance,
+        path=claim_path(claim_id),
+        at=instance.accepted_coordinate(),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._attestation_claim_lineage",
+        lambda *_args, **_kwargs: ((artifact,), False),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._claim_law_evidence_by_artifact_index",
+        lambda *_args, **_kwargs: {(claim_path(claim_id), digest): law},
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._claim_admission_accounts",
+        lambda *_args, **_kwargs: tuple(
+            _account(capture, status, suffix)
+            for status, suffix in zip(statuses, ("a", "b"), strict=True)
+        ),
+    )
+    assert (_door_rows(instance) == ()) is resolved
+
+
+def test_multi_capture_partial_resolution_retains_only_unadmitted_membership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, _owner, captures = _door_world(tmp_path, capture_count=2)
+    admitted_capture, retained_capture = captures
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claim = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
+    digest = claim_artifact_digest(claim).tagged
+    artifact = _AttestationLineageArtifact(claim=claim, artifact_digest=digest, tree=tree)
+    law = _claim_law_evidence(
+        instance,
+        path=claim_path(claim_id),
+        at=instance.accepted_coordinate(),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._attestation_claim_lineage",
+        lambda *_args, **_kwargs: ((artifact,), False),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._claim_law_evidence_by_artifact_index",
+        lambda *_args, **_kwargs: {(claim_path(claim_id), digest): law},
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._claim_admission_accounts",
+        lambda *_args, **_kwargs: (_account(admitted_capture, "admitted", "a"),),
+    )
+    rows = _door_rows(instance)
+    assert [row.detail["capture_digest"] for row in rows] == [retained_capture]
+
+
+def test_unsure_and_later_events_never_erase_new_capture_memberships(tmp_path: Path) -> None:
+    instance, claim_id, owner, first = _door_world(tmp_path, stance="unsure")
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    second = build_coordinator_self_source_capture(
+        store=instance.body_store(),
+        accepted_contract=SELF_SOURCE,
+        actor_id="owner",
+        claim_id=claim_id,
+        body=b"later observation\n",
+        observed_at=RECORDED_AT,
+        accepted_coordinate=coordinate,
+    )
+    request = _request(
+        instance,
+        owner,
+        claim_id,
+        tmp_path,
+        basis="new_capture",
+        stance="support",
+        captures=(second.capture_digest,),
+    )
+    service_append_claim_attestation(
+        instance,
+        request=request,
+        actor_id="owner",
+        recorded_at=RECORDED_AT,
+    )
+    rows = _door_rows(instance)
+    assert {row.detail["capture_digest"] for row in rows} == {first[0], second.capture_digest}
+    assert {row.reason for row in rows} == {
+        "claim_new_evidence_supporting",
+        "claim_new_evidence_unreviewed",
+    }
+
+
+def test_terminal_retirement_resolves_and_incomplete_lineage_retains_typed_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, _owner, _captures = _door_world(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claim = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
+    digest = claim_artifact_digest(claim).tagged
+    live = _AttestationLineageArtifact(claim=claim, artifact_digest=digest, tree=tree)
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._attestation_claim_lineage",
+        lambda *_args, **_kwargs: ((live,), True),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._claim_law_evidence_by_artifact_index",
+        lambda *_args, **_kwargs: {},
+    )
+    incomplete = _door_rows(instance)
+    assert len(incomplete) == 1
+    assert incomplete[0].detail["lineage_status"] == "incomplete"
+
+    retired = ClaimArtifact(
+        identity=claim.identity,
+        statement=claim.statement,
+        backing=claim.backing,
+        pins=claim.pins,
+        lifecycle=ArtifactLifecycle(state="retired", predecessor_digest=digest),
+        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
+    )
+    retired_artifact = _AttestationLineageArtifact(
+        claim=retired,
+        artifact_digest=claim_artifact_digest(retired).tagged,
+        tree=tree,
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next._attestation_claim_lineage",
+        lambda *_args, **_kwargs: ((live, retired_artifact), False),
+    )
+    assert _door_rows(instance) == ()
+
+
+@dataclass(frozen=True)
+class _Generation:
+    sequence: int
+    git_oid: str
+
+
+class _LineageHistory:
+    """The exact-locator reads a lineage walk makes, bound to one accepted cutoff."""
+
+    def __init__(
+        self,
+        versions: Mapping[tuple[str, str], ArtifactVersionLocation],
+        generations: tuple[_Generation, ...],
+        cutoff: int,
+    ) -> None:
+        self._versions = versions
+        self._generations = generations
+        self._cutoff = cutoff
+
+    def artifact(
+        self, artifact_digest: str, *, identity: str | None = None
+    ) -> ArtifactVersionLocation | None:
+        assert identity is not None
+        location = self._versions.get((identity, artifact_digest))
+        if location is None or location.occurrence_sequence > self._cutoff:
+            return None
+        return location
+
+    def generation(self, sequence: int) -> _Generation:
+        assert 0 <= sequence <= self._cutoff
+        return self._generations[sequence]
+
+
+class _LineageInstance:
+    """One Claim rewritten once per generation, readable only through its locators."""
+
+    def __init__(
+        self,
+        trees: dict[str, dict[str, bytes]],
+        history: tuple[_Generation, ...],
+        coordinate: AcceptedProjectionCoordinate,
+    ) -> None:
+        self._trees = trees
+        self._history = history
+        self._coordinate = coordinate
+        self.lookups = 0
+        versions: dict[tuple[str, str], ArtifactVersionLocation] = {}
+        for generation in history:
+            for path, raw in trees[generation.git_oid].items():
+                claim = parse_claim(raw, path=path)
+                digest = claim_artifact_digest(claim).tagged
+                versions[(claim.identity.qualified, digest)] = ArtifactVersionLocation(
+                    identity=claim.identity.qualified,
+                    artifact_digest=digest,
+                    occurrence_sequence=generation.sequence,
+                    path=path,
+                    predecessor_digest=claim.lifecycle.predecessor_digest,
+                    artifact_revision=generation.sequence,
+                )
+        self._versions = versions
+
+    @contextmanager
+    def accepted_history_reader(self, *, at: AcceptedCoordinate) -> Iterator[_LineageHistory]:
+        self.lookups += 1
+        (cutoff,) = (g.sequence for g in self._history if g.git_oid == at.git_oid)
+        yield _LineageHistory(self._versions, self._history, cutoff)
+
+    def coordinate_for_oid(self, oid: str) -> AcceptedProjectionCoordinate:
+        assert oid in self._trees
+        return self._coordinate.model_copy(update={"git_oid": oid})
+
+    def blob_at(self, oid: str, path: str) -> bytes | None:
+        return self._trees[oid].get(path)
+
+    def blobs_at(self, oid: str, paths: Sequence[str]) -> dict[str, bytes]:
+        tree = self._trees[oid]
+        return {path: tree[path] for path in paths if path in tree}
+
+
+def test_lineage_walk_hits_node_cap_and_reports_incomplete(tmp_path: Path) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    path = claim_path(claim_id)
+    base_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claim = parse_claim(base_tree[path], path=path)
+    assert claim.lifecycle.predecessor_digest is None
+    trees: dict[str, dict[str, bytes]] = {}
+    history: list[_Generation] = []
+    from cruxible_client.contracts.claims import render_claim
+
+    # One version more than the walk may hold: the oldest is out of reach.
+    for sequence in range(MAX_DEPENDENCY_LINEAGE_NODES + 1):
+        oid = f"{sequence:040x}"
+        trees[oid] = {path: render_claim(claim)}
+        history.append(_Generation(sequence=sequence, git_oid=oid))
+        claim = claim.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    predecessor_digest=claim_artifact_digest(claim).tagged,
+                )
+            }
+        )
+    fake = _LineageInstance(trees, tuple(history), instance.accepted_coordinate())
+
+    def walk(target: _Generation) -> tuple[tuple[_AttestationLineageArtifact, ...], bool]:
+        return _attestation_claim_lineage(
+            fake,  # type: ignore[arg-type]
+            coordinate=fake.coordinate_for_oid(target.git_oid),
+            claim_identity=claim_id,
+        )
+
+    lineage, incomplete = walk(history[-1])
+    assert len(lineage) == MAX_DEPENDENCY_LINEAGE_NODES
+    assert incomplete is True
+    # Oldest first, and the walk stopped at the cap rather than at a gap.
+    assert (
+        lineage[0].claim.lifecycle.predecessor_digest
+        == claim_artifact_digest(parse_claim(trees[history[0].git_oid][path], path=path)).tagged
+    )
+    assert fake.lookups == MAX_DEPENDENCY_LINEAGE_NODES - 1
+
+    # One generation earlier the whole lineage fits the cap exactly.
+    lineage, incomplete = walk(history[-2])
+    assert len(lineage) == MAX_DEPENDENCY_LINEAGE_NODES
+    assert lineage[0].claim.lifecycle.predecessor_digest is None
+    assert incomplete is False

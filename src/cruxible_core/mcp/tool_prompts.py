@@ -1,484 +1,406 @@
-"""Client-facing MCP tool descriptions.
-
-Style rule for every description:
-- Start with "Use when" so non-coding clients can choose tools by intent.
-- Prefer domain words a kit user sees in Cruxible: config, query, receipt,
-  workflow, review, group, state, source evidence.
-- Avoid implementation terms that are not useful for tool choice.
-- Where the loaded kit answers a question the tool leaves open, the description
-  carries that answer (see ``KIT_FACTS_BY_TOOL``). The static text stays
-  self-contained: kit facts are additive, never a replacement.
-"""
+"""Reviewed intent descriptions for the Cruxible MCP surface."""
 
 from __future__ import annotations
 
 from cruxible_core.errors import ConfigError
-from cruxible_core.mcp.kit_surface import (
-    KitSurface,
-    describe_contracts,
-    describe_named_queries,
-    describe_providers,
-)
-
-TOOL_PROMPT_STYLE_RULE = (
-    'Tool descriptions must start with "Use when", name the user intent first, '
-    "and avoid implementation details that do not help a non-coding client choose a tool."
-)
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "cruxible_version": (
-        "Use when you need to confirm which cruxible build this MCP server is running."
+    "cruxible_provider_list": (
+        "Use when you need to know which Providers are installed here (each with its package, "
+        "version and the interface IDs it implements) and which packages the configured "
+        "provider repository offers."
     ),
-    "cruxible_server_info": (
-        "Use when you need live daemon details such as state directory, version, "
-        "and how many instances are loaded."
+    "cruxible_provider_install": (
+        "Install a provider package by name (from the configured repository or the provider "
+        "index) and register its definitions, landing at once when the approval policy "
+        "requires no approval, otherwise stopping at awaiting_approval. Admin only; "
+        "installation grants no execution permission."
     ),
+    "cruxible_provider_retire": (
+        "Retire an exact provider build when no live definition pins it. Preview by default; "
+        "retain its environment and deployments. Requires admin permission."
+    ),
+    "cruxible_provider_move": (
+        "Move live Lines to a provider build (newest means most recently registered). "
+        "Preview each re-pin, carried disabled Line and Mandate carried propose-only; commit the "
+        "governed change with dry_run false and at set to the preview coordinate."
+    ),
+    "cruxible_kit_build": (
+        "Use when you want to export the definitions under owned identity prefixes as a "
+        "kit release another instance can install. A release is a lineage-free snapshot; "
+        "its manifest records where it was built. providers names provider packages "
+        "(wheel, lock and path-dependency wheels, staged with body_store first): every "
+        "Provider a carried Procedure pins must be named. delivery index makes one the "
+        "kit's default provider, installed by name only where nothing implements it."
+    ),
+    "cruxible_kit_status": (
+        "List the installed kits, the kit paths edited since install, what was kept on "
+        "purpose, and (for registry kits) the latest available version."
+    ),
+    "cruxible_kit_add": (
+        "Install or upgrade a kit. It always proposes, landing at once when the approval "
+        "policy requires no approval. A definition held differently takes the release's "
+        "version unless kept (keep, keep_local_edits); the plan says what each change does "
+        "and counts dependents. Bundled provider packages install first (admin; a commit "
+        "stages their files), and a default provider by name unless something here "
+        "implements it (satisfied); an install awaiting approval stops at awaiting_providers "
+        "and its activation proposes the definitions. Lines bound to another build of a "
+        "shipped provider move to that build unless kept (keep_build). The preview lists "
+        "re-pins, disabled Line successors and propose-only Mandates; Triggers stay "
+        "unchanged. Old builds stay installed."
+    ),
+    "cruxible_kit_remove": (
+        "Use when you want to retire what a kit installed. It lands at once when the approval "
+        "policy requires no approval; live Claims that depend on those definitions block it."
+    ),
+    "cruxible_server_info": ("Adapter and daemon versions with state, auth, and host metadata."),
+    "cruxible_body_store": (
+        "Use when you need to store exact Document bytes inertly before proposing them."
+    ),
+    "cruxible_document_propose": (
+        "Use when you need to propose a governed Document create or supersession."
+    ),
+    "cruxible_proposal_review": ("A structured candidate review and permission-filtered diff."),
+    "cruxible_proposal_approve_prepare": (
+        "Use when a client-held signer needs the exact immutable approval statement."
+    ),
+    "cruxible_proposal_approve_submit": (
+        "Use when you have a public approval attestation produced outside the daemon; "
+        "like approve, it activates a candidate it completes unless hold is set."
+    ),
+    "cruxible_proposal_approve": (
+        "Use after review to approve a proposal with a local key (CRUXIBLE_MCP_KEY_DIR, "
+        "else the folder owner's); it challenges, signs and submits in one call. The approval "
+        "that completes the candidate also activates it when your tier may; hold=true "
+        "signs only. Pass the reviewed candidate_digest to bind it to what you read."
+    ),
+    "cruxible_proposal_activate": (
+        "Use when an admitted candidate's approvals are in but nothing activated it: a "
+        "held approval, or one that needs no approval."
+    ),
+    "cruxible_orient": (
+        "Use first, to see what an instance holds: each Subject kind with its count and "
+        "predicates (type, enum members, accepted evidence), artifact counts, named queries, "
+        "Claims by status, whether you can author, what needs attention, and runnable next "
+        "calls. Pass kind for one kind in full with sample Subject IDs, or section to page "
+        "one family."
+    ),
+    "cruxible_whoami": (
+        "Which instance this server acts on, who you are there, and whether you can "
+        "author (and the repair when not)."
+    ),
+    "cruxible_proposal_list": (
+        "Find open proposals or inspect terminal outcomes, one page at a time (default "
+        "limit 50); when truncated, pass next_cursor back as cursor."
+    ),
+    "cruxible_proposal_readmit": (
+        "Use when a stale proposal should be re-admitted against the current coordinate."
+    ),
+    "cruxible_proposal_withdraw": (
+        "Use when an open proposal can never be activated and should leave the open inventory."
+    ),
+    "cruxible_proposal_reject": (
+        "Use when you review another actor's open proposal and it should not be accepted; "
+        "the reason is recorded and the proposal leaves the open inventory."
+    ),
+    "cruxible_capture_read": (
+        "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
+        "A restricted CaptureKind answers status=restricted (a body_restricted notice) unless "
+        "the caller is governed_write or higher; max_bytes bounds returned material. "
+        "Never refetches sources."
+    ),
+    "cruxible_capture_erase": (
+        "Use when a Capture's retained bytes must not stay (a secret a tool printed). "
+        "Only a contract that authorizes erasure allows it; it cannot be undone: preview, "
+        "then commit with dry_run=false and at=<the preview's coordinate digest>."
+    ),
+    "cruxible_files_check": (
+        "Use when you need to check the workspace's catalogued files (or a compiled "
+        "bundle) against accepted state: aligned, modified, pending, behind and the rest."
+    ),
+    "cruxible_files_propose": (
+        "Use when a catalogued workspace file should become its Document's next revision: "
+        "name the catalog file; this adapter reads and compiles the file and proposes it, "
+        "landing it when policy and your tier allow (accept=never proposes only)."
+    ),
+    "cruxible_compiler_upgrade": (
+        "Use to propose a compiler upgrade (default: the daemon's compiler, at the head). "
+        "Admin only; one-way once active; settles on one signed cruxible_proposal_approve."
+    ),
+    "cruxible_principal_propose": (
+        "Use when you need a governed principal registration, rotation, revocation, or recovery."
+    ),
+    "cruxible_capture_contract_propose": (
+        "Use to define captured evidence: input names a contract and its shape "
+        "(http_response, procedure_output, foreign_span or database_snapshot). "
+        "Grade, replay, retention, erasure and byte budget have defaults. "
+        "Edits keep omitted fields; incompatible changes need a new name. "
+        "Lands when policy and your tier allow; accept=never proposes only."
+    ),
+    "cruxible_claim_type_propose": (
+        "Use when you need a governed ClaimType before any Claim can state that predicate; "
+        "pass a ClaimTypeInputRecord: a new one states its subject kinds, object and "
+        "cardinality, and every other field "
+        "has a default (`cruxible claim-type propose --template --expanded`); an edit states "
+        "only what changes; inverse makes it record absence (a none). Lands when policy and "
+        "your tier allow; accept=never proposes only."
+    ),
+    "cruxible_claim_type_migrate": (
+        "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."
+    ),
+    "cruxible_claim_attest": (
+        "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
+        "optionally citing your own words (because) or one write evidence option (evidence)."
+    ),
+    "cruxible_authoring_example": (
+        "Use when you need a model-constructed Claim, Procedure, Line, acquisition policy, "
+        "mandate, Subject, QueryDefinition, or ApprovalPolicy authoring input template."
+    ),
+    "cruxible_authoring_get": (
+        "Use when you need the current durable content and state of one authoring intent."
+    ),
+    "cruxible_authoring_list": (
+        "Use when you need to find your incomplete authoring work without remembering handles."
+    ),
+    "cruxible_authoring_compile": (
+        "Use when you want to author or revise a Claim or Procedure and learn every "
+        "refusal at once."
+    ),
+    "cruxible_authoring_bind": (
+        "Use when one exact anchor in a configured workspace file is the evidence for a "
+        "Claim you are authoring."
+    ),
+    "cruxible_authoring_preflight": (
+        "Use when you need a complete binding check of an existing authoring intent."
+    ),
+    "cruxible_next": (
+        "What to work on next: ranked repair work, conflicts, and stale "
+        "evidence, each with its exact next operation."
+    ),
+    "cruxible_authoring_submit": (
+        "Use when an authoring intent has passed preflight and should become one candidate."
+    ),
+    "cruxible_authoring_submit_file": (
+        "Use to submit a workspace authoring file, such as a tailored kit automation template."
+    ),
+    "cruxible_console": ("Use to open the read-only console in the user's browser."),
     "cruxible_init": (
-        "Use when you need to create a governed instance from a config or reconnect "
-        "to an existing instance after a daemon restart."
+        "Use once in a bare project folder: creates its instance and owner; this session "
+        "then acts as the owner."
     ),
-    "cruxible_validate": (
-        "Use when you need to check whether a Cruxible config is valid before "
-        "creating or reloading an instance."
+    "cruxible_authoring_status": (
+        "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
-    "cruxible_state_create_overlay": (
-        "Use when you need a local overlay instance based on a published upstream state release."
+    "cruxible_block_repin": (
+        "Use to stamp a new projection block or refresh one: name the catalogued file "
+        "and the block; this adapter reads the backings, rewrites the opening marker and "
+        "registers the block. The marker grammar is in docs/cli-reference.md, Projection "
+        "block markers."
     ),
-    "cruxible_lock_workflow": (
-        "Use when workflow inputs, providers, or artifacts changed and you need "
-        "to refresh the workflow lock before running it."
+    "cruxible_block_sync": (
+        "Use to check whether page blocks still match their backings; each stale block names "
+        "its repin. It edits no page."
     ),
-    "cruxible_plan_workflow": (
-        "Use when you need to preview the concrete steps a configured workflow "
-        "would run without executing those steps."
+    "cruxible_block_detach": (
+        "Use to take retired blocks' markers off pages, keeping the prose: preview with "
+        "dry_run, then commit with at set to the preview's coordinate digest."
     ),
-    "cruxible_run_workflow": (
-        "Use when you need to execute a configured workflow and receive its output, "
-        "receipts, traces, and apply instructions if it is a preview."
+    "cruxible_block_depublish": (
+        "Use when a published page block is being taken down for good, so the registration "
+        "that demands its frame is released instead of asking for the block back."
     ),
-    "cruxible_apply_workflow": (
-        "Use when a workflow preview returned an apply digest and you are ready "
-        "to commit that exact workflow result."
+    "cruxible_set": (
+        "Use to change one value: set a field of a Subject (kind/id) to a value. It replaces "
+        "the live value (no Claim ID needed), adds a missing Subject of a known kind, and "
+        "accepts in the same call when policy lets you; otherwise it answers awaiting_approval "
+        "with the approve call. Check each change's verdict and the warnings."
     ),
-    "cruxible_test_workflow": (
-        "Use when you need to run workflow tests declared by the active config."
+    "cruxible_retire": (
+        "Use to end one live Claim (by Claim ID, or Subject and field) with its dependents, or "
+        "a Subject (kind/id): its key Claims go too, its others only with with_claims."
+    ),
+    "cruxible_write": (
+        "Write Claims and Markdown sections together. docs: append under or replace a section "
+        "(heading lists; [] preamble); cite it as kind=section evidence or by doc id. Docs "
+        "are written after admission."
+    ),
+    "cruxible_backlinks": (
+        "Use to find what points into one thing: ref a Subject (kind/id) for the notes "
+        "about it and the workspace sections its Claims cite; a ClaimType or Procedure for "
+        "the Documents that guide it; file and section for the Claims resting on that "
+        "section. Section rows say drift: changed_since_cited, unchanged or unknown."
+    ),
+    "cruxible_get": (
+        "Use when you have a reference to one thing (any form ref lists, or Trigger:/"
+        "Principal:/Provider:NAME[/BUILD], ApprovalPolicy:instance, "
+        "ProcedureRuntimePolicy:instance) and want its values. detail: summary "
+        "(default card), evidence, why, history, incoming, runs, backlinks (what points at "
+        "a Subject, ClaimType or Procedure), proof (full envelope), body (Document bytes by "
+        "range). "
+        "A wrong name refuses with the nearest names."
     ),
     "cruxible_query": (
-        "Use when you need to run a named query from the active config and receive "
-        "matching items plus a receipt. First call cruxible_list_queries or "
-        "cruxible_describe_query when you do not know the query name, required "
-        "params, result shape, or examples. For traversal queries, params must "
-        "include the entry_point primary-key field, such as {'vehicle_id': 'V-123'} "
-        "when the entry point is Vehicle and its primary key is vehicle_id; "
-        "cruxible_schema shows entity primary keys. Items default to the compact "
-        "output profile; ask for profile='standard' or 'full' when you need "
-        "provenance or actor context. Pass layout='graph' for multi-row "
-        "traversal reads: it returns each entity and relationship once as "
-        "nodes/edges with results as ordered references, instead of "
-        "duplicating them per row."
-    ),
-    "cruxible_query_inline": (
-        "Use when you need a one-off bounded graph query without adding it to the "
-        "config. Inline definitions use the configured named-query JSON shape plus "
-        "a required name; promote repeated or workflow-critical queries into config. "
-        "Items default to the compact output profile; ask for profile='standard' "
-        "or 'full' when you need provenance or actor context. Pass "
-        "layout='graph' to receive deduplicated nodes/edges with results as "
-        "ordered references instead of per-row items."
-    ),
-    "cruxible_list_queries": (
-        "Use when you need to discover the named queries available in the active "
-        "config. Returns bounded summaries (name, entry point, required params); "
-        "call cruxible_describe_query for one query's full definition. Pass "
-        "detail='full' only when you truly need every definition expanded. "
-        "If truncated is true, pass the returned continuation_token back as "
-        "continuation to fetch the next page."
-    ),
-    "cruxible_describe_query": (
-        "Use when you need the purpose, parameters, and result shape for one named query."
-    ),
-    "cruxible_receipt": (
-        "Use when you need to inspect the proof record for a previous query, write, "
-        "workflow, feedback, or outcome."
-    ),
-    "cruxible_get_trace": (
-        "Use when you need the execution trace for one provider or workflow step."
-    ),
-    "cruxible_list_traces": (
-        "Use when you need to browse execution traces by workflow, provider, or page."
-    ),
-    "cruxible_feedback": (
-        "Use when a person or reviewer agent adjudicated one explicit relationship "
-        "and you need to record support, rejection, or a correction. To record a "
-        "DOUBT without adjudicating, use cruxible_attest with stance 'contradict' "
-        "instead. Use edge_key only to disambiguate multiple stored edges with the "
-        "same relationship tuple; receipt_id is optional for explicit-coordinate "
-        "feedback."
-    ),
-    "cruxible_feedback_batch": (
-        "Use when you need to record several relationship feedback decisions from "
-        "the same review session."
-    ),
-    "cruxible_feedback_from_query": (
-        "Use when a query receipt and result index identify the relationship that "
-        "needs feedback. This path requires receipt_id because the receipt/result "
-        "selection is the target selector."
-    ),
-    "cruxible_outcome": (
-        "Use when you need to record what happened after a decision, query, workflow, "
-        "or reviewed relationship."
-    ),
-    "cruxible_list": (
-        "Use when you need a paged list of entities, relationships, receipts, feedback, "
-        "or outcomes with optional filters. Use resource_type='entities' with "
-        "entity_type and optional fields to reduce payload size; use where for "
-        "bounded property predicates such as {'status': {'eq': 'active'}}. Entity "
-        "and edge items default to the compact output profile; ask for "
-        "profile='standard' or 'full' when you need provenance or actor context. "
-        "Always check truncated: when true, pass the returned continuation_token "
-        "back as continuation (same filters) to fetch the next page; a stale-"
-        "continuation error means state changed - restart from the first page. "
-        "read_revision on the envelope is the state freshness marker; receipts "
-        "prove computation, never freshness."
-    ),
-    "cruxible_evaluate": (
-        "Use when you need graph quality findings such as orphaned entities, "
-        "coverage gaps, constraint issues, or candidate opportunities."
-    ),
-    "cruxible_stats": (
-        "Use when you need quick counts of entity and relationship types in an instance."
-    ),
-    "cruxible_lint": (
-        "Use when you need a combined quality report for config, graph state, feedback, "
-        "and outcome coverage."
-    ),
-    "cruxible_get_feedback_profile": (
-        "Use when you need the allowed feedback codes and guidance for a relationship type."
-    ),
-    "cruxible_analyze_feedback": (
-        "Use when you need patterns from recorded feedback, such as common corrections "
-        "or recurring review issues."
-    ),
-    "cruxible_get_outcome_profile": (
-        "Use when you need the allowed outcome codes and guidance for a decision surface."
-    ),
-    "cruxible_analyze_outcomes": (
-        "Use when you need patterns from recorded outcomes for a query, workflow, "
-        "relationship, or decision surface."
-    ),
-    "cruxible_schema": (
-        "Use when you need the active entity types, relationships, queries, workflows, "
-        "and governance settings."
-    ),
-    "cruxible_sample": (
-        "Use when you need example entities of one type before writing a query or review. "
-        "Items default to the compact output profile; ask for profile='standard' or "
-        "'full' for complete property bags and metadata."
-    ),
-    "cruxible_inspect_entity": (
-        "Use when you need everything relevant about one entity within a bounded "
-        "number of hops — the generic neighborhood read beneath named queries. "
-        "Anchor on the entity, then expand: depth (1-4) sets the hop horizon; "
-        "max_nodes and max_edges are explicit budgets and the response reports "
-        "truncated with truncation_reasons instead of silently clipping. Filter "
-        "with relationship_types and target_types; state selects relationship "
-        "visibility exactly like query traversal (default all — every stored "
-        "edge with its review/lifecycle markers, so pending edges in governed "
-        "overlays are visible by default; an explicit state filters like "
-        "traversal and edges_hidden_by_state counts edges at the explored "
-        "frontier hidden by state alone). projection trims neighbor "
-        "properties; payloads default to the compact output profile — ask for "
-        "profile='standard' or 'full' when you need provenance or actor context. "
-        "When the expanded read reports truncated on a budget, pass the returned "
-        "continuation_token back as continuation (same parameters) to resume the "
-        "expansion where it stopped; a stale-continuation error means state "
-        "changed - restart the read."
-    ),
-    "cruxible_inspect_entity_history": (
-        "Use when you need receipt-derived property changes for one entity type or entity."
-    ),
-    "cruxible_inspect_ontology": (
-        "Use when orienting before a query or a write: compact entity and relationship "
-        "property contracts, enum vocabularies, topology, and configured write policies."
-    ),
-    "cruxible_inspect_workflows": (
-        "Use when you need to understand the workflows declared by the active config."
-    ),
-    "cruxible_inspect_queries": (
-        "Use when you need to understand configured queries and their parameters."
-    ),
-    "cruxible_inspect_governance": (
-        "Use when you need to review feedback, outcome, group, and policy settings."
-    ),
-    "cruxible_inspect_overview": ("Use when you need a single high-level summary of the instance."),
-    "cruxible_add_relationship": (
-        "Use when you need to add or update a small number of explicit relationships "
-        "and the endpoint entities already exist. Set pending=true when the edge "
-        "should enter relationship review state instead of immediately becoming live."
-    ),
-    "cruxible_add_entity": (
-        "Use when you need to add or update a small number of explicit entities."
-    ),
-    "cruxible_supersede_claim": (
-        "Use when the settled, receipted adjudication replaces one claim with an "
-        "already-existing live same-type successor."
-    ),
-    "cruxible_retract_claim": (
-        "Use when the settled, receipted adjudication withdraws a claim without a successor."
-    ),
-    "cruxible_supersede_entity": (
-        "Use when the settled, receipted adjudication replaces one entity with an "
-        "already-existing live same-type successor; edges do not migrate."
-    ),
-    "cruxible_retire_entity": (
-        "Use when the settled, receipted adjudication retires an entity without cascading edges."
-    ),
-    "cruxible_batch_direct_write": (
-        "Use when you need to validate or apply one coherent batch of explicit "
-        "entities and relationships; set dry_run first."
-    ),
-    "cruxible_add_constraint": (
-        "Use when you need to add a graph quality rule that future evaluations should check."
-    ),
-    "cruxible_add_decision_policy": (
-        "Use when you need to record a policy that affects how a decision surface "
-        "should be handled."
-    ),
-    "cruxible_reload_config": (
-        "Use when you need to replace or reload the active config for an instance."
-    ),
-    "cruxible_config_status": (
-        "Use when you need to check source drift or active config integrity."
-    ),
-    "cruxible_propose_workflow": (
-        "Use when a workflow proposes reviewable relationship changes instead of "
-        "writing them directly."
-    ),
-    "cruxible_create_decision_record": (
-        "Use when you need to open a tracked decision before gathering evidence, "
-        "running workflows, or recording outcomes."
-    ),
-    "cruxible_get_decision_record": (
-        "Use when you need the current state and optional event history for one decision."
-    ),
-    "cruxible_list_decision_records": (
-        "Use when you need to find decision records by status, subject, class, or page."
-    ),
-    "cruxible_list_decision_events": (
-        "Use when you need the event timeline for decisions, optionally filtered by receipt."
-    ),
-    "cruxible_finalize_decision_record": (
-        "Use when a tracked decision has a final answer and rationale."
-    ),
-    "cruxible_abandon_decision_record": (
-        "Use when a tracked decision should be closed without a final decision."
-    ),
-    "cruxible_propose_procedure": (
-        "Use when you need to propose a bounded composition of procedure-exported actions "
-        "for independent review."
-    ),
-    "cruxible_list_procedures": (
-        "Use when you need to find governed procedures by lifecycle status or page and compare "
-        "their run-ledger track records before choosing one."
-    ),
-    "cruxible_get_procedure": (
-        "Use when you need one procedure's definition, resolved input field schema, budget, "
-        "precondition, lifecycle, and run-ledger track record."
-    ),
-    "cruxible_resolve_procedure": (
-        "Use when an independent reviewer needs to accept or reject a pending procedure."
-    ),
-    "cruxible_withdraw_procedure": (
-        "Use when you changed your mind about a procedure YOU proposed and it is "
-        "still pending: withdraw it instead of proposing a renamed variant. The "
-        "name is immediately free to re-propose."
-    ),
-    "cruxible_retire_procedure": (
-        "Use when a reviewer needs to retire a live immutable procedure."
-    ),
-    "cruxible_run_procedure": (
-        "Use when you need to execute one live procedure through the generic receipted runner."
-    ),
-    "cruxible_list_procedure_runs": (
-        "Use when you need invocation history or crash-visible started tombstones "
-        "for one procedure."
-    ),
-    "cruxible_attest": (
-        "Use when you observed evidence supporting, contradicting, or leaving you "
-        "unsure about one relationship claim. Supply evidence for support or "
-        "contradict; a note is optional but encouraged for unsure. If the claim "
-        "does not exist yet, a 'support' stance CREATES it as a pending "
-        "(unreviewed) claim from 'properties' — 'contradict' and 'unsure' are "
-        "refused on an absent claim."
-    ),
-    "cruxible_list_attestations": (
-        "Use when you need immutable observation history for one claim tuple or stance."
-    ),
-    "cruxible_attestation_queue": (
-        "Use when a reviewer needs live claims with open current-content "
-        "contradictions, aggregated per claim."
-    ),
-    "cruxible_resolve_attestation": (
-        "Use when a reviewer needs to uphold, correct, or invalidate an attestation "
-        "without changing its immutable history."
-    ),
-    "cruxible_open_outcome_contract": (
-        "Use when a decision is about to be accepted and you need to state in "
-        "advance what result counts as success, how it will be measured, when to "
-        "check it, and when the commitment expires."
-    ),
-    "cruxible_resolve_outcome": (
-        "Use when you checked an outcome contract and need to record what reality "
-        "said: satisfied, contradicted, or indeterminate."
-    ),
-    "cruxible_list_outcome_contracts": (
-        "Use when you need the outcome contracts on a subject with their status, "
-        "activation, and standing answer."
-    ),
-    "cruxible_outcome_due": (
-        "Use when you need the outcome work list: contracts due for checking, "
-        "overdue contracts, or contradicted outcomes awaiting a reviewer."
-    ),
-    "cruxible_dispose_outcome_resolution": (
-        "Use when a reviewer needs to uphold or overturn a recorded outcome; an "
-        "overturn re-opens the contract for one new answer."
-    ),
-    "cruxible_propose_group": (
-        "Use when you need to create a review group for candidate relationship changes."
-    ),
-    "cruxible_resolve_group": (
-        "Use when a reviewer approves, rejects, or otherwise resolves a pending group."
-    ),
-    "cruxible_update_trust_status": (
-        "Use when you need to mark a prior group resolution as trusted, invalidated, "
-        "or otherwise updated."
-    ),
-    "cruxible_get_group": (
-        "Use when you need the details and members for one candidate relationship group."
-    ),
-    "cruxible_list_groups": (
-        "Use when you need to find candidate relationship groups by type, status, or page."
-    ),
-    "cruxible_list_resolutions": (
-        "Use when you need to review past group decisions by relationship type or action."
-    ),
-    "cruxible_group_status": (
-        "Use when you need the latest status for a group or for a known group signature."
-    ),
-    "cruxible_state_publish": (
-        "Use when you need to publish the current instance state as an immutable release."
-    ),
-    "cruxible_create_snapshot": (
-        "Use when you need to mark the current state with a named snapshot."
-    ),
-    "cruxible_instance_backup": (
-        "Use when you need a portable same-identity backup of an instance, including "
-        "its authoritative state database."
-    ),
-    "cruxible_instance_restore": (
-        "Use when you need to restore a daemon-backed instance from a same-identity "
-        "backup artifact."
-    ),
-    "cruxible_instance_relocate": (
-        "Use when you need to move a healthy daemon-backed instance to a new directory "
-        "while preserving its identity; the registry is repointed to the new location."
-    ),
-    "cruxible_list_snapshots": ("Use when you need to browse available snapshots for an instance."),
-    "cruxible_register_source_artifact": (
-        "Use when you need to register a source document so relationship evidence can "
-        "cite stable chunks from it."
-    ),
-    "cruxible_dereference_source_evidence": (
-        "Use when you need to read back a registered source evidence chunk and verify "
-        "its expected content hash."
-    ),
-    "cruxible_clone_snapshot": (
-        "Use when you need a new local instance created from an existing snapshot. "
-        "On auth-enabled daemons the result carries a one-time admin_credential "
-        "token for the new instance - save it immediately; it is never shown again."
-    ),
-    "cruxible_state_status": (
-        "Use when you need to see whether an overlay is connected to an upstream state "
-        "and whether pulls are available."
-    ),
-    "cruxible_state_diff": (
-        "Use when you need the structured difference between two state coordinates - "
-        "a snapshot vs current, current vs the materialized upstream release, or two "
-        "snapshots. The complete body is persisted and content-addressed by "
-        "diff_digest; treat the result as a reviewable plan only when "
-        "artifact_complete is true, and re-read the whole body with artifact_digest."
-    ),
-    "cruxible_state_pull_preview": (
-        "Use when you need to preview upstream state changes before applying them."
-    ),
-    "cruxible_state_pull_apply": (
-        "Use when a pull preview returned an apply digest and you are ready to apply it."
-    ),
-    "cruxible_get_entity": (
-        "Use when you need to fetch one entity by type and ID. The payload defaults "
-        "to the compact output profile; ask for profile='standard' or 'full' for "
-        "the complete property bag and metadata."
-    ),
-    "cruxible_get_relationship": (
-        "Use when you need to fetch one relationship by endpoints and relationship type."
-    ),
-    "cruxible_relationship_lineage": (
-        "Use when you need the provenance, review state, feedback, and receipts for "
-        "one relationship."
+        "Use to answer any question over accepted state in one call. Compact: kind "
+        '(e.g. "project.work_item") with where filters such as '
+        '{"field": "status", "eq": "ready"}, select, follow and order_by; contains alone '
+        "searches every "
+        "Claim value; a definition kind (ClaimType, Procedure, Trigger, Line, SubjectKind, "
+        "CaptureContract, ProcedureMandate, QueryDefinition) lists those definitions with "
+        "typed columns. Or pass a query name "
+        "with params (budgets, receipt=full for its replay receipt). Rows lead with values "
+        "and carry flags (stale, contested, contradicted, uncovered, unsure_hold); status "
+        "adds overturned, ineligible or retired Claims (retired also lists retired Subjects) "
+        "and claims=true names each cell's Claims. "
+        "When truncated, pass next_cursor back as cursor. A wrong name refuses with the "
+        "nearest valid names."
+    ),
+    "cruxible_query_spec": (
+        "Use when compact filters cannot say it: run one full QueryDefinitionSpec inline "
+        "(traversals, disjunctions, projections) without accepting a QueryDefinition. "
+        "Same rows, flags and paging as cruxible_query."
+    ),
+    "cruxible_procedure_run": (
+        "Use when you need to execute an accepted Procedure with durable outcomes."
+    ),
+    "cruxible_procedure_measure": (
+        "Use when a Procedure's declared measurements are due: evaluate them from real evidence "
+        "at an explicit observation instant, persist the resolution, and credit one finalized "
+        "run's exact grain. Retrying replays the standing answer; pending and expired windows "
+        "write nothing."
+    ),
+    "cruxible_procedure_dispose": (
+        "Record your upheld or overturned judgment and reason on the latest measurement "
+        "resolution, attributed to your authenticated principal. Find its resolution_id "
+        "in procedure readings or get Procedure:NAME. Exact retries reuse the judgment; "
+        "overturn clears the standing answer without extending its measurement window."
+    ),
+    "cruxible_procedure_readings": (
+        "Use when you need each measurement's standing (pending, expired, resolved) and the "
+        "retained exact-grain readings that credit real runs. Read-only and paginated."
+    ),
+    "cruxible_line_enable": (
+        "Enable a Line: its Triggers do nothing until then. The daemon admits what they match "
+        "from now on, under your credential and the Line and Trigger versions current now. "
+        "Needs governed write even for observe-only Lines. Never catches up. Read it with "
+        "cruxible_get(ref='Line:NAME')."
+    ),
+    "cruxible_line_disable": (
+        "Stop a Line admitting work on its own. Runs already admitted keep going. "
+        "A Line already stopped returns already_disabled."
+    ),
+    "cruxible_line_evaluate": (
+        "Turn a missed range (since, until) into pending work for dispatch; no runs start. "
+        "dry_run only reports what the range makes eligible. Page incomplete results."
+    ),
+    "cruxible_line_dispatch": (
+        "Run pending occurrences under your current authority, up to limit (default 100). "
+        "An enabled Line admits only what it matched itself; the rest waits for this call."
+    ),
+    "cruxible_inbox_list": (
+        "Use when next names unread inbox items, or to review what Lines sent for judgment. "
+        "Items are untyped data a Line could not decide; filter by line and status."
+    ),
+    "cruxible_inbox_get": (
+        "Use to read one inbox item whole before judging it: payload, how often it was seen, "
+        "the runs and source Captures of its sightings, and any prior disposition."
+    ),
+    "cruxible_inbox_ack": (
+        "Use when an inbox item needs nothing further from you and no reason is worth recording."
+    ),
+    "cruxible_inbox_dismiss": (
+        "Use when an inbox item needs nothing; the reason is recorded and stays visible if the "
+        "same item recurs."
+    ),
+    "cruxible_inbox_link": (
+        "Use after you acted on an inbox item: link it to the proposal you wrote or to a "
+        "Subject (such as a note) that records your judgment."
+    ),
+    "cruxible_line_run": (
+        "Run a Line once now as a manual occurrence under its inputs, budgets, authority and "
+        "mandate; it never consumes a Trigger. Pass event when its Procedure takes one."
+    ),
+    "cruxible_runbook_run": (
+        "Run a Runbook's steps in order, each Line as your manual run; it stops at the first "
+        "step that fails or sends writes to review. Preview it first."
+    ),
+    "cruxible_runbook_preview": (
+        "Read what each Runbook step can read, write, settle, propose and set off, the files "
+        "and fetches it needs (and whether each file is there), and its order problems; "
+        "nothing runs."
+    ),
+    "cruxible_prediction_list": (
+        "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "
+        "definitions and version references, including retired contracts."
+    ),
+    "cruxible_prediction_propose": (
+        "Propose a governed test of an accepted Claim: its hypothesis is a Claim ID, plus an "
+        "observation selector, mechanical rule, and fixed or retained-event observation window."
+    ),
+    "cruxible_prediction_settle": (
+        "Use when a predicted Claim and its matching later observation are accepted: pass the "
+        "prediction id and the observation's Claim ID."
+    ),
+    "cruxible_curation_list": (
+        "Beta: detection runs only when a curation-detect Trigger is authored. "
+        "List the curation patterns detection recorded; a pure read. Each item carries the "
+        "latest_event_digest the rulings "
+        "need; detection says when it last ran, inactive_detectors which detectors cannot run. "
+        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
+    ),
+    "cruxible_curation_duplicates": (
+        "Use to find what may name one thing twice in one kind: Subjects whose ids or aliases, "
+        "and values of one predicate, that meet under a broad comparison (casefold, no "
+        "punctuation, the alias graph) but differ under the declared rules, and Subjects of a "
+        "hint kind holding one key. Resolve a Subject or key group with semantic.alias plus "
+        "retire, or semantic.distinct_from; a value group with "
+        "a canonical_form succession. A pure, bounded read; pass next_cursor while truncated."
+    ),
+    "cruxible_audit": (
+        "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
+        "This read records completed coverage but never recommends or executes a repair."
+    ),
+    "cruxible_curation_overrule": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
+        "Use when a detected pattern does not apply here: closes the item permanently, and the "
+        "pattern is never raised again."
+    ),
+    "cruxible_curation_accept_fixed": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
+        "Use after an accepted change fixed an item: name it by accepted_proposal_id or "
+        "accepted_generation; it must touch the item's subject or evidence."
+    ),
+    "cruxible_curation_suppress": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
+        "Hide an item (scope item) or its whole lineage (scope lineage) without resolving it."
+    ),
+    "cruxible_curation_unsuppress": (
+        "Beta curation (detection only with an authored curation-detect Trigger). "
+        "Lift a suppression on an item, so what it hid is listed again."
+    ),
+    "cruxible_since": ("The exact accepted ChangeSet members after a known generation."),
+    "cruxible_floor_export": (
+        "Use when you need the accepted floor as greppable files: return the bytes, write "
+        "them to the workspace, or check that copy's status."
+    ),
+    "cruxible_coverage_resolve": (
+        "Use when you have read or changed working files and need what they have to do with "
+        "accepted state; the file catalog binds files to their sources."
+    ),
+    "cruxible_files_compile": (
+        "Use to compile the workspace's catalogued files without constructing file "
+        "digests or compilation wire."
     ),
 }
 
 
-# Which loaded-kit facts each tool's description carries.
-#
-# Deliberately narrow: a fact is injected only where it answers the question
-# THAT tool leaves open. Naming providers on a query tool would be noise, and
-# noise in a description is paid on every listing by every client.
-KIT_FACTS_BY_TOOL: dict[str, tuple[str, ...]] = {
-    "cruxible_query": ("named_queries",),
-    "cruxible_list_queries": ("named_queries",),
-    "cruxible_describe_query": ("named_queries",),
-    "cruxible_lock_workflow": ("providers",),
-    "cruxible_plan_workflow": ("providers",),
-    "cruxible_run_workflow": ("providers", "contracts"),
-    "cruxible_propose_procedure": ("providers", "contracts"),
-}
-
-_KIT_FACT_RENDERERS = {
-    "named_queries": describe_named_queries,
-    "providers": describe_providers,
-    "contracts": describe_contracts,
-}
-
-
-def tool_description(tool_name: str, *, kit_surface: KitSurface | None = None) -> str:
-    """Return the reviewed MCP description for *tool_name*.
-
-    Given a resolved ``kit_surface``, the description also names the loaded
-    config's vocabulary for the facts this tool needs, so an agent discovers
-    contracts, providers, and named queries from the tool surface rather than
-    from out-of-band prompt enumeration. Tool SCHEMAS are untouched: only the
-    prose varies with the kit.
-    """
+def tool_description(tool_name: str) -> str:
     try:
-        base = TOOL_DESCRIPTIONS[tool_name]
+        return TOOL_DESCRIPTIONS[tool_name]
     except KeyError as exc:
         raise ConfigError(f"MCP tool '{tool_name}' is missing a prompt description") from exc
-    if kit_surface is None:
-        return base
-    sections = [
-        rendered
-        for fact in KIT_FACTS_BY_TOOL.get(tool_name, ())
-        if (rendered := _KIT_FACT_RENDERERS[fact](kit_surface)) is not None
-    ]
-    if not sections:
-        return base
-    return " ".join([base, *sections])
 
 
 __all__ = [
-    "KIT_FACTS_BY_TOOL",
     "TOOL_DESCRIPTIONS",
-    "TOOL_PROMPT_STYLE_RULE",
     "tool_description",
 ]

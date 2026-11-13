@@ -1,0 +1,508 @@
+"""Read-path memo laws: what a read is allowed to re-read, and what it must re-prove."""
+
+from __future__ import annotations
+
+import subprocess
+from collections import Counter
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    AcceptedCaptureContract,
+    capture_contract_digest,
+    capture_contract_path,
+)
+from cruxible_client.contracts.claims import (
+    _self_source_capture_admitted_by_rule,
+    claim_path,
+    new_claim_id,
+)
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV1,
+    ProjectionClaimBacking,
+    ProjectionMarkerSummary,
+)
+from cruxible_client.contracts.errors import GitError, ProjectionIntegrityError
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
+)
+from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.exhaust.consumption import consumption_artifacts_for_paths
+from cruxible_core.indexes import logical_digest
+from cruxible_core.indexes import sqlite as playbill_projection
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.git import GitLedger
+from cruxible_core.runtime import playbill_api as runtime_api
+from cruxible_core.service.claims.claims import (
+    _claim_from_view,
+    service_list_playbill_claims,
+)
+from cruxible_core.service.discovery import next as playbill_next
+from cruxible_core.service.discovery.next import (
+    NextRequest,
+    NextSourceObservation,
+    NextWorkspaceObservation,
+    service_playbill_next,
+)
+from cruxible_core.service.discovery.query import build_accepted_query_facts
+from cruxible_core.service.evidence import evidence as playbill_evidence
+from tests.core_support._knowledge_loop_support import seed_claims
+from tests.core_support._subject_kind_support import fixture_claim_paths
+from tests.test_claims.test_claims import _claim as _test_claim
+from tests.test_claims.test_claims import _claim_type as _test_claim_type
+
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
+EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
+ACCESS = CoverageAccessProfile(profile_id="read-latency-test")
+
+
+def _orient(instance: Any) -> Any:
+    """One real orient: its Claim status counts read every accepted Claim's status."""
+
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    return service_playbill_orient(instance, evaluation_time=EVALUATION_TIME)
+
+
+def _count_read_trees(monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
+    counted: Counter[str] = Counter()
+    original = GitLedger.read_tree
+
+    def counting(self: GitLedger, oid: str) -> dict[str, bytes]:
+        counted[oid] += 1
+        return original(self, oid)
+
+    monkeypatch.setattr(GitLedger, "read_tree", counting)
+    return counted
+
+
+def test_orient_uses_indexed_inventory_without_accepted_tree_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+
+    counted = _count_read_trees(monkeypatch)
+    _orient(instance)
+
+    assert counted == Counter()
+
+    counted.clear()
+    _orient(instance)
+    assert counted == Counter()
+
+
+def test_explicit_tree_reads_are_owned_copies(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    oid = instance.accepted_coordinate().git_oid
+
+    first = instance.tree_at(oid)
+    paths = set(first)
+    first.pop(next(iter(first)))
+    first["claims/injected.json"] = b"{}"
+
+    second = instance.tree_at(oid)
+    assert set(second) == paths
+
+
+def test_blob_and_path_reads_agree_with_the_whole_tree(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    oid = instance.accepted_coordinate().git_oid
+    tree = instance.tree_at(oid)
+
+    assert set(instance.paths_at(oid)) == set(tree)
+    sample = fixture_claim_paths(tree)[:2]
+    assert instance.blobs_at(oid, sample) == {path: tree[path] for path in sample}
+    assert instance.blob_at(oid, sample[0]) == tree[sample[0]]
+    assert instance.blob_at(oid, "claims/absent-from-this-generation.json") is None
+
+
+def _commit_carrying_a_symlink(ledger_path: Path) -> str:
+    """Commit one tree whose single member is a symlink, not a plain file."""
+
+    def git(arguments: list[str], stdin: bytes = b"") -> bytes:
+        return subprocess.run(
+            ["git", f"--git-dir={ledger_path}", *arguments],
+            input=stdin,
+            capture_output=True,
+            check=True,
+        ).stdout
+
+    blob = git(["hash-object", "-w", "--stdin"], b"../elsewhere").decode().strip()
+    tree = git(["mktree"], f"120000 blob {blob}\tlink.json\n".encode()).decode().strip()
+    return git(["commit-tree", tree, "-m", "poisoned"]).decode().strip()
+
+
+def test_listing_accepted_paths_refuses_what_reading_them_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    poisoned = _commit_carrying_a_symlink(instance._ledger.path)
+    # The listing is only reachable behind the acceptance proof, so stand in for
+    # a generation the ledger accepted and then ask what each reader answers.
+    monkeypatch.setattr(type(instance), "coordinate_for_oid", lambda self, oid: None)
+
+    with pytest.raises(GitError, match="unsupported 120000"):
+        instance._ledger.read_tree(poisoned)
+
+    # Exact path reads reject unsupported tree entries.
+    with pytest.raises(GitError, match="unsupported 120000"):
+        instance.paths_at(poisoned)
+
+    # Whole-tree materialization must enforce the same refusal.
+    with pytest.raises(GitError, match="unsupported 120000"):
+        instance.tree_at(poisoned)
+    with pytest.raises(GitError, match="unsupported 120000"):
+        instance.paths_at(poisoned)
+
+
+def test_a_serving_piece_is_verified_once_and_a_tampered_piece_is_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    playbill_projection.reset_projection_verification_memo()
+
+    calls = 0
+    # Full verification recomputes the logical digest; a memo hit does not.
+    original = logical_digest.verify_logical_digest
+
+    def counting(*args: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original(*args)
+
+    monkeypatch.setattr(logical_digest, "verify_logical_digest", counting)
+    piece: Path | None = None
+    for _ in range(3):
+        with instance.bind_accepted_projection(coordinate) as handle:
+            piece = handle.piece_paths[0]
+    assert calls == 1
+    assert piece is not None
+
+    content = bytearray(piece.read_bytes())
+    # Flip one byte deep inside the page data, past the SQLite header.
+    content[-1] ^= 0xFF
+    mode = piece.stat().st_mode
+    piece.chmod(0o600)
+    piece.write_bytes(bytes(content))
+    piece.chmod(mode)
+
+    with pytest.raises(ProjectionIntegrityError):
+        with instance.bind_accepted_projection(coordinate):
+            pass
+
+
+def _declared_projection_observation(
+    instance: Any,
+) -> NextWorkspaceObservation:
+    """Observe one declared block, so `next` reaches the resolution fold.
+
+    Without a marker summary `_projection_items` returns before the fold ever
+    runs, and only `_claim_items` evaluates a verdict: a request with no
+    workspace observation cannot tell a shared verdict map from a per-fold one.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    row = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate()).claims[0]
+    stamp = ProjectionBlockStampV1(
+        source_id="fixture.work-items",
+        block_id="status",
+        declared_generation=0,
+        declared_coordinate=coordinate,
+        backing=(
+            ProjectionClaimBacking(
+                identity=row.accepted.claim.identity,
+                statement_digest=row.accepted.statement_digest,
+            ),
+        ),
+        body_digest="sha256:" + "b" * 64,
+    )
+    return NextWorkspaceObservation(
+        source_observations=(
+            NextSourceObservation(
+                source_id="fixture.work-items",
+                observed_source_digest="sha256:" + "0" * 64,
+                byte_length=1000,
+                marker_summaries=(
+                    ProjectionMarkerSummary(
+                        stamp=stamp,
+                        observed_body_digest="sha256:" + "b" * 64,
+                        start_byte=0,
+                        end_byte=100,
+                    ),
+                ),
+                occurrences=(),
+                commitment_scan_proofs=(),
+                citation_window_observations=(),
+                scan_notes=(),
+                marker_notes=(),
+            ),
+        )
+    )
+
+
+def test_next_evaluates_each_claim_verdict_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    observation = _declared_projection_observation(instance)
+    evaluated: Counter[str] = Counter()
+    original = playbill_evidence.service_evaluate_playbill_claim_verdict
+
+    def counting(instance_: Any, *, claim_identity: str, **values: Any) -> Any:
+        evaluated[claim_identity] += 1
+        return original(instance_, claim_identity=claim_identity, **values)
+
+    monkeypatch.setattr(playbill_evidence, "service_evaluate_playbill_claim_verdict", counting)
+    monkeypatch.setattr(playbill_next, "service_evaluate_playbill_claim_verdict", counting)
+
+    live = tuple(
+        claim
+        for claim in (
+            _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
+        )
+        if claim.lifecycle.state == "live"
+    )
+    result = service_playbill_next(
+        instance,
+        request=NextRequest(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=EVALUATION_TIME,
+            access_profile=ACCESS,
+            workspace_observation=observation,
+        ),
+    )
+
+    # The observation actually reached the projection fold, so both folds ran.
+    assert "workspace_sources" in result.observed_domains
+    assert evaluated
+    assert set(evaluated) <= {claim.identity.qualified for claim in live}
+    assert max(evaluated.values()) == 1
+    assert sum(evaluated.values()) == len(evaluated)
+
+
+def test_claim_reads_use_history_locators_without_a_retained_history_map(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("served orient must not build the old Claim history map")
+
+    monkeypatch.setattr(playbill_evidence, "_build_claim_read_history_index", forbidden)
+    _orient(instance)
+    _orient(instance)
+    assert not hasattr(instance, "claim_read_history_memo")
+
+
+def test_one_claim_read_materializes_no_generation_and_still_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    claim = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    identity = claim.identity.name
+    coordinate = instance.accepted_coordinate()
+    path = claim_path(identity)
+
+    class _Manager:
+        def get(self, _instance_id: str) -> Any:
+            return instance
+
+    monkeypatch.setattr(runtime_api, "check_permission", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
+
+    counted = _count_read_trees(monkeypatch)
+    from cruxible_client.contracts.get_reads import GetRequest
+
+    view = runtime_api.playbill_get(
+        instance.descriptor.instance_id,
+        request=GetRequest(ref=identity, detail="proof", evaluation_time=EVALUATION_TIME),
+    ).proof
+    assert view is not None
+
+    # One served read reads the paths it answers for and nothing else.
+    assert counted == Counter()
+    assert view["envelope"]["path"] == path
+    # The narrow read still resolved the ClaimType and the capture contracts.
+    assert view["admission_accounts"]
+
+    # The receipt is still written, and names the artifact the read served.
+    served = consumption_artifacts_for_paths(instance.tree_at(coordinate.git_oid), (path,))
+    assert served
+    receipted = [
+        (payload["response_artifact_identity"], payload["response_artifact_digest"])
+        for _event, payload in instance.review_operational_store().events(family="consumption")
+        if payload.get("tag") == "playbill-consumption-receipt-v1"
+    ]
+    assert receipted == [
+        (served_identity.model_dump(mode="json"), digest) for served_identity, digest in served
+    ]
+
+
+def _scanned_source_observation(
+    *,
+    source_id: str,
+    scan_notes: tuple[str, ...],
+) -> NextSourceObservation:
+    return NextSourceObservation(
+        source_id=source_id,
+        observed_source_digest="sha256:" + "0" * 64,
+        byte_length=64,
+        marker_summaries=(),
+        occurrences=(),
+        commitment_scan_proofs=(),
+        citation_window_observations=(),
+        scan_notes=scan_notes,
+        marker_notes=(),
+    )
+
+
+def _unobserved_rows(
+    instance: Any,
+    *,
+    scan_notes: tuple[str, ...],
+    other_source_notes: tuple[str, ...] | None = None,
+) -> tuple[Any, ...]:
+    sources = [_scanned_source_observation(source_id="fixture.work-items", scan_notes=scan_notes)]
+    if other_source_notes is not None:
+        sources.append(
+            _scanned_source_observation(
+                source_id="fixture.other-notes", scan_notes=other_source_notes
+            )
+        )
+    result = service_playbill_next(
+        instance,
+        request=NextRequest(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=EVALUATION_TIME,
+            access_profile=ACCESS,
+            workspace_observation=NextWorkspaceObservation(
+                source_observations=tuple(
+                    sorted(sources, key=lambda item: item.source_id.encode("utf-8"))
+                )
+            ),
+        ),
+    )
+    return tuple(item for item in result.items if item.reason == "citation_source_unobserved")
+
+
+def test_a_defective_coverage_scan_reports_one_row_naming_its_cause(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+
+    def citations(rows) -> int:  # type: ignore[no-untyped-def]
+        return sum(1 + len(row.findings) for row in rows)
+
+    # A healthy source is one row, carrying each unobserved citation's finding.
+    healthy = _unobserved_rows(instance, scan_notes=())
+    assert len(healthy) == 1 and citations(healthy) > 1
+    assert all("unobserved_cause" not in row.detail for row in healthy)
+
+    # Every note that says the source's own scan is incomplete collapses its
+    # citations onto one row, and the row names the cause, not a co-symptom.
+    for notes in (
+        ("coverage_partial",),
+        ("coverage_stale",),
+        ("coverage_denied",),
+        ("coverage_unavailable",),
+        ("coverage_span_missing",),
+        ("coverage_result_version_unsupported",),
+        ("coverage_card_limit_exceeded",),
+        ("coverage_proof_limit_exceeded",),
+        ("coverage_window_limit_exceeded",),
+        # The program instance's own shape: partial *and* window-capped. The
+        # cap is reported truthfully alongside, never as the cause.
+        ("coverage_partial", "coverage_window_limit_exceeded"),
+    ):
+        collapsed = _unobserved_rows(instance, scan_notes=notes)
+        assert len(collapsed) == 1
+        (row,) = collapsed
+        assert row.detail["source_id"] == "fixture.work-items"
+        assert row.detail["unobserved_cause"] == "source_scan_incomplete"
+        assert row.detail["source_scan_notes"] == list(notes)
+        assert row.detail["collapsed_citation_count"] == citations(healthy)
+        assert row.repair.operation == "cruxible.authoring.bind"
+
+    # A note about one dropped item is not a whole-source defect: those
+    # citations each keep their own row, because the scan can still speak to
+    # them one at a time.
+    assert citations(_unobserved_rows(instance, scan_notes=("coverage_proof_invalid",))) == (
+        citations(healthy)
+    )
+
+    # A second, healthy source in the same observation is untouched.
+    mixed = _unobserved_rows(
+        instance,
+        scan_notes=("coverage_partial",),
+        other_source_notes=(),
+    )
+    assert sum(1 for row in mixed if row.detail["source_id"] == "fixture.work-items") == 1
+
+
+def _coordinator_contract() -> AcceptedCaptureContract:
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    return AcceptedCaptureContract(
+        path=capture_contract_path(contract.identity.name),
+        contract=contract,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+
+
+def test_a_prose_claim_type_admits_its_own_authored_body_and_a_domain_type_does_not() -> None:
+    claim = _test_claim(
+        claim_id=new_claim_id(),
+        capture_digest="sha256:" + "1" * 64,
+        source_digest="sha256:" + "2" * 64,
+        source_length=13,
+    )
+    accepted = _coordinator_contract()
+    domain_type = _test_claim_type()
+
+    # A domain ClaimType names no rule for the coordinator self-source contract,
+    # so the citation is skipped exactly as before and the Claim reads uncovered.
+    assert not _self_source_capture_admitted_by_rule(
+        claim,
+        claim_type=domain_type,
+        capture_contract=accepted,
+        capture_digest=claim.backing.citations[0].capture_digest,
+    )
+
+    prose_type = domain_type.model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="authored-prose",
+                        claim_roles=("normative", "observation"),
+                        capture_contracts=(accepted.contract.identity.name,),
+                        admission="origin_only",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+    assert _self_source_capture_admitted_by_rule(
+        claim,
+        claim_type=prose_type,
+        capture_contract=accepted,
+        capture_digest=claim.backing.citations[0].capture_digest,
+    )

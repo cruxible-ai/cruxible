@@ -1,0 +1,3801 @@
+"""``get``: one governed thing by reference, as values first.
+
+A reference arrives in whatever form an agent saw it -- ``CLM-…``, ``kind/id``,
+a predicate, ``Document:<name>``, an artifact path, a proposal id or prefix --
+and resolves to exactly one accepted artifact at one coordinate, or refuses
+with the candidates it could have meant. ``detail`` then chooses what comes
+back: a compact card (``summary``), what backs a Claim (``evidence``), today's
+explain output (``why``), revisions (``history``), today's full envelope
+(``proof``), or a byte range of a Document body (``body``). Every detail level
+reuses the service that already answers it; this module only resolves, shapes,
+and names things by identity.
+"""
+
+from __future__ import annotations
+
+import base64
+import functools
+import json
+import re
+import shlex
+from collections import defaultdict
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Literal, cast
+
+from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
+from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
+from cruxible_client.contracts.capabilities import capability_ref_for_identity
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    contract_source_kinds,
+)
+from cruxible_client.contracts.claim_reads import ClaimValueRecord, ClaimValuesRequest
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_contention,
+    claim_type_format_version,
+    effective_evidence_requirement,
+    effective_revision_evidence,
+)
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimRetirementReason,
+    NoneClaimObject,
+    claim_artifact_digest,
+    claim_path,
+    claim_statement_digest,
+    parse_claim,
+)
+from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.get_display import (
+    GET_CLI_HISTORY_VALUE_WIDTH,
+    GET_CLI_VALUE_WIDTH,
+    get_value_display,
+)
+from cruxible_client.contracts.get_reads import (
+    GET_BODY_DEFAULT_MAX_BYTES,
+    GET_CARD_LINKS,
+    GET_CARD_PAIRS,
+    GET_DETAILS_BY_KIND,
+    GET_HISTORY_DEFAULT_LIMIT,
+    ByteRange,
+    GetApprovalPolicyCard,
+    GetAttestationEvidence,
+    GetBacklinks,
+    GetBody,
+    GetCapabilityCard,
+    GetCaptureContractCard,
+    GetCaptureErasure,
+    GetCaptureEvidence,
+    GetCard,
+    GetClaimCard,
+    GetClaimTypeCard,
+    GetContender,
+    GetContractCard,
+    GetContractField,
+    GetCoordinate,
+    GetDocumentCard,
+    GetDocumentLink,
+    GetEndPairs,
+    GetEvidence,
+    GetEvidenceRule,
+    GetFieldChanged,
+    GetFieldEvent,
+    GetFieldRebound,
+    GetFieldReobserved,
+    GetFieldRetired,
+    GetFieldStated,
+    GetGuidance,
+    GetHistory,
+    GetIncoming,
+    GetIncomingClaim,
+    GetKindEnd,
+    GetLineRuns,
+    GetNone,
+    GetPairEnd,
+    GetPairs,
+    GetPrincipalCard,
+    GetProcedureCard,
+    GetProcedureNode,
+    GetProcedureRuntimePolicyCard,
+    GetProcedureTrackRecord,
+    GetProposalCard,
+    GetProposalChange,
+    GetProposalRefusal,
+    GetProposedReason,
+    GetProviderCard,
+    GetQueryCard,
+    GetQueryParameter,
+    GetRefKind,
+    GetRequest,
+    GetResult,
+    GetRevision,
+    GetSubjectCard,
+    GetSubjectClaim,
+    GetSubjectHistory,
+    GetSubjectKindCard,
+    GetTriggerCard,
+    ReadFlag,
+    ReadSurface,
+    RevisionChange,
+)
+from cruxible_client.contracts.identity_normalizers import NoneNormalizer, normalizer_spelling
+from cruxible_client.contracts.operational_reads import capture_handle
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
+from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.query.definitions import QueryDefinition
+from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
+from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
+from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
+from cruxible_client.contracts.shapes import (
+    Contract,
+    contract_ref_for_identity,
+    render_type,
+    subject_value_kinds,
+    value_members,
+)
+from cruxible_client.contracts.subject_kinds import SubjectKind
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.contracts.temporal import utc_now
+from cruxible_client.contracts.triggers import Trigger
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.write import SUBJECT_KIND_PATTERN, SUBJECT_REF_TEXT_PATTERN
+from cruxible_core.evidence.capture_erasures import erased_body
+from cruxible_core.exhaust.journal_index import RunPageInvalidated
+from cruxible_core.indexes.history.history_index import (
+    AcceptedGenerationLocation,
+    AcceptedMemberLocation,
+)
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL, PREDICATE_COUNTS_SQL
+from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.change_reasons import ChangeReasons
+from cruxible_core.service.discovery.claim_lines import served_claim_value, served_none
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
+from cruxible_core.service.discovery.operational import (
+    LIVE_CARD_FIELDS,
+    capture_card,
+    capture_hex,
+    captures_with_prefix,
+    is_line_digest,
+    line_card,
+    lines_with_digest,
+    live_view,
+    mandate_card,
+    resolution_contract_card,
+    uncited_capture_present,
+)
+from cruxible_core.service.discovery.operational_viewer import OperationalViewer
+from cruxible_core.service.discovery.pair_reads import (
+    CARD_SCAN,
+    PairsCursorInvalid,
+    cut_page,
+    end_pair_groups,
+    fact_claim_paths,
+    group_pairs,
+    page_candidates,
+    page_scan,
+    pair_ends,
+    visible_pairs,
+)
+from cruxible_core.service.discovery.read_flags import (
+    answer_flags,
+    ordered_flags,
+    unsure_holds,
+    verdict_flags,
+)
+from cruxible_core.service.discovery.runs import (
+    procedure_run_card,
+    procedure_run_proof,
+    run_ids_with_prefix,
+    run_rows,
+)
+from cruxible_core.service.list_pages import (
+    ListContinuation,
+    ListCursorMismatch,
+    ListCursorStale,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_snapshot,
+    page_after_boundary,
+)
+from cruxible_core.service.read_refusals import (
+    ReadRefusalError,
+    nearest,
+    resolve_read_coordinate,
+)
+from cruxible_core.storage.capture_metadata import capture_envelope
+from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, positioned_read
+
+_CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
+_CLAIM_PREFIX = re.compile(r"^CLM-[0-9a-f]{4,31}$")
+_SUBJECT = re.compile(rf"^(?P<kind>{SUBJECT_KIND_PATTERN})/(?P<id>{SUBJECT_REF_TEXT_PATTERN})$")
+_SERVICE_ACCESS = BodyAccessContext(principal_id="playbill-service", can_read_body=True)
+_MAX_CANDIDATES = 10
+_MAX_CHANGES = 25
+
+# Typed reference prefixes an agent sees, and the kind each names.
+_TYPED_PREFIXES: Mapping[str, GetRefKind] = {
+    "Claim": "claim",
+    "Subject": "subject",
+    "ClaimType": "claim_type",
+    "Document": "document",
+    "document": "document",
+    "Procedure": "procedure",
+    "QueryDefinition": "query",
+    "query": "query",
+    "CaptureContract": "capture_contract",
+    "Trigger": "trigger",
+    "SubjectKind": "subject_kind",
+    "Contract": "contract",
+    "Capability": "capability",
+    "Proposal": "proposal",
+    "Line": "line",
+    "Capture": "capture",
+    "ResolutionContract": "resolution_contract",
+    "Mandate": "mandate",
+    "ProcedureMandate": "mandate",
+    "ProcedureRun": "procedure_run",
+    "Principal": "principal",
+    "ApprovalPolicy": "approval_policy",
+    "ProcedureRuntimePolicy": "procedure_runtime_policy",
+    "Provider": "provider",
+    "Runbook": "runbook",
+}
+# The projection's artifact kind for each reference kind, and back.
+_PROJECTION_KIND: Mapping[GetRefKind, str] = {
+    "claim": "claim",
+    "subject": "subject",
+    "claim_type": "claim-type",
+    "document": "document",
+    "procedure": "procedure",
+    "query": "query-definition",
+    "capture_contract": "capture-contract",
+    "trigger": "trigger",
+    "subject_kind": "subject-kind",
+    "line": "line",
+    "resolution_contract": "resolution-contract",
+    "mandate": "procedure-mandate",
+    "approval_policy": "approval-policy",
+    "procedure_runtime_policy": "procedure-runtime-policy",
+    "provider": "provider",
+    "contract": "contract",
+    "capability": "capability",
+    "runbook": "runbook",
+}
+_REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
+_QUALIFIER: Mapping[GetRefKind, str] = {
+    "claim": "Claim",
+    "subject": "Subject",
+    "claim_type": "ClaimType",
+    "document": "document",
+    "procedure": "Procedure",
+    "query": "QueryDefinition",
+    "capture_contract": "CaptureContract",
+    "trigger": "Trigger",
+    "subject_kind": "SubjectKind",
+    "line": "Line",
+    "resolution_contract": "ResolutionContract",
+    "mandate": "ProcedureMandate",
+    "approval_policy": "ApprovalPolicy",
+    "procedure_runtime_policy": "ProcedureRuntimePolicy",
+    "provider": "Provider",
+    "contract": "Contract",
+    "capability": "Capability",
+    "runbook": "Runbook",
+}
+_NAMED_KINDS: tuple[GetRefKind, ...] = (
+    "document",
+    "procedure",
+    "query",
+    "capture_contract",
+    "trigger",
+    "subject_kind",
+    "line",
+    "resolution_contract",
+    "mandate",
+    "runbook",
+)
+_DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
+    "claim_type": "ClaimType",
+    "document": "Document",
+    "procedure": "Procedure",
+    "query": "query",
+    "capture_contract": "CaptureContract",
+    "trigger": "Trigger",
+    "subject_kind": "SubjectKind",
+    "proposal": "Proposal",
+    "line": "Line",
+    "resolution_contract": "ResolutionContract",
+    "mandate": "Mandate",
+    "capture": "Capture",
+    "procedure_run": "ProcedureRun",
+    "principal": "Principal",
+    "approval_policy": "ApprovalPolicy",
+    "procedure_runtime_policy": "ProcedureRuntimePolicy",
+    "provider": "Provider",
+    "contract": "Contract",
+    "capability": "Capability",
+    "runbook": "Runbook",
+}
+# The orient section that lists each operational kind, named by a refusal
+# that has no nearer candidate to offer.
+_ORIENT_SECTION: Mapping[GetRefKind, str] = {
+    "line": "lines",
+    "runbook": "runbooks",
+    "capture": "captures",
+    "resolution_contract": "predictions",
+    "mandate": "mandates",
+    "capture_contract": "capture_contracts",
+    "contract": "contracts",
+    "capability": "capabilities",
+    "procedure_run": "runs",
+    "principal": "principals",
+    "approval_policy": "policies",
+    "procedure_runtime_policy": "policies",
+}
+
+
+@dataclass(frozen=True)
+class ResolvedRef:
+    """One reference resolved to exactly one accepted (or proposed) thing."""
+
+    kind: GetRefKind
+    # The projection identity (``Claim:CLM-…``, ``document:<name>``), or the
+    # full proposal id.
+    identity: str
+    # The canonical reference shown back to the caller.
+    display: str
+    path: str | None = None
+
+
+def _name(identity: str) -> str:
+    return identity.split(":", 1)[1]
+
+
+def _display(kind: GetRefKind, identity: str) -> str:
+    if kind == "capture":
+        return f"Capture:{identity}"
+    if kind == "procedure_run":
+        return f"ProcedureRun:{identity}"
+    name = _name(identity) if kind != "proposal" else identity
+    if kind in {"claim", "subject"}:
+        return name
+    if kind == "contract":
+        return "Contract:" + contract_ref_for_identity(parse_artifact_identity(identity)).spelling
+    if kind == "capability":
+        return (
+            "Capability:" + capability_ref_for_identity(parse_artifact_identity(identity)).spelling
+        )
+    return f"{_DISPLAY_PREFIX[kind]}:{name}"
+
+
+def _subject_ref(path: str) -> str:
+    """``subjects/<kind>/<id>.json`` as the ``kind/id`` shorthand an agent types."""
+
+    if path.startswith("subjects/") and path.endswith(".json"):
+        return path[len("subjects/") : -len(".json")]
+    return path
+
+
+def _short_digest(digest: str, *, length: int = 12) -> str:
+    algorithm, _, value = digest.partition(":")
+    return f"{algorithm}:{value[:length]}" if value else digest[:length]
+
+
+def _live_predicates(projection: Any) -> frozenset[str]:
+    """Every live accepted predicate: the vocabulary field names are shortened against."""
+
+    return frozenset(
+        str(identity).removeprefix("ClaimType:")
+        for (identity,) in projection.typed.connection.execute(
+            "SELECT identity FROM claim_types WHERE lifecycle='live'"
+        )
+    )
+
+
+# -- reference resolution ------------------------------------------------------
+
+
+def _not_found(
+    what: str,
+    ref: str,
+    candidates: Sequence[str],
+    *,
+    surface: ReadSurface,
+    section: str | None = None,
+) -> ReadRefusalError:
+    if candidates:
+        repair = RepairOperation(operation="cruxible.get", arguments={"ref": candidates[0]})
+        line = f"Run {_render_get(surface, candidates[0])}"
+    elif section is not None:
+        repair = RepairOperation(operation="cruxible.orient", arguments={"section": section})
+        line = f'Run orient(section="{section}") to list them, then get one of its rows'
+    else:
+        repair = RepairOperation(operation="cruxible.orient")
+        line = "Run orient to see what exists, then get one of its names"
+    return ReadRefusalError(
+        "cruxible.get.ref_not_found",
+        f"no accepted {what} {ref!r}",
+        http_status=404,
+        candidates=candidates,
+        repair=repair,
+        repair_line=line,
+        context={"ref": ref},
+    )
+
+
+def _ambiguous(ref: str, candidates: Sequence[str]) -> ReadRefusalError:
+    return ReadRefusalError(
+        "cruxible.get.ref_ambiguous",
+        f"{ref!r} names {len(candidates)} artifacts",
+        http_status=409,
+        candidates=candidates[:_MAX_CANDIDATES],
+        repair=RepairOperation(operation="cruxible.get", arguments={"ref": candidates[0]}),
+        repair_line="Name one of them exactly",
+        context={"ref": ref},
+    )
+
+
+def resolve_get_ref(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    ref: str,
+    *,
+    surface: ReadSurface = "mcp",
+    subject_suggestions: bool = True,
+    access: BodyAccessContext | None = None,
+) -> ResolvedRef:
+    """Resolve every reference form an agent sees to exactly one thing, or refuse.
+
+    ``access`` is the reader's: a Capture prefix candidate withheld from it is
+    named without being verified (C14).
+    """
+
+    value = ref.strip()
+    if not value:
+        raise _not_found("artifact", ref, (), surface=surface)
+    if value.startswith("sha256:"):
+        # The identity digest next names a due Line by, else a proposal id.
+        if is_line_digest(value):
+            with instance.bind_accepted_projection(coordinate) as projection:
+                lines = lines_with_digest(
+                    projection.typed.connection, value, limit=_MAX_CANDIDATES + 1
+                )
+                if len(lines) > 1:
+                    raise _ambiguous(value, [_display("line", item) for item in lines])
+                if lines:
+                    row = _envelope(projection, lines[0])
+                    return ResolvedRef(
+                        "line", lines[0], _display("line", lines[0]), row.path if row else None
+                    )
+        return _resolve_proposal(instance, value)
+    if value.startswith("refs/"):
+        return _resolve_proposal(instance, value)
+    if value.startswith("CAP-"):
+        return _resolve_capture(
+            instance, coordinate, value, ref=value, surface=surface, access=access
+        )
+    if value.startswith("RUN-"):
+        return _resolve_run(instance, value, ref=value, surface=surface)
+    head, separator, rest = value.partition(":")
+    if separator and head in _TYPED_PREFIXES:
+        kind = _TYPED_PREFIXES[head]
+        if kind == "proposal":
+            return _resolve_proposal(instance, rest)
+        if kind == "capture":
+            return _resolve_capture(
+                instance, coordinate, rest, ref=value, surface=surface, access=access
+            )
+        if kind == "procedure_run":
+            return _resolve_run(instance, rest, ref=value, surface=surface)
+        if kind == "principal":
+            return _resolve_principal(instance, coordinate, rest, ref=value, surface=surface)
+        with instance.bind_accepted_projection(coordinate) as projection:
+            return _resolve_typed(
+                projection,
+                kind,
+                rest,
+                ref=value,
+                surface=surface,
+                key_reader=_tree_key_reader(instance, coordinate),
+                subject_suggestions=subject_suggestions,
+            )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        if value.endswith(".json") and "/" in value:
+            rows = projection.typed.envelopes(paths=(value,))
+            if len(rows) == 1 and rows[0].kind in _REF_KIND:
+                kind = _REF_KIND[rows[0].kind]
+                return ResolvedRef(kind, rows[0].identity, _display(kind, rows[0].identity), value)
+            raise _not_found("artifact at path", value, (), surface=surface)
+        if value.startswith("CLM-"):
+            return _resolve_typed(projection, "claim", value, ref=value, surface=surface)
+        if "/" in value:
+            return _resolve_typed(
+                projection,
+                "subject",
+                value,
+                ref=value,
+                surface=surface,
+                key_reader=_tree_key_reader(instance, coordinate),
+                subject_suggestions=subject_suggestions,
+            )
+        return _resolve_bare(projection, value, surface=surface)
+
+
+def _tree_key_reader(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> Callable[[], KeyReader]:
+    """The accepted tree's single-key reader, read only when a reference needs it."""
+
+    cached: list[KeyReader] = []
+
+    def read() -> KeyReader:
+        from cruxible_core.indexes.subject_identity import tree_key_reader
+
+        if not cached:
+            cached.append(tree_key_reader(instance.immutable_tree_at(coordinate.git_oid)))
+        return cached[0]
+
+    return read
+
+
+def _resolve_proposal(instance: PlaybillInstance, selector: str) -> ResolvedRef:
+    """A proposal id or unique prefix, or a target ref, without requiring every record.
+
+    Retained partial evidence is still a proposal: the by-ID status read answers
+    it as ``incomplete``, so resolution must not demand the admission first.
+    """
+
+    from cruxible_client.contracts.errors import ProposalSelectorAmbiguousError
+    from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix
+    from cruxible_core.service.proposals.proposals import (
+        service_playbill_proposal_status,
+        service_resolve_playbill_proposal_selector,
+    )
+
+    if selector.startswith("refs/"):
+        resolved = service_resolve_playbill_proposal_selector(instance, selector=selector)
+        return ResolvedRef("proposal", resolved.proposal_id, f"Proposal:{resolved.proposal_id}")
+    try:
+        entry = service_playbill_proposal_status(instance, proposal_id=selector)
+    except AmbiguousIdPrefix as exc:
+        evidence = instance.proposal_evidence()
+        candidates = (
+            ()
+            if evidence.index is None
+            else tuple(
+                row["proposal_id"]
+                for row in evidence.index.rows(
+                    evidence, "proposal_id>=? AND proposal_id<?", (selector, selector + "\uffff")
+                )
+            )
+        )
+        raise ProposalSelectorAmbiguousError(selector, candidates) from exc
+    return ResolvedRef("proposal", entry.proposal_id, f"Proposal:{entry.proposal_id}")
+
+
+def _envelope(projection: Any, identity: str) -> Any | None:
+    return projection.typed.envelope(identity)
+
+
+_RUN_PREFIX = re.compile(r"^RUN-[0-9a-f]{12,64}$")
+
+
+def _resolve_run(
+    instance: PlaybillInstance, value: str, *, ref: str, surface: ReadSurface
+) -> ResolvedRef:
+    """A Procedure run id, or a unique prefix of at least 12 hex after ``RUN-``."""
+
+    if not _RUN_PREFIX.fullmatch(value):
+        raise ReadRefusalError(
+            "cruxible.get.ref_malformed",
+            f"{ref!r} is not a Procedure run id",
+            candidates=(),
+            repair=RepairOperation(operation="cruxible.orient", arguments={"section": "runs"}),
+            repair_line="Pass RUN- plus at least 12 lowercase hex of the run id",
+            context={"ref": ref},
+        )
+    matches = run_ids_with_prefix(instance, value, limit=_MAX_CANDIDATES + 1)
+    if len(matches) > 1:
+        raise _ambiguous(ref, [_display("procedure_run", item) for item in matches])
+    if not matches:
+        raise _not_found("Procedure run", ref, (), surface=surface, section="runs")
+    return ResolvedRef("procedure_run", matches[0], _display("procedure_run", matches[0]))
+
+
+def _principals_at(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> dict[str, PrincipalRecord]:
+    """The principal registry of the accepted generation at ``coordinate``, by ID."""
+
+    generation = next(
+        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
+    )
+    return {
+        item.principal_id: PrincipalRecord.model_validate(item.model_dump(mode="json"))
+        for item in generation.principals.principals
+    }
+
+
+def _resolve_principal(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    name: str,
+    *,
+    ref: str,
+    surface: ReadSurface,
+) -> ResolvedRef:
+    """``Principal:<id>``: one record of the registry at the read coordinate."""
+
+    registry = _principals_at(instance, coordinate)
+    if name in registry:
+        identity = f"Principal:{name}"
+        return ResolvedRef("principal", identity, identity, f"principals/{name}.json")
+    raise _not_found(
+        "Principal",
+        ref,
+        tuple(f"Principal:{item}" for item in nearest(name, registry)),
+        surface=surface,
+        section="principals",
+    )
+
+
+def _resolve_capture(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    value: str,
+    *,
+    ref: str,
+    surface: ReadSurface,
+    access: BodyAccessContext | None = None,
+) -> ResolvedRef:
+    """``CAP-<12+ hex>``, ``Capture:<digest>`` or a unique digest prefix, to one Capture.
+
+    A full digest names itself: cited, or held in the store uncited. A prefix
+    resolves as every verb resolves one (``resolve_capture_handle``): among
+    Captures cited at the coordinate and retained ones that verify there, so a
+    handle the write verbs accepted opens here too.
+    """
+
+    hex_digits = capture_hex(value)
+    if hex_digits is None:
+        raise ReadRefusalError(
+            "cruxible.get.ref_malformed",
+            f"{ref!r} is not a Capture reference",
+            candidates=(),
+            repair=RepairOperation(operation="cruxible.orient", arguments={"section": "captures"}),
+            repair_line=(
+                "Pass CAP- plus at least 12 lowercase hex of the digest, or Capture:sha256:<64 hex>"
+            ),
+            context={"ref": ref},
+        )
+    if len(hex_digits) == 64:
+        digest = "sha256:" + hex_digits
+        with instance.bind_accepted_projection(coordinate) as projection:
+            cited = captures_with_prefix(projection.typed.connection, hex_digits, limit=1)
+        if cited or uncited_capture_present(instance, digest):
+            return ResolvedRef("capture", digest, _display("capture", digest))
+        raise _not_found("Capture", ref, (), surface=surface, section="captures")
+    from cruxible_core.service.evidence.capture_reads import (
+        CaptureHandleAmbiguous,
+        CaptureHandleExhausted,
+        CaptureHandleResolved,
+        capture_handle_exhausted,
+        resolve_capture_handle,
+    )
+
+    resolution = resolve_capture_handle(instance, coordinate, hex_digits, access=access)
+    if isinstance(resolution, CaptureHandleResolved):
+        return ResolvedRef("capture", resolution.digest, _display("capture", resolution.digest))
+    if isinstance(resolution, CaptureHandleAmbiguous):
+        raise _ambiguous(ref, [_display("capture", item) for item in resolution.candidates])
+    if isinstance(resolution, CaptureHandleExhausted):
+        raise capture_handle_exhausted(ref, field="ref")
+    raise _not_found("Capture", ref, (), surface=surface, section="captures")
+
+
+def _resolve_typed(
+    projection: Any,
+    kind: GetRefKind,
+    name: str,
+    *,
+    ref: str,
+    surface: ReadSurface,
+    key_reader: Callable[[], KeyReader] | None = None,
+    subject_suggestions: bool = True,
+) -> ResolvedRef:
+    if kind == "claim":
+        return _resolve_claim(projection, name.removeprefix("Claim:"), ref=ref, surface=surface)
+    if kind == "claim_type":
+        return _resolve_claim_type(projection, name, ref=ref, surface=surface)
+    if kind == "provider":
+        return _resolve_provider(projection, name, ref=ref)
+    if kind == "contract":
+        return _resolve_contract(projection, name, ref=ref, surface=surface)
+    if kind == "capability":
+        return _resolve_capability(projection, name, ref=ref, surface=surface)
+    if kind == "subject":
+        name = name.removeprefix("Subject:")
+        # A Subject reference resolves in the common order -- exact live id,
+        # alias, key, exact retired id -- so an exact retired id never shadows
+        # the live Subject an alias or key names (review H F-002).
+        found = _resolve_subject_text(projection, name, ref=ref, key_reader=key_reader)
+        if found is not None:
+            return found
+    identity = f"{_QUALIFIER[kind]}:{name}"
+    row = _envelope(projection, identity)
+    if row is not None:
+        return ResolvedRef(kind, row.identity, _display(kind, row.identity), row.path)
+    if kind == "subject" and not subject_suggestions:
+        # World supplies its own AbsentSubject repair. Identity/alias/key
+        # resolution above already established absence; do not enumerate the
+        # instance just to compute names that this caller will discard.
+        raise _not_found("Subject", ref, (), surface=surface)
+    names = _names_of(projection, kind)
+    if kind == "subject":
+        match = _SUBJECT.fullmatch(name)
+        if match is not None and not any(item.startswith(match["kind"] + "/") for item in names):
+            kinds = nearest(match["kind"], {item.split("/", 1)[0] for item in names})
+            raise ReadRefusalError(
+                "cruxible.get.ref_not_found",
+                f"no accepted Subject has kind {match['kind']!r} ({ref!r})",
+                http_status=404,
+                candidates=kinds,
+                repair=RepairOperation(operation="cruxible.orient"),
+                repair_line="Use one of these Subject kinds; orient lists every kind",
+                context={"ref": ref},
+            )
+    what = {
+        "subject": "Subject",
+        "document": "Document",
+        "procedure": "Procedure",
+        "query": "QueryDefinition",
+        "capture_contract": "CaptureContract",
+        "trigger": "Trigger",
+        "subject_kind": "SubjectKind",
+        "line": "Line",
+        "resolution_contract": "ResolutionContract",
+        "mandate": "ProcedureMandate",
+        "approval_policy": "ApprovalPolicy",
+        "procedure_runtime_policy": "ProcedureRuntimePolicy",
+        "runbook": "Runbook",
+    }[kind]
+    candidates = tuple(
+        item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
+        for item in nearest(name, names)
+    )
+    raise _not_found(what, ref, candidates, surface=surface, section=_ORIENT_SECTION.get(kind))
+
+
+def _resolve_contract(projection: Any, name: str, *, ref: str, surface: ReadSurface) -> ResolvedRef:
+    """``Contract:<name>@<N>`` (or ``/v<N>``) names one version; a bare name its newest."""
+
+    text = name.removeprefix("Contract:")
+    identity: str | None = None
+    base, at, version = text.partition("@")
+    if at and version.isdigit():
+        identity = f"Contract:{base}/v{version}"
+    elif "/v" in text:
+        identity = f"Contract:{text}"
+    else:
+        newest = projection.typed.connection.execute(
+            "SELECT identity FROM contracts WHERE contract_name=? "
+            "ORDER BY contract_version DESC LIMIT 1",
+            (text,),
+        ).fetchone()
+        identity = None if newest is None else str(newest[0])
+    row = None if identity is None else _envelope(projection, identity)
+    if row is not None:
+        return ResolvedRef("contract", row.identity, _display("contract", row.identity), row.path)
+    names = sorted(
+        {
+            str(item[0])
+            for item in projection.typed.connection.execute("SELECT contract_name FROM contracts")
+        }
+    )
+    candidates = tuple(f"Contract:{item}" for item in nearest(base or text, names))
+    raise _not_found("Contract", ref, candidates, surface=surface, section="contracts")
+
+
+def _resolve_capability(
+    projection: Any, name: str, *, ref: str, surface: ReadSurface
+) -> ResolvedRef:
+    """``Capability:<name>@<N>`` (or ``/v<N>``) names one version; a bare name its newest.
+
+    Served from the capabilities index: an identity seek, or one
+    ``capabilities_by_name_version`` seek for the newest version.
+    """
+
+    from cruxible_core.capabilities.lookup import newest_capability_identity
+
+    text = name.removeprefix("Capability:")
+    identity: str | None = None
+    base, at, version = text.partition("@")
+    if at and version.isdigit():
+        identity = f"Capability:{base}/v{version}"
+    elif "/v" in text:
+        identity = f"Capability:{text}"
+    else:
+        identity = newest_capability_identity(projection, text)
+    row = None if identity is None else _envelope(projection, identity)
+    if row is not None:
+        return ResolvedRef(
+            "capability", row.identity, _display("capability", row.identity), row.path
+        )
+    # The refusal names the nearest accepted names: only on this miss path.
+    names = sorted(
+        {
+            str(item[0])
+            for item in projection.typed.connection.execute(
+                "SELECT DISTINCT capability_name FROM capabilities"
+            )
+        }
+    )
+    candidates = tuple(f"Capability:{item}" for item in nearest(base or text, names))
+    raise _not_found("Capability", ref, candidates, surface=surface, section="capabilities")
+
+
+def _resolve_provider(projection: Any, name: str, *, ref: str) -> ResolvedRef:
+    """Seek one exact build or the maintained newest live build of its name."""
+
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.providers.builds import (
+        indexed_exact_provider,
+        indexed_provider_builds,
+    )
+
+    connection = projection.typed.connection
+    repair = RepairOperation(operation="cruxible.provider.list")
+    if "/" in name:
+        row = indexed_exact_provider(connection, f"Provider:{name}")
+    else:
+        # Only one maintained head is needed on a successful read. Enumerate
+        # this name's builds only when refusing a tied registration, to name
+        # the exact references that repair the request.
+        from cruxible_core.providers.builds import indexed_newest_provider
+
+        try:
+            row = indexed_newest_provider(connection, name)
+        except RequestRefusedError as exc:
+            candidates = tuple(
+                item.identity for item in indexed_provider_builds(connection, name) if item.live
+            )
+            raise ReadRefusalError(
+                "cruxible.get.ref_ambiguous",
+                f"{ref!r} names builds registered together; name an exact build",
+                http_status=409,
+                candidates=candidates,
+                repair=repair,
+                repair_line="Run provider list, then get Provider:NAME/BUILD from its build column",
+                context={"ref": ref},
+            ) from exc
+    if row is None:
+        raise ReadRefusalError(
+            "cruxible.get.ref_not_found",
+            f"no accepted Provider {ref!r}",
+            http_status=404,
+            repair=repair,
+            repair_line="Run provider list, then get Provider:NAME or Provider:NAME/BUILD",
+            context={"ref": ref},
+        )
+    return ResolvedRef("provider", row.identity, row.identity, row.path)
+
+
+def _resolve_subject_text(
+    projection: Any, name: str, *, ref: str, key_reader: Callable[[], KeyReader] | None
+) -> ResolvedRef | None:
+    """``kind/<text>``: the Subject the shared resolver names, or None when none.
+
+    Its order is exact live id, alias, single key, exact retired id, as every
+    write, query and inbox link reads a reference; several alias or key holders
+    are ambiguous and refuse, even in front of an exact retired id. Only an
+    artifact path (``subjects/<kind>/<id>.json``) reads an exact envelope as is.
+    """
+
+    from cruxible_core.indexes.subject_aliases import resolve_subject_ref
+
+    match = _SUBJECT.fullmatch(name)
+    if match is None:
+        return None
+    lazy: KeyReader | None = None
+    if key_reader is not None:
+        reader = key_reader
+
+        # The tree is read only when the key step is reached (not for a live id).
+        def lazy(kind: str, text: str) -> KeyTuple | None:
+            return reader()(kind, text)
+
+    resolution = resolve_subject_ref(
+        projection.typed.connection, match["kind"], match["id"], key_reader=lazy
+    )
+    if resolution.ambiguous:
+        raise _ambiguous(ref, list(resolution.candidates))
+    if resolution.ref is None:
+        return None
+    row = _envelope(projection, f"Subject:{resolution.ref}")
+    if row is None:
+        return None
+    return ResolvedRef("subject", row.identity, _display("subject", row.identity), row.path)
+
+
+def _names_of(projection: Any, kind: GetRefKind) -> tuple[str, ...]:
+    return tuple(
+        _name(row.identity) for row in projection.typed.envelopes(kind=_PROJECTION_KIND[kind])
+    )
+
+
+def _resolve_claim(projection: Any, name: str, *, ref: str, surface: ReadSurface) -> ResolvedRef:
+    if _CLAIM_ID.fullmatch(name):
+        identity = f"Claim:{name}"
+        row = _envelope(projection, identity)
+        if row is None:
+            raise _not_found("Claim", ref, (), surface=surface)
+        return ResolvedRef("claim", identity, name, row.path)
+    if not _CLAIM_PREFIX.fullmatch(name):
+        raise ReadRefusalError(
+            "cruxible.get.ref_malformed",
+            f"{ref!r} is not a Claim id or a unique CLM- prefix",
+            candidates=(),
+            repair=RepairOperation(operation="cruxible.orient"),
+            repair_line="Pass CLM- plus 32 lowercase hex, or a unique prefix of at least 4 hex",
+            context={"ref": ref},
+        )
+    lower = f"Claim:{name}"
+    rows = projection.typed.connection.execute(
+        "SELECT identity FROM claims WHERE identity >= ? AND identity < ? "
+        "ORDER BY identity LIMIT ?",
+        (lower, lower + "￿", _MAX_CANDIDATES + 1),
+    ).fetchall()
+    matches = [str(row[0]) for row in rows]
+    if not matches:
+        raise _not_found("Claim with prefix", ref, (), surface=surface)
+    if len(matches) > 1:
+        raise _ambiguous(ref, [_name(item) for item in matches])
+    row = _envelope(projection, matches[0])
+    return ResolvedRef("claim", matches[0], _name(matches[0]), row.path if row else None)
+
+
+#: The live predicates a name is the dotted tail of: one prefix range of the
+#: reversed-name index (``claim_type_names_by_reversed``) -- the reversed tail
+#: ``.work.status`` is a prefix of exactly the reversed names ending in it -- so
+#: resolving a short name reads its matches (bounded), never the other names
+#: sharing its leaf, nor every ClaimType.
+_PREDICATE_TAIL_SQL = (
+    "SELECT name FROM claim_type_names INDEXED BY claim_type_names_by_reversed "
+    "WHERE kind='predicate' AND reversed_name>=? AND reversed_name<? "
+    "ORDER BY reversed_name LIMIT ?"
+)
+
+
+def _predicates_ending_in(projection: Any, name: str) -> list[str]:
+    low = ("." + name)[::-1]
+    # The exact upper bound of the prefix: its last character ('.') plus one.
+    high = low[:-1] + chr(ord(low[-1]) + 1)
+    return sorted(
+        str(row[0])
+        for row in projection.typed.connection.execute(
+            _PREDICATE_TAIL_SQL, (low, high, _MAX_CANDIDATES + 1)
+        )
+    )
+
+
+def _resolve_claim_type(
+    projection: Any, name: str, *, ref: str, surface: ReadSurface
+) -> ResolvedRef:
+    row = _envelope(projection, f"ClaimType:{name}")
+    if row is not None:
+        return ResolvedRef(
+            "claim_type", row.identity, _display("claim_type", row.identity), row.path
+        )
+    leaf = _predicates_ending_in(projection, name)
+    if len(leaf) == 1:
+        identity = f"ClaimType:{leaf[0]}"
+        found = _envelope(projection, identity)
+        return ResolvedRef(
+            "claim_type", identity, _display("claim_type", identity), found.path if found else None
+        )
+    if len(leaf) > 1:
+        raise _ambiguous(ref, [f"ClaimType:{item}" for item in sorted(leaf)])
+    # Only a refusal reads every name, for its nearest-name repair.
+    predicates = _names_of(projection, "claim_type")
+    raise _not_found(
+        "ClaimType",
+        ref,
+        tuple(f"ClaimType:{item}" for item in nearest(name, predicates)),
+        surface=surface,
+    )
+
+
+def _resolve_bare(projection: Any, value: str, *, surface: ReadSurface) -> ResolvedRef:
+    """A bare name: a predicate (full or unique leaf), or another artifact's name."""
+
+    matches: list[ResolvedRef] = []
+    # An exact predicate, else the live predicates it is the dotted tail of:
+    # indexed lookups, so a hit costs its matches, never every ClaimType.
+    if _envelope(projection, f"ClaimType:{value}") is not None:
+        identity = f"ClaimType:{value}"
+        matches.append(ResolvedRef("claim_type", identity, _display("claim_type", identity)))
+    else:
+        for predicate in _predicates_ending_in(projection, value):
+            identity = f"ClaimType:{predicate}"
+            matches.append(ResolvedRef("claim_type", identity, _display("claim_type", identity)))
+    for typed_kind in _NAMED_KINDS:
+        identity = f"{_QUALIFIER[typed_kind]}:{value}"
+        if _envelope(projection, identity) is not None:
+            matches.append(ResolvedRef(typed_kind, identity, _display(typed_kind, identity)))
+    if len(matches) == 1:
+        found = matches[0]
+        row = _envelope(projection, found.identity)
+        return ResolvedRef(found.kind, found.identity, found.display, row.path if row else None)
+    if matches:
+        raise _ambiguous(value, [item.display for item in matches])
+    # Only a refusal reads every name, for its nearest-name repair.
+    names = [f"ClaimType:{item}" for item in _names_of(projection, "claim_type")]
+    for typed_kind in _NAMED_KINDS:
+        names.extend(
+            f"{_DISPLAY_PREFIX[typed_kind]}:{item}" for item in _names_of(projection, typed_kind)
+        )
+    by_name = {item.split(":", 1)[1]: item for item in names}
+    candidates = tuple(by_name[item] for item in nearest(value, by_name))
+    raise _not_found("artifact named", value, candidates, surface=surface)
+
+
+# -- rendering next steps for the caller's surface -----------------------------
+
+
+def _sdk_context(at: ClientCoordinate | None) -> str:
+    """The SDK context a rendered read runs on: ``cx``, pinned to ``at`` when given."""
+
+    if at is None:
+        return "cx"
+    fields = ", ".join(f"{key}={json.dumps(value)}" for key, value in at.model_dump().items())
+    return f"cx.at(AcceptedCoordinate({fields}))"
+
+
+def _render_get(
+    surface: ReadSurface,
+    ref: str,
+    detail: str | None = None,
+    *,
+    window: str | None = None,
+    at: ClientCoordinate | None = None,
+) -> str:
+    """One ``get`` call spelled for the caller's surface (R07)."""
+
+    if surface == "cli":
+        rendered = f"cruxible get {shlex.quote(ref)}"
+        if detail:
+            rendered += f" --detail {detail}"
+        if at is not None:
+            rendered += f" --at {at.git_oid}"
+        return rendered + (f" --range {window}" if window else "")
+    arguments = [json.dumps(ref)]
+    if detail:
+        arguments.append(f"detail={json.dumps(detail)}")
+    if window:
+        start, _, end = window.partition(":")
+        arguments.append(
+            f"range=({start}, {end})"
+            if surface == "sdk"
+            else f'range={{"start": {start}, "end": {end}}}'
+        )
+    if surface == "sdk":
+        return f"{_sdk_context(at)}.get({', '.join(arguments)})"
+    if at is not None:
+        arguments.append(f"at={json.dumps(at.git_oid)}")
+    arguments[0] = f"ref={arguments[0]}"
+    return f"cruxible_get({', '.join(arguments)})"
+
+
+def _render_procedure_run(surface: ReadSurface, name: str, runnable: str) -> tuple[str, ...]:
+    """How this Procedure runs, spelled for the caller's surface: itself, or as a Line."""
+
+    if runnable == "direct":
+        return (
+            {
+                "cli": f"cruxible procedure run {shlex.quote(name)} -",
+                "mcp": f"cruxible_procedure_run(name={json.dumps(name)}, input={{...}})",
+                "sdk": f"cx.accepted_procedure({json.dumps(name)}).run(input=...)",
+            }[surface],
+        )
+    if runnable == "line":
+        target = json.dumps("Procedure:" + name)
+        return (
+            {
+                "cli": f"cruxible query Line --where procedure=Procedure:{shlex.quote(name)}",
+                "mcp": (
+                    'cruxible_query(kind="Line", where=[{"field": "procedure", "eq": '
+                    + target
+                    + "}])"
+                ),
+                "sdk": f'cx.query("Line", where=[{{"field": "procedure", "eq": {target}}}])',
+            }[surface],
+        )
+    return ()
+
+
+def _render_backlinks(surface: ReadSurface, ref: str, *, at: ClientCoordinate | None) -> str:
+    """The backlinks read of one target, spelled for the caller's surface, at ``at``.
+
+    MCP spells it as ``get`` with ``detail="backlinks"``, the same page, which
+    every tool profile serves.
+    """
+
+    if surface == "cli":
+        return f"cruxible backlinks {shlex.quote(ref)}" + (
+            "" if at is None else f" --at {at.git_oid}"
+        )
+    if surface == "sdk":
+        return f"{_sdk_context(at)}.backlinks({json.dumps(ref)})"
+    return _render_get(surface, ref, "backlinks", at=at)
+
+
+def _card_guidance(
+    connection: Any,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+    pinned: ClientCoordinate | None,
+) -> tuple[tuple[GetGuidance, ...], int | None, tuple[str, ...]]:
+    """The Documents that guide a ClaimType or Procedure, for its card (D-R17).
+
+    One bounded range of the backlink index for this one target; a cut list
+    carries the total and the backlinks read that pages them all, at
+    ``pinned`` (the coordinate a historical card was read at).
+    """
+
+    from cruxible_core.service.discovery.backlinks import card_guidance
+
+    rows, total = card_guidance(connection, resolved.identity, limit=GET_CARD_LINKS)
+    guidance = tuple(
+        GetGuidance(document=_display("document", document), title=title)
+        for document, title in rows
+    )
+    more = () if total is None else (_render_backlinks(surface, resolved.display, at=pinned),)
+    return guidance, total, more
+
+
+def _render_read_capture(surface: ReadSurface, digest: str) -> str:
+    """The body-permission read of one Capture's material, spelled for the surface."""
+
+    if surface == "cli":
+        return f"cruxible capture read {digest}"
+    if surface == "sdk":
+        return (
+            "client.read_capture(instance_id, "
+            f"CaptureReadRequest(capture_digest={json.dumps(digest)}))"
+        )
+    return f'cruxible_capture_read(request={{"capture_digest": {json.dumps(digest)}}})'
+
+
+def _value_was_cut(
+    value: object,
+    *,
+    surface: ReadSurface,
+    width: int = GET_CLI_VALUE_WIDTH,
+) -> bool:
+    if surface == "cli":
+        return get_value_display(value, width=width).truncated
+    if isinstance(value, TruncatedText):
+        return True
+    return isinstance(value, list | tuple) and any(
+        _value_was_cut(item, surface=surface, width=width) for item in value
+    )
+
+
+def _render_proposal_step(surface: ReadSurface, step: str, proposal_id: str) -> str:
+    if surface == "cli":
+        return f"cruxible proposal {step} {proposal_id}"
+    if surface == "sdk":
+        return f"cx.proposal({json.dumps(proposal_id)}).{step}()"
+    tool = {
+        "review": "cruxible_proposal_review",
+        "readmit": "cruxible_proposal_readmit",
+    }[step]
+    return f"{tool}(proposal_id={json.dumps(proposal_id)})"
+
+
+# -- per-kind builders ------------------------------------------------------------
+
+
+def _claim_value(row: ClaimValueRecord) -> object:
+    if row.object_kind == "none":
+        # A none contending in a one-valued slot is shown as the none it states.
+        assert isinstance(row.object, NoneClaimObject)
+        return served_none(row.object)
+    if row.object_kind == "subject" and isinstance(row.value, str):
+        return _subject_ref(row.value)
+    return row.value
+
+
+def _none_of(obj: object) -> object:
+    """The unit a none says is empty, as a read shows it: None for a whole slot."""
+
+    assert isinstance(obj, NoneClaimObject)
+    return served_none(obj)["none"]
+
+
+def _value_key(row: ClaimValueRecord) -> str:
+    """Canonical native value used for slot distinctness."""
+
+    return repr(_claim_value(row))
+
+
+def _artifact_value(claim: ClaimArtifact) -> object:
+    return served_claim_value(claim.statement.object)
+
+
+def _slot_values(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    subject_path: str,
+    predicates: tuple[str, ...] = (),
+    evaluation_time: datetime,
+) -> tuple[ClaimValueRecord, ...]:
+    from cruxible_core.service.claims.claim_reads import service_read_claim_values
+
+    public = AcceptedCoordinate.from_internal(coordinate)
+    result = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(
+            at=ClientCoordinate.model_validate(public.model_dump(mode="json")),
+            subject_paths=(subject_path,),
+            predicates=predicates,
+            evaluation_time=evaluation_time,
+        ),
+    )
+    return result.values
+
+
+def _generation_timestamp(instance: PlaybillInstance, history: Any, sequence: int) -> str:
+    return str(history.read_generation_facts(sequence, instance.retained_record_reader()).timestamp)
+
+
+def _claim_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    surface: ReadSurface,
+) -> GetClaimCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
+        row = projection.typed.envelope(resolved.identity)
+    statement = claim.statement
+    subject_path = statement.subject.artifact_path
+    subject_kind = _subject_ref(subject_path).split("/", 1)[0]
+    slot = tuple(
+        item
+        for item in _slot_values(
+            instance,
+            coordinate,
+            subject_path=subject_path,
+            predicates=(statement.predicate,),
+            evaluation_time=evaluation_time,
+        )
+        if item.qualifier == statement.qualifier
+    )
+    own = next((item for item in slot if item.claim_id == claim.identity.name), None)
+    verdict = own.verdict if own is not None else "retired"
+    status = own.status if own is not None else "retired"
+    with instance.bind_accepted_projection(coordinate) as projection:
+        accepted_predicates = _live_predicates(projection)
+        contenders = tuple(
+            cast(ClaimArtifact, projection.typed.source(f"Claim:{item.claim_id}"))
+            for item in slot
+            if item.claim_id != claim.identity.name
+        )
+    held = unsure_holds(
+        instance,
+        coordinate,
+        (claim, *contenders),
+        statuses={item.claim_id: item.status for item in slot},
+        evaluation_time=evaluation_time,
+    )
+    with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
+        latest = h.latest_member(claim_path(claim.identity.name))
+        accepted = None if latest is None else _generation_timestamp(instance, h, latest.sequence)
+    name = claim.identity.name
+    value = _artifact_value(claim)
+    contender_values = {item.claim_id: _claim_value(item) for item in slot if item.claim_id != name}
+    flags = verdict_flags(verdict, status, held=claim.identity.qualified in held)
+    value_source: Literal["field", "literal", "param"] | None = None
+    receipt = claim.backing.procedure_evidence
+    if receipt is not None:
+        from cruxible_client.contracts.procedures.artifacts import parse_procedure
+        from cruxible_client.contracts.procedures.claims import ClaimsNode
+        from cruxible_client.contracts.refs import ref_from_graph_text
+
+        pinned = instance.accepted_artifact_version(
+            AcceptedCoordinate.from_internal(coordinate),
+            receipt.procedure_digest,
+            family="procedures/",
+        )
+        if pinned is not None:
+            procedure_path, procedure_bytes = pinned
+            procedure = parse_procedure(procedure_bytes, path=procedure_path)
+            node = next(
+                (n for n in procedure.definition.nodes if n.node_id == receipt.node_id), None
+            )
+            if isinstance(node, ClaimsNode) and receipt.template < len(node.claims):
+                template = node.claims[receipt.template].value
+                ref = ref_from_graph_text(template) if isinstance(template, str) else None
+                value_source = (
+                    "literal" if ref is None else "param" if ref.root == "param" else "field"
+                )
+    return GetClaimCard(
+        value_source=value_source,
+        claim=name,
+        subject=_subject_ref(subject_path),
+        predicate=short_field_name(statement.predicate, subject_kind, accepted_predicates),
+        predicate_full=statement.predicate,
+        qualifier=statement.qualifier,
+        value=summary_value(value, read_whole=whole_value_read(name, coordinate.git_oid)),
+        effective_from=statement.effective_from,
+        effective_until=statement.effective_until,
+        verdict=verdict,
+        status=status,
+        revision=int(row.revision) if row is not None else 1,
+        accepted=accepted,
+        contenders=tuple(
+            GetContender(
+                claim=item.claim_id,
+                value=summary_value(
+                    contender_values[item.claim_id],
+                    read_whole=whole_value_read(item.claim_id, coordinate.git_oid),
+                ),
+                verdict=item.verdict,
+            )
+            for item in slot
+            if item.claim_id != name
+        ),
+        flags=flags,
+        next=(
+            _render_get(surface, name, "evidence"),
+            *(
+                _render_get(surface, item, "evidence")
+                for item, value in contender_values.items()
+                if _value_was_cut(summary_value(value), surface=surface)
+            ),
+            # ``why`` is a deep admission/verdict explanation: worth suggesting
+            # only when something about this Claim is actually notable (stale,
+            # contested, contradicted, uncovered or held), not on every
+            # ordinary supported read.
+            *((_render_get(surface, name, "why"),) if flags else ()),
+            _render_get(surface, _subject_ref(subject_path)),
+        ),
+    )
+
+
+def _subject_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    surface: ReadSurface,
+) -> GetSubjectCard:
+    subject = _name(resolved.identity)
+    kind = subject.split("/", 1)[0]
+    path = resolved.path or f"subjects/{subject}.json"
+    rows = _slot_values(instance, coordinate, subject_path=path, evaluation_time=evaluation_time)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        shell = cast(SubjectShell, projection.typed.source(resolved.identity))
+        accepted_predicates = _live_predicates(projection)
+        claim_types: dict[str, ClaimType] = {}
+        claims: list[ClaimArtifact] = []
+        for item in rows:
+            if item.predicate not in claim_types:
+                claim_types[item.predicate] = cast(
+                    ClaimType, projection.typed.source(f"ClaimType:{item.predicate}")
+                )
+            claims.append(cast(ClaimArtifact, projection.typed.source(f"Claim:{item.claim_id}")))
+        incoming = int(
+            projection.typed.connection.execute(
+                "SELECT count(*) FROM claims WHERE object_kind='subject' AND object_path=? "
+                "AND lifecycle='live'",
+                (path,),
+            ).fetchone()[0]
+        )
+        # A pair's ends (its pair_ends rows) and, as an end, its pair candidates
+        # per pair kind and part (pair_units seeks): at most CARD_SCAN per group.
+        ends = pair_ends(projection.typed.connection, path)
+        scanned = [
+            (group, group_pairs(projection.typed.connection, path, group, limit=CARD_SCAN + 1))
+            for group in end_pair_groups(projection.typed.connection, path)
+        ]
+        examined = [(group, pair) for group, found in scanned for pair in found[:CARD_SCAN]]
+        fact_paths = fact_claim_paths(projection.typed.connection, examined)
+    # Candidates only propose: each is listed when one of its facts is visible.
+    visible = visible_pairs(
+        instance,
+        coordinate,
+        pairs=[pair for _group, pair in examined],
+        claim_paths=fact_paths,
+        evaluation_time=evaluation_time,
+    )
+    end_groups = []
+    for group, found in scanned:
+        visible_found = [pair for pair in found[:CARD_SCAN] if pair in visible]
+        more = len(visible_found) > GET_CARD_PAIRS or len(found) > CARD_SCAN
+        if not found:
+            continue
+        end_groups.append(
+            GetEndPairs(
+                kind=group.kind,
+                part=short_field_name(group.part, group.kind, accepted_predicates),
+                pairs=tuple(_subject_ref(item) for item in visible_found[:GET_CARD_PAIRS]),
+                hidden=len(found[:CARD_SCAN]) - len(visible_found),
+                more=more,
+            )
+        )
+    held = unsure_holds(
+        instance,
+        coordinate,
+        claims,
+        statuses={item.claim_id: item.status for item in rows},
+        evaluation_time=evaluation_time,
+    )
+    end_parts = dict(ends)
+    end_claims: dict[str, ClaimValueRecord] = {}
+    slots: dict[tuple[str, str | None], list[ClaimValueRecord]] = defaultdict(list)
+    for item in rows:
+        if (
+            item.predicate in end_parts
+            and item.qualifier is None
+            and item.object_kind == "subject"
+            and item.value == end_parts[item.predicate]
+        ):
+            # An endpoint key Claim: shown as the pair's end, not as a field.
+            end_claims.setdefault(item.predicate, item)
+            continue
+        slots[(item.predicate, item.qualifier)].append(item)
+    pair_end_rows = tuple(
+        GetPairEnd(
+            part=short_field_name(part, kind, accepted_predicates),
+            subject=_subject_ref(end),
+            claim=None if part not in end_claims else end_claims[part].claim_id,
+            flags=()
+            if part not in end_claims
+            else tuple(
+                ordered_flags(
+                    set(
+                        verdict_flags(
+                            end_claims[part].verdict,
+                            end_claims[part].status,
+                            held=f"Claim:{end_claims[part].claim_id}" in held,
+                        )
+                    )
+                )
+            ),
+        )
+        for part, end in ends
+    )
+    entries: list[GetSubjectClaim] = []
+    evidence_steps: list[str] = []
+    for (predicate, qualifier), slot_members in sorted(
+        slots.items(), key=lambda pair: (pair[0][0], pair[0][1] or "")
+    ):
+        declared = claim_types.get(predicate)
+        many = declared is not None and declared.cardinality == "many"
+        # A none (an inverse Claim) is never a value: it is listed beside them.
+        members = [item for item in slot_members if item.object_kind != "none"]
+        nones = tuple(
+            GetNone(
+                claim=item.claim_id,
+                of=summary_value(_none_of(item.object)),
+                verdict=item.verdict,
+                flags=verdict_flags(
+                    item.verdict, item.status, held=f"Claim:{item.claim_id}" in held
+                ),
+            )
+            for item in slot_members
+            if item.object_kind == "none"
+        )
+        if not members:
+            entries.append(
+                GetSubjectClaim(
+                    predicate=short_field_name(predicate, kind, accepted_predicates),
+                    qualifier=qualifier,
+                    claim=(),
+                    value=[],
+                    flags=tuple(ordered_flags({flag for item in nones for flag in item.flags})),
+                    nones=nones,
+                )
+            )
+            continue
+        # The slot's answer: what resolution selected, or every live contender
+        # while it is contested. Overturned and refused contenders are not values.
+        shown = [item for item in members if item.status in {"accepted", "conflicted"}] or members
+        # Distinctness is judged on native values before summary rendering.
+        marks: set[ReadFlag] = set(
+            answer_flags("many" if many else "one", len({_value_key(item) for item in shown}))
+        )
+        values = [_claim_value(item) for item in shown]
+        for item, value in zip(shown, values, strict=True):
+            if _value_was_cut(summary_value(value), surface=surface):
+                evidence_steps.append(_render_get(surface, item.claim_id, "evidence"))
+        for item in shown:
+            marks.update(
+                verdict_flags(item.verdict, item.status, held=f"Claim:{item.claim_id}" in held)
+            )
+        for none in nones:
+            marks.update(none.flags)
+        listed = many or len(values) > 1
+        claims_shown = tuple(item.claim_id for item in shown)
+        reads = [whole_value_read(item, coordinate.git_oid) for item in claims_shown]
+        displayed_value = (
+            [
+                summary_value(value, read_whole=read)
+                for value, read in zip(values, reads, strict=True)
+            ]
+            if listed
+            else summary_value(values[0], read_whole=reads[0])
+        )
+        if listed and surface == "cli" and _value_was_cut(displayed_value, surface=surface):
+            evidence_steps.extend(_render_get(surface, item, "evidence") for item in claims_shown)
+        entries.append(
+            GetSubjectClaim(
+                predicate=short_field_name(predicate, kind, accepted_predicates),
+                qualifier=qualifier,
+                claim=claims_shown if listed else claims_shown[0],
+                value=displayed_value,
+                flags=tuple(ordered_flags(marks)),
+                nones=nones,
+            )
+        )
+    any_claim_flagged = any(entry.flags for entry in entries) or any(
+        end.flags for end in pair_end_rows
+    )
+    return GetSubjectCard(
+        subject=subject,
+        kind=kind,
+        lifecycle=shell.lifecycle.state,
+        ends=pair_end_rows,
+        claims=tuple(entries),
+        incoming_count=incoming,
+        pairs=tuple(end_groups),
+        next=(
+            *dict.fromkeys(evidence_steps),
+            # See the matching note in _claim_card: suggest ``why`` only when
+            # some claim here is actually notable.
+            *((_render_get(surface, subject, "why"),) if any_claim_flagged else ()),
+            _render_get(surface, subject, "history"),
+            # What points at it: the edges stored on other Subjects.
+            *((_render_get(surface, subject, "incoming"),) if incoming else ()),
+            # The rest of its pairs, when the card cut a group.
+            *(
+                (_render_get(surface, subject, "pairs"),)
+                if any(group.more for group in end_groups)
+                else ()
+            ),
+        ),
+    )
+
+
+def _object_description(claim_type: ClaimType) -> tuple[str, tuple[Any, ...] | None]:
+    return render_type(claim_type.value), value_members(claim_type.value) or None
+
+
+def _claim_type_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+    pinned: ClientCoordinate | None = None,
+) -> GetClaimTypeCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim_type = cast(ClaimType, projection.typed.source(resolved.identity))
+        envelope = projection.typed.envelope(resolved.identity)
+        assert envelope is not None, resolved.identity
+        # The predicate's counters Claim writes maintain, summed over its kinds.
+        live, with_value = (
+            int(value)
+            for value in projection.typed.connection.execute(
+                PREDICATE_COUNTS_SQL, (claim_type.predicate,)
+            ).fetchone()
+        )
+        kit = owned_by(
+            kit_owners(instance, projection.typed.connection), "ClaimType", claim_type.predicate
+        )
+        guidance, guidance_total, more_guidance = _card_guidance(
+            projection.typed.connection, resolved, surface=surface, pinned=pinned
+        )
+    names = CaptureContractNames(instance, coordinate)
+    evidence = names.admitted(claim_type, qualified=True)
+    rules = tuple(
+        GetEvidenceRule(
+            rule_id=rule.rule_id,
+            roles=rule.claim_roles,
+            contracts=tuple(item.target.qualified for item in rule.capture_contracts),
+            families=rule.capture_contract_families,
+            admission=rule.admission,
+        )
+        for rule in claim_type.evidence_admission_policy.rules
+    )
+    object_type, members = _object_description(claim_type)
+    next_steps = [_render_get(surface, resolved.display, "proof")]
+    next_steps.extend(
+        _render_get(surface, name) for name in evidence[:1] if not name.startswith("unresolved:")
+    )
+    next_steps.extend(more_guidance)
+    return GetClaimTypeCard(
+        predicate=claim_type.predicate,
+        subject_kinds=claim_type.allowed_subject_kinds,
+        object=object_type,
+        cardinality=claim_type.cardinality,
+        members=members,
+        description=claim_type.description,
+        member_descriptions=claim_type.member_descriptions,
+        roles=claim_type.permitted_roles,
+        default_role=claim_type.default_role,
+        evidence_requirement=effective_evidence_requirement(claim_type),
+        revision_evidence=effective_revision_evidence(claim_type),
+        evidence=evidence,
+        evidence_rules=rules,
+        contention=claim_type_contention(claim_type),
+        format=claim_type_format_version(claim_type),
+        revision=envelope.revision,
+        path=envelope.path,
+        live_claims=live,
+        subjects_with_value=with_value,
+        kit=kit,
+        guidance=guidance,
+        guidance_total=guidance_total,
+        next=tuple(next_steps),
+    )
+
+
+def _document_size(projection: Any, identity: str, body_digest: str) -> int | None:
+    """The accepted whole-body mapping's length, if the landing index holds it."""
+
+    if not PositionedBodies(projection.typed.bodies).verify(body_digest):
+        return None
+    for fact in projection.typed.facts("cruxible.document.source_mapping", identity=identity):
+        if fact.fact_key == "whole_body":
+            mapping = SourceMapping.model_validate(fact.value)
+            return max((span.end_byte for span in mapping.spans), default=0)
+    return None
+
+
+def _document_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+    pinned: ClientCoordinate | None = None,
+) -> GetDocumentCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        shell = cast(DocumentShell, projection.typed.source(resolved.identity))
+        size = _document_size(projection, resolved.identity, shell.body_digest)
+    # Its own links, from the shell already read; a cut list names the full
+    # envelope (``proof``), which carries them all.
+    cut = len(shell.links) > GET_CARD_LINKS
+    return GetDocumentCard(
+        document=_name(resolved.identity),
+        title=shell.title,
+        document_kind=shell.document_kind,
+        media_type=shell.media_type,
+        size=size,
+        revision=shell.lifecycle.revision,
+        links=tuple(
+            GetDocumentLink(relation=link.relation, target=link.target_identity)
+            for link in shell.links[:GET_CARD_LINKS]
+        ),
+        links_total=len(shell.links) if cut else None,
+        next=(
+            _render_get(surface, resolved.display, "body"),
+            _render_get(surface, resolved.display, "why"),
+            _render_get(surface, resolved.display, "history"),
+            *((_render_get(surface, resolved.display, "proof", at=pinned),) if cut else ()),
+        ),
+    )
+
+
+def _principal_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetPrincipalCard:
+    record = _principals_at(instance, coordinate)[_name(resolved.identity)]
+    return GetPrincipalCard(
+        principal=record.principal_id,
+        kind=record.kind,
+        status=record.status,
+        algorithm=record.algorithm,
+        public_key=record.public_key,
+        next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _approval_policy_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetApprovalPolicyCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        policy = cast(ApprovalPolicy, projection.typed.source(resolved.identity))
+    return GetApprovalPolicyCard(
+        policy=resolved.display,
+        mode=policy.mode,
+        next=(
+            _render_get(surface, resolved.display, "history"),
+            _render_get(surface, resolved.display, "proof"),
+        ),
+    )
+
+
+def _runtime_policy_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetProcedureRuntimePolicyCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        policy = cast(ProcedureRuntimePolicy, projection.typed.source(resolved.identity))
+    return GetProcedureRuntimePolicyCard(
+        policy=resolved.display,
+        provider_output_bytes_cap=policy.provider_output_bytes_cap,
+        result_bytes_cap=policy.result_bytes_cap,
+        repeat_attempts_cap=policy.repeat_attempts_cap,
+        next=(
+            _render_get(surface, resolved.display, "history"),
+            _render_get(surface, resolved.display, "proof"),
+        ),
+    )
+
+
+def _provider_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetProviderCard:
+    from cruxible_client.contracts.providers import ProviderV2
+    from cruxible_core.service.discovery.discovery import operation_row
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        provider = projection.typed.source(resolved.identity)
+    assert provider is not None
+    runtime = getattr(provider, "runtime_artifact", None)
+    distribution = None if runtime is None else runtime.distribution
+    return GetProviderCard(
+        provider=provider.provider_name,
+        build=provider.identity.name,
+        package=None if distribution is None else distribution.name,
+        version=None if distribution is None else distribution.version,
+        state=provider.lifecycle.state,
+        operations=tuple(operation_row(provider, item) for item in provider.operations)
+        if isinstance(provider, ProviderV2)
+        else (),
+        next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _pin_name(binding: Any) -> str:
+    target = getattr(binding, "target", None)
+    if target is not None:
+        return str(target.qualified)
+    return f"slot:{getattr(binding, 'slot_name', '?')}"
+
+
+def _procedure_reviews(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    history_limit: int = 0,
+) -> tuple[ProcedureMeasurementReview, ...]:
+    from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+    from cruxible_core.service.procedures.resolution_dispositions import (
+        procedure_measurement_reviews,
+    )
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        procedure = projection.typed.source(resolved.identity)
+        row = projection.typed.envelope(resolved.identity)
+    assert procedure is not None and row is not None
+    return procedure_measurement_reviews(
+        instance,
+        accepted=AcceptedProcedure(
+            path=resolved.path or f"procedures/{_name(resolved.identity)}.json",
+            procedure=procedure,
+            artifact_digest=row.artifact_digest,
+        ),
+        observation=coordinate,
+        history_limit=history_limit,
+    )
+
+
+def _procedure_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    surface: ReadSurface,
+    pinned: ClientCoordinate | None = None,
+) -> GetProcedureCard:
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureReadinessRequestV1,
+        service_playbill_procedure_readiness,
+    )
+
+    readiness = service_playbill_procedure_readiness(
+        instance,
+        name=_name(resolved.identity),
+        request=ProcedureReadinessRequestV1(at=AcceptedCoordinate.from_internal(coordinate)),
+    )
+    definition = readiness.artifact.definition
+    inputs: dict[str, Any] = {"input": _pin_name(definition.contract_in)}
+    if definition.parameter_contract is not None:
+        inputs["parameters"] = _pin_name(definition.parameter_contract)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        promoted = projection.typed.facts(
+            "cruxible.procedure.track_record", identity=resolved.identity
+        )
+        guidance, guidance_total, more_guidance = _card_guidance(
+            projection.typed.connection, resolved, surface=surface, pinned=pinned
+        )
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+
+    return GetProcedureCard(
+        authored=decompile_procedure(readiness.artifact),
+        measurement_reviews=_procedure_reviews(instance, coordinate, resolved),
+        procedure=_name(resolved.identity),
+        description=definition.description,
+        lifecycle=readiness.artifact.lifecycle.state,
+        inputs=inputs,
+        runnable=readiness.runnable,
+        unsupported_nodes=tuple(
+            GetProcedureNode(node_id=item.node_id, kind=item.kind, runs_on=item.runs_on)
+            for item in readiness.unsupported_nodes
+        ),
+        track_record=tuple(
+            _track_record_entry(fact)
+            for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
+        ),
+        guidance=guidance,
+        guidance_total=guidance_total,
+        next=(
+            *(
+                ()
+                if readiness.artifact.lifecycle.state == "retired"
+                else _render_procedure_run(surface, _name(resolved.identity), readiness.runnable)
+            ),
+            _render_get(surface, resolved.display, "proof"),
+            *more_guidance,
+        ),
+    )
+
+
+def _track_record_entry(fact: ProjectionFact) -> GetProcedureTrackRecord:
+    """One ``cruxible.procedure.track_record`` fact, as the Procedure card shows it."""
+
+    value = cast(Mapping[str, Any], fact.value)
+
+    def digest(name: str) -> str:
+        tagged = value[name]
+        return str(tagged["$digest"] if isinstance(tagged, Mapping) else tagged)
+
+    return GetProcedureTrackRecord(
+        promotion=fact.fact_key,
+        first_sequence=value["first_sequence"],
+        last_sequence=value["last_sequence"],
+        output=value["output"],
+        output_digest=digest("output_digest"),
+        promotion_digest=digest("promotion_digest"),
+    )
+
+
+def _query_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetQueryCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        query = cast(QueryDefinition, projection.typed.source(resolved.identity))
+    from cruxible_client.contracts.query.authored import QuerySpecInput, query_spec_from_definition
+
+    definition: QuerySpecInput | QueryDefinition | None = None
+    if getattr(query, "artifact_format") == "cruxible-query-definition-v3":
+        try:
+            definition = query_spec_from_definition(query)
+        except ValueError:
+            definition = query
+    return GetQueryCard(
+        query=query.identity.name,
+        definition=definition,
+        description=query.description,
+        params=tuple(
+            GetQueryParameter(name=item.name, type=str(item.value_type), required=item.required)
+            for item in query.parameters
+        ),
+        next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _trigger_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetTriggerCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        trigger = cast(Trigger, projection.typed.source(resolved.identity))
+    target = trigger.line.qualified if trigger.line is not None else str(trigger.action)
+    return GetTriggerCard(
+        trigger=resolved.identity,
+        lifecycle=trigger.lifecycle.state,
+        schedule=trigger.schedule.model_dump(mode="json"),
+        target=target,
+        next=(_render_get(surface, resolved.display, "history"),),
+    )
+
+
+def _subject_kind_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetSubjectKindCard:
+    """How core names Subjects of one kind, and how many are live."""
+
+    kind = _name(resolved.identity)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        declared = cast(SubjectKind, projection.typed.source(resolved.identity))
+        # The kind's maintained counter: one key seek, never a count of its Subjects.
+        counted = projection.typed.connection.execute(LIVE_SUBJECT_COUNT_SQL, (kind,)).fetchone()
+        live = 0 if counted is None else counted[0]
+        kit = owned_by(kit_owners(instance, projection.typed.connection), "SubjectKind", kind)
+        # A pair kind's ends: each Subject-valued key part's one end kind.
+        ends = tuple(
+            GetKindEnd(key=predicate, kind=end_kinds[0])
+            for predicate in declared.keys
+            if len(end_kinds := _end_kinds(projection, predicate)) == 1
+        )
+    rule = declared.identity_rule
+    return GetSubjectKindCard(
+        pair=bool(ends),
+        ends=ends,
+        subject_kind=resolved.identity,
+        description=declared.description,
+        lifecycle=declared.lifecycle.state,
+        rule=rule.rule,
+        keys=declared.keys,
+        normalizers={
+            predicate: normalizer_spelling(declared.normalizer(predicate))
+            for predicate in declared.keys
+            if not isinstance(declared.normalizer(predicate), NoneNormalizer)
+        },
+        uniqueness=getattr(rule, "uniqueness", None),
+        live_subjects=int(live),
+        kit=kit,
+        next=(
+            _render_get(surface, resolved.display, "history"),
+            {
+                "cli": f"cruxible query {kind}",
+                "mcp": f'cruxible_query(kind="{kind}")',
+                "sdk": f'cx.query("{kind}")',
+            }[surface],
+        ),
+    )
+
+
+def _end_kinds(projection: Any, predicate: str) -> tuple[str, ...]:
+    """The Subject kinds a key ClaimType's value names; empty for a literal part."""
+
+    claim_type = projection.typed.source(f"ClaimType:{predicate}")
+    if not isinstance(claim_type, ClaimType):
+        return ()
+    return subject_value_kinds(claim_type.value)
+
+
+def _contract_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetContractCard:
+    """One Contract version, field by field, as authors spell the types."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        declared = cast(Contract, projection.typed.source(resolved.identity))
+    return GetContractCard(
+        contract=resolved.display,
+        version=declared.version,
+        description=declared.description,
+        fields=tuple(
+            GetContractField(
+                name=name,
+                type=render_type(field.type),
+                optional=field.optional,
+                description=field.description,
+            )
+            for name, field in declared.fields.items()
+        ),
+        predecessor=None if declared.version == 1 else f"{declared.name}@{declared.version - 1}",
+        pins=tuple(ref.spelling for ref in declared.refs()),
+        next=(_render_get(surface, resolved.display, "history"),),
+    )
+
+
+def _capability_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetCapabilityCard:
+    """One capability version: what it does, its effect and its two Contracts."""
+
+    from cruxible_client.contracts.capabilities import Capability
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        declared = cast(Capability, projection.typed.source(resolved.identity))
+    request = f"Contract:{declared.in_.spelling}"
+    return GetCapabilityCard.model_validate(
+        {
+            "capability": resolved.display,
+            "version": declared.version,
+            "description": declared.description,
+            "effect": declared.effect,
+            "in": declared.in_.spelling,
+            "out": declared.out.spelling,
+            "predecessor": (
+                None if declared.version == 1 else f"{declared.name}@{declared.version - 1}"
+            ),
+            "next": (
+                _render_get(surface, request, "summary"),
+                _render_get(surface, f"Contract:{declared.out.spelling}", "summary"),
+                _render_get(surface, resolved.display, "history"),
+            ),
+        }
+    )
+
+
+def _capture_contract_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetCaptureContractCard:
+    names = CaptureContractNames(instance, coordinate)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        contract = cast(CaptureContract, projection.typed.source(resolved.identity))
+        row = projection.typed.envelope(resolved.identity)
+        claim_types = [
+            cast(ClaimType, projection.typed.source(item.identity))
+            for item in projection.typed.envelopes(kind="claim-type")
+        ]
+    admitted_by = tuple(
+        sorted(
+            item.predicate
+            for item in claim_types
+            if item.lifecycle.state == "live"
+            and resolved.identity in names.admitted(item, qualified=True)
+        )
+    )
+    return GetCaptureContractCard(
+        contract=resolved.identity,
+        version=names.version_number(resolved.identity, row.artifact_digest) if row else 1,
+        lifecycle=contract.lifecycle.state,
+        captures={
+            "grade": contract.epistemic_grade,
+            "source_kinds": list(contract_source_kinds(contract)),
+        },
+        admitted_by=admitted_by,
+        next=tuple(
+            [_render_get(surface, resolved.display, "history")]
+            + [_render_get(surface, f"ClaimType:{item}") for item in admitted_by[:1]]
+        ),
+    )
+
+
+def _proposal_records(instance: PlaybillInstance, proposal_id: str) -> dict[str, Any]:
+    """The proposal's list entry and whichever of its records are retained.
+
+    The entry is the by-ID status read's, which authenticates every record that
+    is present and answers ``incomplete`` with its reasons for any that is not.
+    """
+
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+    entry = service_playbill_proposal_status(instance, proposal_id=proposal_id)
+    missing = set(entry.incomplete_reasons)
+    evidence = instance.proposal_evidence()
+    admission = None if "missing_admission" in missing else evidence.read_admission(proposal_id)
+    evaluation = None if "missing_evaluation" in missing else evidence.read_evaluation(proposal_id)
+    candidate = (
+        None
+        if evaluation is None
+        or evaluation.candidate_digest is None
+        or "missing_candidate" in missing
+        else evidence.read_candidate(evaluation.candidate_digest)
+    )
+    return {
+        "status": entry,
+        "admission": admission,
+        "evaluation": evaluation,
+        "candidate": candidate,
+    }
+
+
+def _proposal_card(
+    instance: PlaybillInstance,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetProposalCard:
+    records = _proposal_records(instance, resolved.identity)
+    entry = records["status"]
+    admission = records["admission"]
+    candidate = records["candidate"]
+    changes: list[GetProposalChange] = []
+    members = () if candidate is None else candidate.members
+    for member in members[:_MAX_CHANGES]:
+        changes.append(GetProposalChange(path=member.path, change=member.disposition))
+    if len(members) > _MAX_CHANGES:
+        changes.append(
+            GetProposalChange(
+                path="…", change=f"{len(members) - _MAX_CHANGES} more; see detail=proof"
+            )
+        )
+    # A refused proposal says why on the card itself; there is no further step.
+    evaluation = records["evaluation"]
+    refusal = (
+        tuple(
+            GetProposalRefusal(
+                code=item.code,
+                message=item.message,
+                repair=served_repair_for_refusal(item.code),
+            )
+            for item in evaluation.diagnostics
+        )
+        if evaluation is not None and evaluation.verdict == "refused"
+        else ()
+    )
+    step: str | None = None
+    if entry.status == "open" and entry.verdict == "candidate":
+        step = "review"
+    elif entry.status == "awaiting_readmit":
+        step = "readmit"
+    return GetProposalCard(
+        proposal=resolved.identity,
+        status=entry.status,
+        incomplete=entry.incomplete_reasons,
+        verdict=entry.verdict,
+        reason=entry.terminal_reason,
+        actor=entry.actor_id,
+        admitted_at=entry.admitted_at,
+        rationale=None if admission is None else admission.rationale,
+        originating_line=None if admission is None else admission.originating_line,
+        generation=entry.accepted_generation,
+        changes=tuple(changes),
+        refusal=refusal,
+        next=() if step is None else (_render_proposal_step(surface, step, resolved.identity),),
+    )
+
+
+# -- evidence ------------------------------------------------------------------------
+
+
+def _latest_generation(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, path: str
+) -> AcceptedGenerationLocation | None:
+    """The accepted generation of ``path``'s latest revision at ``coordinate``: one lookup."""
+
+    with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
+        latest = h.latest_member(path)
+        return None if latest is None else h.generation(latest.sequence)
+
+
+def _claim_evidence(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    access: BodyAccessContext | None = None,
+) -> GetEvidence:
+    from cruxible_core.indexes.sql_batch import select_in
+    from cruxible_core.service.claims.claims import service_explain_playbill_claim
+    from cruxible_core.service.discovery.operational import _from_microseconds
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+    )
+
+    reader = access or NO_RESTRICTED_ACCESS
+    explanation = service_explain_playbill_claim(
+        instance,
+        identity=resolved.identity,
+        at=AcceptedCoordinate.from_internal(coordinate),
+        evaluation_time=evaluation_time,
+        access=reader,
+    )
+    names = CaptureContractNames(instance, coordinate)
+    bodies = instance.body_store()
+    withheld, _notice = capture_access_resolver(instance, coordinate).withheld(
+        [account.capture_digest for account in explanation.admission_accounts], reader
+    )
+    indexed: dict[str, tuple[object, ...]] = {}
+    if withheld:
+        # C14: a withheld Capture is described from the accepted citation index.
+        with instance.bind_accepted_projection(coordinate) as projection:
+            indexed = {
+                str(row[0]): tuple(row[1:])
+                for row in select_in(
+                    projection.typed.connection,
+                    "SELECT p.capture_digest,s.kind,s.source_identity,p.producer_identity,"
+                    "p.observed_at_us FROM captures p "
+                    "JOIN source_references s USING(source_ref_key) "
+                    "WHERE p.capture_digest IN ({})",
+                    sorted(withheld),
+                )
+            }
+    captures: list[GetCaptureEvidence] = []
+    for account in explanation.admission_accounts:
+        version = names.version_of(account.capture_contract_digest)
+        erasure = None
+        if account.capture_digest in withheld:
+            row = indexed.get(account.capture_digest)
+            if row is None:
+                continue
+            kind, identity, producer, observed_us = row
+            source = identity if kind == "external" else (producer if version else None)
+            observed_at = _from_microseconds(int(str(observed_us)))
+        else:
+            envelope = capture_envelope(bodies, account.capture_digest, access=_SERVICE_ACCESS)
+            # One stat when nothing was ever erased; a lookup only for an absent body.
+            erasure = erased_body(instance, envelope)
+            source = getattr(envelope.source, "source_identity", None)
+            if source is None and version is not None:
+                source = envelope.producer.qualified
+            observed_at = envelope.observed_at
+        captures.append(
+            GetCaptureEvidence(
+                capture=capture_handle(account.capture_digest),
+                contract=account.capture_contract_identity,
+                version=names.version_number(
+                    account.capture_contract_identity, account.capture_contract_digest
+                ),
+                source=str(source or "unknown"),
+                observed_at=observed_at,
+                role=account.citation_role,
+                origin=account.citation_origin,
+                status=account.status,
+                erased=None
+                if erasure is None
+                else GetCaptureErasure(
+                    by=erasure.erased_by, at=erasure.erased_at, because=erasure.because
+                ),
+            )
+        )
+    # Accepted attestations and the door's recorded events of this exact version.
+    attestations = tuple(
+        GetAttestationEvidence(
+            stance=item.stance,
+            principal=item.principal,
+            at=item.attested_at,
+            current=item.current,
+            record=item.record,
+            basis=item.basis,
+            counts=item.counts,
+            counts_reason=item.counts_reason,
+            event=item.event_digest,
+            rule=item.rule_id,
+        )
+        for item in explanation.attestation_accounts
+    )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
+    value = _artifact_value(claim)
+    return GetEvidence(
+        value=value,
+        captures=tuple(captures),
+        attestations=attestations,
+        rationale=_claim_rationale(instance, coordinate, _name(resolved.identity)),
+    )
+
+
+def _claim_rationale(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, claim_id: str
+) -> str | None:
+    """Why this Claim revision was proposed, whole: the shared resolver's text."""
+
+    path = claim_path(claim_id)
+    generation = _latest_generation(instance, coordinate, path)
+    return None if generation is None else ChangeReasons(instance).rationale(generation, path)
+
+
+# -- history -------------------------------------------------------------------------
+
+_HISTORY_LIST = "get history"
+_INCOMING_LIST = "get incoming"
+_PAIRS_LIST = "get pairs"
+_RUNS_LIST = "get runs"
+#: A keyset cursor's snapshot: it continues after its last key, whatever lands meanwhile.
+_KEYSET = "keyset"
+
+
+@dataclass(frozen=True)
+class _Shown:
+    """What one revision shows once read: its value, lifecycle and, for a Claim, its change."""
+
+    value: object = None
+    lifecycle: str | None = None
+    change: RevisionChange | None = None
+    retirement: ClaimRetirementReason | None = None
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+
+
+def _nothing_shown() -> _Shown:
+    return _Shown()
+
+
+@dataclass(frozen=True)
+class _RevisionEntry:
+    """One accepted revision, located but not yet read."""
+
+    revision: int
+    sequence: int
+    digest: str
+    # The member path the revision changed, which its reason is read for.
+    path: str | None = None
+    # What the revision shows, read only when a page shows it.
+    read: Callable[[], _Shown] = _nothing_shown
+
+
+class _ClaimVersions:
+    """One Claim path's accepted revisions: located by the history index, read when shown.
+
+    Locating is the path's member rows (``members_by_path``); a row whose bytes
+    are unchanged (an evaluation) is no revision. A revision's blob is read,
+    parsed and verified against its record member only when a page shows it, or
+    the revision after it compares against it, and once.
+    """
+
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        history: Any,
+        path: str,
+        locations: Sequence[AcceptedMemberLocation],
+    ) -> None:
+        self._instance = instance
+        self._history = history
+        self._records = instance.retained_record_reader()
+        self.path = path
+        located: list[AcceptedMemberLocation] = []
+        for location in locations:
+            if location.artifact_digest is None:
+                continue
+            if located and located[-1].artifact_digest == location.artifact_digest:
+                continue
+            located.append(location)
+        self.locations = tuple(located)
+        self._claims: dict[int, ClaimArtifact] = {}
+
+    def claim(self, index: int) -> ClaimArtifact:
+        """Revision ``index`` (oldest first), verified against its accepted record member."""
+
+        if index not in self._claims:
+            location = self.locations[index]
+            generation = self._history.generation(location.sequence)
+            self._history.read_member(location, self._records)
+            content = self._instance.blob_at(generation.git_oid, self.path)
+            if content is None:
+                raise ProjectionIntegrityError("Claim history source is unavailable")
+            claim = parse_claim(content, path=self.path)
+            digest = claim_artifact_digest(claim).tagged
+            if digest != location.artifact_digest:
+                raise ProjectionIntegrityError("Claim history source binding differs")
+            self._claims[index] = claim
+        return self._claims[index]
+
+    def change(self, index: int) -> tuple[RevisionChange, ClaimRetirementReason | None]:
+        """What revision ``index`` did: stated, changed, reobserved, rebound, or retired (and why).
+
+        A re-bind is derived from its shape, which no earlier law accepts: the
+        same statement, with a citation its predecessor held left out.
+        """
+
+        claim = self.claim(index)
+        if claim.lifecycle.state == "retired":
+            return "retired", None if claim.retirement is None else claim.retirement.reason
+        if index == 0:
+            return "stated", None
+        before = self.claim(index - 1)
+        same = claim_statement_digest(claim.statement) == claim_statement_digest(before.statement)
+        if same and self.rebound(index) is not None:
+            return "rebound", None
+        return ("reobserved" if same else "changed"), None
+
+    def rebound(self, index: int) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        """A re-bind's replaced and new Captures (``CAP-`` handles), or None if it is none."""
+
+        if index == 0:
+            return None
+        claim, before = self.claim(index), self.claim(index - 1)
+        current = {item.citation_id for item in claim.backing.citations}
+        previous = {item.citation_id for item in before.backing.citations}
+        if previous <= current:
+            return None
+        kept = {item.capture_digest for item in claim.backing.citations}
+        held = {item.capture_digest for item in before.backing.citations}
+        replaced = sorted(
+            {item.capture_digest for item in before.backing.citations} - kept,
+            key=lambda item: item.encode("ascii"),
+        )
+        added = sorted(kept - held, key=lambda item: item.encode("ascii"))
+        return (
+            tuple(capture_handle(item) for item in replaced),
+            tuple(capture_handle(item) for item in added),
+        )
+
+    def shown(self, index: int) -> _Shown:
+        claim = self.claim(index)
+        value = _artifact_value(claim)
+        change, retirement = self.change(index)
+        return _Shown(
+            value=value,
+            lifecycle=claim.lifecycle.state,
+            change=change,
+            retirement=retirement,
+            effective_from=claim.statement.effective_from,
+            effective_until=claim.statement.effective_until,
+        )
+
+
+def _generation_coordinate(generation: AcceptedGenerationLocation) -> ClientCoordinate:
+    return ClientCoordinate(
+        git_oid=generation.git_oid,
+        semantic_root=generation.semantic_root,
+        generation_root=generation.generation_root,
+        compiler_digest=generation.compiler_digest,
+    )
+
+
+def _accepted_by(
+    instance: PlaybillInstance, history: Any, generation: AcceptedGenerationLocation
+) -> tuple[str, str | None, tuple[str, ...]]:
+    """When a generation was accepted, by whom, and who approved it (its record's facts)."""
+
+    # Genesis carries no change-set record: its instant is the bootstrap's and
+    # nobody approved it.
+    if generation.source_record_path is None:
+        accepted = instance.accepted_evaluation_time(generation.git_oid)
+        return accepted.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), generation.actor_id, ()
+    facts = history.read_generation_facts(generation.sequence, instance.retained_record_reader())
+    return (
+        facts.timestamp,
+        generation.actor_id or facts.actor_id,
+        tuple(dict.fromkeys(facts.approval_signers)),
+    )
+
+
+def _revision(
+    instance: PlaybillInstance,
+    history: Any,
+    entry: _RevisionEntry,
+    *,
+    ref: str,
+    surface: ReadSurface,
+    reasons: ChangeReasons,
+) -> GetRevision:
+    generation = history.generation(entry.sequence)
+    accepted, actor, approved_by = _accepted_by(instance, history, generation)
+    shown = entry.read()
+    # The revision's own generation, so the whole read returns this revision's value.
+    cut_value = summary_value(shown.value, read_whole=whole_value_read(ref, generation.git_oid))
+    return GetRevision(
+        revision=entry.revision,
+        sequence=entry.sequence,
+        git_oid=generation.git_oid[:12],
+        accepted=accepted,
+        actor=actor,
+        approved_by=approved_by,
+        lifecycle=shown.lifecycle,
+        value=cut_value,
+        effective_from=shown.effective_from,
+        effective_until=shown.effective_until,
+        next=(_render_get(surface, ref, "evidence", at=_generation_coordinate(generation)),)
+        if _value_was_cut(cut_value, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
+        else (),
+        digest=_short_digest(entry.digest),
+        change=shown.change,
+        reason=None if entry.path is None else reasons.reason(generation, entry.path),
+        retirement=shown.retirement,
+    )
+
+
+def _history_entries(
+    instance: PlaybillInstance,
+    resolved: ResolvedRef,
+    history: Any,
+) -> list[_RevisionEntry]:
+    """Every accepted revision up to the read coordinate, oldest first, located only.
+
+    A Claim's revisions are its member rows; a Subject shell's, a Document's
+    and a definition's come from their own history reads, which are few.
+    """
+
+    from cruxible_core.service.authoring.documents import service_playbill_document_history
+    from cruxible_core.service.claims.subjects import service_playbill_subject_history
+
+    cutoff = history.sequence
+    entries: list[_RevisionEntry] = []
+    if resolved.kind == "claim":
+        path = claim_path(_name(resolved.identity))
+        versions = _ClaimVersions(instance, history, path, history.member_history(path))
+        for index, location in enumerate(versions.locations):
+            assert location.artifact_digest is not None
+            entries.append(
+                _RevisionEntry(
+                    revision=index + 1,
+                    sequence=location.sequence,
+                    digest=location.artifact_digest,
+                    path=path,
+                    read=functools.partial(versions.shown, index),
+                )
+            )
+    elif resolved.kind == "subject":
+        shell_path = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+        for subject_entry in service_playbill_subject_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if subject_entry.sequence <= cutoff:
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=subject_entry.sequence,
+                        digest=subject_entry.artifact_digest,
+                        path=shell_path,
+                        read=functools.partial(_Shown, lifecycle=subject_entry.lifecycle_state),
+                    )
+                )
+    elif resolved.kind == "document":
+        for document_entry in service_playbill_document_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if document_entry.sequence <= cutoff:
+                body: object = {"body": _short_digest(document_entry.body_digest)}
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=document_entry.sequence,
+                        digest=document_entry.envelope_digest,
+                        path=resolved.path,
+                        read=functools.partial(_Shown, value=body),
+                    )
+                )
+    else:
+        # Definitions keep one version per accepted digest of their identity.
+        seen: set[str] = set()
+        for location in history.occurrences(resolved.identity):
+            if location.artifact_digest in seen:
+                continue
+            seen.add(location.artifact_digest)
+            entries.append(
+                _RevisionEntry(
+                    revision=len(entries) + 1,
+                    sequence=location.occurrence_sequence,
+                    digest=location.artifact_digest,
+                    path=location.path,
+                )
+            )
+    return entries
+
+
+def _history(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[GetHistory | GetSubjectHistory, bool, str | None]:
+    """One page of history, newest first, and the cursor that continues it.
+
+    A Subject's page is its field events (``GetSubjectHistory``); anything
+    else's is its own revisions. Either way locating costs the thing's own
+    history -- its member rows -- and reading costs the page.
+    """
+
+    if request.field is not None and resolved.kind != "subject":
+        raise ReadRefusalError(
+            "cruxible.get.field_unsupported",
+            f"field narrows the history of a Subject, and {resolved.display} is a "
+            f"{resolved.kind.replace('_', ' ')}",
+            repair=RepairOperation(
+                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "history"}
+            ),
+            repair_line=f"Run {_render_get(request.surface, resolved.display, 'history')}",
+            context={"ref": resolved.display, "kind": resolved.kind},
+        )
+    at = AcceptedCoordinate.from_internal(coordinate)
+    reasons = ChangeReasons(instance)
+    surface = request.surface
+    with instance.accepted_history_reader(at=at) as history:
+        newest_first = list(reversed(_history_entries(instance, resolved, history)))
+        revisions = tuple(
+            _revision(
+                instance,
+                history,
+                entry,
+                ref=resolved.display,
+                surface=surface,
+                reasons=reasons,
+            )
+            for entry in (newest_first if resolved.kind == "subject" else ())
+        )
+        if resolved.kind == "subject":
+            return _subject_events(
+                instance,
+                coordinate,
+                resolved,
+                history,
+                shell=revisions,
+                request=request,
+                limit=limit,
+                continuation=continuation,
+                reasons=reasons,
+            )
+        keys = [(str(entry.sequence), entry.digest) for entry in newest_first]
+        snapshot = list_snapshot(keys)
+        page, truncated = page_after_boundary(
+            newest_first,
+            keys=keys,
+            snapshot=snapshot,
+            continuation=continuation,
+            limit=limit,
+            list_name=_HISTORY_LIST,
+        )
+        reasons.prefetch(history.generation(entry.sequence) for entry in page)
+        shown = tuple(
+            _revision(
+                instance,
+                history,
+                entry,
+                ref=resolved.display,
+                surface=surface,
+                reasons=reasons,
+            )
+            for entry in page
+        )
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_HISTORY_LIST,
+            coordinate=at.model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=snapshot,
+            last_key=(str(page[-1].sequence), page[-1].digest),
+        )
+        if truncated and page
+        else None
+    )
+    reviews = (
+        _procedure_reviews(instance, coordinate, resolved, history_limit=min(limit, 50))
+        if resolved.kind == "procedure"
+        else ()
+    )
+    return GetHistory(revisions=shown, measurement_reviews=reviews), truncated, next_cursor
+
+
+def _history_field(
+    kind: str, field: str, accepted: frozenset[str], *, ref: str, surface: ReadSurface
+) -> str:
+    """The predicate ``field`` names for a Subject of ``kind``, as get and orient name it."""
+
+    predicate = field if field in accepted else f"{kind}.{field}"
+    if predicate in accepted:
+        return predicate
+    shown = sorted(
+        short_field_name(item, kind, accepted) for item in accepted if item.startswith(f"{kind}.")
+    )
+    raise ReadRefusalError(
+        "cruxible.get.unknown_field",
+        f"{kind} has no field {field!r}",
+        repair=RepairOperation(
+            operation="cruxible.get", arguments={"ref": ref, "detail": "history"}
+        ),
+        repair_line=f"Name a field of {kind}, or run {_render_get(surface, ref, 'history')}",
+        candidates=nearest(field, shown),
+        context={"ref": ref, "field": field},
+    )
+
+
+def _subject_events(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    history: Any,
+    *,
+    shell: tuple[GetRevision, ...],
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+    reasons: ChangeReasons,
+) -> tuple[GetSubjectHistory, bool, str | None]:
+    """One page of a Subject's field events, newest first, pinned to the read coordinate.
+
+    Its Claim lineages are the projection's Claims about it, any lifecycle
+    (``claims_by_subject_predicate``; ``field`` narrows to one predicate's
+    prefix of it), and their revisions one read of their member rows: locating
+    costs the Subject's own Claims and revisions. Only the page's revisions are
+    read (each, and the one before it for what it changed), and only the page's
+    generations' facts and reasons.
+    """
+
+    subject = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+    kind = _subject_ref(subject).split("/", 1)[0]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        accepted = _live_predicates(projection)
+        predicate = (
+            None
+            if request.field is None
+            else _history_field(
+                kind, request.field, accepted, ref=resolved.display, surface=request.surface
+            )
+        )
+        connection = projection.typed.connection
+        rows = connection.execute(
+            "SELECT identity, predicate, qualifier, lifecycle FROM claims WHERE subject_path=?"
+            + ("" if predicate is None else " AND predicate=?")
+            + " ORDER BY identity",
+            (subject,) if predicate is None else (subject, predicate),
+        ).fetchall()
+        single = {
+            name
+            for name in {str(row[1]) for row in rows}
+            if isinstance(claim_type := projection.typed.source(f"ClaimType:{name}"), ClaimType)
+            and claim_type.cardinality == "one"
+        }
+    lineages = {
+        claim_path(str(identity).removeprefix("Claim:")): (
+            str(name),
+            None if qualifier is None else str(qualifier),
+            str(lifecycle),
+        )
+        for identity, name, qualifier, lifecycle in rows
+    }
+    located = history.member_locations(tuple(lineages))
+    versions = {path: _ClaimVersions(instance, history, path, located[path]) for path in lineages}
+    events = sorted(
+        (
+            (location.sequence, path, index)
+            for path, lineage in versions.items()
+            for index, location in enumerate(lineage.locations)
+        ),
+        key=lambda item: (-item[0], item[1].encode("utf-8")),
+    )
+    keys = [(str(sequence), path) for sequence, path, _index in events]
+    snapshot = list_snapshot(keys)
+    page, truncated = page_after_boundary(
+        events,
+        keys=keys,
+        snapshot=snapshot,
+        continuation=continuation,
+        limit=limit,
+        list_name=_HISTORY_LIST,
+    )
+    # A single-value slot's lineage is live from its first revision until it
+    # retires; retirement is terminal, so the projection's lifecycle says whether
+    # its last revision retired it.
+    spans = {
+        path: (
+            lineage.locations[0].sequence,
+            lineage.locations[-1].sequence if lineages[path][2] == "retired" else None,
+        )
+        for path, lineage in versions.items()
+        if lineage.locations
+    }
+
+    def contended(path: str, sequence: int) -> bool:
+        name, qualifier, _lifecycle = lineages[path]
+        if name not in single:
+            return False
+        return any(
+            other != path
+            and lineages[other][:2] == (name, qualifier)
+            and first < sequence
+            and (ended is None or ended > sequence)
+            for other, (first, ended) in spans.items()
+        )
+
+    reasons.prefetch(history.generation(sequence) for sequence, _path, _index in page)
+    shown = tuple(
+        _field_event(
+            instance,
+            history,
+            versions[path],
+            index,
+            field=short_field_name(lineages[path][0], kind, accepted),
+            predicate=lineages[path][0],
+            qualifier=lineages[path][1],
+            contended=index == 0 and contended(path, sequence),
+            surface=request.surface,
+            reasons=reasons,
+        )
+        for sequence, path, index in page
+    )
+    at = AcceptedCoordinate.from_internal(coordinate)
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_HISTORY_LIST,
+            coordinate=at.model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=snapshot,
+            last_key=(str(page[-1][0]), page[-1][1]),
+        )
+        if truncated and page
+        else None
+    )
+    return GetSubjectHistory(revisions=shell, events=shown), truncated, next_cursor
+
+
+def _field_event(
+    instance: PlaybillInstance,
+    history: Any,
+    versions: _ClaimVersions,
+    index: int,
+    *,
+    field: str,
+    predicate: str,
+    qualifier: str | None,
+    contended: bool,
+    surface: ReadSurface,
+    reasons: ChangeReasons,
+) -> GetFieldEvent:
+    location = versions.locations[index]
+    generation = history.generation(location.sequence)
+    accepted, actor, approved_by = _accepted_by(instance, history, generation)
+    claim = versions.claim(index)
+    claim_id = claim.identity.name
+    value = _artifact_value(claim)
+    cut = summary_value(value, read_whole=whole_value_read(claim_id, generation.git_oid))
+    common: dict[str, Any] = {
+        "field": field,
+        "predicate": predicate,
+        "qualifier": qualifier,
+        "claim": claim_id,
+        "sequence": location.sequence,
+        "git_oid": generation.git_oid[:12],
+        "accepted": accepted,
+        "actor": actor,
+        "approved_by": approved_by,
+        "reason": reasons.reason(generation, versions.path),
+        "value": cut,
+        "next": (_render_get(surface, claim_id, "evidence", at=_generation_coordinate(generation)),)
+        if _value_was_cut(cut, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
+        else (),
+    }
+    change, retirement = versions.change(index)
+    if change == "retired":
+        return GetFieldRetired(**common, retirement=retirement)
+    if change == "stated":
+        return GetFieldStated(**common, contended=contended)
+    if change == "reobserved":
+        return GetFieldReobserved(**common)
+    if change == "rebound":
+        replaced, by = versions.rebound(index) or ((), ())
+        return GetFieldRebound(**common, replaced=replaced, by=by)
+    earlier = versions.claim(index - 1)
+    before = _artifact_value(earlier)
+    before_at = history.generation(versions.locations[index - 1].sequence).git_oid
+    return GetFieldChanged(
+        **common, before=summary_value(before, read_whole=whole_value_read(claim_id, before_at))
+    )
+
+
+def _history_selection(request: GetRequest) -> dict[str, str]:
+    """What a history cursor continues: the reference, and the field it was narrowed to."""
+
+    return {"ref": request.ref, **({} if request.field is None else {"field": request.field})}
+
+
+#: Each paged detail's cursor list: a cursor from one never continues another.
+_PAGED_LISTS = {
+    "history": _HISTORY_LIST,
+    "incoming": _INCOMING_LIST,
+    "pairs": _PAIRS_LIST,
+    "runs": _RUNS_LIST,
+}
+
+
+def _history_continuation(
+    instance: PlaybillInstance,
+    request: GetRequest,
+) -> tuple[ListContinuation | None, ClientCoordinate | str | None]:
+    """The page a paged detail's cursor continues, pinned to the coordinate it was cut at."""
+
+    if request.cursor is None:
+        return None, request.at
+    continuation = decode_list_cursor(
+        request.cursor,
+        list_name=_PAGED_LISTS[request.detail],
+        selection=_history_selection(request),
+    )
+    pinned = ClientCoordinate.model_validate(continuation.coordinate)
+    at = request.at
+    if at is not None and AcceptedCoordinate.from_internal(
+        resolve_read_coordinate(instance, at)
+    ).model_dump(mode="json") != pinned.model_dump(mode="json"):
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor continues a different "
+            "coordinate; omit at to continue it, or read history again without a cursor"
+        )
+    return continuation, pinned
+
+
+# -- incoming --------------------------------------------------------------------------
+
+#: One incoming page: a seek of the object index after the last Claim, bounded by LIMIT.
+INCOMING_PAGE_SQL = (
+    "SELECT identity, subject_path, predicate, qualifier FROM claims "
+    "INDEXED BY claims_by_object_subject "
+    "WHERE object_kind='subject' AND object_path=? AND identity>? AND lifecycle='live' "
+    "ORDER BY identity LIMIT ?"
+)
+
+
+def _incoming(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[GetIncoming, bool, str | None]:
+    """One page of the live Claims whose Subject-valued object is this Subject.
+
+    A keyset walk of the object index (``claims_by_object_subject``) after the
+    cursor's Claim: the page reads its own rows and one more, never the
+    Subject's whole incoming set.
+    """
+
+    after = ""
+    if continuation is not None:
+        if continuation.snapshot != _KEYSET or len(continuation.last_key) != 1:
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read incoming again without a cursor"
+            )
+        after = continuation.last_key[0]
+    path = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.typed.connection.execute(
+            INCOMING_PAGE_SQL, (path, after, limit + 1)
+        ).fetchall()
+    truncated = len(rows) > limit
+    page = rows[:limit]
+    claims = tuple(
+        GetIncomingClaim(
+            claim=str(identity).removeprefix("Claim:"),
+            subject=_subject_ref(str(subject_path)),
+            predicate=str(predicate),
+            qualifier=None if qualifier is None else str(qualifier),
+        )
+        for identity, subject_path, predicate, qualifier in page
+    )
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_INCOMING_LIST,
+            coordinate=AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=_KEYSET,
+            last_key=(str(page[-1][0]),),
+        )
+        if truncated and page
+        else None
+    )
+    return GetIncoming(claims=claims), truncated, next_cursor
+
+
+# -- pairs ----------------------------------------------------------------------------
+
+
+def _pairs(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[GetPairs, bool, str | None]:
+    """One page of the pairs this Subject is an end of, by pair kind, part and id.
+
+    Keyset seeks of the pair index after the cursor's (part, pair), at most
+    ``page_scan(limit)`` candidates, judged by one batched fact read: the page
+    never reads the Subject's whole set of pairs (``pair_reads``).
+    """
+
+    after: tuple[str, str] | None = None
+    if continuation is not None:
+        if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read pairs again without a cursor"
+            )
+        after = (continuation.last_key[0], continuation.last_key[1])
+    path = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+    scan = page_scan(limit)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        try:
+            candidates = page_candidates(
+                projection.typed.connection, path, after=after, count=scan + 1
+            )
+        except PairsCursorInvalid as exc:
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read pairs again without a cursor"
+            ) from exc
+        fact_paths = fact_claim_paths(projection.typed.connection, candidates[:scan])
+        accepted_predicates = _live_predicates(projection) if candidates else frozenset()
+    # Candidates only propose: each is listed when one of its facts is visible;
+    # a hidden one is counted and the cursor moves past it.
+    visible = visible_pairs(
+        instance,
+        coordinate,
+        pairs=[pair for _group, pair in candidates[:scan]],
+        claim_paths=fact_paths,
+        evaluation_time=evaluation_time,
+    )
+    page = cut_page(candidates, visible, limit=limit, scan=scan)
+    groups = tuple(
+        GetEndPairs(
+            kind=group.kind,
+            part=short_field_name(group.part, group.kind, accepted_predicates),
+            pairs=tuple(_subject_ref(item) for item in listed),
+            hidden=hidden,
+        )
+        for group, listed, hidden in page.groups
+    )
+    next_cursor = (
+        None
+        if page.last is None
+        else encode_list_cursor(
+            list_name=_PAIRS_LIST,
+            coordinate=AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=_KEYSET,
+            # The visibility instant the walk judged its first page at: every
+            # page of one walk reads one snapshot (_pairs_instant).
+            last_key=(*page.last, evaluation_time.isoformat()),
+        )
+    )
+    return GetPairs(groups=groups), page.last is not None, next_cursor
+
+
+def _pairs_instant(request: GetRequest, continuation: ListContinuation) -> datetime:
+    """The instant a pairs continuation judges visibility at: the one its walk began at.
+
+    Visibility depends on effective periods, so a walk whose pages were judged
+    at different instants could list pairs no single instant holds. The cursor
+    carries the first page's instant; an explicit other ``evaluation_time``
+    refuses.
+    """
+
+    mismatch = ListCursorMismatch(
+        f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+        "listing; read pairs again without a cursor"
+    )
+    if continuation.snapshot != _KEYSET or len(continuation.last_key) != 3:
+        raise mismatch
+    try:
+        pinned = datetime.fromisoformat(continuation.last_key[2])
+    except ValueError as exc:
+        raise mismatch from exc
+    if pinned.utcoffset() is None:
+        raise mismatch
+    if request.evaluation_time is not None and request.evaluation_time != pinned:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor continues pairs judged at "
+            f"{pinned.isoformat()}; omit evaluation_time to continue it, or read pairs "
+            "again without a cursor"
+        )
+    return pinned
+
+
+# -- a Line's runs ----------------------------------------------------------------------
+
+
+def _line_runs(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[GetLineRuns, bool, str | None]:
+    """One page of a Line's runs, newest admission first, through its partition index.
+
+    The cursor names the last admission's immutable position in the run
+    index, so the page continues by key: one bounded locator read per page,
+    whatever the Line's run history holds.
+    """
+
+    after: tuple[str, int] | None = None
+    if continuation is not None:
+        key = continuation.last_key
+        if continuation.snapshot != _KEYSET or len(key) != 2 or not key[1].isdigit():
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read the runs again without a cursor"
+            )
+        after = (key[0], int(key[1]))
+    line = ArtifactIdentity(kind="Line", name=_name(resolved.identity))
+    try:
+        rows, stop = run_rows(instance, limit=limit, line=line, after=after)
+    except RunPageInvalidated as exc:
+        raise ListCursorStale(
+            f"{ListCursorStale.error_code}: {exc}; read the runs again without a cursor"
+        ) from exc
+    next_cursor = (
+        None
+        if stop is None
+        else encode_list_cursor(
+            list_name=_RUNS_LIST,
+            coordinate=AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=_KEYSET,
+            last_key=(stop[0], str(stop[1])),
+        )
+    )
+    return GetLineRuns(line=line.qualified, runs=rows), stop is not None, next_cursor
+
+
+# -- body ------------------------------------------------------------------------------
+
+
+def _body(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    requested: ByteRange | None,
+    access: BodyAccessContext,
+    surface: ReadSurface,
+) -> GetBody:
+    from cruxible_core.service.authoring.documents import service_dereference_playbill_document
+
+    read = service_dereference_playbill_document(
+        instance,
+        identity=resolved.identity,
+        access=access,
+        at=AcceptedCoordinate.from_internal(coordinate),
+    )
+    content = base64.b64decode(read.content_base64)
+    size = len(content)
+    if requested is None:
+        if size > GET_BODY_DEFAULT_MAX_BYTES:
+            window = f"0:{GET_BODY_DEFAULT_MAX_BYTES}"
+            line = (
+                f"Run {_render_get(surface, resolved.display, 'body', window=window)}, "
+                "then read the following ranges"
+            )
+            raise ReadRefusalError(
+                "cruxible.get.body_too_large",
+                f"{resolved.display} is {size} bytes, over the {GET_BODY_DEFAULT_MAX_BYTES}-byte "
+                "whole-body cap",
+                repair=RepairOperation(
+                    operation="cruxible.get",
+                    arguments={"ref": resolved.display, "detail": "body", "range": window},
+                ),
+                repair_line=line,
+                context={"size": size, "cap": GET_BODY_DEFAULT_MAX_BYTES},
+            )
+        window_range: ByteRange | None = ByteRange(start=0, end=size) if size else None
+    else:
+        # An empty Document has no bytes to range over: a range from 0 reads
+        # its empty body, and any later start is out of bounds.
+        if requested.start > 0 and requested.start >= size:
+            arguments: dict[str, object] = {"ref": resolved.display, "detail": "body"}
+            if size:
+                arguments["range"] = f"0:{size}"
+            raise ReadRefusalError(
+                "cruxible.get.range_out_of_bounds",
+                f"range starts at {requested.start} but {resolved.display} is {size} bytes",
+                repair=RepairOperation(operation="cruxible.get", arguments=arguments),
+                repair_line=(
+                    f"Pass a range inside 0:{size}" if size else "Omit range; the body is empty"
+                ),
+                context={"size": size},
+            )
+        window_range = (
+            ByteRange(start=requested.start, end=min(requested.end, size)) if size else None
+        )
+    chunk = b"" if window_range is None else content[window_range.start : window_range.end]
+    text: str | None = None
+    encoded: str | None = None
+    try:
+        text = chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        encoded = base64.b64encode(chunk).decode("ascii")
+    return GetBody(
+        document=_name(resolved.identity),
+        media_type=read.media_type,
+        size=size,
+        body_digest=read.body_digest,
+        range=window_range,
+        text=text,
+        content_base64=encoded,
+    )
+
+
+# -- proof and why ----------------------------------------------------------------------
+
+
+def _proof(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    access: BodyAccessContext,
+    viewer: OperationalViewer | None = None,
+) -> dict[str, Any]:
+    at = AcceptedCoordinate.from_internal(coordinate)
+    # A run id and a Capture digest are bare identities, not `Kind:name`.
+    if resolved.kind == "procedure_run":
+        return procedure_run_proof(instance, resolved.identity, viewer=viewer, access=access)
+    if resolved.kind == "capture":
+        from cruxible_core.service.evidence.body_access import capture_access_resolver
+
+        # C14: a restricted kind's envelope is not read for a reader without
+        # the key; the proof says which kind withheld it.
+        withheld, notice = capture_access_resolver(instance, coordinate).withheld(
+            (resolved.identity,), access
+        )
+        if withheld:
+            assert notice is not None
+            return {
+                "coordinate": at.model_dump(mode="json"),
+                "capture_digest": resolved.identity,
+                "envelope": None,
+                "notice": notice.model_dump(mode="json"),
+            }
+        envelope = capture_envelope(
+            instance.body_store(), resolved.identity, access=_SERVICE_ACCESS
+        )
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "capture_digest": resolved.identity,
+            "envelope": envelope.model_dump(mode="json"),
+        }
+    name = _name(resolved.identity) if resolved.kind != "proposal" else resolved.identity
+    if resolved.kind == "claim":
+        from cruxible_core.service.claims.claims import service_get_playbill_claim
+
+        view = service_get_playbill_claim(
+            instance, identity=resolved.identity, at=at, evaluation_time=evaluation_time
+        )
+        return _withhold_claim_evidence(
+            instance, coordinate, view.model_dump(mode="json"), access=access
+        )
+    if resolved.kind == "subject":
+        from cruxible_core.service.claims.subjects import service_get_playbill_subject
+
+        return service_get_playbill_subject(instance, identity=resolved.identity, at=at).model_dump(
+            mode="json"
+        )
+    if resolved.kind == "claim_type":
+        from cruxible_core.service.claims.claim_types import service_get_playbill_claim_type
+
+        return service_get_playbill_claim_type(instance, predicate=name, at=at).model_dump(
+            mode="json"
+        )
+    if resolved.kind == "document":
+        from cruxible_core.service.authoring.documents import service_get_playbill_document
+
+        return service_get_playbill_document(
+            instance, identity=resolved.identity, access=access, at=at
+        ).model_dump(mode="json")
+    if resolved.kind == "query":
+        from cruxible_core.service.discovery.query_definitions import (
+            service_get_playbill_query_definition,
+        )
+
+        return service_get_playbill_query_definition(instance, name=name, at=at).model_dump(
+            mode="json"
+        )
+    if resolved.kind == "procedure":
+        from cruxible_core.service.procedures.procedure_runs import (
+            ProcedureReadinessRequestV1,
+            service_playbill_procedure_readiness,
+        )
+
+        return service_playbill_procedure_readiness(
+            instance, name=name, request=ProcedureReadinessRequestV1(at=at)
+        ).model_dump(mode="json")
+    if resolved.kind == "principal":
+        record = _principals_at(instance, coordinate)[name]
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "path": resolved.path,
+            "record": record.model_dump(mode="json"),
+        }
+    if resolved.kind in {
+        "capture_contract",
+        "trigger",
+        "subject_kind",
+        "line",
+        "resolution_contract",
+        "mandate",
+        "approval_policy",
+        "procedure_runtime_policy",
+        "provider",
+        "contract",
+        "capability",
+        "runbook",
+    }:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            source = projection.typed.source(resolved.identity)
+            row = projection.typed.envelope(resolved.identity)
+        assert source is not None
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "path": row.path if row else None,
+            "artifact_digest": row.artifact_digest if row else None,
+            "envelope": None if source is None else source.model_dump(mode="json"),
+        }
+    # Proposals are operational: the status entry and the retained records.
+    # C14: their candidate law evidence quotes Captures; withheld ones are
+    # filtered, every digest and commitment kept.
+    return _withhold_claim_evidence(
+        instance,
+        coordinate,
+        {
+            name: None if value is None else value.model_dump(mode="json")
+            for name, value in _proposal_records(instance, resolved.identity).items()
+        },
+        access=access,
+    )
+
+
+def _withhold_claim_evidence(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    payload: dict[str, Any],
+    *,
+    access: BodyAccessContext,
+) -> dict[str, Any]:
+    """A served view without what its withheld Captures say, with a notice (C14).
+
+    Values stay; spans over, evidence locators into and absence witnesses of a
+    restricted Capture go, wherever the payload copies them. Decided from
+    maintained metadata before anything of theirs is read.
+    """
+
+    from cruxible_core.service.evidence.body_access import withhold_evidence_payload
+
+    redacted, notice = withhold_evidence_payload(instance, coordinate, payload, access)
+    if notice is None:
+        return payload
+    redacted["withheld"] = notice.model_dump(mode="json")
+    return redacted
+
+
+def _why(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    evaluation_time: datetime,
+    access: BodyAccessContext,
+) -> dict[str, Any]:
+    at = AcceptedCoordinate.from_internal(coordinate)
+    if resolved.kind == "claim":
+        from cruxible_core.service.claims.claims import service_explain_playbill_claim
+
+        explanation = service_explain_playbill_claim(
+            instance,
+            identity=resolved.identity,
+            at=at,
+            evaluation_time=evaluation_time,
+            access=access,
+        )
+        return _withhold_claim_evidence(
+            instance, coordinate, explanation.model_dump(mode="json"), access=access
+        )
+    from cruxible_core.service.discovery.explain import service_explain_playbill_subject
+
+    return service_explain_playbill_subject(
+        instance,
+        subject=SemanticAddress.whole_artifact(
+            resolved.path or f"subjects/{_name(resolved.identity)}.json"
+        ),
+        at=at,
+        detail="summary",
+        access=access,
+    ).model_dump(mode="json")
+
+
+# -- entry point ----------------------------------------------------------------------------
+
+
+@positioned_read
+def service_playbill_get(
+    instance: PlaybillInstance,
+    *,
+    request: GetRequest,
+    access: BodyAccessContext,
+    viewer: OperationalViewer | None = None,
+    subject_suggestions: bool = True,
+) -> GetResult:
+    """Resolve one reference and answer it at one ``detail`` level.
+
+    ``access`` is the reader's body access: Document bodies at the read tier,
+    a restricted CaptureKind's envelope and cited spans only with
+    ``can_read_restricted`` (C14). Claim values are never withheld. ``viewer`` is the
+    authenticated reader: a Line or run card names a runtime arming
+    credential only to that credential or an admin (``None`` sees none).
+    Only the SDK-internal batch reader may disable ``subject_suggestions``;
+    ordinary public get always keeps its nearest-name repair suggestions.
+    """
+
+    if request.ref.startswith("file:"):
+        from cruxible_core.service.authoring.doc_writes import read_doc_edits
+
+        return read_doc_edits(instance, request=request, access=access)
+    if request.detail == "backlinks":
+        return _get_backlinks(instance, request, access=access)
+    continuation, at = _history_continuation(instance, request)
+    coordinate = resolve_read_coordinate(instance, at)
+    evaluation_time = (
+        _pairs_instant(request, continuation)
+        if request.detail == "pairs" and continuation is not None
+        else request.evaluation_time or utc_now()
+    )
+    resolved = resolve_get_ref(
+        instance,
+        coordinate,
+        request.ref,
+        surface=request.surface,
+        subject_suggestions=subject_suggestions,
+        access=access,
+    )
+    if resolved.kind == "proposal":
+        # Proposals are operational state, read only as of the current head;
+        # one response never mixes an older requested generation with it. (A
+        # Procedure run is read live whatever at names, and says so: `live`.)
+        head = instance.accepted_coordinate()
+        if request.at is not None and coordinate.git_oid != head.git_oid:
+            raise ReadRefusalError(
+                "cruxible.get.historical_read_unsupported",
+                f"{resolved.display} is operational state, readable only at the current "
+                "head, not at an earlier accepted generation",
+                repair=RepairOperation(
+                    operation="cruxible.get", arguments={"ref": resolved.display}
+                ),
+                repair_line="Omit at to read the proposal as of the current head",
+                context={"ref": resolved.display, "kind": resolved.kind},
+            )
+        coordinate = head
+    allowed = GET_DETAILS_BY_KIND[resolved.kind]
+    if request.detail not in allowed:
+        raise ReadRefusalError(
+            "cruxible.get.detail_unsupported",
+            f'detail="{request.detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
+            f"it takes {', '.join(allowed)}",
+            repair=RepairOperation(
+                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
+            ),
+            repair_line=f"Run {_render_get(request.surface, resolved.display)}",
+            context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},
+        )
+    card: GetCard | None = None
+    fields: dict[str, Any] = {}
+    surface = request.surface
+
+    def render(ref: str, detail: str | None) -> str:
+        return _render_get(surface, ref, detail)
+
+    # A card read at a named coordinate pins the continuations that recover
+    # what it cut (guidance, a Document's links) to that same coordinate.
+    pinned = (
+        None
+        if request.at is None
+        else ClientCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        )
+    )
+
+    if request.detail == "summary":
+        if resolved.kind == "claim":
+            card = _claim_card(
+                instance,
+                coordinate,
+                resolved,
+                evaluation_time=evaluation_time,
+                surface=surface,
+            )
+        elif resolved.kind == "subject":
+            card = _subject_card(
+                instance,
+                coordinate,
+                resolved,
+                evaluation_time=evaluation_time,
+                surface=surface,
+            )
+        elif resolved.kind == "claim_type":
+            card = _claim_type_card(instance, coordinate, resolved, surface=surface, pinned=pinned)
+        elif resolved.kind == "document":
+            card = _document_card(instance, coordinate, resolved, surface=surface, pinned=pinned)
+        elif resolved.kind == "procedure":
+            card = _procedure_card(
+                instance,
+                coordinate,
+                resolved,
+                evaluation_time=evaluation_time,
+                surface=surface,
+                pinned=pinned,
+            )
+        elif resolved.kind == "query":
+            card = _query_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "capture_contract":
+            card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "trigger":
+            card = _trigger_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "subject_kind":
+            card = _subject_kind_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "contract":
+            card = _contract_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "capability":
+            card = _capability_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "line":
+            card = line_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+                viewer=viewer,
+            )
+        elif resolved.kind == "runbook":
+            from cruxible_core.service.discovery.runbook_reads import runbook_card
+
+            card = runbook_card(instance, coordinate, resolved.identity, render=render)
+        elif resolved.kind == "capture":
+            card = capture_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                render=render,
+                read_capture=functools.partial(_render_read_capture, surface),
+                access=access,
+            )
+        elif resolved.kind == "resolution_contract":
+            card = resolution_contract_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+            )
+        elif resolved.kind == "procedure_run":
+            card = procedure_run_card(
+                instance,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+                viewer=viewer,
+                access=access,
+            )
+        elif resolved.kind == "principal":
+            card = _principal_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "approval_policy":
+            card = _approval_policy_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "procedure_runtime_policy":
+            card = _runtime_policy_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "provider":
+            card = _provider_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "mandate":
+            card = mandate_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+            )
+        else:
+            card = _proposal_card(instance, resolved, surface=surface)
+        fields["card"] = card
+        live = LIVE_CARD_FIELDS.get(resolved.kind)
+        if live is not None:
+            fields["live"] = live_view(instance, live)
+        elif isinstance(card, GetProcedureCard) and card.measurement_reviews:
+            fields["live"] = live_view(instance, ("measurement_reviews",))
+    elif request.detail == "evidence":
+        fields["evidence"] = _claim_evidence(
+            instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
+        )
+    elif request.detail == "why":
+        fields["why"] = _why(
+            instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
+        )
+        member = (
+            claim_path(_name(resolved.identity))
+            if resolved.kind == "claim"
+            else resolved.path or f"subjects/{_name(resolved.identity)}.json"
+        )
+        accepted_at = _latest_generation(instance, coordinate, member)
+        reason = (
+            None if accepted_at is None else ChangeReasons(instance).reason(accepted_at, member)
+        )
+        if isinstance(reason, GetProposedReason):
+            fields["reason"] = reason
+    elif request.detail == "history":
+        fields["history"], fields["truncated"], fields["next_cursor"] = _history(
+            instance,
+            coordinate,
+            resolved,
+            request=request,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
+        if resolved.kind == "procedure" and fields["history"].measurement_reviews:
+            fields["live"] = live_view(instance, ("history.measurement_reviews",))
+    elif request.detail == "runs":
+        fields["runs"], fields["truncated"], fields["next_cursor"] = _line_runs(
+            instance,
+            coordinate,
+            resolved,
+            request=request,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
+        fields["live"] = live_view(instance, ("runs",))
+    elif request.detail == "incoming":
+        fields["incoming"], fields["truncated"], fields["next_cursor"] = _incoming(
+            instance,
+            coordinate,
+            resolved,
+            request=request,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
+    elif request.detail == "pairs":
+        fields["pairs"], fields["truncated"], fields["next_cursor"] = _pairs(
+            instance,
+            coordinate,
+            resolved,
+            evaluation_time=evaluation_time,
+            request=request,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
+    elif request.detail == "proof":
+        fields["proof"] = _proof(
+            instance,
+            coordinate,
+            resolved,
+            evaluation_time=evaluation_time,
+            access=access,
+            viewer=viewer,
+        )
+        if resolved.kind == "procedure_run":
+            fields["live"] = live_view(instance, ("proof",))
+    else:
+        fields["body"] = _body(
+            instance,
+            coordinate,
+            resolved,
+            requested=request.range,
+            access=access,
+            surface=surface,
+        )
+    served = AcceptedCoordinate.from_internal(coordinate)
+    with instance.accepted_history_reader(at=served) as history:
+        generation = int(history.sequence)
+    if request.detail == "proof" or request.full_coordinate:
+        fields["accepted_coordinate"] = ClientCoordinate.model_validate(
+            served.model_dump(mode="json")
+        )
+    return GetResult(
+        ref=resolved.display,
+        kind=resolved.kind,
+        detail=request.detail,
+        coordinate=GetCoordinate(git_oid=served.git_oid[:12], generation=generation),
+        evaluation_time=evaluation_time,
+        **fields,
+    )
+
+
+def _get_backlinks(
+    instance: PlaybillInstance,
+    request: GetRequest,
+    *,
+    access: BodyAccessContext,
+) -> GetResult:
+    """``detail="backlinks"`` (D-R32): one page of the backlinks read, as a ``get`` answer.
+
+    The page is the ``backlinks`` read's own keyset page (and cursor), so it
+    costs the page's rows, never the target's whole link set.
+    """
+
+    from cruxible_client.contracts.backlinks import BACKLINKS_MAX_LIMIT, BacklinksRequest
+    from cruxible_core.service.discovery.backlinks import (
+        backlinks_of_resolved,
+        resolve_backlink_target,
+    )
+
+    backlinks_request = BacklinksRequest(
+        ref=request.ref,
+        limit=min(request.limit or GET_HISTORY_DEFAULT_LIMIT, BACKLINKS_MAX_LIMIT),
+        cursor=request.cursor,
+        at=request.at,
+        surface=request.surface,
+    )
+    resolved, coordinate = resolve_backlink_target(instance, backlinks_request, access=access)
+    allowed = GET_DETAILS_BY_KIND[resolved.kind]
+    if request.detail not in allowed:
+        raise ReadRefusalError(
+            "cruxible.get.detail_unsupported",
+            f'detail="{request.detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
+            f"it takes {', '.join(allowed)}",
+            repair=RepairOperation(
+                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
+            ),
+            repair_line=f"Run {_render_get(request.surface, resolved.display)}",
+            context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},
+        )
+    page = backlinks_of_resolved(instance, resolved, request=backlinks_request, access=access)
+    fields: dict[str, Any] = {}
+    if request.full_coordinate:
+        fields["accepted_coordinate"] = ClientCoordinate.model_validate(
+            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+        )
+    return GetResult(
+        ref=resolved.display,
+        kind=resolved.kind,
+        detail="backlinks",
+        backlinks=GetBacklinks(target=page.target, links=page.links, withheld=page.withheld),
+        truncated=page.truncated,
+        next_cursor=page.next_cursor,
+        coordinate=page.coordinate,
+        evaluation_time=request.evaluation_time or utc_now(),
+        **fields,
+    )
+
+
+__all__ = [
+    "ResolvedRef",
+    "resolve_get_ref",
+    "service_playbill_get",
+]

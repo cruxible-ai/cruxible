@@ -1,2795 +1,2346 @@
-"""Handler implementations for MCP tools.
-
-Public MCP handlers can delegate to a governed server when server mode is
-configured. In local mode, they forward to the shared runtime API.
-"""
+"""MCP handler implementations."""
 
 from __future__ import annotations
 
+import base64
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
-import yaml
+from pydantic import TypeAdapter, ValidationError
 
-from cruxible_client import CruxibleClient, contracts
+from cruxible_client import (
+    CruxibleClient,
+    contracts,
+    observe_next_workspace,
+)
+from cruxible_client._safe_files import ContainmentError, HeldRoot
+from cruxible_client.artifacts import unpack_artifact
+from cruxible_client.authoring.attestations import (
+    local_attestation_signer_from_environment,
+)
+from cruxible_client.authoring.bind import bind_catalogued_selection_input
+from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
+from cruxible_client.authoring.doc_writes import write_workspace
+from cruxible_client.authoring.examples import authoring_example, authoring_example_note
+from cruxible_client.authoring.files import (
+    compile_client_file_context,
+    load_file_catalog,
+    mapped_root_aliases,
+)
+from cruxible_client.authoring.folder_identity import (
+    VerifiedFolderIdentity,
+)
+from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.selectors import WorkspaceFiles
+from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
+from cruxible_client.authoring.workspace import (
+    daemon_floor_delivery,
+    floor_export_parts,
+    inspect_workspace_floor,
+    observe_next_workspace_with_coverage,
+    workspace_floor_freshness,
+    write_workspace_floor,
+    write_workspace_floor_delta,
+)
+from cruxible_client.authoring.write_evidence import observe_evidence
+from cruxible_client.compatibility import check_daemon_compatibility
+from cruxible_client.contracts.artifacts import parse_artifact_identity
+from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
+from cruxible_client.contracts.authoring.models import BlockDetachResult
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
+from cruxible_client.contracts.backlinks import BacklinksResult
+from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
+from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationAppendResult,
+    ClaimStance,
+)
+from cruxible_client.contracts.declared_blocks import (
+    BlockRepinResult,
+)
+from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.duplicates import (
+    DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    DuplicatesAuditResult,
+)
+from cruxible_client.contracts.file_catalog import FileCompilationBundle
+from cruxible_client.contracts.get_reads import (
+    ByteRange,
+    GetRequest,
+    GetResult,
+)
+from cruxible_client.contracts.governance import governance_identifier
+from cruxible_client.contracts.kits import (
+    KIT_AUTOMATION_TEMPLATE_MAX_BYTES,
+    KitAddRequest,
+    KitBuildRequest,
+    KitBuildResult,
+    KitBundle,
+    KitChangeResult,
+    KitRemoveRequest,
+    KitStatus,
+)
+from cruxible_client.contracts.provider_installation import (
+    ProviderCatalog,
+    ProviderInstallRequest,
+    ProviderInstallResult,
+    ProviderMoveRequest,
+    ProviderMoveResult,
+    ProviderRetireRequest,
+    ProviderRetireResult,
+)
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
+from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.validation_messages import validation_lines
+from cruxible_client.contracts.write import (
+    AboutChange,
+    FileEvidence,
+    RetireRequest,
+    SectionEvidence,
+    SetRequest,
+    WriteOutcome,
+    WriteRequest,
+)
+from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
-from cruxible_core.config.composer import compose_config_sequence, resolve_config_layers
-from cruxible_core.config.loader import load_config
-from cruxible_core.config.provenance import compose_file_with_source_manifest
-from cruxible_core.errors import ConfigError
-from cruxible_core.mcp import working_set as _working_set_capture
-from cruxible_core.runtime import api
-from cruxible_core.runtime.instance_manager import (
-    InstanceManager,
+from cruxible_client.kits import (
+    KIT_ARTIFACT,
+    check_kit_updates,
+    kit_automation_template,
+    resolve_kit_image,
+    stage_kit_providers,
+    with_automation_template,
 )
-from cruxible_core.runtime.instance_manager import (
-    get_manager as runtime_get_manager,
+from cruxible_core import __version__
+from cruxible_core.adapters.block_detach import detach_projection_pages
+from cruxible_core.claims.claim_type_inputs import (
+    ClaimTypeInputRecord,
 )
-from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
+from cruxible_core.coverage.adapter import WorkingSourceObservation
+from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
+from cruxible_core.coverage.indexes import CoverageScanBudget
+from cruxible_core.coverage.workspace import (
+    bindings_from_mapping,
+    observe_workspace,
+)
+from cruxible_core.errors import ConfigError, DaemonOperationScopeError, DataValidationError
+from cruxible_core.mcp.daemon import (
+    DaemonUnavailableError,
+    configured_daemon_target,
+    forget_local_daemon,
+    resolve_daemon_target,
+)
+from cruxible_core.mcp.identity import (
+    McpIdentity,
+    environment_names_identity,
+    folder_candidate,
+    forget_verified_identities,
+    local_identity,
+    verified_folder_identity,
+)
+from cruxible_core.mcp.init import run_mcp_init
+from cruxible_core.mcp.permissions import check_permission
+from cruxible_core.mcp.results import (
+    McpConsoleResult,
+    McpInitResult,
+    McpServerInfoResult,
+    McpWhoAmIResult,
+)
+from cruxible_core.mcp.target import configured_instance_id
+from cruxible_core.mcp.workspace import (
+    mcp_approval_key_dir,
+    mcp_custody_forbidden_roots,
+    mcp_floor_workspace_root,
+    mcp_workspace_root,
+    optional_mcp_workspace_root,
+    resolve_workspace_path,
+)
+from cruxible_core.server.config import get_runtime_bearer_token
+from cruxible_core.server.playbill_request_models import (
+    CompilerUpgradeRequest,
+)
+from cruxible_core.service.discovery.since import validate_playbill_since_request
+from cruxible_core.service.procedures.procedure_runs import (
+    LineRunRequest,
+    ProcedureRunRequest,
+)
 
 _client_cache: CruxibleClient | None = None
-_client_cache_key: tuple[str | None, str | None, str | None] | None = None
-# Tool calls run on worker threads in server mode, so cache construction
-# and teardown must be serialized; RLock because _get_client resets inline.
+_client_cache_key: tuple[str | None, str | None, str | None, str | None] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
-
-
-class _SourceAliasKwargs(TypedDict, total=False):
-    source: str
-
-
-class _OpenedByAliasKwargs(TypedDict, total=False):
-    opened_by: str
-
-
-class _ProposedByAliasKwargs(TypedDict, total=False):
-    proposed_by: str
-
-
-class _ResolvedByAliasKwargs(TypedDict, total=False):
-    resolved_by: str
-
-
-def get_manager() -> InstanceManager:
-    """Return the process-global instance manager."""
-    return runtime_get_manager()
+_AUTHORING_INPUT: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
+_CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
+    ClaimTypeMigrationRequest
+)
 
 
 def reset_client_cache() -> None:
-    """Clear cached client state. Used by tests."""
     global _client_cache, _client_cache_key
     with _client_cache_lock:
         if _client_cache is not None:
             _client_cache.close()
         _client_cache = None
         _client_cache_key = None
+        forget_local_daemon()
+        forget_verified_identities()
 
 
-def _get_client() -> CruxibleClient | None:
-    """Return a configured HTTP client in server mode."""
+def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
+    """The daemon client and who it acts as (`cruxible_core.mcp.identity`).
+
+    The daemon is configured, found, or started (`cruxible_core.mcp.daemon`).
+    The principal is the environment's, else the bound folder's record, checked
+    against the daemon's principal registry before any call acts as it.
+    """
+
     global _client_cache, _client_cache_key
-
-    settings = resolve_server_settings()
-    if not settings.enabled:
-        reset_client_cache()
-        return None
-
+    target = resolve_daemon_target()
     token = get_runtime_bearer_token()
-    cache_key = (settings.server_url, settings.server_socket, token)
+    source, principal_id, candidate = local_identity(target=target, token=token)
+    cache_key = (target.server_url, target.server_socket, token, principal_id)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
-            reset_client_cache()
-            _client_cache = CruxibleClient(
-                base_url=settings.server_url,
-                socket_path=settings.server_socket,
+            if _client_cache is not None:
+                _client_cache.close()
+            fresh = CruxibleClient(
+                base_url=target.server_url,
+                socket_path=target.server_socket,
                 token=token,
+                principal_id=principal_id,
             )
+            try:
+                # One /version request per client: a daemon on another contract
+                # refuses before the first real request.
+                check_daemon_compatibility(fresh)
+            except BaseException:
+                fresh.close()
+                _client_cache = None
+                _client_cache_key = None
+                raise
+            _client_cache = fresh
             _client_cache_key = cache_key
-        return _client_cache
+        client = _client_cache
+    if candidate is None:
+        return McpIdentity(source=source, principal_id=principal_id), client
+    verified = verified_folder_identity(candidate, target=target, client=client)
+    return McpIdentity(source="folder", principal_id=principal_id, folder=verified), client
 
 
-def _dispatch_remote_or_local(
+def _get_client() -> CruxibleClient:
+    """The daemon client: configured, found, or started (`cruxible_core.mcp.daemon`)."""
+
+    return _identity_and_client()[1]
+
+
+def _mcp_identity() -> McpIdentity:
+    """Who this adapter acts as; a folder record is checked against its daemon first."""
+
+    return _identity_and_client()[0]
+
+
+def _daemon_call(
     remote_call: Callable[[CruxibleClient], ResultT],
-    local_call: Callable[[], ResultT],
     *,
-    allow_local: bool = True,
-    operation_name: str | None = None,
+    operation_name: str,
 ) -> ResultT:
-    """Route a handler to the configured HTTP client when server mode is enabled.
+    """Run one operation on the daemon; every MCP tool takes this one path."""
 
-    Transport problems are reported HERE, at call time, and never at listing
-    time: ``tools/list`` is a static catalog that must answer even when no
-    daemon is configured or running, so the teaching message about the missing
-    or unreachable daemon belongs on the call that actually needs it.
-    """
     try:
-        client = _get_client()
-    except ConfigError as exc:
-        raise ConfigError(
-            f"{exc} Required by {operation_name or 'this tool'}. Start the daemon "
-            "with `cruxible serve` and point CRUXIBLE_SERVER_URL or "
-            "CRUXIBLE_SERVER_SOCKET at it. The tool listing is static and does "
-            "not prove the daemon is reachable."
-        ) from exc
-    if client is not None:
         try:
-            return remote_call(client)
-        except ServerUnreachableError as exc:
-            raise ServerUnreachableError(
-                exc.target,
-                f"{exc.reason} (needed by {operation_name or 'this tool'}; "
-                "start the daemon with `cruxible serve` or point "
-                "CRUXIBLE_SERVER_URL/CRUXIBLE_SERVER_SOCKET at a running one)",
-            ) from exc
-    if not allow_local:
-        raise ConfigError(
-            f"Local mutation disabled for {operation_name or 'this operation'}; configure a server."
+            client = _get_client()
+        except DaemonUnavailableError:
+            raise
+        except ConfigError as exc:
+            raise ConfigError(f"{exc} Required by {operation_name}.") from exc
+        return remote_call(client)
+    except ServerUnreachableError as exc:
+        configured = configured_daemon_target()
+        if configured is not None:
+            detail = (
+                f"{exc.reason} (needed by {operation_name}; the daemon is configured by "
+                f"{configured.source}, so none is started in its place)"
+            )
+        else:
+            # The found or started daemon went away: the next call finds or starts one.
+            reset_client_cache()
+            detail = f"{exc.reason} (needed by {operation_name}; the next call looks again)"
+        raise ServerUnreachableError(exc.target, detail) from exc
+
+
+def _daemon_version() -> str:
+    """The daemon's public version probe."""
+
+    return _daemon_call(
+        lambda client: client.version(), operation_name="daemon version probe (GET /version)"
+    )
+
+
+def handle_server_info() -> McpServerInfoResult:
+    """Answer a daemon-scope caller with daemon metadata, a scoped one with its instance."""
+
+    try:
+        daemon = _daemon_call(
+            lambda client: client.server_info(), operation_name="cruxible_server_info"
         )
-    return local_call()
+    except (ClientDaemonOperationScopeError, DaemonOperationScopeError) as exc:
+        scope = exc.credential_scope
+        return McpServerInfoResult(
+            scope="instance",
+            instance_id=scope,
+            adapter_version=__version__,
+            daemon_version=_daemon_version(),
+            host=_daemon_call(
+                lambda client: client.show_host(scope), operation_name="cruxible_server_info"
+            ),
+            identity=_playbill_whoami(scope),
+        )
+    return McpServerInfoResult(
+        scope="daemon",
+        instance_id=configured_instance_id(),
+        adapter_version=__version__,
+        daemon_version=daemon.version,
+        daemon=daemon,
+    )
 
 
-def _captured_read(result: ResultT, *, tool: str, instance_id: str) -> ResultT:
-    """Working-set capture hook at the read-handler dispatch seam.
+def handle_playbill_store_body(instance_id: str, content_base64: str) -> contracts.CasObjectResult:
+    try:
+        content = base64.b64decode(content_base64, validate=True)
+    except ValueError as exc:
+        raise DataValidationError("Cruxible body is not canonical base64") from exc
+    return _daemon_call(
+        lambda client: client.store_body(instance_id, content), operation_name="cruxible_body_store"
+    )
 
-    Sits AFTER :func:`_dispatch_remote_or_local` so both remote (HTTP client)
-    and local modes are covered. Hard no-op unless
-    ``CRUXIBLE_WORKING_SET_DIR`` opts in (see
-    :mod:`cruxible_core.mcp.working_set`); the result is returned unchanged
-    either way.
+
+def handle_playbill_provider_catalog(instance_id: str) -> ProviderCatalog:
+    return _daemon_call(
+        lambda client: client.list_provider_packages(instance_id),
+        operation_name="cruxible_provider_list",
+    )
+
+
+def handle_playbill_provider_install(
+    instance_id: str,
+    request: ProviderInstallRequest,
+) -> ProviderInstallResult:
+    return _daemon_call(
+        lambda client: client.install_provider(instance_id, request),
+        operation_name="cruxible_provider_install",
+    )
+
+
+def handle_playbill_provider_retire(
+    instance_id: str, request: ProviderRetireRequest
+) -> ProviderRetireResult:
+    return _daemon_call(
+        lambda client: client.retire_provider(instance_id, request),
+        operation_name="cruxible_provider_retire",
+    )
+
+
+def handle_playbill_provider_move(
+    instance_id: str, request: ProviderMoveRequest
+) -> ProviderMoveResult:
+    return _daemon_call(
+        lambda client: client.move_provider(instance_id, request),
+        operation_name="cruxible_provider_move",
+    )
+
+
+def handle_playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
+    return _daemon_call(
+        lambda client: client.build_kit(instance_id, request), operation_name="cruxible_kit_build"
+    )
+
+
+def handle_playbill_kit_status(instance_id: str, *, offline: bool = False) -> KitStatus:
+    """Installed kits; this adapter looks up newer releases of registry-sourced ones."""
+
+    status = _daemon_call(
+        lambda client: client.kit_status(instance_id), operation_name="cruxible_kit_status"
+    )
+    return check_kit_updates(status, offline=offline)
+
+
+def handle_playbill_kit_add(
+    instance_id: str,
+    request: KitAddRequest | None = None,
+    *,
+    reference: str | None = None,
+    bundle: KitBundle | None = None,
+    keep: Sequence[str] = (),
+    keep_local_edits: bool = False,
+    retire_dependents: Sequence[str] = (),
+    keep_build: Sequence[str] = (),
+    allow_downgrade: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> KitChangeResult:
+    """Install a kit by reference or bundle. This adapter reads the reference as
+    ``kit add`` does: a local kit directory or OCI layout, else a registry
+    reference it pulls and verifies.
+
+    A commit stages the kit's bundled provider files in the daemon's body store
+    first, so the daemon can install them; a preview sends none. The result
+    carries the automation template's text; a bundle that declares a template
+    without its bytes refuses before the daemon is called.
     """
-    _working_set_capture.capture_tool_read(result, source_tool=tool, instance_id=instance_id)
+
+    if request is not None:
+        added = request
+        return _daemon_call(
+            lambda client: client.add_kit(instance_id, added), operation_name="cruxible_kit_add"
+        )
+    if (reference is None) == (bundle is None):
+        raise DataValidationError("kit add takes exactly one of reference or bundle")
+    source = None
+    if reference is not None:
+        image, source = resolve_kit_image(reference)
+        bundle = unpack_artifact(KIT_ARTIFACT, image)
+    assert bundle is not None
+    resolved = bundle
+    # Checked before the daemon, so a bad template refuses before anything is proposed.
+    template = kit_automation_template(resolved)
+
+    def add(client: CruxibleClient) -> KitChangeResult:
+        staged = (
+            stage_kit_providers(client, instance_id, resolved)
+            if dry_run is False
+            else resolved.model_copy(update={"provider_files": ()})
+        )
+        return client.add_kit(
+            instance_id,
+            KitAddRequest(
+                bundle=staged,
+                source=source,
+                keep=tuple(sorted(set(keep))),
+                keep_local_edits=keep_local_edits,
+                retire_dependents=tuple(sorted(set(retire_dependents))),
+                keep_build=tuple(sorted(set(keep_build))),
+                allow_downgrade=allow_downgrade,
+                dry_run=dry_run,
+                at=at,
+            ),
+        )
+
+    return with_automation_template(_daemon_call(add, operation_name="cruxible_kit_add"), template)
+
+
+def handle_playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
+    return _daemon_call(
+        lambda client: client.remove_kit(instance_id, request), operation_name="cruxible_kit_remove"
+    )
+
+
+def handle_playbill_propose_document(
+    instance_id: str,
+    shell: dict[str, Any],
+    proposal_name: str,
+    source_compilation_digest: str | None,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.ProposalInspection:
+    document = DocumentShell.model_validate(shell)
+    return _daemon_call(
+        lambda client: client.propose_document(
+            instance_id,
+            shell=document.model_dump(mode="json"),
+            proposal_name=proposal_name,
+            source_compilation_digest=source_compilation_digest,
+            dry_run=dry_run,
+            at=at,
+            accept=accept,
+        ),
+        operation_name="cruxible_document_propose",
+    )
+
+
+def handle_playbill_review(
+    instance_id: str,
+    proposal_id: str,
+    *,
+    include_body: bool | None,
+    item_reasons_after: str | None = None,
+    item_reasons_limit: int | None = None,
+    detail: bool = False,
+    summary_after: str | None = None,
+    summary_group: str | None = None,
+    rows_after: str | None = None,
+    rows_limit: int = 5,
+    groups_limit: int = 5,
+    findings_after: str | None = None,
+) -> contracts.ProposalReviewResponse:
+    return _daemon_call(
+        lambda client: client.review_proposal(
+            instance_id,
+            proposal_id,
+            include_body=include_body,
+            detail=detail,
+            summary_after=summary_after,
+            summary_group=summary_group,
+            rows_after=rows_after,
+            rows_limit=rows_limit,
+            groups_limit=groups_limit,
+            findings_after=findings_after,
+            item_reasons_after=item_reasons_after,
+            item_reasons_limit=item_reasons_limit,
+        ),
+        operation_name="cruxible_proposal_review",
+    )
+
+
+def handle_playbill_prepare_approval(
+    instance_id: str,
+    proposal_id: str,
+    *,
+    signer_id: str,
+    include_body: bool,
+) -> contracts.ApprovalChallenge:
+    return _daemon_call(
+        lambda client: client.prepare_approval(
+            instance_id,
+            proposal_id,
+            signer_id=signer_id,
+            include_body=include_body,
+        ),
+        operation_name="cruxible_proposal_approve_prepare",
+    )
+
+
+def handle_playbill_submit_approval(
+    instance_id: str,
+    proposal_id: str,
+    attestation: dict[str, Any],
+    *,
+    hold: bool = False,
+) -> contracts.ProposalApprovalResult:
+    public_attestation = ApprovalAttestation.model_validate(attestation)
+    return _daemon_call(
+        lambda client: client.submit_approval(
+            instance_id,
+            proposal_id,
+            attestation=public_attestation.model_dump(mode="json"),
+            hold=hold,
+        ),
+        operation_name="cruxible_proposal_approve_submit",
+    )
+
+
+def handle_playbill_approve(
+    instance_id: str,
+    proposal_id: str,
+    *,
+    signer_id: str | None,
+    candidate_digest: str | None,
+    hold: bool = False,
+) -> contracts.ProposalApprovalResult:
+    """Challenge, sign with the configured local key, and submit, as `proposal approve` does.
+
+    Only the public attestation leaves this process; the key's bytes and path
+    never enter a result or a log line.
+    """
+
+    key_dir, default_signer = _approval_key_dir()
+    signer = (
+        signer_id
+        if signer_id is not None
+        else default_signer
+        if default_signer is not None
+        else _sole_approval_signer(key_dir)
+    )
+    try:
+        governance_identifier(signer, label="signer_id")
+    except ValueError as exc:
+        raise DataValidationError(f"cruxible_proposal_approve: {exc}") from exc
+    challenge = handle_playbill_prepare_approval(
+        instance_id, proposal_id, signer_id=signer, include_body=False
+    )
+    statement = ApprovalStatement.model_validate(challenge.statement)
+    if candidate_digest is not None and statement.payload_digest != candidate_digest:
+        raise DataValidationError(
+            f"cruxible_proposal_approve: proposal {proposal_id} now signs candidate "
+            f"{statement.payload_digest}, not the reviewed {candidate_digest}; review it again"
+        )
+    principal = PrincipalRecord.model_validate(challenge.signer_principal)
+    key_signer = LocalEd25519ApprovalSigner.open(
+        signer_id=signer,
+        private_key_path=key_dir / f"{signer}.ed25519",
+        expected_public_key=principal.public_key,
+        forbidden_roots=mcp_custody_forbidden_roots(),
+    )
+    attestation = key_signer.sign(statement)
+    result = handle_playbill_submit_approval(
+        instance_id, proposal_id, attestation.model_dump(mode="json"), hold=hold
+    )
+    if (
+        isinstance(result, contracts.ProposalRecompiled)
+        and result.status == "pending_review"
+        and result.members_identical
+        and result.proposal_id is not None
+    ):
+        # Nothing it touches changed since its base: the same change set landed
+        # at the head under its author, and that candidate is the one to sign.
+        landed = handle_playbill_prepare_approval(
+            instance_id, result.proposal_id, signer_id=signer, include_body=False
+        )
+        result = handle_playbill_submit_approval(
+            instance_id,
+            result.proposal_id,
+            key_signer.sign(ApprovalStatement.model_validate(landed.statement)).model_dump(
+                mode="json"
+            ),
+            hold=hold,
+        )
     return result
 
 
-# MCP is the agent surface: entity-shaped read tools default to the compact
-# output profile (identity card + governance markers) unless the caller passes
-# an explicit `profile` or overrides the default via env.
-_MCP_READ_PROFILE_ENV = "CRUXIBLE_MCP_READ_PROFILE"
-_MCP_DEFAULT_READ_PROFILE: contracts.ReadProfile = "compact"
-_VALID_READ_PROFILES = ("compact", "standard", "full")
+def _approval_key_dir() -> tuple[Path, str | None]:
+    """The local approval key directory and the signer it defaults to, if one.
 
-
-def resolve_mcp_read_profile(
-    profile: contracts.ReadProfile | None,
-) -> contracts.ReadProfile:
-    """Resolve the effective read profile for an MCP read tool call.
-
-    Precedence: explicit per-call ``profile`` > ``CRUXIBLE_MCP_READ_PROFILE``
-    env override > the MCP default (``compact``).
+    ``CRUXIBLE_MCP_KEY_DIR`` when the environment names the identity; else the
+    folder record's key directory, signing as the folder's principal.
     """
-    if profile is not None:
-        return profile
-    env_profile = os.environ.get(_MCP_READ_PROFILE_ENV)
-    if env_profile:
-        if env_profile not in _VALID_READ_PROFILES:
-            raise ConfigError(
-                f"{_MCP_READ_PROFILE_ENV} must be one of {', '.join(_VALID_READ_PROFILES)}; "
-                f"got {env_profile!r}"
-            )
-        return cast(contracts.ReadProfile, env_profile)
-    return _MCP_DEFAULT_READ_PROFILE
+
+    folder = _folder_identity()
+    if folder is not None:
+        return folder.key_dir, folder.principal_id
+    return mcp_approval_key_dir(), None
 
 
-def _required_pending_version(expected_pending_version: int | None) -> int:
-    if expected_pending_version is None:
-        raise ConfigError("expected_pending_version is required when resolving via server mode")
-    return expected_pending_version
+def _folder_identity() -> VerifiedFolderIdentity | None:
+    """The bound folder's checked identity, when the environment names none.
+
+    Only a configured daemon (the environment's or the binding's) can carry a
+    folder record, so this never starts one to find out there is none.
+    """
+
+    if environment_names_identity(os.environ, token=get_runtime_bearer_token()):
+        return None
+    target = configured_daemon_target()
+    if target is None or folder_candidate(os.environ, target=target) is None:
+        return None
+    return _mcp_identity().folder
 
 
-def _config_yaml_for_upload(config_path: str, *, root_dir: str | None = None) -> str:
-    """Read a config file and compose overlays before uploading to the daemon."""
-    path = Path(config_path)
-    if not path.is_absolute() and root_dir is not None:
-        path = Path(root_dir) / path
-    config = load_config(path)
-    composed = compose_config_sequence(
-        resolve_config_layers(config, config_path=path.resolve()),
-    )
-    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
-    return yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
-
-
-def _config_upload_for_path(
-    config_path: str,
-    *,
-    root_dir: str | None = None,
-) -> tuple[str, contracts.ConfigSourceManifest]:
-    path = Path(config_path)
-    if not path.is_absolute() and root_dir is not None:
-        path = Path(root_dir) / path
-    composed, source_manifest = compose_file_with_source_manifest(path)
-    composed_data = composed.model_dump(mode="python", by_alias=True, exclude_none=True)
-    config_yaml = yaml.safe_dump(composed_data, default_flow_style=False, sort_keys=False)
-    return config_yaml, contracts.ConfigSourceManifest.model_validate(
-        source_manifest.model_dump(mode="python")
-    )
-
-
-def handle_init(
-    root_dir: str,
-    config_path: str | None = None,
-    config_yaml: str | None = None,
-    data_dir: str | None = None,
-    kits: list[str] | None = None,
-    bare: bool = False,
-) -> contracts.InitResult:
-    """Initialize a new cruxible instance, or reload an existing one."""
-    uploaded_yaml = config_yaml
-    source_manifest: contracts.ConfigSourceManifest | None = None
-    if uploaded_yaml is None and config_path is not None:
-        uploaded_yaml, source_manifest = _config_upload_for_path(
-            config_path,
-            root_dir=root_dir,
+def _sole_approval_signer(key_dir: Path) -> str:
+    signers = sorted(path.name.removesuffix(".ed25519") for path in key_dir.glob("*.ed25519"))
+    if len(signers) != 1:
+        found = ", ".join(signers) if signers else "none"
+        raise DataValidationError(
+            "cruxible_proposal_approve: pass signer_id; the configured key directory holds "
+            f"{len(signers)} approval keys (signers: {found})"
         )
+    return signers[0]
 
-    def _remote_init(client: CruxibleClient) -> contracts.InitResult:
-        kwargs: dict[str, Any] = dict(
-            root_dir=root_dir,
-            config_path=None,
-            config_yaml=uploaded_yaml,
-            data_dir=data_dir,
-            kits=kits,
-        )
-        if source_manifest is not None:
-            kwargs["config_source_manifest"] = source_manifest
-        if bare:
-            kwargs["bare"] = True
-        return client.init(**kwargs)
 
-    def _local_init() -> contracts.InitResult:
-        if bare:
-            return api.init_local(
-                root_dir,
-                config_path,
-                config_yaml,
-                data_dir,
-                kits,
-                bare=True,
-            )
-        return api.init_local(root_dir, config_path, config_yaml, data_dir, kits)
+def handle_playbill_activate(
+    instance_id: str, proposal_id: str
+) -> contracts.ProposalActivationResult:
+    """Activation is a daemon act; the daemon's trigger delivers the floor."""
 
-    return _dispatch_remote_or_local(
-        _remote_init,
-        _local_init,
-        allow_local=False,
-        operation_name="cruxible_init",
+    return _daemon_call(
+        lambda client: client.activate_proposal(instance_id, proposal_id),
+        operation_name="cruxible_proposal_activate",
     )
 
 
-def handle_validate(
-    config_path: str | None = None,
-    config_yaml: str | None = None,
-) -> contracts.ValidateResult:
-    """Validate a config file or inline YAML string."""
-    uploaded_yaml = config_yaml
-    if uploaded_yaml is None and config_path is not None:
-        uploaded_yaml = _config_yaml_for_upload(config_path)
-    return _dispatch_remote_or_local(
-        lambda client: client.validate(config_path=None, config_yaml=uploaded_yaml),
-        lambda: api.validate(config_path, config_yaml),
-    )
-
-
-def handle_server_info() -> contracts.ServerInfoResult:
-    """Return live daemon metadata such as permission mode and state dir."""
-    return _dispatch_remote_or_local(
-        lambda client: client.server_info(),
-        api.server_info,
-        operation_name="cruxible_server_info",
-    )
-
-
-def handle_create_state_overlay(
-    root_dir: str,
-    transport_ref: str | None = None,
-    state_ref: str | None = None,
-    kit: str | None = None,
-    no_kit: bool = False,
-) -> contracts.StateOverlayResult:
-    """Create a new governed overlay from a published state release."""
-    return _dispatch_remote_or_local(
-        lambda client: client.create_state_overlay(
-            root_dir=root_dir,
-            transport_ref=transport_ref,
-            state_ref=state_ref,
-            kit=kit,
-            no_kit=no_kit,
-        ),
-        lambda: api.create_state_overlay_local(
-            transport_ref,
-            state_ref,
-            kit,
-            no_kit,
-            root_dir,
-        ),
-        allow_local=False,
-        operation_name="cruxible_state_create_overlay",
-    )
-
-
-def handle_workflow_lock(instance_id: str, force: bool = False) -> contracts.WorkflowLockResult:
-    """Generate a workflow lock file for an instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.workflow_lock(instance_id, force=force),
-        lambda: api.workflow_lock(instance_id, force=force),
-    )
-
-
-def handle_workflow_plan(
-    instance_id: str,
-    workflow_name: str,
-    input_payload: dict[str, Any] | None = None,
-) -> contracts.WorkflowPlanResult:
-    """Compile a configured workflow plan."""
-    return _dispatch_remote_or_local(
-        lambda client: client.workflow_plan(
-            instance_id,
-            workflow_name=workflow_name,
-            input_payload=input_payload or {},
-        ),
-        lambda: api.workflow_plan(
-            instance_id,
-            workflow_name,
-            input_payload,
-        ),
-    )
-
-
-def handle_workflow_run(
-    instance_id: str,
-    workflow_name: str,
-    input_payload: dict[str, Any] | None = None,
-    decision_record_id: str | None = None,
-) -> contracts.WorkflowRunResult:
-    """Execute a configured workflow."""
-    decision_kwargs: dict[str, Any] = (
-        {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
-    )
-    return _dispatch_remote_or_local(
-        lambda client: client.workflow_run(
-            instance_id,
-            workflow_name=workflow_name,
-            input_payload=input_payload or {},
-            **decision_kwargs,
-        ),
-        lambda: api.workflow_run(
-            instance_id,
-            workflow_name,
-            input_payload,
-            decision_record_id=decision_record_id,
-            surface="mcp",
-        ),
-        allow_local=False,
-        operation_name="cruxible_run_workflow",
-    )
-
-
-def handle_workflow_apply(
-    instance_id: str,
-    workflow_name: str,
-    *,
-    expected_apply_digest: str,
-    expected_head_snapshot_id: str | None = None,
-    input_payload: dict[str, Any] | None = None,
-    decision_record_id: str | None = None,
-) -> contracts.WorkflowApplyResult:
-    """Commit a previously previewed canonical workflow after verifying identity."""
-    decision_kwargs: dict[str, Any] = (
-        {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
-    )
-    return _dispatch_remote_or_local(
-        lambda client: client.workflow_apply(
-            instance_id,
-            workflow_name=workflow_name,
-            expected_apply_digest=expected_apply_digest,
-            expected_head_snapshot_id=expected_head_snapshot_id,
-            input_payload=input_payload or {},
-            **decision_kwargs,
-        ),
-        lambda: api.workflow_apply(
-            instance_id,
-            workflow_name,
-            expected_apply_digest,
-            expected_head_snapshot_id,
-            input_payload,
-            decision_record_id=decision_record_id,
-            surface="mcp",
-        ),
-        allow_local=False,
-        operation_name="cruxible_apply_workflow",
-    )
-
-
-def handle_workflow_test(
-    instance_id: str,
-    name: str | None = None,
-) -> contracts.WorkflowTestResult:
-    """Run configured workflow tests for an instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.workflow_test(instance_id, name=name),
-        lambda: api.workflow_test(instance_id, name),
-        allow_local=False,
-        operation_name="cruxible_test_workflow",
-    )
-
-
-def handle_propose_workflow(
-    instance_id: str,
-    workflow_name: str,
-    input_payload: dict[str, Any] | None = None,
-    decision_record_id: str | None = None,
-) -> contracts.WorkflowProposeResult:
-    """Execute a workflow and create a governed relationship proposal."""
-    decision_kwargs: dict[str, Any] = (
-        {"decision_record_id": decision_record_id} if decision_record_id is not None else {}
-    )
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_workflow(
-            instance_id,
-            workflow_name=workflow_name,
-            input_payload=input_payload or {},
-            **decision_kwargs,
-        ),
-        lambda: api.propose_workflow(
-            instance_id,
-            workflow_name,
-            input_payload,
-            decision_record_id=decision_record_id,
-            surface="mcp",
-        ),
-        allow_local=False,
-        operation_name="cruxible_propose_workflow",
-    )
-
-
-def handle_query(
-    instance_id: str,
-    query_name: str,
-    params: dict[str, Any] | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-    relationship_state: contracts.QueryVisibilityState | None = None,
-    lifecycle_status: contracts.LifecycleStatus | None = None,
-    decision_record_id: str | None = None,
-    profile: contracts.ReadProfile | None = None,
-    layout: contracts.QueryLayout = "rows",
-) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
-    """Execute a named query."""
-    resolved_profile = resolve_mcp_read_profile(profile)
-    result = _dispatch_remote_or_local(
-        lambda client: _client_query(
-            client,
-            instance_id=instance_id,
-            query_name=query_name,
-            params=params,
-            limit=limit,
-            offset=offset,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-            decision_record_id=decision_record_id,
-            profile=resolved_profile,
-            layout=layout,
-        ),
-        lambda: api.query(
-            instance_id,
-            query_name,
-            params,
-            limit=limit,
-            offset=offset,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-            decision_record_id=decision_record_id,
-            surface="mcp",
-            profile=resolved_profile,
-            layout=layout,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_query", instance_id=instance_id)
-
-
-def handle_query_inline(
-    instance_id: str,
-    definition: contracts.InlineQueryDefinition,
-    params: dict[str, Any] | None = None,
-    limit: int | None = None,
-    relationship_state: contracts.QueryVisibilityState | None = None,
-    lifecycle_status: contracts.LifecycleStatus | None = None,
-    decision_record_id: str | None = None,
-    profile: contracts.ReadProfile | None = None,
-    layout: contracts.QueryLayout = "rows",
-) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
-    """Execute a bounded inline query definition without persisting it to config."""
-    resolved_profile = resolve_mcp_read_profile(profile)
-    result = _dispatch_remote_or_local(
-        lambda client: _client_query_inline(
-            client,
-            instance_id=instance_id,
-            definition=definition,
-            params=params,
-            limit=limit,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-            decision_record_id=decision_record_id,
-            profile=resolved_profile,
-            layout=layout,
-        ),
-        lambda: api.query_inline(
-            instance_id,
-            definition,
-            params,
-            limit=limit,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-            decision_record_id=decision_record_id,
-            surface="mcp",
-            profile=resolved_profile,
-            layout=layout,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_query_inline", instance_id=instance_id)
-
-
-def _client_query_inline(
-    client: CruxibleClient,
-    *,
-    instance_id: str,
-    definition: contracts.InlineQueryDefinition,
-    params: dict[str, Any] | None,
-    limit: int | None,
-    relationship_state: contracts.QueryVisibilityState | None,
-    lifecycle_status: contracts.LifecycleStatus | None,
-    decision_record_id: str | None,
-    profile: contracts.ReadProfile | None,
-    layout: contracts.QueryLayout,
-) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
-    if lifecycle_status is None:
-        if layout == "graph":
-            return client.query_inline(
-                instance_id,
-                definition,
-                params,
-                limit=limit,
-                relationship_state=relationship_state,
-                decision_record_id=decision_record_id,
-                profile=profile,
-                layout="graph",
-            )
-        return client.query_inline(
-            instance_id,
-            definition,
-            params,
-            limit=limit,
-            relationship_state=relationship_state,
-            decision_record_id=decision_record_id,
-            profile=profile,
-        )
-    if layout == "graph":
-        return client.query_inline(
-            instance_id,
-            definition,
-            params,
-            limit=limit,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-            decision_record_id=decision_record_id,
-            profile=profile,
-            layout="graph",
-        )
-    return client.query_inline(
-        instance_id,
-        definition,
-        params,
-        limit=limit,
-        relationship_state=relationship_state,
-        lifecycle_status=lifecycle_status,
-        decision_record_id=decision_record_id,
-        profile=profile,
-    )
-
-
-def _client_query(
-    client: CruxibleClient,
-    *,
-    instance_id: str,
-    query_name: str,
-    params: dict[str, Any] | None,
-    limit: int | None,
-    offset: int,
-    relationship_state: contracts.QueryVisibilityState | None,
-    lifecycle_status: contracts.LifecycleStatus | None,
-    decision_record_id: str | None,
-    profile: contracts.ReadProfile | None = None,
-    layout: contracts.QueryLayout = "rows",
-) -> contracts.QueryToolResult | contracts.QueryGraphToolResult:
-    # `layout` is only passed when it opts into graph so rows-layout requests
-    # stay unchanged for older servers (and older client stubs).
-    layout_kwargs: dict[str, Any] = {"layout": layout} if layout == "graph" else {}
-    optional_kwargs: dict[str, Any] = {}
-    if relationship_state is not None:
-        optional_kwargs["relationship_state"] = relationship_state
-    if lifecycle_status is not None:
-        optional_kwargs["lifecycle_status"] = lifecycle_status
-    if decision_record_id is not None:
-        optional_kwargs["decision_record_id"] = decision_record_id
-    return client.query(
-        instance_id,
-        query_name,
-        params,
-        limit=limit,
-        offset=offset,
-        profile=profile,
-        **optional_kwargs,
-        **layout_kwargs,
-    )
-
-
-def handle_list_queries(
-    instance_id: str,
-    *,
-    detail: contracts.QueryListDetail = "summary",
-    limit: int | None = None,
-    offset: int = 0,
-    continuation: str | None = None,
-) -> contracts.QueryListResult | contracts.QueryListDetailResult:
-    """List named-query definitions for an instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.list_queries(
-            instance_id,
-            detail=detail,
-            limit=limit,
-            offset=offset,
-            continuation=continuation,
-        ),
-        lambda: api.list_queries(
-            instance_id,
-            detail=detail,
-            limit=limit,
-            offset=offset,
-            continuation=continuation,
-        ),
-    )
-
-
-def handle_create_decision_record(
-    instance_id: str,
-    question: str,
-    subject_type: str | None = None,
-    subject_id: str | None = None,
-    opened_by: str | None = None,
-) -> contracts.DecisionRecordResult:
-    deprecated_kwargs: _OpenedByAliasKwargs = {}
-    if opened_by is not None:
-        deprecated_kwargs["opened_by"] = opened_by
-    return _dispatch_remote_or_local(
-        lambda client: client.create_decision_record(
-            instance_id,
-            question=question,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            **deprecated_kwargs,
-        ),
-        lambda: api.create_decision_record(
-            instance_id,
-            question=question,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            **deprecated_kwargs,
-        ),
-        allow_local=False,
-        operation_name="cruxible_create_decision_record",
-    )
-
-
-def handle_get_decision_record(
-    instance_id: str,
-    decision_record_id: str,
-    include_events: bool = True,
-) -> contracts.DecisionRecordResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.get_decision_record(
-            instance_id,
-            decision_record_id,
-            include_events=include_events,
-        ),
-        lambda: api.get_decision_record(
-            instance_id,
-            decision_record_id,
-            include_events=include_events,
-        ),
-    )
-
-
-def handle_list_decision_records(
-    instance_id: str,
-    status: str | None = None,
-    subject_type: str | None = None,
-    subject_id: str | None = None,
-    decision_class: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.DecisionRecordListResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_decision_records(
-            instance_id,
-            status=status,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            decision_class=decision_class,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_decision_records(
-            instance_id,
-            status=status,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            decision_class=decision_class,
-            limit=limit,
-            offset=offset,
-        ),
-    )
-
-
-def handle_list_decision_events(
-    instance_id: str,
-    decision_record_id: str | None = None,
-    receipt_id: str | None = None,
-    trace_id: str | None = None,
-    status: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.DecisionEventListResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_decision_events(
-            instance_id,
-            decision_record_id=decision_record_id,
-            receipt_id=receipt_id,
-            trace_id=trace_id,
-            status=status,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_decision_events(
-            instance_id,
-            decision_record_id=decision_record_id,
-            receipt_id=receipt_id,
-            trace_id=trace_id,
-            status=status,
-            limit=limit,
-            offset=offset,
-        ),
-    )
-
-
-def handle_finalize_decision_record(
-    instance_id: str,
-    decision_record_id: str,
-    final_decision: str,
-    decision_class: contracts.DecisionClass,
-    rationale: str = "",
-) -> contracts.DecisionRecordResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.finalize_decision_record(
-            instance_id,
-            decision_record_id,
-            final_decision=final_decision,
-            decision_class=decision_class,
-            rationale=rationale,
-        ),
-        lambda: api.finalize_decision_record(
-            instance_id,
-            decision_record_id,
-            final_decision=final_decision,
-            decision_class=decision_class,
-            rationale=rationale,
-        ),
-        allow_local=False,
-        operation_name="cruxible_finalize_decision_record",
-    )
-
-
-def handle_abandon_decision_record(
-    instance_id: str,
-    decision_record_id: str,
-    reason: str = "",
-) -> contracts.DecisionRecordResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.abandon_decision_record(
-            instance_id,
-            decision_record_id,
-            reason=reason,
-        ),
-        lambda: api.abandon_decision_record(
-            instance_id,
-            decision_record_id,
-            reason=reason,
-        ),
-        allow_local=False,
-        operation_name="cruxible_abandon_decision_record",
-    )
-
-
-def handle_describe_query(
-    instance_id: str,
-    query_name: str,
-) -> contracts.NamedQueryInfoResult:
-    """Describe one named-query surface for an instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.describe_query(instance_id, query_name),
-        lambda: api.describe_query(instance_id, query_name),
-    )
-
-
-def handle_receipt(instance_id: str, receipt_id: str) -> dict[str, Any]:
-    """Retrieve a stored receipt by ID."""
-    return _dispatch_remote_or_local(
-        lambda client: client.receipt(instance_id, receipt_id),
-        lambda: api.receipt(instance_id, receipt_id),
-    )
-
-
-def handle_get_trace(instance_id: str, trace_id: str) -> dict[str, Any]:
-    """Retrieve a stored provider execution trace by ID."""
-    return _dispatch_remote_or_local(
-        lambda client: client.get_trace(instance_id, trace_id),
-        lambda: api.get_trace(instance_id, trace_id),
-    )
-
-
-def handle_list_traces(
-    instance_id: str,
-    workflow_name: str | None = None,
-    provider_name: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.TraceListResult:
-    """List stored provider execution trace summaries."""
-    return _dispatch_remote_or_local(
-        lambda client: client.list_traces(
-            instance_id,
-            workflow_name=workflow_name,
-            provider_name=provider_name,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_traces(
-            instance_id,
-            workflow_name=workflow_name,
-            provider_name=provider_name,
-            limit=limit,
-            offset=offset,
-        ),
-    )
-
-
-def handle_feedback(
-    instance_id: str,
-    receipt_id: str | None,
-    action: contracts.FeedbackInputAction,
-    from_type: str,
-    from_id: str,
-    relationship_type: str,
-    to_type: str,
-    to_id: str,
-    edge_key: int | None = None,
-    reason: str = "",
-    reason_code: str | None = None,
-    scope_hints: dict[str, Any] | None = None,
-    corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
-    claim_id: str | None = None,
-    source: str | None = None,
-) -> contracts.FeedbackResult:
-    """Record feedback on an edge."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
-    return _dispatch_remote_or_local(
-        lambda client: client.feedback(
-            instance_id,
-            receipt_id=receipt_id,
-            action=action,
-            from_type=from_type,
-            from_id=from_id,
-            relationship_type=relationship_type,
-            to_type=to_type,
-            to_id=to_id,
-            edge_key=edge_key,
-            claim_id=claim_id,
-            reason=reason,
-            reason_code=reason_code,
-            scope_hints=scope_hints,
-            corrections=corrections,
-            group_override=group_override,
-            **deprecated_kwargs,
-        ),
-        lambda: api.feedback(
-            instance_id=instance_id,
-            receipt_id=receipt_id,
-            action=action,
-            from_type=from_type,
-            from_id=from_id,
-            relationship_type=relationship_type,
-            to_type=to_type,
-            to_id=to_id,
-            edge_key=edge_key,
-            claim_id=claim_id,
-            reason=reason,
-            reason_code=reason_code,
-            scope_hints=scope_hints,
-            corrections=corrections,
-            group_override=group_override,
-            **deprecated_kwargs,
-        ),
-        allow_local=False,
-        operation_name="cruxible_feedback",
-    )
-
-
-def handle_get_feedback_profile(
-    instance_id: str,
-    relationship_type: str,
-) -> contracts.FeedbackProfileResult:
-    """Get a focused feedback profile for one relationship type."""
-    return _dispatch_remote_or_local(
-        lambda client: client.get_feedback_profile(instance_id, relationship_type),
-        lambda: api.get_feedback_profile(instance_id, relationship_type),
-    )
-
-
-def handle_analyze_feedback(
-    instance_id: str,
-    relationship_type: str,
-    limit: int = 200,
-    min_support: int = 5,
-    decision_surface_type: str | None = None,
-    decision_surface_name: str | None = None,
-    property_pairs: list[contracts.PropertyPairInput] | None = None,
-) -> contracts.AnalyzeFeedbackResult:
-    """Analyze structured feedback into deterministic remediation suggestions."""
-    return _dispatch_remote_or_local(
-        lambda client: client.analyze_feedback(
-            instance_id,
-            relationship_type=relationship_type,
-            limit=limit,
-            min_support=min_support,
-            decision_surface_type=decision_surface_type,
-            decision_surface_name=decision_surface_name,
-            property_pairs=property_pairs,
-        ),
-        lambda: api.analyze_feedback(
-            instance_id,
-            relationship_type,
-            limit=limit,
-            min_support=min_support,
-            decision_surface_type=decision_surface_type,
-            decision_surface_name=decision_surface_name,
-            property_pairs=property_pairs,
-        ),
-    )
-
-
-def handle_get_outcome_profile(
-    instance_id: str,
-    *,
-    anchor_type: contracts.OutcomeAnchorType,
-    relationship_type: str | None = None,
-    workflow_name: str | None = None,
-    surface_type: str | None = None,
-    surface_name: str | None = None,
-) -> contracts.OutcomeProfileResult:
-    """Get a focused outcome profile for one anchor context."""
-    return _dispatch_remote_or_local(
-        lambda client: client.get_outcome_profile(
-            instance_id,
-            anchor_type=anchor_type,
-            relationship_type=relationship_type,
-            workflow_name=workflow_name,
-            surface_type=surface_type,
-            surface_name=surface_name,
-        ),
-        lambda: api.get_outcome_profile(
-            instance_id,
-            anchor_type=anchor_type,
-            relationship_type=relationship_type,
-            workflow_name=workflow_name,
-            surface_type=surface_type,
-            surface_name=surface_name,
-        ),
-    )
-
-
-def handle_analyze_outcomes(
-    instance_id: str,
-    *,
-    anchor_type: contracts.OutcomeAnchorType,
-    relationship_type: str | None = None,
-    workflow_name: str | None = None,
-    query_name: str | None = None,
-    surface_type: str | None = None,
-    surface_name: str | None = None,
-    limit: int = 200,
-    min_support: int = 5,
-) -> contracts.AnalyzeOutcomesResult:
-    """Analyze structured outcomes into trust and debugging suggestions."""
-    return _dispatch_remote_or_local(
-        lambda client: client.analyze_outcomes(
-            instance_id,
-            anchor_type=anchor_type,
-            relationship_type=relationship_type,
-            workflow_name=workflow_name,
-            query_name=query_name,
-            surface_type=surface_type,
-            surface_name=surface_name,
-            limit=limit,
-            min_support=min_support,
-        ),
-        lambda: api.analyze_outcomes(
-            instance_id,
-            anchor_type=anchor_type,
-            relationship_type=relationship_type,
-            workflow_name=workflow_name,
-            query_name=query_name,
-            surface_type=surface_type,
-            surface_name=surface_name,
-            limit=limit,
-            min_support=min_support,
-        ),
-    )
-
-
-def handle_feedback_batch(
-    instance_id: str,
-    items: list[contracts.FeedbackBatchItemInput],
-) -> contracts.FeedbackBatchResult:
-    """Record batch edge feedback tied to prior receipts."""
-    return _dispatch_remote_or_local(
-        lambda client: client.feedback_batch(instance_id, items=items),
-        lambda: api.feedback_batch(instance_id, items),
-        allow_local=False,
-        operation_name="cruxible_feedback_batch",
-    )
-
-
-def handle_feedback_from_query(
-    instance_id: str,
-    *,
-    receipt_id: str,
-    result_index: int,
-    action: contracts.FeedbackInputAction,
-    reason: str = "",
-    reason_code: str | None = None,
-    scope_hints: dict[str, Any] | None = None,
-    corrections: dict[str, Any] | None = None,
-    group_override: bool = False,
-    path_index: int | None = None,
-    path_alias: str | None = None,
-    source: str | None = None,
-) -> contracts.FeedbackResult:
-    """Record edge feedback by selecting relationship evidence from a query receipt."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
-    return _dispatch_remote_or_local(
-        lambda client: client.feedback_from_query(
-            instance_id,
-            receipt_id=receipt_id,
-            result_index=result_index,
-            action=action,
-            reason=reason,
-            reason_code=reason_code,
-            scope_hints=scope_hints,
-            corrections=corrections,
-            group_override=group_override,
-            path_index=path_index,
-            path_alias=path_alias,
-            **deprecated_kwargs,
-        ),
-        lambda: api.feedback_from_query(
-            instance_id,
-            receipt_id=receipt_id,
-            result_index=result_index,
-            action=action,
-            reason=reason,
-            reason_code=reason_code,
-            scope_hints=scope_hints,
-            corrections=corrections,
-            group_override=group_override,
-            path_index=path_index,
-            path_alias=path_alias,
-            **deprecated_kwargs,
-        ),
-        allow_local=False,
-        operation_name="cruxible_feedback_from_query",
-    )
-
-
-def handle_outcome(
-    instance_id: str,
-    outcome: contracts.OutcomeValue,
-    receipt_id: str | None = None,
-    anchor_type: contracts.OutcomeAnchorType = "receipt",
-    anchor_id: str | None = None,
-    outcome_code: str | None = None,
-    scope_hints: dict[str, Any] | None = None,
-    outcome_profile_key: str | None = None,
-    detail: dict[str, Any] | None = None,
-    source: str | None = None,
-) -> contracts.OutcomeResult:
-    """Record a structured outcome for a prior receipt or proposal resolution."""
-    deprecated_kwargs: _SourceAliasKwargs = {}
-    if source is not None:
-        deprecated_kwargs["source"] = source
-    return _dispatch_remote_or_local(
-        lambda client: client.outcome(
-            instance_id,
-            receipt_id=receipt_id,
-            outcome=outcome,
-            anchor_type=anchor_type,
-            anchor_id=anchor_id,
-            outcome_code=outcome_code,
-            scope_hints=scope_hints,
-            outcome_profile_key=outcome_profile_key,
-            detail=detail,
-            **deprecated_kwargs,
-        ),
-        lambda: api.outcome(
-            instance_id,
-            receipt_id,
-            outcome,
-            anchor_type=anchor_type,
-            anchor_id=anchor_id,
-            outcome_code=outcome_code,
-            scope_hints=scope_hints,
-            outcome_profile_key=outcome_profile_key,
-            detail=detail,
-            **deprecated_kwargs,
-        ),
-        allow_local=False,
-        operation_name="cruxible_outcome",
-    )
-
-
-def handle_list(
-    instance_id: str,
-    resource_type: contracts.ResourceType,
-    entity_type: str | None = None,
-    relationship_type: str | None = None,
-    query_name: str | None = None,
-    receipt_id: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-    property_filter: dict[str, Any] | None = None,
-    where: dict[str, dict[str, Any]] | None = None,
-    operation_type: str | None = None,
-    fields: list[str] | None = None,
-    relationship_state: contracts.QueryVisibilityState | None = None,
-    lifecycle_status: contracts.LifecycleStatus | None = None,
-    profile: contracts.ReadProfile | None = None,
-    continuation: str | None = None,
-) -> contracts.ListResult:
-    """List entities, edges, receipts, feedback, or outcomes."""
-    resolved_profile = resolve_mcp_read_profile(profile)
-    result = _dispatch_remote_or_local(
-        lambda client: _client_list(
-            client,
-            instance_id=instance_id,
-            resource_type=resource_type,
-            entity_type=entity_type,
-            relationship_type=relationship_type,
-            query_name=query_name,
-            receipt_id=receipt_id,
-            limit=limit,
-            offset=offset,
-            property_filter=property_filter,
-            where=where,
-            operation_type=operation_type,
-            fields=fields,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-            profile=resolved_profile,
-            continuation=continuation,
-        ),
-        lambda: api.list_resources(
-            instance_id,
-            resource_type,
-            entity_type=entity_type,
-            relationship_type=relationship_type,
-            query_name=query_name,
-            receipt_id=receipt_id,
-            limit=limit,
-            offset=offset,
-            property_filter=property_filter,
-            where=where,
-            operation_type=operation_type,
-            fields=fields,
-            relationship_state=relationship_state,
-            lifecycle_status=lifecycle_status,
-            profile=resolved_profile,
-            continuation=continuation,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_list", instance_id=instance_id)
-
-
-def _client_list(
-    client: CruxibleClient,
-    *,
-    instance_id: str,
-    resource_type: contracts.ResourceType,
-    entity_type: str | None,
-    relationship_type: str | None,
-    query_name: str | None,
-    receipt_id: str | None,
-    limit: int,
-    offset: int,
-    property_filter: dict[str, Any] | None,
-    where: dict[str, dict[str, Any]] | None,
-    operation_type: str | None,
-    fields: list[str] | None,
-    relationship_state: contracts.QueryVisibilityState | None,
-    lifecycle_status: contracts.LifecycleStatus | None,
-    profile: contracts.ReadProfile | None,
-    continuation: str | None,
-) -> contracts.ListResult:
-    if lifecycle_status is None:
-        return client.list(
-            instance_id,
-            resource_type=resource_type,
-            entity_type=entity_type,
-            relationship_type=relationship_type,
-            query_name=query_name,
-            receipt_id=receipt_id,
-            limit=limit,
-            offset=offset,
-            property_filter=property_filter,
-            where=where,
-            operation_type=operation_type,
-            fields=fields,
-            relationship_state=relationship_state,
-            profile=profile,
-            continuation=continuation,
-        )
-    return client.list(
-        instance_id,
-        resource_type=resource_type,
-        entity_type=entity_type,
-        relationship_type=relationship_type,
-        query_name=query_name,
-        receipt_id=receipt_id,
-        limit=limit,
-        offset=offset,
-        property_filter=property_filter,
-        where=where,
-        operation_type=operation_type,
-        fields=fields,
-        relationship_state=relationship_state,
-        lifecycle_status=lifecycle_status,
-        profile=profile,
-        continuation=continuation,
-    )
-
-
-def handle_evaluate(
-    instance_id: str,
-    max_findings: int = 100,
-    exclude_orphan_types: list[str] | None = None,
-    severity_filter: list[contracts.FindingSeverity] | None = None,
-    category_filter: list[contracts.FindingCategory] | None = None,
-) -> contracts.EvaluateResult:
-    """Evaluate graph quality."""
-    return _dispatch_remote_or_local(
-        lambda client: client.evaluate(
-            instance_id,
-            max_findings=max_findings,
-            exclude_orphan_types=exclude_orphan_types,
-            severity_filter=severity_filter,
-            category_filter=category_filter,
-        ),
-        lambda: api.evaluate(
-            instance_id,
-            max_findings=max_findings,
-            exclude_orphan_types=exclude_orphan_types,
-            severity_filter=severity_filter,
-            category_filter=category_filter,
-        ),
-    )
-
-
-def handle_stats(instance_id: str) -> contracts.StatsResult:
-    """Return graph counts and head snapshot metadata."""
-    return _dispatch_remote_or_local(
-        lambda client: client.stats(instance_id),
-        lambda: api.stats(instance_id),
-    )
-
-
-def handle_lint(
-    instance_id: str,
-    max_findings: int = 100,
-    analysis_limit: int = 200,
-    min_support: int = 5,
-    exclude_orphan_types: list[str] | None = None,
-) -> contracts.LintResult:
-    """Run aggregate read-only lint checks."""
-    return _dispatch_remote_or_local(
-        lambda client: client.lint(
-            instance_id,
-            max_findings=max_findings,
-            analysis_limit=analysis_limit,
-            min_support=min_support,
-            exclude_orphan_types=exclude_orphan_types,
-        ),
-        lambda: api.lint(
-            instance_id,
-            max_findings=max_findings,
-            analysis_limit=analysis_limit,
-            min_support=min_support,
-            exclude_orphan_types=exclude_orphan_types,
-        ),
-    )
-
-
-def handle_schema(instance_id: str) -> dict[str, Any]:
-    """Get config schema details."""
-    return _dispatch_remote_or_local(
-        lambda client: client.schema(instance_id),
-        lambda: api.schema(instance_id),
-    )
-
-
-def handle_sample(
-    instance_id: str,
-    entity_type: str,
-    limit: int = 5,
-    fields: list[str] | None = None,
-    profile: contracts.ReadProfile | None = None,
-) -> contracts.SampleResult:
-    """Sample entities of a given type."""
-    resolved_profile = resolve_mcp_read_profile(profile)
-    result = _dispatch_remote_or_local(
-        lambda client: client.sample(
-            instance_id,
-            entity_type,
-            limit=limit,
-            fields=fields,
-            profile=resolved_profile,
-        ),
-        lambda: api.sample(
-            instance_id,
-            entity_type,
-            limit=limit,
-            fields=fields,
-            profile=resolved_profile,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_sample", instance_id=instance_id)
-
-
-def handle_inspect_entity(
-    instance_id: str,
-    entity_type: str,
-    entity_id: str,
-    *,
-    direction: str = "both",
-    relationship_type: str | None = None,
-    limit: int | None = None,
-    depth: int | None = None,
-    relationship_types: list[str] | None = None,
-    target_types: list[str] | None = None,
-    state: contracts.QueryVisibilityState | None = None,
-    projection: list[str] | None = None,
-    max_nodes: int | None = None,
-    max_edges: int | None = None,
-    profile: contracts.ReadProfile | None = None,
-    continuation: str | None = None,
-) -> contracts.InspectEntityResult | contracts.InspectNeighborhoodResult:
-    """Inspect one entity and its bounded neighborhood."""
-    resolved_profile = resolve_mcp_read_profile(profile)
-    result = _dispatch_remote_or_local(
-        lambda client: client.inspect_entity(
-            instance_id,
-            entity_type,
-            entity_id,
-            direction=direction,
-            relationship_type=relationship_type,
-            limit=limit,
-            depth=depth,
-            relationship_types=relationship_types,
-            target_types=target_types,
-            state=state,
-            projection=projection,
-            max_nodes=max_nodes,
-            max_edges=max_edges,
-            profile=resolved_profile,
-            continuation=continuation,
-        ),
-        lambda: api.inspect_entity(
-            instance_id,
-            entity_type,
-            entity_id,
-            direction=direction,
-            relationship_type=relationship_type,
-            limit=limit,
-            depth=depth,
-            relationship_types=relationship_types,
-            target_types=target_types,
-            state=state,
-            projection=projection,
-            max_nodes=max_nodes,
-            max_edges=max_edges,
-            profile=resolved_profile,
-            continuation=continuation,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_inspect_entity", instance_id=instance_id)
-
-
-def handle_inspect_entity_history(
-    instance_id: str,
-    entity_type: str,
-    entity_id: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> contracts.EntityChangeHistoryResult:
-    """Inspect receipt-derived entity change history for one entity type or entity."""
-    return _dispatch_remote_or_local(
-        lambda client: client.inspect_entity_history(
-            instance_id,
-            entity_type,
-            entity_id=entity_id,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.inspect_entity_history(
-            instance_id,
-            entity_type,
-            entity_id=entity_id,
-            limit=limit,
-            offset=offset,
-        ),
-    )
-
-
-def handle_inspect_view(
-    instance_id: str,
-    view: str,
-    *,
-    limit: int = 200,
-) -> contracts.CanonicalViewResult:
-    """Build a canonical structured inspect view."""
-    return _dispatch_remote_or_local(
-        lambda client: client.inspect_view(instance_id, view, limit=limit),
-        lambda: api.inspect_view(instance_id, view, limit=limit),
-    )
-
-
-def handle_reload_config(
-    instance_id: str,
-    *,
-    config_path: str | None = None,
-    config_yaml: str | None = None,
-    allow_orphans: bool = False,
-    config_source_manifest: contracts.ConfigSourceManifest | None = None,
-) -> contracts.ReloadConfigResult:
-    """Reload or replace an instance config."""
-    uploaded_yaml = config_yaml
-    source_manifest = config_source_manifest
-    if uploaded_yaml is None and config_path is not None:
-        uploaded_yaml, source_manifest = _config_upload_for_path(config_path)
-
-    def _remote_reload(client: CruxibleClient) -> contracts.ReloadConfigResult:
-        kwargs: dict[str, Any] = {
-            "config_path": None,
-            "config_yaml": uploaded_yaml,
-        }
-        if source_manifest is not None:
-            kwargs["config_source_manifest"] = source_manifest
-        if allow_orphans:
-            kwargs["allow_orphans"] = True
-        return client.reload_config(instance_id, **kwargs)
-
-    return _dispatch_remote_or_local(
-        _remote_reload,
-        lambda: api.reload_config(
-            instance_id,
-            config_path=config_path,
-            config_yaml=config_yaml,
-            allow_orphans=allow_orphans,
-            config_source_manifest=config_source_manifest,
-        ),
-        allow_local=False,
-        operation_name="cruxible_reload_config",
-    )
-
-
-def handle_config_status(
-    instance_id: str,
-    *,
-    current_source_manifest: contracts.ConfigSourceManifest | None = None,
-) -> contracts.ConfigStatusResult:
-    """Report config source/materialization parity."""
-    return _dispatch_remote_or_local(
-        lambda client: client.config_status(
-            instance_id,
-            current_source_manifest=current_source_manifest,
-        ),
-        lambda: api.config_status(instance_id, current_source_manifest),
-    )
-
-
-def handle_add_relationship(
-    instance_id: str,
-    relationships: list[contracts.RelationshipInput],
-    *,
-    dry_run: bool = False,
-) -> contracts.AddRelationshipResult:
-    """Add or update one or more relationships in the graph (upsert)."""
-    return _dispatch_remote_or_local(
-        lambda client: client.add_relationships(instance_id, relationships, dry_run=dry_run),
-        lambda: api.add_relationships(instance_id, relationships, dry_run=dry_run),
-        allow_local=False,
-        operation_name="cruxible_add_relationship",
-    )
-
-
-def handle_add_entity(
-    instance_id: str,
-    entities: list[contracts.EntityInput],
-    *,
-    dry_run: bool = False,
-) -> contracts.AddEntityResult:
-    """Add or update one or more entities in the graph (upsert)."""
-    return _dispatch_remote_or_local(
-        lambda client: client.add_entities(instance_id, entities, dry_run=dry_run),
-        lambda: api.add_entities(instance_id, entities, dry_run=dry_run),
-        allow_local=False,
-        operation_name="cruxible_add_entity",
-    )
-
-
-def handle_supersede_claim(
-    instance_id: str,
-    claim_id: str,
-    successor_claim_id: str,
-    reason: str,
-    evidence_ref: contracts.EvidenceRef | None = None,
-) -> contracts.ClaimLifecycleResult:
-    """Settle a claim as superseded by an existing live claim."""
-    return _dispatch_remote_or_local(
-        lambda client: client.supersede_claim(
-            instance_id,
-            claim_id,
-            successor_claim_id,
-            reason,
-            evidence_ref=evidence_ref,
-        ),
-        lambda: api.supersede_claim(
-            instance_id,
-            claim_id,
-            successor_claim_id,
-            reason,
-            evidence_ref=evidence_ref,
-        ),
-        allow_local=False,
-        operation_name="cruxible_supersede_claim",
-    )
+def _playbill_whoami(instance_id: str) -> contracts.WhoAmI:
+    return _daemon_call(lambda client: client.whoami(instance_id), operation_name="cruxible_whoami")
 
 
-def handle_retract_claim(
-    instance_id: str,
-    claim_id: str,
-    reason: str,
-    evidence_ref: contracts.EvidenceRef | None = None,
-) -> contracts.ClaimLifecycleResult:
-    """Settle a claim as retracted without a successor."""
-    return _dispatch_remote_or_local(
-        lambda client: client.retract_claim(
-            instance_id,
-            claim_id,
-            reason,
-            evidence_ref=evidence_ref,
-        ),
-        lambda: api.retract_claim(instance_id, claim_id, reason, evidence_ref=evidence_ref),
-        allow_local=False,
-        operation_name="cruxible_retract_claim",
-    )
-
-
-def handle_supersede_entity(
-    instance_id: str,
-    entity_type: str,
-    entity_id: str,
-    successor_entity_type: str,
-    successor_entity_id: str,
-    reason: str,
-    evidence_ref: contracts.EvidenceRef | None = None,
-) -> contracts.EntityLifecycleResult:
-    """Settle an entity as superseded without migrating attached edges."""
-    return _dispatch_remote_or_local(
-        lambda client: client.supersede_entity(
-            instance_id,
-            entity_type,
-            entity_id,
-            successor_entity_type,
-            successor_entity_id,
-            reason,
-            evidence_ref=evidence_ref,
-        ),
-        lambda: api.supersede_entity(
-            instance_id,
-            entity_type,
-            entity_id,
-            successor_entity_type,
-            successor_entity_id,
-            reason,
-            evidence_ref=evidence_ref,
-        ),
-        allow_local=False,
-        operation_name="cruxible_supersede_entity",
-    )
-
-
-def handle_retire_entity(
-    instance_id: str,
-    entity_type: str,
-    entity_id: str,
-    reason: str,
-    evidence_ref: contracts.EvidenceRef | None = None,
-) -> contracts.EntityLifecycleResult:
-    """Settle an entity as retired without cascading attached edges."""
-    return _dispatch_remote_or_local(
-        lambda client: client.retire_entity(
-            instance_id,
-            entity_type,
-            entity_id,
-            reason,
-            evidence_ref=evidence_ref,
-        ),
-        lambda: api.retire_entity(
-            instance_id,
-            entity_type,
-            entity_id,
-            reason,
-            evidence_ref=evidence_ref,
-        ),
-        allow_local=False,
-        operation_name="cruxible_retire_entity",
-    )
-
-
-def handle_batch_direct_write(
-    instance_id: str,
-    payload: contracts.BatchDirectWritePayload,
-    *,
-    dry_run: bool = False,
-) -> contracts.BatchDirectWriteResult:
-    """Validate or apply one direct entity/relationship write payload."""
-    return _dispatch_remote_or_local(
-        lambda client: client.batch_direct_write(
-            instance_id,
-            payload,
-            dry_run=dry_run,
-        ),
-        lambda: api.batch_direct_write(
-            instance_id,
-            payload,
-            dry_run=dry_run,
-        ),
-        allow_local=False,
-        operation_name="cruxible_batch_direct_write",
-    )
-
-
-def handle_add_constraint(
-    instance_id: str,
-    name: str,
-    rule: str,
-    severity: contracts.ConstraintSeverity = "warning",
-    description: str | None = None,
-) -> contracts.AddConstraintResult:
-    """Add a constraint rule to the config and write back to YAML."""
-    return _dispatch_remote_or_local(
-        lambda client: client.add_constraint(
-            instance_id,
-            name=name,
-            rule=rule,
-            severity=severity,
-            description=description,
-        ),
-        lambda: api.add_constraint(
-            instance_id,
-            name,
-            rule,
-            severity,
-            description,
-        ),
-        allow_local=False,
-        operation_name="cruxible_add_constraint",
-    )
-
-
-def handle_add_decision_policy(
-    instance_id: str,
-    name: str,
-    applies_to: contracts.DecisionPolicyAppliesTo,
-    relationship_type: str,
-    effect: contracts.DecisionPolicyEffect,
-    match: contracts.DecisionPolicyMatchInput | None = None,
-    description: str | None = None,
-    rationale: str = "",
-    query_name: str | None = None,
-    workflow_name: str | None = None,
-    expires_at: str | None = None,
-) -> contracts.AddDecisionPolicyResult:
-    """Add a decision policy to the config and write back to YAML."""
-    return _dispatch_remote_or_local(
-        lambda client: client.add_decision_policy(
-            instance_id,
-            name=name,
-            applies_to=applies_to,
-            relationship_type=relationship_type,
-            effect=effect,
-            match=match,
-            description=description,
-            rationale=rationale,
-            query_name=query_name,
-            workflow_name=workflow_name,
-            expires_at=expires_at,
-        ),
-        lambda: api.add_decision_policy(
-            instance_id,
-            name=name,
-            applies_to=applies_to,
-            relationship_type=relationship_type,
-            effect=effect,
-            match=match,
-            description=description,
-            rationale=rationale,
-            query_name=query_name,
-            workflow_name=workflow_name,
-            expires_at=expires_at,
-        ),
-        allow_local=False,
-        operation_name="cruxible_add_decision_policy",
-    )
-
-
-def handle_get_entity(
-    instance_id: str,
-    entity_type: str,
-    entity_id: str,
-    profile: contracts.ReadProfile | None = None,
-) -> contracts.GetEntityResult:
-    """Look up a specific entity by type and ID."""
-    resolved_profile = resolve_mcp_read_profile(profile)
-    result = _dispatch_remote_or_local(
-        lambda client: client.get_entity(
-            instance_id,
-            entity_type,
-            entity_id,
-            profile=resolved_profile,
-        ),
-        lambda: api.get_entity(instance_id, entity_type, entity_id, profile=resolved_profile),
-    )
-    return _captured_read(result, tool="cruxible_get_entity", instance_id=instance_id)
-
-
-def handle_get_relationship(
-    instance_id: str,
-    from_type: str,
-    from_id: str,
-    relationship_type: str,
-    to_type: str,
-    to_id: str,
-    edge_key: int | None = None,
-) -> contracts.GetRelationshipResult:
-    """Look up a specific relationship by its endpoints and type."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.get_relationship(
-            instance_id,
-            from_type=from_type,
-            from_id=from_id,
-            relationship_type=relationship_type,
-            to_type=to_type,
-            to_id=to_id,
-            edge_key=edge_key,
-        ),
-        lambda: api.get_relationship(
-            instance_id,
-            from_type,
-            from_id,
-            relationship_type,
-            to_type,
-            to_id,
-            edge_key=edge_key,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_get_relationship", instance_id=instance_id)
-
-
-def handle_relationship_lineage(
-    instance_id: str,
-    from_type: str,
-    from_id: str,
-    relationship_type: str,
-    to_type: str,
-    to_id: str,
-    edge_key: int | None = None,
-) -> contracts.RelationshipLineageResult:
-    """Look up a relationship and follow group provenance when available."""
-    return _dispatch_remote_or_local(
-        lambda client: client.get_relationship_lineage(
-            instance_id,
-            from_type=from_type,
-            from_id=from_id,
-            relationship_type=relationship_type,
-            to_type=to_type,
-            to_id=to_id,
-            edge_key=edge_key,
-        ),
-        lambda: api.get_relationship_lineage(
-            instance_id,
-            from_type,
-            from_id,
-            relationship_type,
-            to_type,
-            to_id,
-            edge_key=edge_key,
-        ),
-    )
-
-
-def handle_propose_procedure(
-    instance_id: str,
-    definition: dict[str, Any],
-    *,
-    supersedes_procedure_id: str | None = None,
-    evidence_refs: list[contracts.EvidenceRef] | None = None,
-) -> dict[str, Any]:
-    """Propose a state-held procedure definition for review."""
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_procedure(
-            instance_id,
-            definition=definition,
-            supersedes_procedure_id=supersedes_procedure_id,
-            evidence_refs=evidence_refs,
-        ),
-        lambda: api.propose_procedure(
-            instance_id,
-            definition,
-            supersedes_procedure_id=supersedes_procedure_id,
-            evidence_refs=evidence_refs,
-        ),
-        allow_local=False,
-        operation_name="cruxible_propose_procedure",
-    )
-
-
-def handle_list_procedures(
-    instance_id: str,
-    *,
-    status: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.ListResult:
-    """List procedure definitions with lifecycle state."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.list_procedures(
-            instance_id,
-            status=status,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_procedures(
-            instance_id,
-            status=status,  # type: ignore[arg-type]
-            limit=limit,
-            offset=offset,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_list_procedures", instance_id=instance_id)
-
-
-def handle_get_procedure(instance_id: str, procedure_id: str) -> dict[str, Any]:
-    """Get one procedure definition with lifecycle state."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.get_procedure(instance_id, procedure_id),
-        lambda: api.get_procedure(instance_id, procedure_id),
-    )
-    return _captured_read(result, tool="cruxible_get_procedure", instance_id=instance_id)
-
-
-def handle_resolve_procedure(
-    instance_id: str,
-    procedure_id: str,
-    *,
-    action: str,
-    expected_version: int,
-    reason: str | None = None,
-) -> dict[str, Any]:
-    """Accept or reject one pending procedure."""
-    return _dispatch_remote_or_local(
-        lambda client: client.resolve_procedure(
-            instance_id,
-            procedure_id,
-            action=action,
-            expected_version=expected_version,
-            reason=reason,
-        ),
-        lambda: api.resolve_procedure(
-            instance_id,
-            procedure_id,
-            action=action,  # type: ignore[arg-type]
-            expected_version=expected_version,
-            reason=reason,
-        ),
-        allow_local=False,
-        operation_name="cruxible_resolve_procedure",
-    )
-
-
-def handle_withdraw_procedure(
-    instance_id: str,
-    procedure_id: str,
-    *,
-    expected_version: int,
-    reason: str | None = None,
-) -> dict[str, Any]:
-    """Withdraw one pending procedure proposal as its author."""
-    return _dispatch_remote_or_local(
-        lambda client: client.withdraw_procedure(
-            instance_id,
-            procedure_id,
-            expected_version=expected_version,
-            reason=reason,
-        ),
-        lambda: api.withdraw_procedure(
-            instance_id,
-            procedure_id,
-            expected_version=expected_version,
-            reason=reason,
-        ),
-        allow_local=False,
-        operation_name="cruxible_withdraw_procedure",
-    )
-
-
-def handle_retire_procedure(
-    instance_id: str,
-    procedure_id: str,
-    *,
-    expected_version: int,
-    reason: str,
-) -> dict[str, Any]:
-    """Retire one live procedure."""
-    return _dispatch_remote_or_local(
-        lambda client: client.retire_procedure(
-            instance_id,
-            procedure_id,
-            expected_version=expected_version,
-            reason=reason,
-        ),
-        lambda: api.retire_procedure(
-            instance_id,
-            procedure_id,
-            expected_version=expected_version,
-            reason=reason,
-        ),
-        allow_local=False,
-        operation_name="cruxible_retire_procedure",
-    )
-
-
-def handle_run_procedure(
-    instance_id: str,
-    procedure_id: str,
-    *,
-    input_payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Run one live procedure through the generic execution surface."""
-    return _dispatch_remote_or_local(
-        lambda client: client.run_procedure(
-            instance_id,
-            procedure_id,
-            input_payload=input_payload,
-        ),
-        lambda: api.run_procedure(
-            instance_id,
-            procedure_id,
-            input_payload=input_payload,
-        ),
-        allow_local=False,
-        operation_name="cruxible_run_procedure",
-    )
-
-
-def handle_list_procedure_runs(
-    instance_id: str,
-    procedure_id: str,
-    *,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.ListResult:
-    """List completed runs and started tombstones for one procedure."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.list_procedure_runs(
-            instance_id,
-            procedure_id,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_procedure_runs(
-            instance_id,
-            procedure_id,
-            limit=limit,
-            offset=offset,
-        ),
-    )
-    return _captured_read(
-        result,
-        tool="cruxible_list_procedure_runs",
+def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
+    if environment_names_identity(os.environ, token=get_runtime_bearer_token()):
+        source: Literal["environment", "folder", "none"] = "environment"
+    else:
+        # A folder record that cannot be used refuses here, before whoami answers.
+        source = "folder" if _folder_identity() is not None else "none"
+    return McpWhoAmIResult(
         instance_id=instance_id,
+        adapter_version=__version__,
+        daemon_version=_daemon_version(),
+        identity=_playbill_whoami(instance_id),
+        identity_source=source,
     )
 
 
-def handle_attest(
+def handle_playbill_orient(
     instance_id: str,
     *,
-    relationship_type: str,
-    from_type: str,
-    from_id: str,
-    to_type: str,
-    to_id: str,
-    stance: contracts.AttestationStance,
-    observed_at: str,
-    evidence_refs: list[contracts.EvidenceRef] | None = None,
-    edge_key: int | None = None,
+    kind: str | None = None,
+    section: contracts.OrientSection | None = None,
+    limit: int = contracts.ORIENT_DEFAULT_LIMIT,
+    cursor: str | None = None,
+    at: str | contracts.AcceptedCoordinate | None = None,
+    evaluation_time: str | None = None,
+) -> contracts.OrientResult:
+    """The orient map, with its follow-up calls rendered as MCP tool calls."""
+
+    from cruxible_core.mcp.curation import session_tool_names
+
+    tools = tuple(sorted(session_tool_names()))
+    result = _daemon_call(
+        lambda client: client.orient(
+            instance_id,
+            kind=kind,
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=at,
+            evaluation_time=evaluation_time,
+            surface="mcp",
+            caller_tools=tools,
+        ),
+        operation_name="cruxible_orient",
+    )
+    try:
+        workspace = optional_mcp_workspace_root()
+    except ConfigError:
+        workspace = None
+    return result if workspace is None else workspace_floor_freshness(workspace, result)
+
+
+def handle_playbill_list_proposals(
+    instance_id: str,
+    status: str | None,
+    *,
+    limit: int = contracts.PROPOSAL_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> contracts.ProposalList:
+    normalized = cast(Any, status)
+    return _daemon_call(
+        lambda client: client.list_proposals(
+            instance_id, status=normalized, limit=limit, cursor=cursor
+        ),
+        operation_name="cruxible_proposal_list",
+    )
+
+
+def handle_playbill_readmit_proposal(
+    instance_id: str,
+    proposal_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ProposalReadmitResult:
+    return _daemon_call(
+        lambda client: client.readmit_proposal(instance_id, proposal_id, dry_run=dry_run, at=at),
+        operation_name="cruxible_proposal_readmit",
+    )
+
+
+def handle_playbill_withdraw_proposal(
+    instance_id: str,
+    proposal_id: str,
+    reason: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ProposalWithdrawResult:
+    return _daemon_call(
+        lambda client: client.withdraw_proposal(
+            instance_id, proposal_id, reason=reason, dry_run=dry_run, at=at
+        ),
+        operation_name="cruxible_proposal_withdraw",
+    )
+
+
+def handle_playbill_reject_proposal(
+    instance_id: str,
+    proposal_id: str,
+    reason: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ProposalRejectResult:
+    return _daemon_call(
+        lambda client: client.reject_proposal(
+            instance_id, proposal_id, reason=reason, dry_run=dry_run, at=at
+        ),
+        operation_name="cruxible_proposal_reject",
+    )
+
+
+def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
+    return _daemon_call(
+        lambda client: client.read_capture(instance_id, request),
+        operation_name="cruxible_capture_read",
+    )
+
+
+def handle_playbill_erase_capture(
+    instance_id: str, request: CaptureEraseRequest
+) -> CaptureEraseResult:
+    return _daemon_call(
+        lambda client: client.erase_capture(instance_id, request),
+        operation_name="cruxible_capture_erase",
+    )
+
+
+def handle_playbill_files_check(
+    instance_id: str,
+    *,
+    bundle: dict[str, Any] | None = None,
+    catalog_path: str | None = None,
+    repository_root: str = ".",
+    local_catalog_path: str | None = None,
+    root_aliases: Mapping[str, str] | None = None,
+) -> contracts.FileCheckResult:
+    """Check a compiled bundle, or compile the workspace's catalogued files first."""
+
+    if bundle is not None and (
+        catalog_path is not None
+        or repository_root != "."
+        or local_catalog_path is not None
+        or root_aliases
+    ):
+        raise DataValidationError(
+            "a bundle is checked as given; catalog_path, repository_root, local_catalog_path "
+            "and root_aliases apply only when compiling the workspace catalog"
+        )
+    frozen = (
+        FileCompilationBundle.model_validate(bundle)
+        if bundle is not None
+        else handle_playbill_files_compile(
+            instance_id,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=root_aliases or {},
+        )
+    )
+    return _daemon_call(
+        lambda client: client.check_file_bundle(instance_id, bundle=frozen.model_dump(mode="json")),
+        operation_name="cruxible_files_check",
+    )
+
+
+def handle_playbill_files_propose(
+    instance_id: str,
+    *,
+    file: str,
+    proposal_name: str,
+    catalog_path: str | None = None,
+    repository_root: str = ".",
+    local_catalog_path: str | None = None,
+    root_aliases: Mapping[str, str] | None = None,
+    dry_run: bool | None = None,
+    at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.ProposalInspection:
+    """Compile the workspace catalog here and propose one file as its Document.
+
+    The adapter reads the files, so no file bytes travel through the caller.
+    """
+
+    frozen = handle_playbill_files_compile(
+        instance_id,
+        catalog_path=catalog_path,
+        repository_root=repository_root,
+        local_catalog_path=local_catalog_path,
+        root_aliases=root_aliases or {},
+    )
+    if file not in {item.source.name for item in frozen.documents}:
+        raise DataValidationError(
+            f"file {file!r} compiles to no Document: it is not catalogued, or its "
+            "catalog entry is evidence-only (give it document_id, document_kind, title, "
+            "media_type and governance_scope to propose it)"
+        )
+    return _daemon_call(
+        lambda client: client.propose_file_bundle(
+            instance_id,
+            bundle=frozen.model_dump(mode="json"),
+            file=file,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+            accept=accept,
+        ),
+        operation_name="cruxible_files_propose",
+    )
+
+
+def handle_playbill_compiler_upgrade(
+    instance_id: str,
+    target_compiler_digest: str | None = None,
+    base: dict[str, Any] | None = None,
+    proposal_name: str | None = None,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ProposalInspection:
+    request = CompilerUpgradeRequest.model_validate(
+        {
+            "target": (
+                None if target_compiler_digest is None else {"rule_digest": target_compiler_digest}
+            ),
+            "base": base,
+            "proposal_name": proposal_name,
+            "dry_run": dry_run,
+            "at": at,
+        }
+    )
+    return _daemon_call(
+        lambda client: client.propose_compiler_upgrade(
+            instance_id,
+            target=request.target,
+            base=request.base,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_compiler_upgrade",
+    )
+
+
+def handle_playbill_propose_principal_change(
+    instance_id: str,
+    principal: dict[str, Any],
+    proposal_name: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ProposalInspection:
+    record = PrincipalRecord.model_validate(principal)
+    return _daemon_call(
+        lambda client: client.propose_principal_change(
+            instance_id,
+            principal=record.model_dump(mode="json"),
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_principal_propose",
+    )
+
+
+def handle_playbill_propose_capture_contract(
+    instance_id: str,
+    input: dict[str, Any],
+    proposal_name: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.ProposalInspection:
+    request = CaptureContractInputRecord.model_validate(input)
+    return _daemon_call(
+        lambda client: client.propose_capture_contract_input(
+            instance_id,
+            input=request.model_dump(mode="json", exclude_unset=True),
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+            accept=accept,
+        ),
+        operation_name="cruxible_capture_contract_propose",
+    )
+
+
+def handle_playbill_propose_claim_type(
+    instance_id: str,
+    input: dict[str, Any],
+    proposal_name: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.ClaimTypeInputProposalResult:
+    request = ClaimTypeInputRecord.model_validate(input)
+    return _daemon_call(
+        lambda client: client.propose_claim_type_input(
+            instance_id,
+            input=request.model_dump(mode="json"),
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+            accept=accept,
+        ),
+        operation_name="cruxible_claim_type_propose",
+    )
+
+
+def handle_playbill_adopt_builtin_claim_type(
+    instance_id: str,
+    builtin: BuiltinClaimTypeName,
+    proposal_name: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.ClaimTypeInputProposalResult:
+    """Propose a builtin ClaimType's exact envelope on an instance that lacks it."""
+
+    return _daemon_call(
+        lambda client: client.propose_builtin_claim_type(
+            instance_id,
+            builtin=builtin,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+            accept=accept,
+        ),
+        operation_name="cruxible_claim_type_propose",
+    )
+
+
+def handle_playbill_migrate_claim_type(
+    instance_id: str,
+    request: dict[str, Any],
+) -> contracts.ClaimTypeMigrationResponse:
+    migration = _CLAIM_TYPE_MIGRATION.validate_python(request)
+    return _daemon_call(
+        lambda client: client.migrate_claim_type(
+            instance_id,
+            request=migration.model_dump(mode="json"),
+        ),
+        operation_name="cruxible_claim_type_migrate",
+    )
+
+
+def handle_playbill_claim_attest(
+    instance_id: str,
+    claim_id: str,
+    stance: ClaimStance,
+    *,
+    because: str | None = None,
+    evidence: Mapping[str, Any] | None = None,
+    valid_until: datetime | None = None,
+) -> ClaimAttestationAppendResult:
+    """Attest the Claim on write's evidence options (D-R42), or on its own evidence."""
+
+    from pydantic import TypeAdapter
+
+    from cruxible_client.authoring.attestations import attest_claim
+    from cruxible_client.contracts.write import Evidence
+
+    try:
+        parsed = None if evidence is None else TypeAdapter(Evidence).validate_python(evidence)
+    except ValidationError as exc:
+        raise DataValidationError(
+            "cruxible_claim_attest: invalid evidence", errors=validation_lines(exc)
+        ) from exc
+
+    def call(client: Any) -> ClaimAttestationAppendResult:
+        folder = _folder_identity()
+        signer = local_attestation_signer_from_environment(
+            client,
+            instance_id,
+            # A forbidden root for key custody; nothing under it is read.
+            workspace_root=mcp_workspace_root(guard=False),
+            private_key_path=None if folder is None else folder.private_key_path,
+        )
+        return attest_claim(
+            client,
+            instance_id,
+            claim_id=claim_id,
+            stance=stance,
+            signer=signer,
+            attested_at=datetime.now(UTC),
+            because=because,
+            evidence=parsed,
+            # File and section evidence are read here, beside the workspace.
+            workspace=mcp_workspace_root() if parsed is not None else None,
+            valid_until=valid_until,
+        )
+
+    return _daemon_call(call, operation_name="cruxible_claim_attest")
+
+
+def handle_playbill_authoring_example(
+    name: contracts.AuthoringExampleName,
+    *,
     claim_id: str | None = None,
-    properties: dict[str, Any] | None = None,
-    note: str | None = None,
-    idempotency_key: str | None = None,
-) -> contracts.AttestationRecordResult:
-    """Record one attributed claim observation."""
-    return _dispatch_remote_or_local(
-        lambda client: client.attest(
-            instance_id,
-            relationship_type=relationship_type,
-            from_type=from_type,
-            from_id=from_id,
-            to_type=to_type,
-            to_id=to_id,
-            stance=stance,
-            observed_at=observed_at,
-            evidence_refs=evidence_refs or [],
-            edge_key=edge_key,
-            claim_id=claim_id,
-            properties=properties,
-            note=note,
-            idempotency_key=idempotency_key,
-        ),
-        lambda: api.attest(
-            instance_id,
-            relationship_type=relationship_type,
-            from_type=from_type,
-            from_id=from_id,
-            to_type=to_type,
-            to_id=to_id,
-            stance=stance,
-            observed_at=observed_at,
-            evidence_refs=evidence_refs or [],
-            edge_key=edge_key,
-            claim_id=claim_id,
-            properties=properties,
-            note=note,
-            idempotency_key=idempotency_key,
-        ),
-        allow_local=False,
-        operation_name="cruxible_attest",
+    capture_digest: str | None = None,
+) -> contracts.AuthoringExampleResult:
+    payload = authoring_example(
+        name,
+        claim_id=claim_id,
+        capture_digest=capture_digest,
+    )
+    return contracts.AuthoringExampleResult(
+        name=name, payload=payload, note=authoring_example_note(name)
     )
 
 
-def handle_list_attestations(
+def handle_playbill_authoring_get(
     instance_id: str,
+    intent_id: str,
+) -> contracts.AuthoringIntentViewRecord:
+    return _daemon_call(
+        lambda client: client.get_authoring_intent(instance_id, intent_id),
+        operation_name="cruxible_authoring_get",
+    )
+
+
+def handle_playbill_authoring_list(
+    instance_id: str,
+) -> contracts.AuthoringIntentListRecord:
+    return _daemon_call(
+        lambda client: client.list_pending_authoring_intents(instance_id),
+        operation_name="cruxible_authoring_list",
+    )
+
+
+def handle_playbill_authoring_compile(
+    instance_id: str,
+    payload: dict[str, Any],
     *,
-    relationship_type: str | None = None,
-    from_type: str | None = None,
-    from_id: str | None = None,
-    to_type: str | None = None,
-    to_id: str | None = None,
-    stance: contracts.AttestationStance | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.ListResult:
-    """List immutable observations for a claim or stance."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.list_attestations(
+    intent_id: str | None,
+) -> contracts.AuthoringPreflightResult:
+    request = _AUTHORING_INPUT.validate_python(payload)
+    return _daemon_call(
+        lambda client: client.compile_authoring_input(
             instance_id,
-            relationship_type=relationship_type,
-            from_type=from_type,
-            from_id=from_id,
-            to_type=to_type,
-            to_id=to_id,
-            stance=stance,
-            limit=limit,
-            offset=offset,
+            input=request.model_dump(mode="json"),
+            intent_id=intent_id,
         ),
-        lambda: api.list_attestations(
-            instance_id,
-            relationship_type=relationship_type,
-            from_type=from_type,
-            from_id=from_id,
-            to_type=to_type,
-            to_id=to_id,
-            stance=stance,
-            limit=limit,
-            offset=offset,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_list_attestations", instance_id=instance_id)
-
-
-def handle_attestation_queue(
-    instance_id: str,
-    *,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.ListResult:
-    """List live claims with open current-content contradictions."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.attestation_queue(
-            instance_id,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.attestation_queue(instance_id, limit=limit, offset=offset),
-    )
-    return _captured_read(result, tool="cruxible_attestation_queue", instance_id=instance_id)
-
-
-def handle_resolve_attestation(
-    instance_id: str,
-    attestation_id: str,
-    *,
-    verdict: contracts.AttestationVerdict,
-    note: str | None = None,
-    follow_up_receipt_id: str | None = None,
-) -> contracts.AttestationDispositionResult:
-    """Append one reviewer disposition."""
-    return _dispatch_remote_or_local(
-        lambda client: client.resolve_attestation(
-            instance_id,
-            attestation_id,
-            verdict=verdict,
-            note=note,
-            follow_up_receipt_id=follow_up_receipt_id,
-        ),
-        lambda: api.resolve_attestation(
-            instance_id,
-            attestation_id,
-            verdict=verdict,
-            note=note,
-            follow_up_receipt_id=follow_up_receipt_id,
-        ),
-        allow_local=False,
-        operation_name="cruxible_resolve_attestation",
+        operation_name="cruxible_authoring_compile",
     )
 
 
-def handle_open_outcome_contract(
-    instance_id: str,
-    *,
-    entity_type: str,
-    entity_id: str,
-    description: str,
-    check_at: str,
-    expires_at: str,
-    measurement: dict[str, Any],
-    idempotency_key: str | None = None,
-) -> contracts.OutcomeContractResult:
-    """Open one resolution contract against an existing governed subject."""
-    return _dispatch_remote_or_local(
-        lambda client: client.open_outcome_contract(
-            instance_id,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            description=description,
-            check_at=check_at,
-            expires_at=expires_at,
-            measurement=measurement,
-            idempotency_key=idempotency_key,
-        ),
-        lambda: api.open_outcome_contract(
-            instance_id,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            description=description,
-            check_at=check_at,
-            expires_at=expires_at,
-            measurement=measurement,
-            idempotency_key=idempotency_key,
-        ),
-        allow_local=False,
-        operation_name="cruxible_open_outcome_contract",
-    )
-
-
-def handle_resolve_outcome(
-    instance_id: str,
-    contract_id: str,
-    *,
-    verdict: contracts.ResolutionVerdict,
-    observed_at: str,
-    evidence_refs: list[contracts.EvidenceRef] | None = None,
-    note: str | None = None,
-    resolving_query_receipt_id: str | None = None,
-    resolving_attestation_ids: list[str] | None = None,
-) -> contracts.OutcomeResolutionResult:
-    """Record the one standing answer to one activated resolution contract."""
-    return _dispatch_remote_or_local(
-        lambda client: client.resolve_outcome(
-            instance_id,
-            contract_id,
-            verdict=verdict,
-            observed_at=observed_at,
-            evidence_refs=evidence_refs or [],
-            note=note,
-            resolving_query_receipt_id=resolving_query_receipt_id,
-            resolving_attestation_ids=resolving_attestation_ids or [],
-        ),
-        lambda: api.resolve_outcome(
-            instance_id,
-            contract_id,
-            verdict=verdict,
-            observed_at=observed_at,
-            evidence_refs=evidence_refs or [],
-            note=note,
-            resolving_query_receipt_id=resolving_query_receipt_id,
-            resolving_attestation_ids=resolving_attestation_ids or [],
-        ),
-        allow_local=False,
-        operation_name="cruxible_resolve_outcome",
-    )
-
-
-def handle_dispose_outcome_resolution(
-    instance_id: str,
-    resolution_id: str,
-    *,
-    verdict: contracts.ResolutionDispositionVerdict,
-    note: str | None = None,
-) -> contracts.OutcomeDispositionResult:
-    """Uphold or overturn one recorded outcome."""
-    return _dispatch_remote_or_local(
-        lambda client: client.dispose_outcome_resolution(
-            instance_id,
-            resolution_id,
-            verdict=verdict,
-            note=note,
-        ),
-        lambda: api.dispose_outcome_resolution(
-            instance_id,
-            resolution_id,
-            verdict=verdict,
-            note=note,
-        ),
-        allow_local=False,
-        operation_name="cruxible_dispose_outcome_resolution",
-    )
-
-
-def handle_list_outcome_contracts(
-    instance_id: str,
-    *,
-    entity_type: str | None = None,
-    entity_id: str | None = None,
-    status: contracts.ContractStatus | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.ListResult:
-    """List resolution contracts with derived lifecycle markers."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.list_outcome_contracts(
-            instance_id,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            status=status,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_outcome_contracts(
-            instance_id,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            status=status,
-            limit=limit,
-            offset=offset,
-        ),
-    )
-    return _captured_read(result, tool="cruxible_list_outcome_contracts", instance_id=instance_id)
-
-
-def handle_outcome_due(
-    instance_id: str,
-    *,
-    queue: contracts.ContractQueue = "due",
-    limit: int = 100,
-    offset: int = 0,
-) -> contracts.ListResult:
-    """Return one derived outcome attention queue."""
-    result = _dispatch_remote_or_local(
-        lambda client: client.outcome_due(
-            instance_id,
-            queue=queue,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.outcome_due(instance_id, queue=queue, limit=limit, offset=offset),
-    )
-    return _captured_read(result, tool="cruxible_outcome_due", instance_id=instance_id)
-
-
-def handle_propose_group(
-    instance_id: str,
-    relationship_type: str,
-    members: list[contracts.MemberInput],
-    thesis_text: str = "",
-    thesis_facts: dict[str, Any] | None = None,
-    analysis_state: dict[str, Any] | None = None,
-    signal_sources_used: list[str] | None = None,
-    suggested_priority: str | None = None,
-    expected_pending_version: int | None = None,
-    proposed_by: str | None = None,
-) -> contracts.ProposeGroupToolResult:
-    """Propose a candidate group for batch edge review."""
-    deprecated_kwargs: _ProposedByAliasKwargs = {}
-    if proposed_by is not None:
-        deprecated_kwargs["proposed_by"] = proposed_by
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_group(
-            instance_id,
-            relationship_type=relationship_type,
-            members=members,
-            thesis_text=thesis_text,
-            thesis_facts=thesis_facts,
-            analysis_state=analysis_state,
-            signal_sources_used=signal_sources_used,
-            suggested_priority=suggested_priority,
-            expected_pending_version=expected_pending_version,
-            **deprecated_kwargs,
-        ),
-        lambda: api.propose_group(
-            instance_id,
-            relationship_type,
-            members,
-            thesis_text=thesis_text,
-            thesis_facts=thesis_facts,
-            analysis_state=analysis_state,
-            signal_sources_used=signal_sources_used,
-            suggested_priority=suggested_priority,
-            expected_pending_version=expected_pending_version,
-            **deprecated_kwargs,
-        ),
-        allow_local=False,
-        operation_name="cruxible_propose_group",
-    )
-
-
-def handle_resolve_group(
-    instance_id: str,
-    group_id: str,
-    action: contracts.GroupAction,
-    rationale: str = "",
-    expected_pending_version: int | None = None,
-    stamp_existing: bool = False,
-    resolved_by: str | None = None,
-) -> contracts.ResolveGroupToolResult:
-    """Resolve a candidate group (approve or reject)."""
-    deprecated_kwargs: _ResolvedByAliasKwargs = {}
-    if resolved_by is not None:
-        deprecated_kwargs["resolved_by"] = resolved_by
-    return _dispatch_remote_or_local(
-        lambda client: client.resolve_group(
-            instance_id,
-            group_id,
-            action=action,
-            rationale=rationale,
-            expected_pending_version=_required_pending_version(expected_pending_version),
-            stamp_existing=stamp_existing,
-            **deprecated_kwargs,
-        ),
-        lambda: api.resolve_group(
-            instance_id,
-            group_id,
-            action,
-            rationale=rationale,
-            expected_pending_version=expected_pending_version,
-            stamp_existing=stamp_existing,
-            **deprecated_kwargs,
-        ),
-        allow_local=False,
-        operation_name="cruxible_resolve_group",
-    )
-
-
-def handle_update_trust_status(
-    instance_id: str,
-    resolution_id: str,
-    trust_status: contracts.GroupTrustStatus,
-    reason: str = "",
-) -> contracts.UpdateTrustStatusToolResult:
-    """Update trust status on a resolution."""
-    return _dispatch_remote_or_local(
-        lambda client: client.update_trust_status(
-            instance_id,
-            resolution_id,
-            trust_status=trust_status,
-            reason=reason,
-        ),
-        lambda: api.update_trust_status(
-            instance_id,
-            resolution_id,
-            trust_status,
-            reason,
-        ),
-        allow_local=False,
-        operation_name="cruxible_update_trust_status",
-    )
-
-
-def handle_get_group(
-    instance_id: str,
-    group_id: str,
-) -> contracts.GetGroupToolResult:
-    """Get a candidate group with its members."""
-    return _dispatch_remote_or_local(
-        lambda client: client.get_group(instance_id, group_id),
-        lambda: api.get_group(instance_id, group_id),
-    )
-
-
-def handle_group_status(
-    instance_id: str,
-    *,
-    group_id: str | None = None,
-    signature: str | None = None,
-) -> contracts.GroupBucketStatusToolResult:
-    """Get signature-bucket lifecycle status."""
-    return _dispatch_remote_or_local(
-        lambda client: client.get_group_status(
-            instance_id,
-            group_id=group_id,
-            signature=signature,
-        ),
-        lambda: api.get_group_status(
-            instance_id,
-            group_id=group_id,
-            signature=signature,
-        ),
-    )
-
-
-def handle_list_groups(
-    instance_id: str,
-    relationship_type: str | None = None,
-    status: contracts.GroupStatus | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> contracts.ListGroupsToolResult:
-    """List candidate groups with optional filters."""
-    return _dispatch_remote_or_local(
-        lambda client: client.list_groups(
-            instance_id,
-            relationship_type=relationship_type,
-            status=status,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_groups(
-            instance_id,
-            relationship_type,
-            status,
-            limit,
-        ),
-    )
-
-
-def handle_list_resolutions(
-    instance_id: str,
-    relationship_type: str | None = None,
-    action: contracts.GroupAction | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> contracts.ListResolutionsToolResult:
-    """List group resolutions with optional filters."""
-    return _dispatch_remote_or_local(
-        lambda client: client.list_resolutions(
-            instance_id,
-            relationship_type=relationship_type,
-            action=action,
-            limit=limit,
-            offset=offset,
-        ),
-        lambda: api.list_resolutions(
-            instance_id,
-            relationship_type,
-            action,
-            limit,
-        ),
-    )
-
-
-def handle_state_publish(
-    instance_id: str,
-    transport_ref: str,
-    state_id: str,
-    release_id: str,
-    compatibility: contracts.StateCompatibility,
-) -> contracts.StatePublishResult:
-    """Publish a root state instance to a transport ref."""
-    return _dispatch_remote_or_local(
-        lambda client: client.state_publish(
-            instance_id,
-            transport_ref=transport_ref,
-            state_id=state_id,
-            release_id=release_id,
-            compatibility=compatibility,
-        ),
-        lambda: api.state_publish(
-            instance_id,
-            transport_ref,
-            state_id,
-            release_id,
-            compatibility,
-        ),
-        allow_local=False,
-        operation_name="cruxible_state_publish",
-    )
-
-
-def handle_create_snapshot(
-    instance_id: str,
-    label: str | None = None,
-) -> contracts.SnapshotCreateResult:
-    """Create an immutable snapshot for an instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.create_snapshot(instance_id, label=label),
-        lambda: api.create_snapshot(instance_id, label),
-        allow_local=False,
-        operation_name="cruxible_create_snapshot",
-    )
-
-
-def handle_instance_backup(
-    instance_id: str,
-    artifact_path: str,
-    label: str | None = None,
-) -> contracts.InstanceBackupResult:
-    """Write a portable same-identity backup artifact for an instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.backup_instance(
-            instance_id,
-            artifact_path=artifact_path,
-            label=label,
-        ),
-        lambda: api.backup_instance(instance_id, artifact_path=artifact_path, label=label),
-        allow_local=False,
-        operation_name="cruxible_instance_backup",
-    )
-
-
-def handle_instance_restore(
-    artifact_path: str,
-    root_dir: str | None = None,
-) -> contracts.InstanceRestoreResult:
-    """Restore a same-identity daemon-backed instance from an artifact."""
-    return _dispatch_remote_or_local(
-        lambda client: client.restore_instance(artifact_path=artifact_path, root_dir=root_dir),
-        lambda: api.restore_instance(artifact_path=artifact_path, root_dir=root_dir),
-        allow_local=False,
-        operation_name="cruxible_instance_restore",
-    )
-
-
-def handle_instance_relocate(
-    instance_id: str,
-    to_dir: str,
-    remove_source: bool = False,
-) -> contracts.InstanceRelocateResult:
-    """Move a healthy daemon-backed instance to a new directory, preserving identity."""
-    return _dispatch_remote_or_local(
-        lambda client: client.relocate_instance(
-            instance_id,
-            to_dir=to_dir,
-            remove_source=remove_source,
-        ),
-        lambda: api.relocate_instance(
-            instance_id,
-            to_dir=to_dir,
-            remove_source=remove_source,
-        ),
-        allow_local=False,
-        operation_name="cruxible_instance_relocate",
-    )
-
-
-def handle_list_snapshots(
-    instance_id: str,
-    *,
-    limit: int | None = None,
-    offset: int = 0,
-) -> contracts.SnapshotListResult:
-    """List snapshots for an instance."""
-    return _dispatch_remote_or_local(
-        lambda client: client.list_snapshots(instance_id, limit=limit, offset=offset),
-        lambda: api.list_snapshots(instance_id, limit=limit, offset=offset),
-    )
-
-
-def handle_register_source_artifact(
+def handle_playbill_authoring_bind(
     instance_id: str,
     *,
     source_path: str,
-    source_artifact_id: str | None = None,
-    source_kind: contracts.SourceKind = "markdown",
-    source_retention: contracts.SourceRetention = "manifest_only",
-    original_uri: str | None = None,
-    label: str | None = None,
-) -> contracts.RegisterSourceArtifactResult:
-    """Register a source artifact for source-backed proposal evidence."""
-    register_kwargs: dict[str, Any] = {
-        "source_path": source_path,
-        "source_kind": source_kind,
-        "source_retention": source_retention,
-        "original_uri": original_uri,
-        "label": label,
-    }
-    if source_artifact_id is not None:
-        register_kwargs["source_artifact_id"] = source_artifact_id
-
-    return _dispatch_remote_or_local(
-        lambda client: client.register_source_artifact(instance_id, **register_kwargs),
-        lambda: api.register_source_artifact(instance_id, **register_kwargs),
-        allow_local=False,
-        operation_name="cruxible_register_source_artifact",
+    anchor: str,
+    payload: ClaimInput,
+    window_lines: int | None,
+    occurrence: int | None = None,
+) -> contracts.AuthoringPreflightResult:
+    root = mcp_workspace_root()
+    path = resolve_workspace_path(source_path, root=root, kind="file")
+    bound = bind_catalogued_selection_input(
+        payload,
+        workspace=root,
+        path=path,
+        anchor=anchor,
+        window_lines=window_lines,
+        occurrence=occurrence,
+    )
+    return _daemon_call(
+        lambda client: client.compile_authoring(
+            instance_id,
+            payload=bound.model_dump(mode="json"),
+            intent_id=None,
+        ),
+        operation_name="cruxible_authoring_bind",
     )
 
 
-def handle_dereference_source_evidence(
+def handle_playbill_authoring_preflight(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.AuthoringPreflightResult:
+    return _daemon_call(
+        lambda client: client.preflight_authoring_intent(instance_id, intent_id),
+        operation_name="cruxible_authoring_preflight",
+    )
+
+
+def handle_playbill_authoring_submit(
     instance_id: str,
     *,
-    source_artifact_id: str,
-    artifact_revision_id: str | None = None,
-    chunk_id: str | None = None,
-    heading_path: list[str] | None = None,
-    block_selector: str | None = None,
-    expected_content_hash: str | None = None,
-) -> contracts.DereferenceSourceEvidenceResult:
-    """Dereference source-backed proposal evidence."""
-    return _dispatch_remote_or_local(
-        lambda client: client.dereference_source_evidence(
+    payload: dict[str, Any] | None = None,
+    intent_id: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.AuthoringSubmitResultRecord:
+    """Submit a payload directly, a staged intent, or a payload onto a staged intent."""
+
+    if payload is None:
+        if intent_id is None:
+            raise ConfigError("cruxible_authoring_submit takes a payload, an intent_id, or both")
+        staged = intent_id
+        return _daemon_call(
+            lambda client: client.submit_authoring_intent(instance_id, staged, accept=accept),
+            operation_name="cruxible_authoring_submit",
+        )
+    request = _AUTHORING_INPUT.validate_python(payload)
+    return _daemon_call(
+        lambda client: client.submit_authoring_input(
             instance_id,
-            source_artifact_id=source_artifact_id,
-            artifact_revision_id=artifact_revision_id,
-            chunk_id=chunk_id,
-            heading_path=heading_path,
-            block_selector=block_selector,
-            expected_content_hash=expected_content_hash,
+            input=request.model_dump(mode="json"),
+            intent_id=intent_id,
+            accept=accept,
         ),
-        lambda: api.dereference_source_evidence(
-            instance_id,
-            source_artifact_id=source_artifact_id,
-            artifact_revision_id=artifact_revision_id,
-            chunk_id=chunk_id,
-            heading_path=heading_path,
-            block_selector=block_selector,
-            expected_content_hash=expected_content_hash,
-        ),
+        operation_name="cruxible_authoring_submit",
     )
 
 
-def handle_clone_snapshot(
+#: The largest authoring file `cruxible_authoring_submit_file` reads: a kit's
+#: automation template's own cap.
+AUTHORING_FILE_MAX_BYTES = KIT_AUTOMATION_TEMPLATE_MAX_BYTES
+
+
+def handle_playbill_authoring_submit_file(
     instance_id: str,
-    snapshot_id: str,
-    root_dir: str,
-) -> contracts.CloneSnapshotResult:
-    """Create a point-in-time clone from a snapshot."""
-    return _dispatch_remote_or_local(
-        lambda client: client.clone_snapshot(
-            instance_id,
-            snapshot_id=snapshot_id,
-            root_dir=root_dir,
-        ),
-        lambda: api.clone_snapshot_governed(instance_id, snapshot_id, root_dir),
-        allow_local=False,
-        operation_name="cruxible_clone_snapshot",
+    path: str,
+    *,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.AuthoringSubmitResultRecord:
+    """Submit the authoring input file at ``path`` in the workspace, as `authoring submit FILE`.
+
+    The file (YAML or JSON, one tagless authoring input) is read beneath the
+    workspace root through held descriptors: a normalized relative path, no
+    symbolic link anywhere on it, at most ``AUTHORING_FILE_MAX_BYTES``.
+    """
+
+    import yaml
+
+    name = "cruxible_authoring_submit_file"
+    root = mcp_workspace_root()
+    try:
+        with HeldRoot(root) as held:
+            raw = held.read(path, max_bytes=AUTHORING_FILE_MAX_BYTES + 1)
+    except ContainmentError as exc:
+        raise DataValidationError(f"{name}: {exc}") from exc
+    except OSError as exc:
+        raise DataValidationError(
+            f"{name}: {path} is not a readable regular file in the workspace {root}: "
+            f"{exc.strerror or exc}"
+        ) from exc
+    if len(raw) > AUTHORING_FILE_MAX_BYTES:
+        raise DataValidationError(f"{name}: {path} is larger than {AUTHORING_FILE_MAX_BYTES} bytes")
+    try:
+        document = yaml.safe_load(raw.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise DataValidationError(f"{name}: {path} is not UTF-8 YAML or JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise DataValidationError(f"{name}: {path} must contain one mapping")
+    try:
+        _AUTHORING_INPUT.validate_python(document)
+    except ValidationError as exc:
+        raise DataValidationError(
+            f"{name}: {path} is not an authoring input (`cruxible_authoring_example` shows "
+            "each shape)",
+            errors=validation_lines(exc),
+        ) from exc
+    return handle_playbill_authoring_submit(instance_id, payload=document, accept=accept)
+
+
+def handle_console(instance_id: str, *, stop: bool = False) -> McpConsoleResult:
+    """`cruxible_console`: start, reuse or stop this process's listener (`mcp.console`)."""
+
+    from cruxible_core.mcp.console import open_console, stop_console
+
+    if stop:
+        return stop_console(instance_id)
+    identity = _mcp_identity()
+    # Fail here, in the tool result, when the instance cannot be read at all.
+    _daemon_call(lambda reader: reader.head(instance_id), operation_name="cruxible_console")
+    return open_console(
+        instance_id,
+        target=resolve_daemon_target(),
+        token=get_runtime_bearer_token(),
+        principal_id=identity.principal_id,
     )
 
 
-def handle_state_status(instance_id: str) -> contracts.StateStatusResult:
-    """Read upstream tracking metadata for a release-backed overlay."""
-    return _dispatch_remote_or_local(
-        lambda client: client.state_status(instance_id),
-        lambda: api.state_status(instance_id),
-    )
+def handle_init(principal_id: str | None = None) -> McpInitResult:
+    """`cruxible_init`: initialize the MCP workspace folder (`cruxible_core.mcp.init`)."""
+
+    check_permission("cruxible_init")
+    target = resolve_daemon_target()
+
+    def call(fn: Callable[[CruxibleClient], Any], operation: str) -> Any:
+        return _daemon_call(fn, operation_name=operation)
+
+    return run_mcp_init(principal_id=principal_id, target=target, call=call)
 
 
-def handle_state_diff(
+def handle_playbill_authoring_status(
     instance_id: str,
-    from_coordinate: str | None = None,
-    to_coordinate: str | None = None,
-    sections: list[str] | None = None,
-    entity_types: list[str] | None = None,
-    relationship_types: list[str] | None = None,
-    buckets: list[str] | None = None,
-    changed_only: bool = False,
-    max_items_per_bucket: int | None = None,
-) -> contracts.StateDiffResult:
-    """Compare two state coordinates."""
-    cap = {"max_items_per_bucket": max_items_per_bucket} if max_items_per_bucket is not None else {}
-    return _dispatch_remote_or_local(
-        lambda client: client.state_diff(
-            instance_id,
-            from_coordinate=from_coordinate,
-            to_coordinate=to_coordinate,
-            sections=sections,
-            entity_types=entity_types,
-            relationship_types=relationship_types,
-            buckets=buckets,
-            changed_only=changed_only,
-            max_items_per_bucket=max_items_per_bucket,
-        ),
-        lambda: api.state_diff(
-            instance_id,
-            from_coordinate=from_coordinate,
-            to_coordinate=to_coordinate,
-            sections=sections,
-            entity_types=entity_types,
-            relationship_types=relationship_types,
-            buckets=buckets,
-            changed_only=changed_only,
-            **cap,
-        ),
+    intent_id: str,
+) -> contracts.CandidateStatusRecord:
+    return _daemon_call(
+        lambda client: client.authoring_intent_status(instance_id, intent_id),
+        operation_name="cruxible_authoring_status",
     )
 
 
-def handle_state_diff_artifact(
+def handle_playbill_block_repin(
     instance_id: str,
-    diff_digest: str,
-) -> contracts.StateDiffArtifactResult:
-    """Read one persisted diff artifact by its content address."""
-    return _dispatch_remote_or_local(
-        lambda client: client.state_diff_artifact(instance_id, diff_digest),
-        lambda: api.state_diff_artifact(instance_id, diff_digest),
+    *,
+    block: str,
+    file: str,
+    claims: Sequence[str] | None = None,
+    queries: Sequence[tuple[str, Mapping[str, object]]] | None = None,
+    artifacts: Sequence[str] | None = None,
+    currency_policy: Literal["warn", "require_current"] | None = None,
+    backing_digest: str | None = None,
+    render: bool = False,
+    dry_run: bool | None = None,
+) -> BlockRepinResult:
+    """Repin one projection block adapter-side: this process computes the stamp (Q17).
+
+    The block is named by its file catalog entry. The SDK reads the page and
+    its backings, rewrites the marker and declares the block.
+    """
+
+    root = mcp_workspace_root()
+    sources = WorkspaceFiles(root)
+    source_id = file
+    path = sources.path_for_file(source_id)
+    stamp = _daemon_call(
+        lambda client: repin_projection_block(
+            client,
+            instance_id,
+            workspace=root,
+            file=source_id,
+            block_id=block,
+            claims=claims,
+            queries=queries,
+            artifacts=None
+            if artifacts is None
+            else tuple(parse_artifact_identity(item) for item in artifacts),
+            currency_policy=currency_policy,
+            backing_digest=backing_digest,
+            evaluation_time=datetime.now(UTC),
+            render=render,
+            dry_run=bool(dry_run),
+        ),
+        operation_name="cruxible_block_repin",
+    )
+    return BlockRepinResult(
+        status="would_repin" if dry_run else "repinned",
+        source_id=source_id,
+        block_id=block,
+        path=path.relative_to(root).as_posix(),
+        declared_generation=stamp.declared_generation,
+        stamp=stamp,
     )
 
 
-def handle_state_pull_preview(instance_id: str) -> contracts.StatePullPreviewResult:
-    """Preview pulling a new upstream release into a local overlay."""
-    return _dispatch_remote_or_local(
-        lambda client: client.state_pull_preview(instance_id),
-        lambda: api.state_pull_preview(instance_id),
-    )
-
-
-def handle_state_pull_apply(
+def handle_playbill_block_sync(
     instance_id: str,
-    expected_apply_digest: str,
-) -> contracts.StatePullApplyResult:
-    """Apply a previewed upstream release into a local overlay."""
-    return _dispatch_remote_or_local(
-        lambda client: client.state_pull_apply(
-            instance_id,
-            expected_apply_digest=expected_apply_digest,
+    *,
+    files: Sequence[str] = (),
+    all_files: bool = False,
+) -> contracts.BlockSyncResult:
+    """Check every block's backings adapter-side; reads only, edits no page.
+
+    Detaching retired blocks edits pages, so it is its own write-tier tool
+    (`handle_playbill_block_detach`), never a flag on this read.
+    """
+
+    root = mcp_workspace_root()
+    paths = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
+    return _daemon_call(
+        lambda client: sync_projection_blocks(
+            client, instance_id, workspace=root, paths=paths, all_files=all_files
         ),
-        lambda: api.state_pull_apply(
-            instance_id,
-            expected_apply_digest,
+        operation_name="cruxible_block_sync",
+    )
+
+
+def handle_playbill_block_detach(
+    instance_id: str,
+    *,
+    files: Sequence[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> BlockDetachResult:
+    """Remove retired blocks' markers from pages, keeping their bodies (R12 previewed).
+
+    A preview reports what the edit would change and edits nothing. The
+    outcome is pinned to the exact page bytes the adapter read -- the same
+    bytes each replacement compare-and-swaps against -- so a commit carrying
+    ``at`` refuses if any page changed since its preview, and a page edited
+    after that check is left as it is.
+    """
+
+    if not files:
+        raise DataValidationError("name at least one page to detach retired blocks from")
+    root = mcp_workspace_root()
+    pages = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
+    return _daemon_call(
+        lambda client: detach_projection_pages(
+            client, instance_id, root=root, pages=pages, dry_run=dry_run, at=at
         ),
-        allow_local=False,
-        operation_name="cruxible_state_pull_apply",
+        operation_name="cruxible_block_detach",
+    )
+
+
+def handle_playbill_block_depublish(
+    instance_id: str,
+    file_id: str,
+    block_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.BlockDepublishResult:
+    return _daemon_call(
+        lambda client: client.depublish_block(
+            instance_id, file_id, block_id, dry_run=dry_run, at=at
+        ),
+        operation_name="cruxible_block_depublish",
+    )
+
+
+def handle_playbill_backlinks(
+    instance_id: str,
+    *,
+    ref: str | None,
+    file: str | None,
+    section: Sequence[str] | None,
+    limit: int,
+    cursor: str | None,
+    at: contracts.AcceptedCoordinate | str | None,
+) -> BacklinksResult:
+    """Backlinks of one target; section rows are checked against the MCP workspace."""
+
+    from cruxible_client.authoring.backlink_sections import observe_drift, section_source
+    from cruxible_client.contracts.backlinks import BacklinksRequest
+
+    workspace = optional_mcp_workspace_root()
+    try:
+        request = BacklinksRequest(
+            ref=ref,
+            file=None if file is None else section_source(workspace, file),
+            section=None if section is None else tuple(section),
+            limit=limit,
+            cursor=cursor,
+            at=at,
+            surface="mcp",
+        )
+    except ValidationError as exc:
+        raise DataValidationError(
+            'Invalid backlinks request; example: {"ref": "kind/id"} or '
+            '{"file": "notes.md", "section": ["Triage"]}',
+            errors=[
+                f"$.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors(include_url=False)
+            ],
+        ) from exc
+    result = _daemon_call(
+        lambda client: client.backlinks(instance_id, request=request),
+        operation_name="cruxible_backlinks",
+    )
+    return observe_drift(result, workspace)
+
+
+def handle_playbill_get(
+    instance_id: str,
+    *,
+    ref: str,
+    detail: str = "summary",
+    range: ByteRange | None = None,
+    at: contracts.AcceptedCoordinate | str | None = None,
+    evaluation_time: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+    field: str | None = None,
+) -> GetResult:
+    try:
+        request = GetRequest.model_validate(
+            {
+                "ref": ref,
+                "detail": detail,
+                "range": range,
+                "at": at,
+                "evaluation_time": evaluation_time,
+                "surface": "mcp",
+                "limit": limit,
+                "cursor": cursor,
+                "field": field,
+            }
+        )
+    except ValidationError as exc:
+        raise DataValidationError(
+            "Invalid get request; example: "
+            '{"ref": "CLM-0123abcd", "detail": "evidence"} or '
+            '{"ref": "Document:design", "detail": "body", "range": {"start": 0, "end": 4096}}',
+            errors=[
+                f"$.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors(include_url=False)
+            ],
+        ) from exc
+    return _daemon_call(
+        lambda client: client.get(instance_id, request=request), operation_name="cruxible_get"
+    )
+
+
+def _playbill_query_request(
+    tool: str, evaluation_time: str | None, fields: Mapping[str, Any]
+) -> contracts.QueryRequest:
+    try:
+        return contracts.QueryRequest.model_validate(
+            {
+                **{name: value for name, value in fields.items() if value is not None},
+                "evaluation_time": parse_datetime(evaluation_time),
+            }
+        )
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'request'}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise DataValidationError(f"{tool}: {problems}") from exc
+
+
+def handle_playbill_query(
+    instance_id: str,
+    *,
+    evaluation_time: str | None = None,
+    **fields: Any,
+) -> contracts.QueryResultRecord:
+    """Build one typed compact or named ``query`` request and answer it."""
+    request = _playbill_query_request("cruxible_query", evaluation_time, fields)
+    return _daemon_call(
+        lambda client: client.query(instance_id, request=request), operation_name="cruxible_query"
+    )
+
+
+_WRITE_EXAMPLES = {
+    "cruxible_set": (
+        '{"subject": "dev.roadmap_item/tidy-cli", "field": "adoption_state", '
+        '"value": "adopted", "because": "Agreed in review."}'
+    ),
+    "cruxible_retire": (
+        '{"target": "CLM-0123456789abcdef0123456789abcdef", "because": "Stated in error."}'
+    ),
+    "cruxible_write": (
+        '{"changes": [{"op": "add", "subject": "dev.card/c1", "field": "governs", '
+        '"value": "dev.roadmap_item/tidy-cli"}], "because": "Linked in review."}'
+    ),
+}
+
+_WriteRequestT = TypeVar("_WriteRequestT", SetRequest, RetireRequest, WriteRequest)
+
+
+def _write_request(
+    model: type[_WriteRequestT], operation: str, fields: Mapping[str, Any]
+) -> _WriteRequestT:
+    """One typed write request for this surface, with its file evidence read here.
+
+    The daemon never reads workspace files, so a ``file`` evidence is observed
+    from the MCP workspace before the request leaves this adapter.
+    """
+
+    try:
+        request = model.model_validate({**fields, "surface": "mcp"})
+    except ValidationError as exc:
+        raise DataValidationError(
+            f"Invalid {operation.removeprefix('cruxible_')} request; example: "
+            + _WRITE_EXAMPLES[operation],
+            errors=[
+                f"$.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors(include_url=False)
+            ],
+        ) from exc
+    if isinstance(request, SetRequest) and isinstance(
+        request.evidence, FileEvidence | SectionEvidence
+    ):
+        request = request.model_copy(
+            update={"evidence": observe_evidence(request.evidence, workspace=mcp_workspace_root())}
+        )
+    return request
+
+
+def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
+    """Put one value in one field of one Subject."""
+
+    request = _write_request(SetRequest, "cruxible_set", fields)
+    return _daemon_call(
+        lambda client: client.set(instance_id, request=request), operation_name="cruxible_set"
+    )
+
+
+def handle_playbill_retire(instance_id: str, **fields: Any) -> WriteOutcome:
+    """End one live Claim, by ID or by its Subject and field."""
+
+    request = _write_request(RetireRequest, "cruxible_retire", fields)
+    return _daemon_call(
+        lambda client: client.retire(instance_id, request=request), operation_name="cruxible_retire"
+    )
+
+
+def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
+    """Apply create, set, add and retire changes as one change set."""
+
+    request = _write_request(WriteRequest, "cruxible_write", fields)
+    if not request.docs and not any(
+        isinstance(c, AboutChange)
+        or isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
+        for c in request.changes
+    ):
+        return _daemon_call(
+            lambda client: client.write(instance_id, request=request),
+            operation_name="cruxible_write",
+        )
+    return write_workspace(
+        request,
+        workspace=mcp_workspace_root(),
+        submit=lambda observed: _daemon_call(
+            lambda client: client.write(instance_id, request=observed),
+            operation_name="cruxible_write",
+        ),
+    )
+
+
+def handle_playbill_query_spec(
+    instance_id: str,
+    *,
+    spec: QueryDefinitionSpec,
+    evaluation_time: str | None = None,
+    **fields: Any,
+) -> contracts.QueryResultRecord:
+    """Run one full QueryDefinition spec through the same ``query`` request path."""
+    request = _playbill_query_request(
+        "cruxible_query_spec", evaluation_time, {**fields, "spec": spec}
+    )
+    return _daemon_call(
+        lambda client: client.query(instance_id, request=request),
+        operation_name="cruxible_query_spec",
+    )
+
+
+def handle_playbill_procedure_run(
+    instance_id: str,
+    name: str,
+    *,
+    evaluation_time: str | None,
+    at: dict[str, Any] | None,
+    input: Any,
+    parameters: Any = None,
+    bindings: dict[str, str] | None = None,
+    resolution_contract: contracts.ResolutionContractReference | None = None,
+    trigger_event: contracts.TriggerEventReference | None = None,
+) -> contracts.ProcedureRunState:
+    evaluated_at = parse_datetime(evaluation_time)
+    request = ProcedureRunRequest.model_validate(
+        {
+            "evaluation_time": evaluated_at,
+            "at": at,
+            "input": input,
+            "parameters": {} if parameters is None else parameters,
+            "bindings": bindings or {},
+            "resolution_contract": resolution_contract,
+            "trigger_event": trigger_event,
+        }
+    )
+    return _daemon_call(
+        lambda client: client.run_procedure(
+            instance_id,
+            resolution_contract=resolution_contract,
+            trigger_event=trigger_event,
+            name=name,
+            evaluation_time=(
+                None if request.evaluation_time is None else request.evaluation_time.isoformat()
+            ),
+            at=None if request.at is None else request.at.model_dump(mode="json"),
+            input=request.input,
+            parameters=request.parameters,
+            **({"bindings": bindings} if bindings else {}),
+        ),
+        operation_name="cruxible_procedure_run",
+    )
+
+
+def handle_playbill_procedure_measure(
+    instance_id: str,
+    name: str,
+    request: contracts.ProcedureMeasureRequest,
+) -> contracts.ProcedureMeasureResult:
+    return _daemon_call(
+        lambda client: client.measure_procedure(instance_id, name, request=request),
+        operation_name="cruxible_procedure_measure",
+    )
+
+
+def handle_playbill_procedure_dispose(
+    instance_id: str,
+    name: str,
+    request: contracts.ProcedureResolutionDispositionRequest,
+) -> contracts.ProcedureResolutionDispositionResult:
+    return _daemon_call(
+        lambda client: client.dispose_procedure_resolution(instance_id, name, request=request),
+        operation_name="cruxible_procedure_dispose",
+    )
+
+
+def handle_playbill_procedure_readings(
+    instance_id: str,
+    name: str,
+    request: contracts.ProcedureReadingsRequest,
+) -> contracts.ProcedureReadingsResult:
+    return _daemon_call(
+        lambda client: client.list_procedure_readings(instance_id, name, request=request),
+        operation_name="cruxible_procedure_readings",
+    )
+
+
+def handle_playbill_line_enable(
+    instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
+) -> contracts.LineEnablement:
+    return _daemon_call(
+        lambda client: client.enable_line(instance_id, line, dry_run=dry_run, at=at),
+        operation_name="cruxible_line_enable",
+    )
+
+
+def handle_playbill_line_disable(
+    instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
+) -> contracts.LineEnablement:
+    return _daemon_call(
+        lambda client: client.disable_line(instance_id, line, dry_run=dry_run, at=at),
+        operation_name="cruxible_line_disable",
+    )
+
+
+def handle_playbill_line_evaluate(
+    instance_id: str, line: str, request: contracts.LineEvaluateRequest
+) -> contracts.LineEvaluateResult:
+    return _daemon_call(
+        lambda client: client.evaluate_line(instance_id, line, request=request),
+        operation_name="cruxible_line_evaluate",
+    )
+
+
+def handle_playbill_line_dispatch(
+    instance_id: str, line: str, request: contracts.LineDispatchRequest
+) -> contracts.LineDispatchResult:
+    return _daemon_call(
+        lambda client: client.dispatch_line(instance_id, line, request=request),
+        operation_name="cruxible_line_dispatch",
+    )
+
+
+def handle_playbill_inbox_list(
+    instance_id: str,
+    *,
+    line: str | None = None,
+    status: contracts.InboxItemStatus | None = None,
+    limit: int = contracts.INBOX_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> contracts.InboxList:
+    return _daemon_call(
+        lambda client: client.list_inbox(
+            instance_id, line=line, status=status, limit=limit, cursor=cursor
+        ),
+        operation_name="cruxible_inbox_list",
+    )
+
+
+def handle_playbill_inbox_get(instance_id: str, item_id: str) -> contracts.InboxItem:
+    return _daemon_call(
+        lambda client: client.get_inbox_item(instance_id, item_id),
+        operation_name="cruxible_inbox_get",
+    )
+
+
+def handle_playbill_inbox_ack(instance_id: str, item_id: str) -> contracts.InboxDispositionResult:
+    return _daemon_call(
+        lambda client: client.ack_inbox_item(instance_id, item_id),
+        operation_name="cruxible_inbox_ack",
+    )
+
+
+def handle_playbill_inbox_dismiss(
+    instance_id: str, item_id: str, reason: str
+) -> contracts.InboxDispositionResult:
+    return _daemon_call(
+        lambda client: client.dismiss_inbox_item(instance_id, item_id, reason=reason),
+        operation_name="cruxible_inbox_dismiss",
+    )
+
+
+def handle_playbill_inbox_link(
+    instance_id: str, item_id: str, target: contracts.InboxLinkTarget
+) -> contracts.InboxDispositionResult:
+    return _daemon_call(
+        lambda client: client.link_inbox_item(instance_id, item_id, target=target),
+        operation_name="cruxible_inbox_link",
+    )
+
+
+def handle_playbill_line_run(
+    instance_id: str,
+    line: str,
+    *,
+    occurrence_id: str | None,
+    evaluation_time: str | None = None,
+    resolution_contract: contracts.ResolutionContractReference | None = None,
+    event: contracts.TriggerEventReference | None = None,
+    repeat: bool = False,
+    parameters: object = None,
+) -> contracts.ProcedureRunState:
+    request = LineRunRequest.model_validate(
+        {
+            "line": line,
+            "resolution_contract": resolution_contract,
+            "event": event,
+            "repeat": repeat,
+            "parameters": parameters,
+            "occurrence_id": occurrence_id,
+            "evaluation_time": (
+                None if evaluation_time is None else parse_datetime(evaluation_time)
+            ),
+        }
+    )
+    return _daemon_call(
+        lambda client: client.run_line(
+            instance_id,
+            resolution_contract=resolution_contract,
+            event=event,
+            repeat=repeat,
+            parameters=request.parameters,
+            line=line,
+            occurrence_id=request.occurrence_id,
+            evaluation_time=(
+                None if request.evaluation_time is None else request.evaluation_time.isoformat()
+            ),
+        ),
+        operation_name="cruxible_line_run",
+    )
+
+
+def handle_playbill_runbook_run(instance_id: str, runbook: str) -> RunbookRunResult:
+    return _daemon_call(
+        lambda client: client.run_runbook(instance_id, runbook),
+        operation_name="cruxible_runbook_run",
+    )
+
+
+def handle_playbill_runbook_preview(instance_id: str, runbook: str) -> RunbookPreview:
+    return _daemon_call(
+        lambda client: client.preview_runbook(instance_id, runbook),
+        operation_name="cruxible_runbook_preview",
+    )
+
+
+def handle_playbill_prediction_list(
+    instance_id: str, request: contracts.ResolutionContractsRequest
+) -> contracts.ResolutionContractsResult:
+    return _daemon_call(
+        lambda client: client.list_predictions(instance_id, request=request),
+        operation_name="cruxible_prediction_list",
+    )
+
+
+def handle_playbill_predict(
+    instance_id: str,
+    request: contracts.PredictRequest,
+) -> contracts.PredictResult:
+    return _daemon_call(
+        lambda client: client.predict(instance_id, request=request),
+        operation_name="cruxible_prediction_propose",
+    )
+
+
+def handle_playbill_settle_prediction(
+    instance_id: str,
+    prediction_id: str,
+    request: contracts.SettleRequest,
+) -> contracts.SettleResult:
+    return _daemon_call(
+        lambda client: client.settle_prediction(
+            instance_id,
+            prediction_id,
+            request=request,
+        ),
+        operation_name="cruxible_prediction_settle",
+    )
+
+
+def handle_playbill_since(
+    instance_id: str,
+    *,
+    generation: int,
+    at: dict[str, Any] | None,
+    access_profile: dict[str, Any] | None,
+    max_rows: int,
+    max_bytes: int,
+    cursor: dict[str, Any] | None,
+) -> contracts.SinceResult:
+    profile = access_profile or {
+        "tag": "playbill-coverage-access-profile-v1",
+        "profile_id": "mcp-since",
+        "permitted_access_classes": ["instance", "public"],
+        "disclose_restricted_existence": True,
+    }
+    request = validate_playbill_since_request(
+        {
+            "generation": generation,
+            "at": at,
+            "access_profile": profile,
+            "max_rows": max_rows,
+            "max_bytes": max_bytes,
+            "cursor": cursor,
+        }
+    )
+    return _daemon_call(
+        lambda client: client.since(
+            instance_id,
+            generation=request.generation,
+            at=request.at,
+            access_profile=request.access_profile,
+            max_rows=request.max_rows,
+            max_bytes=request.max_bytes,
+            cursor=request.cursor,
+        ),
+        operation_name="cruxible_since",
+    )
+
+
+def handle_playbill_next(
+    instance_id: str,
+    *,
+    evaluation_time: str | None = None,
+    access_profile: Mapping[str, Any] | None = None,
+    expiring_within: Mapping[str, Any] | None = None,
+    since_result_digest: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> contracts.NextResult:
+    """Rank outstanding repair work, observing the MCP workspace as `cruxible next` does."""
+
+    stamped = (
+        datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        if evaluation_time is None
+        else evaluation_time
+    )
+    profile = CoverageAccessProfile.model_validate(
+        access_profile
+        or {"profile_id": "mcp-next", "permitted_access_classes": ["instance", "public"]}
+    ).model_dump(mode="json")
+    # The workspace observation is optional: a root that is no workspace is observed
+    # as no workspace rather than refusing the queue.
+    workspace = mcp_workspace_root(guard=False)
+    observation = observe_next_workspace(workspace)
+    # Rows render as MCP tool calls, and a row whose repair is a tool this
+    # session does not advertise keeps its place with the repair withheld and
+    # `repair_requires` naming the tool and profile it needs.
+    from cruxible_core.mcp.curation import session_tool_names
+
+    tools = tuple(sorted(session_tool_names()))
+
+    def remote(client: CruxibleClient) -> contracts.NextResult:
+        observed, coordinate = observe_next_workspace_with_coverage(
+            client,
+            instance_id,
+            workspace,
+            observation=observation,
+            access_profile=profile,
+        )
+        return client.next(
+            instance_id,
+            evaluation_time=stamped,
+            access_profile=profile,
+            at=coordinate,
+            expiring_within=expiring_within,
+            workspace_observation=observed,
+            since_result_digest=since_result_digest,
+            limit=limit,
+            cursor=cursor,
+            caller_surface="mcp",
+            caller_tools=tools,
+        )
+
+    return _daemon_call(remote, operation_name="cruxible_next")
+
+
+def handle_playbill_curation_list(
+    instance_id: str,
+    *,
+    access_profile: dict[str, Any] | None,
+    limit: int = contracts.CURATION_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> contracts.CurationListResult:
+    profile = access_profile or {
+        "tag": "playbill-coverage-access-profile-v1",
+        "profile_id": "mcp-curation",
+        "permitted_access_classes": ["instance", "public"],
+        "disclose_restricted_existence": True,
+    }
+    return _daemon_call(
+        lambda client: client.list_curation(
+            instance_id, access_profile=profile, limit=limit, cursor=cursor
+        ),
+        operation_name="cruxible_curation_list",
+    )
+
+
+def handle_playbill_curation_duplicates(
+    instance_id: str,
+    *,
+    kind: str,
+    limit: int = DUPLICATES_AUDIT_DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> DuplicatesAuditResult:
+    return _daemon_call(
+        lambda client: client.curation_duplicates(
+            instance_id, kind=kind, limit=limit, cursor=cursor
+        ),
+        operation_name="cruxible_curation_duplicates",
+    )
+
+
+def handle_playbill_audit(
+    instance_id: str,
+    *,
+    evaluation_time: str,
+    access_profile: dict[str, Any] | None,
+    claim_type_identities: list[str],
+    subject_kinds: list[str],
+    max_rows: int,
+    max_bytes: int,
+    cursor: dict[str, Any] | None,
+) -> contracts.AuditResult:
+    profile = access_profile or {
+        "tag": "playbill-coverage-access-profile-v1",
+        "profile_id": "mcp-audit",
+        "permitted_access_classes": ["instance", "public"],
+        "disclose_restricted_existence": True,
+    }
+    ordered_claim_types = tuple(
+        sorted(set(claim_type_identities), key=lambda item: item.encode("utf-8"))
+    )
+    ordered_subject_kinds = tuple(sorted(set(subject_kinds), key=lambda item: item.encode("utf-8")))
+    return _daemon_call(
+        lambda client: client.audit(
+            instance_id,
+            evaluation_time=evaluation_time,
+            access_profile=profile,
+            claim_type_identities=ordered_claim_types,
+            subject_kinds=ordered_subject_kinds,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=cursor,
+        ),
+        operation_name="cruxible_audit",
+    )
+
+
+def handle_playbill_curation_overrule(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationActionResult:
+    return _daemon_call(
+        lambda client: client.overrule_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_curation_overrule",
+    )
+
+
+def handle_playbill_curation_accept_fixed(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    accepted_proposal_id: str | None,
+    accepted_changeset_digest: str | None,
+    accepted_generation: int | None,
+    attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationActionResult:
+    return _daemon_call(
+        lambda client: client.accept_fixed_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            accepted_proposal_id=accepted_proposal_id,
+            accepted_changeset_digest=accepted_changeset_digest,
+            accepted_generation=accepted_generation,
+            attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_curation_accept_fixed",
+    )
+
+
+def handle_playbill_curation_suppress(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    scope: Literal["item", "lineage"],
+    until_generation: int | None,
+    attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationActionResult:
+    return _daemon_call(
+        lambda client: client.suppress_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            scope=scope,
+            until_generation=until_generation,
+            attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_curation_suppress",
+    )
+
+
+def handle_playbill_curation_unsuppress(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    suppression_event_id: str | None,
+    attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.CurationActionResult:
+    return _daemon_call(
+        lambda client: client.unsuppress_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            suppression_event_id=suppression_event_id,
+            attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
+        ),
+        operation_name="cruxible_curation_unsuppress",
+    )
+
+
+def handle_playbill_coverage(
+    instance_id: str,
+    *,
+    observations: list[dict[str, Any]] | None = None,
+    bindings: Mapping[str, str] | None = None,
+    files: tuple[str, ...] = (),
+    ranges: tuple[str, ...] = (),
+    grep_results: str | None = None,
+    whole_working_set: bool = False,
+    budget: dict[str, Any] | None = None,
+    scan_budget: dict[str, Any] | None = None,
+) -> contracts.CoverageResult:
+    """Resolve caller observations, or ones the adapter derives from workspace files.
+
+    Workspace files are bound to their sources by the file catalog; ``bindings``
+    override it path by path.
+    """
+
+    selecting = bool(files or ranges or grep_results is not None or whole_working_set)
+    if observations is not None:
+        if bindings is not None or selecting:
+            raise DataValidationError(
+                "observations are resolved as given; bindings, files, ranges, grep_results "
+                "and whole_working_set select workspace files instead"
+            )
+        observed = tuple(WorkingSourceObservation.model_validate(item) for item in observations)
+    else:
+        root = mcp_workspace_root()
+        declared = {**_catalog_coverage_bindings(root), **(bindings or {})}
+        observed = _workspace_observations(
+            declared,
+            files=files,
+            ranges=ranges,
+            grep_results=grep_results,
+            whole_working_set=whole_working_set,
+        )
+    cards = None if budget is None else CoverageCardBudget.model_validate(budget)
+    scan = None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
+    return _daemon_call(
+        lambda client: client.resolve_coverage(
+            instance_id,
+            observations=[item.model_dump(mode="json") for item in observed],
+            budget=(None if cards is None else cards.model_dump(mode="json")),
+            scan_budget=(None if scan is None else scan.model_dump(mode="json")),
+        ),
+        operation_name="cruxible_coverage_resolve",
+    )
+
+
+def handle_playbill_files_compile(
+    instance_id: str,
+    *,
+    catalog_path: str | None = None,
+    repository_root: str = ".",
+    local_catalog_path: str | None = None,
+    root_aliases: Mapping[str, str] | None = None,
+) -> FileCompilationBundle:
+    """Compile the workspace's catalogued files without exposing path or digest plumbing.
+
+    With no ``catalog_path`` the catalog is discovered as every other command
+    finds it (``.cruxible/files.yaml`` or ``files.yaml``, plus
+    ``.cruxible/files.local.yaml``).
+    """
+
+    workspace = mcp_workspace_root()
+    if catalog_path is None:
+        if local_catalog_path is not None:
+            raise DataValidationError(
+                "local_catalog_path needs catalog_path; omit both to discover them"
+            )
+        catalog = WorkspaceFiles(workspace).catalog
+    else:
+        catalog = load_file_catalog(
+            resolve_workspace_path(catalog_path, root=workspace, kind="file"),
+            (
+                None
+                if local_catalog_path is None
+                else resolve_workspace_path(local_catalog_path, root=workspace, kind="file")
+            ),
+        )
+    repository = resolve_workspace_path(repository_root, root=workspace, kind="directory")
+    aliases = mapped_root_aliases(
+        {
+            name: resolve_workspace_path(path, root=workspace, kind="directory")
+            for name, path in (root_aliases or {}).items()
+        }
+    )
+    return _daemon_call(
+        lambda client: compile_client_file_context(
+            client,
+            instance_id,
+            catalog=catalog,
+            repository_root=repository,
+            aliases=aliases,
+        ),
+        operation_name="cruxible_files_compile",
+    )
+
+
+def _catalog_coverage_bindings(root: Path) -> dict[str, str]:
+    """The file catalog's bindings, or none when the workspace has no catalog."""
+
+    try:
+        sources = WorkspaceFiles(root)
+    except SourceSelectionError:
+        return {}
+    return sources.coverage_bindings()
+
+
+def _workspace_observations(
+    bindings: Mapping[str, str],
+    *,
+    files: tuple[str, ...],
+    ranges: tuple[str, ...],
+    grep_results: str | None,
+    whole_working_set: bool,
+) -> tuple[WorkingSourceObservation, ...]:
+    """Read selected workspace bytes and lower them to existing coverage wire."""
+
+    workspace = mcp_workspace_root()
+    return tuple(
+        observe_workspace(
+            bindings_from_mapping(bindings),
+            root=workspace,
+            files=files,
+            ranges=ranges,
+            grep_text=grep_results,
+            whole_working_set=whole_working_set,
+        )
+    )
+
+
+FloorExportMode = Literal["bytes", "write", "status"]
+
+
+def handle_playbill_floor_export(
+    instance_id: str,
+    *,
+    mode: FloorExportMode,
+    force: bool = False,
+    include: tuple[contracts.FloorExportPart, ...] = (),
+) -> contracts.FloorExport | contracts.WorkspaceFloorWriteResult | contracts.WorkspaceFloorStatus:
+    """Return floor bytes, write them under the MCP workspace, or report that floor's status."""
+
+    if force and mode != "write":
+        raise DataValidationError("force applies only to floor export mode 'write'")
+    if include and mode == "status":
+        raise DataValidationError("include applies only to floor export modes 'bytes' and 'write'")
+    if mode == "status":
+        head = _daemon_call(
+            lambda client: client.head(instance_id), operation_name="cruxible_floor_export"
+        )
+        return inspect_workspace_floor(
+            mcp_floor_workspace_root(),
+            current_coordinate=contracts.AcceptedCoordinate.model_validate(
+                head.coordinate.model_dump(mode="json")
+            ),
+        )
+    parts = floor_export_parts(include)
+    if mode == "bytes":
+        return _daemon_call(
+            lambda client: client.export_floor(instance_id, **parts),
+            operation_name="cruxible_floor_export",
+        )
+    # The CLI's write path: export, write, and record the refresh profile with
+    # its opt-in parts, naming the daemon this MCP server talks to.
+    workspace = mcp_floor_workspace_root()
+    daemon = resolve_daemon_target()
+    transport: dict[str, str | None] = (
+        {"server_socket": daemon.server_socket}
+        if daemon.server_socket
+        else {"server_url": daemon.server_url}
+    )
+
+    def write(
+        export_floor: Callable[[], contracts.FloorExport],
+        delivery: Callable[[], contracts.FloorDeliveryResult | None] | None = None,
+    ) -> contracts.WorkspaceFloorWriteResult:
+        return write_workspace_floor(
+            export_floor,
+            delivery=delivery,
+            instance_id=instance_id,
+            workspace=workspace,
+            include=include,
+            force=force,
+            **transport,
+        )[1]
+
+    def write_delta(client: Any) -> contracts.WorkspaceFloorWriteResult:
+        # The default floor goes through the one shared apply, as a delta from
+        # the floor already there.
+        return write_workspace_floor_delta(
+            lambda generation, renderer: client.floor_delta(
+                instance_id, base_generation=generation, base_renderer=renderer
+            ),
+            delivery=lambda: daemon_floor_delivery(client, instance_id, workspace),
+            instance_id=instance_id,
+            workspace=workspace,
+            force=force,
+            **transport,
+        )[1]
+
+    if not include:
+        return _daemon_call(write_delta, operation_name="cruxible_floor_export")
+    return _daemon_call(
+        lambda client: write(
+            lambda: client.export_floor(instance_id, **parts),
+            lambda: daemon_floor_delivery(client, instance_id, workspace, include=tuple(include)),
+        ),
+        operation_name="cruxible_floor_export",
     )

@@ -1,2564 +1,1763 @@
-"""Query engine: execute named queries from config against an EntityGraph.
+"""Direct evaluation of accepted QueryDefinitions over accepted Claim facts.
 
-Traversal model:
-- Start at an entry entity (resolved from params via primary key)
-- Each TraversalStep follows one or more relationships (fan-out),
-  applying edge filters and target entity constraints
-- Steps chain: output entities of step N become input for step N+1
-- max_depth controls how many hops a single step traverses (BFS)
-- Final step output is the query result. Entity-shaped queries can collect
-  only declared return-type entities while traversing through intermediate
-  entity types on the final BFS step.
+An evaluation is a pure function of the accepted definition digest, the caller
+parameters, the accepted coordinate, and one explicit evaluation time. Nothing
+here reads a wall clock, caches a result, or picks a winner among competing
+accepted Claims: a one-cardinality read either surfaces its conflict set or
+refuses with the exact conflicting statement digests.
+
+Every Claim row becomes visible only through the existing evidence-relative
+verdict machinery in :mod:`cruxible_client.contracts.claim_verdicts`; this module
+never re-implements adjudication. Every budget that clips a result is named in
+the result's truncation accounting, so a silently narrowed answer is
+unrepresentable.
+
+The evaluator reads accepted state only through the primitives of
+:class:`~cruxible_core.query.backends.ClaimQueryBackendV1`, and it
+binds the coordinate the backend was materialized at rather than trusting the
+one the caller names. Relation traversal is derived here from those primitives,
+so a backend can never contribute an edge the Claim facts do not carry, and a
+backend that reproduces them in the same canonical order under the same
+verdict computation reproduces these results byte for byte.
 """
 
 from __future__ import annotations
 
-import re
-from collections import deque
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from functools import cmp_to_key
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, cast
 
-from cruxible_core.config.property_validation import (
-    entity_properties_with_identity,
-    entity_with_identity_properties,
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    canonical_bytes,
+    canonical_equal,
+    normalize_canonical,
+    typed_digest,
 )
-from cruxible_core.errors import (
-    EntityNotFoundError,
-    QueryExecutionError,
-    QueryNotFoundError,
-    RelationshipNotFoundError,
+from cruxible_client.contracts.canonical_forms import (
+    CanonicalFormDidNotConverge,
+    canonicalize_literal,
 )
-from cruxible_core.graph.types import EntityInstance, RelationshipMetadata
-from cruxible_core.predicate import (
-    COMPARISON_SYMBOL_PATTERN,
-    PredicateValueType,
-    evaluate_typed_comparison,
+from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
+from cruxible_client.contracts.claims import (
+    NoneClaimObject,
+    SubjectClaimObject,
 )
-from cruxible_core.query.entity_state import entity_matches_query_state
-from cruxible_core.query.enums import (
-    LifecycleStatus,
-    QueryDedupe,
-    QueryResultShape,
-    QueryVisibilityState,
+from cruxible_client.contracts.content_memo import ValueMemo, is_sealed, request_derive
+from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
+from cruxible_client.contracts.identity_normalizers import (
+    KeyNormalizationRefused,
+    KeyNormalizer,
+    canonical_key_part,
 )
-from cruxible_core.query.filters import matches_exact_filter
-from cruxible_core.query.lifecycle_status import (
-    entity_matches_lifecycle_status,
-    relationship_matches_lifecycle_status,
-    validate_lifecycle_status,
+from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
+from cruxible_client.contracts.query.definitions import (
+    AcceptedQueryDefinition,
+    QueryDefinition,
+    QueryEvaluationPolicy,
 )
-from cruxible_core.query.predicates import (
-    build_predicate_context,
-    evaluate_query_predicates,
-    evaluate_related_predicate,
-    is_missing_path,
-    iter_edge_where_property_fields,
-    iter_step_relationships,
-    query_filter_summary,
-    related_edge_exists,
-    resolve_path,
-    segment_endpoint_entities,
-    validate_edge_where_property_fields,
+from cruxible_client.contracts.query.grammar import (
+    QueryArtifactsEntry,
+    QueryBudgets,
+    QueryClaimFieldRef,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryConjunctionFilter,
+    QueryDisjunctionFilter,
+    QueryEntry,
+    QueryEvaluationTimeRef,
+    QueryFilter,
+    QueryInclude,
+    QueryLiteralRef,
+    QueryMembershipFilter,
+    QueryNegationFilter,
+    QueryOrdering,
+    QueryPairStep,
+    QueryParameterRef,
+    QuerySubjectFieldRef,
+    QueryTraversalDirection,
+    QueryValueRef,
+    QueryValueType,
+    byte_sorted,
 )
-from cruxible_core.query.projection import (
-    QueryRowContext,
-    coerce_query_order_value,
-    compare_order_values,
-    compare_sort_keys,
-    project_query_row,
-    sort_query_row_contexts,
-    stable_row_identity,
-)
-from cruxible_core.query.relationship_state import relationship_matches_query_state
-from cruxible_core.query.types import (
-    BaseQueryRow,
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResult,
+    QueryArtifactDefinition,
+    QueryClaimVisibility,
+    QueryClippedBudget,
+    QueryConflict,
+    QueryExecutionReceipt,
     QueryIncludeItem,
     QueryIncludeResult,
-    QueryPathRow,
-    QueryPathSegment,
-    QueryRelationshipRow,
-    QueryResult,
-    QueryRow,
-    dump_query_row,
+    QueryParameterBinding,
+    QueryProjectedField,
+    QueryProjectedFields,
+    QueryRefusal,
+    QueryResultRow,
+    QueryRowBinding,
+    QueryTruncation,
+    QueryValueState,
+    QueryVerdictExclusion,
+    QueryVerdictVisibility,
 )
-from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.temporal import is_expired
+from cruxible_client.contracts.query.values import QueryTypedValue, coerce_query_value
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_aliases import (
+    SubjectReferenceAmbiguous,
+    SubjectReferenceResolver,
+    split_reference,
+)
+from cruxible_core.query.backends import (
+    ClaimFactRowV1,
+    ClaimQueryBackendFactoryV1,
+    ClaimQueryBackendV1,
+    ClaimQueryFactsV1,
+    DirectClaimFactIndex,
+    VisibleClaimRow,
+)
 
-if TYPE_CHECKING:
-    from cruxible_core.config.schema import (
-        CoreConfig,
-        NamedQuerySchema,
-        QueryIncludeSpec,
-        QueryOrderSpec,
-        TraversalStep,
+PARAMETER_DIGEST_DOMAIN = "playbill-query-parameters-v1"
+ATTEMPTED_PARAMETER_DIGEST_DOMAIN = "playbill-query-attempted-parameters-v1"
+
+BUDGET_BELOW_DECLARED_DEPTH = "cruxible.query.budget_below_declared_depth"
+BUDGET_EXCEEDS_MAXIMUM = "cruxible.query.budget_exceeds_maximum"
+CLAIM_CONFLICT = "cruxible.query.claim_conflict"
+COORDINATE_MISMATCH = "cruxible.query.coordinate_mismatch"
+EVALUATION_TIME_NOT_ABSOLUTE = "cruxible.query.evaluation_time_not_absolute"
+PARAMETER_MISSING = "cruxible.query.parameter_missing"
+PARAMETER_TYPE_MISMATCH = "cruxible.query.parameter_type_mismatch"
+PARAMETER_UNDECLARED = "cruxible.query.parameter_undeclared"
+RESULT_CONFLICT = "cruxible.query.result_conflict"
+SUBJECT_FIELD_UNAVAILABLE = "cruxible.query.subject_field_unavailable"
+SUBJECT_UNRESOLVED = "cruxible.query.subject_unresolved"
+TRAVERSAL_OBJECT_NOT_SUBJECT = "cruxible.query.traversal_object_not_subject"
+VALUE_TYPE_MISMATCH = "cruxible.query.value_type_mismatch"
+ALIAS_AMBIGUOUS = "cruxible.query.alias_ambiguous"
+
+
+def query_parameter_digest(parameters: Sequence[QueryParameterBinding]) -> str:
+    """Digest the exact resolved parameter binding of one evaluation."""
+
+    return typed_digest(
+        Sha256Value,
+        PARAMETER_DIGEST_DOMAIN,
+        {"parameters": [item.model_dump(mode="json") for item in parameters]},
+    ).tagged
+
+
+def query_attempted_parameter_digest(parameters: Mapping[str, object] | None) -> str:
+    """Digest the attempted caller input of an evaluation refused before binding.
+
+    A refusal raised before the declared parameters resolved has no resolved
+    binding to digest, and must never borrow the digest of the empty binding:
+    that spelling belongs to an evaluation that legitimately declared no
+    parameters. The attempted input is committed under its own domain instead,
+    so an unbound input can never collide with any resolved one. A value the
+    canonical value set refuses is committed by the type it was rejected as,
+    never by a canonical value it never had.
+    """
+
+    attempted: dict[str, object] = {}
+    for name, value in dict(parameters or {}).items():
+        try:
+            attempted[name] = {"supplied": normalize_canonical(value)}
+        except CanonicalEncodingError:
+            attempted[name] = {"uncanonical": type(value).__name__}
+    return typed_digest(
+        Sha256Value,
+        ATTEMPTED_PARAMETER_DIGEST_DOMAIN,
+        {"parameters": attempted},
+    ).tagged
+
+
+def claim_query_result_digest(result: ClaimQueryResult) -> str:
+    """Digest one complete result, ordering and truncation accounting included.
+
+    `verdict_visibility` sits outside the preimage. It is advisory accounting of
+    the Claims the evaluation policy declined to show, so it describes what was
+    not read rather than what the result commits to; keeping it out means adding
+    it re-pins no existing digest and no receipt, and a result replays
+    byte-identically whether or not the advisory is present.
+    """
+
+    payload = result.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("verdict_visibility")
+    return typed_digest(Sha256Value, result.tag, payload).tagged
+
+
+def query_execution_receipt(result: ClaimQueryResult) -> QueryExecutionReceipt:
+    """Model the replay receipt of one evaluation without journalling it."""
+
+    return QueryExecutionReceipt(
+        definition_path=result.definition_path,
+        definition_digest=result.definition_digest,
+        parameter_digest=result.parameter_digest,
+        coordinate=result.coordinate,
+        evaluation_time=result.evaluated_at,
+        budgets=result.budgets,
+        truncation=result.truncation,
+        verdict=result.verdict,
+        refusal_code=None if result.refusal is None else result.refusal.code,
+        result_digest=claim_query_result_digest(result),
     )
-    from cruxible_core.graph.entity_graph import EntityGraph
 
 
-_NO_COLLECTION_PUSHDOWN = object()
+# -- typed value handling -------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _TraversalState:
-    """Internal path-carrying traversal state."""
-
-    entry: EntityInstance
-    current: EntityInstance
-    entities: tuple[EntityInstance, ...]
-    path: tuple[QueryPathSegment, ...]
-    parent_id: str | None = None
+def _compare(left: object, right: object, value_type: QueryValueType) -> int:
+    first: Any = int(bool(left)) if value_type == "boolean" else left
+    second: Any = int(bool(right)) if value_type == "boolean" else right
+    if first == second:
+        return 0
+    return -1 if first < second else 1
 
 
-@dataclass(frozen=True)
-class _EffectiveQueryOptions:
-    relationship_state: QueryVisibilityState
-    relationship_state_source: str
-    lifecycle_status: LifecycleStatus | None
-    result_shape: QueryResultShape
-    dedupe: QueryDedupe
-
-    def receipt_options(self) -> dict[str, str]:
-        options = {
-            "relationship_state": self.relationship_state,
-            "relationship_state_source": self.relationship_state_source,
-            "result_shape": self.result_shape,
-            "dedupe": self.dedupe,
-        }
-        if self.lifecycle_status is not None:
-            options["lifecycle_status"] = self.lifecycle_status
-        return options
+def _render_time(value: datetime) -> str:
+    utc = value.astimezone(UTC)
+    timespec = "microseconds" if utc.microsecond else "seconds"
+    return utc.isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
-@dataclass(frozen=True)
-class _PathBudgetResult:
-    contexts: list[QueryRowContext]
-    total_path_count: int | None
-    retained_path_count: int | None
-    path_truncated: bool
-    truncation_reasons: list[str]
+class ClaimQueryError(CruxibleError):
+    """An evaluation input has no representation in a canonical query result.
+
+    A result always states the exact instant it was evaluated at, so an
+    evaluation time that is not an absolute instant cannot be reported as a
+    refused result; it is refused before a result exists.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+
+
+class _RefusalSignal(Exception):
+    """Internal fail-closed signal carrying one typed query refusal."""
+
+    def __init__(self, refusal: QueryRefusal) -> None:
+        super().__init__(refusal.code)
+        self.refusal = refusal
+
+
+def _refuse(
+    code: str,
+    message: str,
+    *,
+    statement_digests: tuple[str, ...] = (),
+    subject_identities: tuple[str, ...] = (),
+) -> _RefusalSignal:
+    return _RefusalSignal(
+        QueryRefusal(
+            code=code,
+            message=message,
+            statement_digests=byte_sorted(statement_digests),
+            subject_identities=byte_sorted(subject_identities),
+        )
+    )
+
+
+# -- derived relation traversal -------------------------------------------
+
+
+def _is_none(claim: VisibleClaimRow) -> bool:
+    return isinstance(claim.row.accepted.claim.statement.object, NoneClaimObject)
+
+
+def relation_edges(
+    backend: ClaimQueryBackendV1,
+    artifact_path: str,
+    predicate: str,
+    direction: QueryTraversalDirection,
+) -> tuple[tuple[VisibleClaimRow, str], ...]:
+    """Return the visible relation-Claim edges leaving one bound Subject.
+
+    Traversal is derived from the backend primitives rather than stored, so no
+    backend can answer with an edge its Claim rows do not carry. An inverse
+    Claim (a ``none`` object) is not an edge in either direction: it states the
+    unit holds nothing, and the Subject its ``of`` names is not a target.
+    """
+
+    edges: list[tuple[VisibleClaimRow, str]] = []
+    if direction == "forward":
+        for claim in backend.claims_on(artifact_path, predicate):
+            if _is_none(claim):
+                continue
+            target = claim.object_subject_path
+            if target is None:
+                raise _refuse(
+                    TRAVERSAL_OBJECT_NOT_SUBJECT,
+                    "A traversed Claim does not carry a Subject-typed object.",
+                    statement_digests=(claim.visibility.statement_digest,),
+                )
+            edges.append((claim, target))
+    else:
+        edges.extend(
+            (claim, claim.subject_path)
+            for claim in backend.claims_to(artifact_path, predicate)
+            if not _is_none(claim)
+        )
+    for claim, target in edges:
+        if backend.subject(target) is None:
+            raise _refuse(
+                SUBJECT_UNRESOLVED,
+                "A traversed Claim names a Subject absent at the accepted coordinate.",
+                statement_digests=(claim.visibility.statement_digest,),
+            )
+    return tuple(edges)
+
+
+def pair_edges(
+    backend: ClaimQueryBackendV1,
+    step: QueryPairStep,
+    bindings: Mapping[str, str | None],
+) -> tuple[tuple[QueryClaimVisibility, str, tuple[QueryClaimVisibility, ...]], ...]:
+    """The pairs one pair hop binds from a row: ``(edge, pair path, Claims it read)``.
+
+    The backend proposes candidates only (a superset, read from its indexes,
+    never recorded as reads); eligibility is decided here, from each
+    candidate's own visible Claims, identically for every backend:
+
+    - the pair is a live Subject of the step's kind;
+    - each named part holds a visible key Claim naming that row's end (the
+      edge is the first part's);
+    - with a ``fact``, the pair holds a visible positive Claim of it (a none
+      holds nothing).
+
+    An unbound end binds nothing.
+    """
+
+    ends: list[tuple[str, str]] = []
+    for item in step.parts:
+        end = bindings.get(item.binding)
+        if end is None:
+            return ()
+        ends.append((item.part, end))
+    if step.fact is None:
+        candidates = backend.pairs_with_key(step.subject_kind, tuple(ends))
+    else:
+        candidates = backend.pairs_with_fact(step.subject_kind, ends[0][0], ends[0][1], step.fact)
+    found: list[tuple[QueryClaimVisibility, str, tuple[QueryClaimVisibility, ...]]] = []
+    for pair in byte_sorted(candidates):
+        subject = backend.subject(pair)
+        if (
+            subject is None
+            or subject.shell.subject_kind != step.subject_kind
+            or subject.shell.lifecycle.state != "live"
+        ):
+            continue
+        reads: list[QueryClaimVisibility] = []
+        for part, end in ends:
+            keys = [
+                claim.visibility
+                for claim in backend.claims_on(pair, part)
+                if not _is_none(claim) and claim.object_subject_path == end
+            ]
+            if not keys:
+                break
+            reads.extend(keys)
+        else:
+            if step.fact is not None:
+                held = [
+                    claim.visibility
+                    for claim in backend.claims_on(pair, step.fact)
+                    if not _is_none(claim)
+                ]
+                if not held:
+                    continue
+                reads.extend(held)
+            found.append((reads[0], pair, tuple(reads)))
+    return tuple(found)
+
+
+# -- evaluation state -----------------------------------------------------
 
 
 @dataclass
-class _TraversalBudgetState:
-    """Mutable per-query traversal budget bookkeeping."""
+class _Row:
+    bindings: dict[str, str | None]
+    edges: tuple[tuple[str, QueryClaimVisibility], ...] = ()
+    reads: dict[str, QueryClaimVisibility] = field(default_factory=dict)
+    conflicts: dict[bytes, QueryConflict] = field(default_factory=dict)
+    includes: tuple[QueryIncludeResult, ...] = ()
 
-    max_paths: int | None
-    truncated: bool = False
-    truncation_recorded: bool = False
-    evaluated_path_candidate_count: int = 0
-
-
-def _query_include_summary(query_schema: NamedQuerySchema) -> list[dict[str, Any]]:
-    """Return config-level include summaries for receipt root metadata."""
-    return [
-        {"alias": alias, **include.model_dump(mode="python", by_alias=True, exclude_none=True)}
-        for alias, include in query_schema.include.items()
-    ]
-
-
-def execute_query(
-    config: CoreConfig,
-    graph: EntityGraph,
-    query_name: str,
-    params: dict[str, Any],
-    *,
-    relationship_state: QueryVisibilityState | None = None,
-    lifecycle_status: LifecycleStatus | None = None,
-) -> QueryResult:
-    """Execute a named query from the config against the graph.
-
-    Resolves the entry entity from params using the entry_point type's
-    primary key, then chains traversal steps. Builds a receipt DAG
-    recording every lookup, traversal, filter, and constraint. Result rows
-    are shaped by the named query's ``result_shape`` setting.
-
-    Args:
-        config: Config with named query definitions
-        graph: Populated graph to query
-        query_name: Name of the query in config.named_queries
-        params: Query parameters (must include entry entity ID)
-        relationship_state: Optional relationship visibility override. The
-            named query must allow runtime overrides when this is provided.
-
-    Returns:
-        QueryResult with shaped rows, execution metadata, and a Receipt
-    """
-    query_schema = config.named_queries.get(query_name)
-    if query_schema is None:
-        raise QueryNotFoundError(query_name)
-    return execute_query_definition(
-        config,
-        graph,
-        query_name,
-        query_schema,
-        params,
-        relationship_state=relationship_state,
-        lifecycle_status=lifecycle_status,
-    )
-
-
-def effective_query_receipt_options(
-    config: CoreConfig,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    *,
-    relationship_state: QueryVisibilityState | None = None,
-    lifecycle_status: LifecycleStatus | None = None,
-) -> dict[str, str]:
-    """Return the execution options a run of this query would stamp on its receipt.
-
-    Same resolution (and validation) the engine performs, without executing:
-    callers that need to PIN how a query will run — resolution contracts — must
-    read exactly what a later receipt will carry, not a hand-rolled copy of the
-    defaulting rules.
-    """
-    return _resolve_effective_query_options(
-        config,
-        query_name,
-        query_schema,
-        relationship_state,
-        lifecycle_status,
-    ).receipt_options()
-
-
-def execute_query_definition(
-    config: CoreConfig,
-    graph: EntityGraph,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    params: dict[str, Any],
-    *,
-    relationship_state: QueryVisibilityState | None = None,
-    lifecycle_status: LifecycleStatus | None = None,
-) -> QueryResult:
-    """Execute a named or inline query definition against the graph."""
-    effective_options = _resolve_effective_query_options(
-        config,
-        query_name,
-        query_schema,
-        relationship_state,
-        lifecycle_status,
-    )
-    declared_entity_return_type = _resolve_declared_entity_return_type(
-        config,
-        query_name,
-        query_schema,
-        effective_options.result_shape,
-    )
-    requires_path_retention = _requires_path_retention(
-        result_shape=effective_options.result_shape,
-        dedupe=effective_options.dedupe,
-    )
-    optional_path_aliases = _optional_path_aliases(query_schema)
-
-    builder = ReceiptBuilder(
-        query_name=query_name,
-        parameters=params,
-        execution_options=effective_options.receipt_options(),
-        root_detail={
-            "filter_summary": query_filter_summary(query_schema),
-            "select": query_schema.select,
-            "order_by": [
-                order.model_dump(mode="python", exclude_none=True)
-                for order in query_schema.order_by
-            ],
-            "limit": query_schema.limit,
-            "max_paths": query_schema.max_paths,
-            "max_paths_per_result": query_schema.max_paths_per_result,
-            "include": _query_include_summary(query_schema),
-        },
-    )
-
-    if query_schema.mode == "collection":
-        return _execute_collection_query(
-            config,
-            graph,
-            query_name,
-            query_schema,
-            params,
-            effective_options=effective_options,
-            builder=builder,
+    def copy(self) -> "_Row":
+        return _Row(
+            bindings=dict(self.bindings),
+            edges=self.edges,
+            reads=dict(self.reads),
+            conflicts=dict(self.conflicts),
         )
 
-    if query_schema.entry_point is None:
-        raise QueryExecutionError(f"Traversal query '{query_name}' requires entry_point")
-    entry_entity = _resolve_entry_entity(
-        config,
-        graph,
-        query_schema.entry_point,
-        params,
-        builder=builder,
-    )
-
-    current_states = [
-        _TraversalState(
-            entry=entry_entity,
-            current=entry_entity,
-            entities=(entry_entity,),
-            path=(),
-        )
-    ]
-    steps_executed = 0
-    policy_summary: dict[str, int] = {}
-    traversal_budget = _TraversalBudgetState(
-        max_paths=query_schema.max_paths if requires_path_retention else None
-    )
-
-    for step_index, step in enumerate(query_schema.traversal):
-        collect_entity_type = _step_collect_entity_type(
-            config,
-            query_schema,
-            effective_options.result_shape,
-            declared_entity_return_type,
-            step,
-            step_index=step_index,
-        )
-        current_states = _execute_step(
-            config,
-            graph,
-            step,
-            current_states,
-            params,
-            query_name=query_name,
-            requires_path_retention=requires_path_retention,
-            relationship_state=effective_options.relationship_state,
-            lifecycle_status=effective_options.lifecycle_status,
-            traversal_budget=traversal_budget,
-            step_index=step_index,
-            policy_summary=policy_summary,
-            optional_path_aliases=optional_path_aliases,
-            collect_entity_type=collect_entity_type,
-            builder=builder,
-        )
-        steps_executed += 1
-
-    result_states = _dedupe_states(current_states, effective_options.dedupe)
-    result_contexts = _build_result_contexts(
-        config,
-        result_states,
-        effective_options.result_shape,
-        optional_path_aliases=optional_path_aliases,
-    )
-    result_contexts = _filter_contexts_by_entity_state(
-        result_contexts,
-        effective_options.relationship_state,
-        effective_options.result_shape,
-    )
-    if declared_entity_return_type is not None:
-        _validate_result_context_return_types(
-            query_name,
-            result_contexts,
-            expected_entity_type=declared_entity_return_type,
-        )
-    result_contexts = _apply_includes(
-        config,
-        graph,
-        query_schema,
-        result_contexts,
-        params,
-        relationship_state=effective_options.relationship_state,
-        lifecycle_status=effective_options.lifecycle_status,
-        builder=builder,
-    )
-    budget_result = _apply_path_budgets(
-        result_contexts,
-        max_paths_per_result=query_schema.max_paths_per_result,
-        traversal_max_paths=query_schema.max_paths,
-        traversal_truncated=traversal_budget.truncated,
-    )
-    result_contexts = budget_result.contexts
-    result_contexts = sort_query_row_contexts(
-        result_contexts,
-        query_schema.order_by,
-        params,
-        config=config,
-    )
-    total_results = len(result_contexts)
-    limited_contexts = (
-        result_contexts[: query_schema.limit] if query_schema.limit is not None else result_contexts
-    )
-    limit_truncated = query_schema.limit is not None and total_results > query_schema.limit
-    truncation_reasons = list(budget_result.truncation_reasons)
-    if limit_truncated:
-        truncation_reasons.append("limit")
-    truncated = bool(truncation_reasons)
-    result_rows: list[QueryRow] = [
-        (
-            project_query_row(query_schema.select, context, params)
-            if query_schema.select is not None
-            else context.row
-        )
-        for context in limited_contexts
-    ]
-    result_dicts = [dump_query_row(row, include_source=True) for row in result_rows]
-    parent_ids = [
-        context.parent_id for context in limited_contexts if context.parent_id is not None
-    ]
-    builder.record_results(
-        result_dicts,
-        parent_ids=parent_ids or None,
-        detail={
-            "total_results": total_results,
-            "limit": query_schema.limit,
-            "truncated": truncated,
-            "limit_truncated": limit_truncated,
-            "path_truncated": budget_result.path_truncated,
-            "truncation_reasons": truncation_reasons,
-            "max_paths": query_schema.max_paths,
-            "max_paths_per_result": query_schema.max_paths_per_result,
-            "total_path_count": budget_result.total_path_count,
-            "retained_path_count": budget_result.retained_path_count,
-            "evaluated_path_candidate_count": (
-                traversal_budget.evaluated_path_candidate_count
-                if query_schema.max_paths is not None
-                else None
-            ),
-        },
-    )
-    receipt = builder.build(result_dicts)
-
-    return QueryResult(
-        query_name=query_name,
-        parameters=params,
-        results=result_rows,
-        result_shape=effective_options.result_shape,
-        dedupe=effective_options.dedupe,
-        relationship_state=effective_options.relationship_state,
-        lifecycle_status=effective_options.lifecycle_status,
-        steps_executed=steps_executed,
-        total_results=total_results,
-        limit=query_schema.limit,
-        truncated=truncated,
-        limit_truncated=limit_truncated,
-        path_truncated=budget_result.path_truncated,
-        truncation_reasons=truncation_reasons,
-        max_paths=query_schema.max_paths,
-        max_paths_per_result=query_schema.max_paths_per_result,
-        total_path_count=budget_result.total_path_count,
-        retained_path_count=budget_result.retained_path_count,
-        receipt=receipt,
-        policy_summary=policy_summary,
-    )
-
-
-def _resolve_entry_entity(
-    config: CoreConfig,
-    graph: EntityGraph,
-    entry_point: str,
-    params: dict[str, Any],
-    *,
-    builder: ReceiptBuilder | None = None,
-) -> EntityInstance:
-    """Find the entry entity using the primary key from params."""
-    entity_schema = config.get_entity_type(entry_point)
-    if entity_schema is None:
-        raise QueryExecutionError(f"Entry point entity type '{entry_point}' not in config")
-
-    pk = entity_schema.get_primary_key()
-    if pk is None:
-        raise QueryExecutionError(f"Entity type '{entry_point}' has no primary key")
-
-    entity_id = params.get(pk)
-    if entity_id is None:
-        raise QueryExecutionError(
-            f"Parameter '{pk}' required for entry point '{entry_point}'. "
-            f"Got params: {sorted(params.keys())}"
+    def identity(self) -> bytes:
+        ordered = sorted(self.bindings, key=lambda item: item.encode("utf-8"))
+        return canonical_bytes(
+            {
+                "bindings": [[name, self.bindings[name]] for name in ordered],
+                "edges": [[binding, item.claim_path] for binding, item in self.edges],
+            }
         )
 
-    entity = graph.get_entity(entry_point, str(entity_id))
-    if entity is None:
-        raise EntityNotFoundError(entry_point, str(entity_id))
-
-    if builder is not None:
-        builder.record_entity_lookup(
-            entity_type=entity.entity_type,
-            entity_id=entity.entity_id,
-        )
-
-    return entity
-
-
-def _anchor_in_scope(metadata: Any, state: QueryVisibilityState) -> bool:
-    """Whether a traversal ANCHOR (entry / intermediate hop) is in scope.
-
-    Anchors are not results: they are where a path is *entered* and *passes
-    through*, not the referent the read returns. So they are gated only on
-    presence in the world the read operates over, not on the result state machine:
-
-    * live read (``live`` + the review-only selectors, which resolve to ``live``
-      for entities) -- the anchor must itself be live; a path entered at or routed
-      through a retired/superseded entity is invisible, so the row drops.
-      This is the chokepoint that closes the traversal-entry leak (codex F-001):
-      ``parts_for_vehicle`` entered at a retired ``Vehicle`` returns EMPTY under the
-      default ``live`` -- no rows, no error, no existence leak -- exactly like
-      ``list`` when everything is filtered.
-    * ``not-live`` / ``all`` -- the anchor is UNCONDITIONALLY in scope. ``not-live``
-      is a diagnostic of the gated-out *result* set; a live anchor must not block a
-      retired result from surfacing, and a retired anchor must let the traversal
-      proceed. Restricting the anchor itself to non-live here would both hide
-      retired results reached from live anchors and re-surface nothing useful.
-    """
-    if state in ("all", "not-live"):
-        return True
-    # `live` plus the review-only refinements collapse to a live-presence check.
-    return entity_matches_query_state(metadata, "live")
-
-
-def _filter_contexts_by_entity_state(
-    contexts: list[QueryRowContext],
-    state: QueryVisibilityState,
-    result_shape: QueryResultShape,
-) -> list[QueryRowContext]:
-    """Gate query rows by entity lifecycle visibility at one chokepoint.
-
-    This is the single entity-lifecycle chokepoint for the query engine: it runs
-    over the assembled result contexts of BOTH collection-mode and traversal-mode
-    queries (so ``list entities``, entity queries, and path/relationship rows are
-    all gated identically). The gate is RESULT-SHAPE-AWARE because what the
-    ``context.result`` referent *is* differs by shape.
-
-    For ``result_shape in {"entity", "path"}`` the logical result the read returns
-    IS an entity (``context.result``), so two roles are gated here in one pass:
-
-    * the RESULT (the referent the read returns) is kept only when it matches
-      ``state`` under :func:`entity_matches_query_state` -- the established result
-      state machine (``live`` / ``not-live`` / ``all`` / review-only-as-live).
-    * every entity on the row (``context.entities`` carries the full set: the
-      traversal entry, every intermediate hop, and the result) is gated as an
-      ANCHOR by :func:`_anchor_in_scope`: it must be live under a live read, and is
-      unconditionally in scope under ``not-live`` / ``all``. This closes the
-      entry/intermediate leak (codex F-001) while leaving the ``not-live`` result
-      diagnostic intact. Applying the anchor gate to the result entity too is
-      harmless: under a live read it reduces to the same liveness check as the
-      result gate, and under ``not-live`` it is a no-op the result gate dominates.
-
-    For ``result_shape == "relationship"`` the logical result is the EDGE, not an
-    entity. The edge is already gated by :func:`relationship_matches_query_state`
-    during collection/traversal (collection at ``_collection_relationship_contexts``,
-    traversal at the segment expansion), so applying the entity result-state gate
-    to ``context.result`` (which for a relationship row is merely the edge's
-    target ENDPOINT entity, e.g. a live Vehicle) WRONGLY drops a retracted edge
-    whose endpoints are live under ``not-live``/``all`` -- the over-gating codex
-    F-002 flagged, which disagreed with ``list edges``. So for relationship shape
-    we apply ONLY the endpoint anchor gate (:func:`_anchor_in_scope` over
-    ``context.entities`` = ``(source, target)``): endpoints must be live under a
-    live read and are unconditionally in scope under ``not-live``/``all``. Net:
-    a retracted edge with live endpoints surfaces under ``not-live``/``all`` and is
-    hidden under ``live``, matching ``list edges`` exactly. The edge's own lifecycle
-    visibility is still enforced -- by the collection-time relationship-state gate,
-    not here.
-
-    ``state == "all"`` is a no-op (everything visible).
-    """
-    if state == "all":
-        return contexts
-    if result_shape == "relationship":
-        # Edge already gated by `relationship_matches_query_state` during
-        # collection; here gate only the endpoint anchors, never the result
-        # entity (the edge's endpoint, not the logical result).
-        return [
-            context
-            for context in contexts
-            if all(_anchor_in_scope(entity.metadata, state) for entity in context.entities)
-        ]
-    return [
-        context
-        for context in contexts
-        if entity_matches_query_state(context.result.metadata, state)
-        and all(_anchor_in_scope(entity.metadata, state) for entity in context.entities)
-    ]
-
-
-def _execute_collection_query(
-    config: CoreConfig,
-    graph: EntityGraph,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    params: dict[str, Any],
-    *,
-    effective_options: _EffectiveQueryOptions,
-    builder: ReceiptBuilder,
-) -> QueryResult:
-    """Execute an entity or relationship collection query."""
-    if query_schema.result_shape == "path":
-        raise QueryExecutionError(
-            f"Collection query '{query_name}' does not support result_shape 'path'"
-        )
-    if query_schema.traversal:
-        raise QueryExecutionError(f"Collection query '{query_name}' must not define traversal")
-    if query_schema.result_shape == "entity":
-        contexts = _collection_entity_contexts(
-            config,
-            graph,
-            query_name,
-            query_schema,
-            params,
-        )
-        if effective_options.lifecycle_status is not None:
-            contexts = [
-                context
-                for context in contexts
-                if entity_matches_lifecycle_status(
-                    context.result.metadata,
-                    effective_options.lifecycle_status,
-                )
-            ]
-        policy_summary: dict[str, int] = {}
-    elif query_schema.result_shape == "relationship":
-        contexts, policy_summary = _collection_relationship_contexts(
-            config,
-            graph,
-            query_name,
-            query_schema,
-            params,
-            relationship_state=effective_options.relationship_state,
-            lifecycle_status=effective_options.lifecycle_status,
-            builder=builder,
-        )
-    else:
-        raise QueryExecutionError(
-            f"Unsupported collection query result_shape '{query_schema.result_shape}'"
-        )
-
-    contexts = _filter_contexts_by_entity_state(
-        contexts,
-        effective_options.relationship_state,
-        query_schema.result_shape,
-    )
-    contexts = _apply_includes(
-        config,
-        graph,
-        query_schema,
-        contexts,
-        params,
-        relationship_state=effective_options.relationship_state,
-        lifecycle_status=(
-            effective_options.lifecycle_status
-            if query_schema.result_shape == "relationship"
-            else None
-        ),
-        builder=builder,
-    )
-    contexts = sort_query_row_contexts(
-        contexts,
-        query_schema.order_by,
-        params,
-        config=config,
-    )
-    total_results = len(contexts)
-    limited_contexts = (
-        contexts[: query_schema.limit] if query_schema.limit is not None else contexts
-    )
-    limit_truncated = query_schema.limit is not None and total_results > query_schema.limit
-    truncation_reasons = ["limit"] if limit_truncated else []
-    result_rows: list[QueryRow] = [
-        (
-            project_query_row(query_schema.select, context, params)
-            if query_schema.select is not None
-            else context.row
-        )
-        for context in limited_contexts
-    ]
-    result_dicts = [dump_query_row(row, include_source=True) for row in result_rows]
-    builder.record_results(
-        result_dicts,
-        detail={
-            "total_results": total_results,
-            "limit": query_schema.limit,
-            "truncated": limit_truncated,
-            "limit_truncated": limit_truncated,
-            "path_truncated": False,
-            "truncation_reasons": truncation_reasons,
-            "max_paths": None,
-            "max_paths_per_result": None,
-            "total_path_count": None,
-            "retained_path_count": None,
-            "evaluated_path_candidate_count": None,
-            "policy_summary": policy_summary,
-        },
-    )
-    receipt = builder.build(result_dicts)
-    return QueryResult(
-        query_name=query_name,
-        parameters=params,
-        results=result_rows,
-        result_shape=query_schema.result_shape,
-        dedupe=effective_options.dedupe,
-        relationship_state=effective_options.relationship_state,
-        lifecycle_status=effective_options.lifecycle_status,
-        steps_executed=0,
-        total_results=total_results,
-        limit=query_schema.limit,
-        truncated=limit_truncated,
-        limit_truncated=limit_truncated,
-        path_truncated=False,
-        truncation_reasons=truncation_reasons,
-        max_paths=None,
-        max_paths_per_result=None,
-        total_path_count=None,
-        retained_path_count=None,
-        receipt=receipt,
-        policy_summary=policy_summary,
-    )
-
-
-def _collection_entity_contexts(
-    config: CoreConfig,
-    graph: EntityGraph,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    params: dict[str, Any],
-) -> list[QueryRowContext]:
-    entity_type = _normalize_entity_returns(query_schema.returns)
-    if entity_type not in config.entity_types:
-        raise QueryExecutionError(
-            f"Entryless query '{query_name}' declares unknown result entity type "
-            f"'{query_schema.returns}'"
-        )
-    contexts: list[QueryRowContext] = []
-    for raw_entity in _collection_entity_candidates(
-        config,
-        graph,
-        entity_type,
-        query_schema.where,
-        params,
-    ):
-        entity = entity_with_identity_properties(config, raw_entity)
-        if query_schema.where is not None:
-            predicate_context = _entity_collection_predicate_context(entity)
-            if not evaluate_query_predicates(
-                config,
-                query_schema.where,
-                predicate_context,
-                params,
-            ):
-                continue
-        contexts.append(
-            QueryRowContext(
-                row=entity,
-                entry=entity,
-                result=entity,
-                entities=(entity,),
-                path=(),
-            )
-        )
-    return contexts
-
-
-def _collection_entity_candidates(
-    config: CoreConfig,
-    graph: EntityGraph,
-    entity_type: str,
-    where: Any | None,
-    params: dict[str, Any],
-) -> list[EntityInstance]:
-    if where is None:
-        return graph.list_entities(entity_type)
-
-    entity_id = _collection_entity_id_eq_filter(where, params)
-    if entity_id is not _NO_COLLECTION_PUSHDOWN:
-        if not isinstance(entity_id, str):
-            return []
-        entity = graph.get_entity(entity_type, entity_id)
-        return [entity] if entity is not None else []
-
-    primary_key_id = _collection_entity_primary_key_eq_filter(
-        config,
-        entity_type,
-        where,
-        params,
-    )
-    if primary_key_id is not _NO_COLLECTION_PUSHDOWN:
-        if not isinstance(primary_key_id, str):
-            return []
-        entity = graph.get_entity(entity_type, primary_key_id)
-        return [entity] if entity is not None else []
-
-    property_filter = _collection_entity_property_eq_filter(
-        config,
-        entity_type,
-        where,
-        params,
-    )
-    if property_filter:
-        return graph.list_entities(entity_type, property_filter=property_filter)
-
-    return graph.list_entities(entity_type)
-
-
-def _collection_entity_id_eq_filter(where: Any, params: dict[str, Any]) -> Any:
-    operators = where.root.get("result.entity_id")
-    if not isinstance(operators, dict) or "eq" not in operators:
-        return _NO_COLLECTION_PUSHDOWN
-    expected = _resolve_collection_pushdown_expected(operators["eq"], params)
-    if expected is _NO_COLLECTION_PUSHDOWN:
-        return _NO_COLLECTION_PUSHDOWN
-    # entity_id is stored as an identity string, so raw == only matches the typed
-    # predicate when the expected value is itself a plain string. A non-string
-    # expected (e.g. int) would be type-coerced by the typed matcher, so pushing
-    # it down here could silently drop candidates the predicate would include.
-    if not _pushdown_value_eq_is_sound(expected):
-        return _NO_COLLECTION_PUSHDOWN
-    return expected
-
-
-def _collection_entity_primary_key_eq_filter(
-    config: CoreConfig,
-    entity_type: str,
-    where: Any,
-    params: dict[str, Any],
-) -> Any:
-    primary_key_properties = _entity_primary_key_properties(config, entity_type)
-    for property_name in primary_key_properties:
-        operators = where.root.get(f"result.properties.{property_name}")
-        if not isinstance(operators, dict) or "eq" not in operators:
-            continue
-        if not _pushdown_property_eq_is_sound(config, entity_type, property_name):
-            continue
-        expected = _resolve_collection_pushdown_expected(operators["eq"], params)
-        if expected is _NO_COLLECTION_PUSHDOWN:
-            continue
-        if not _pushdown_value_eq_is_sound(expected):
-            continue
-        return expected
-    return _NO_COLLECTION_PUSHDOWN
-
-
-def _collection_entity_property_eq_filter(
-    config: CoreConfig,
-    entity_type: str,
-    where: Any,
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    property_filter: dict[str, Any] = {}
-    primary_key_properties = _entity_primary_key_properties(config, entity_type)
-    for predicate_path, operators in where.root.items():
-        if not predicate_path.startswith("result.properties."):
-            continue
-        property_name = predicate_path.removeprefix("result.properties.")
-        if property_name in primary_key_properties:
-            continue
-        if "." in property_name or not isinstance(operators, dict) or "eq" not in operators:
-            continue
-        if not _pushdown_property_eq_is_sound(config, entity_type, property_name):
-            continue
-        expected = _resolve_collection_pushdown_expected(operators["eq"], params)
-        if expected is _NO_COLLECTION_PUSHDOWN:
-            continue
-        if not _pushdown_value_eq_is_sound(expected):
-            continue
-        property_filter[property_name] = expected
-    return property_filter
-
-
-def _pushdown_property_eq_is_sound(
-    config: CoreConfig,
-    entity_type: str,
-    property_name: str,
-) -> bool:
-    """Return whether a raw ``==`` eq-filter pushdown is sound for a property.
-
-    The collection-query pushdown (``EntityGraph.list_entities`` property_filter)
-    compares stored values with a raw Python ``==``. The typed predicate matcher,
-    by contrast, coerces operands by declared/inferred type before comparing
-    (see :func:`resolve_query_predicate_value_type`). The pushdown therefore
-    *must* be a superset of the typed match — it may never drop a candidate the
-    predicate would keep.
-
-    Raw ``==`` is provably equivalent to the typed compare only when the property
-    is declared with ``string`` type: stored values are then always strings, so
-    :func:`infer_predicate_value_type` returns ``None`` (no coercion) for any
-    string expected value. Any numeric/bool/date/datetime/json declaration — or
-    an undeclared property — can hold values the typed matcher would coerce, so
-    the pushdown is disabled and the typed matcher does the work.
-    """
-    entity_schema = config.entity_types.get(entity_type)
-    if entity_schema is None:
-        return False
-    prop = entity_schema.properties.get(property_name)
-    if prop is None:
-        return False
-    return prop.type == "string"
-
-
-def _pushdown_value_eq_is_sound(expected: Any) -> bool:
-    """Return whether a resolved eq expected value is safe to push down raw.
-
-    Only plain strings are safe: a non-string expected (int/float/bool/date/...)
-    forces the typed matcher into a coercing comparison via
-    :func:`infer_predicate_value_type`, which can match stored values that a raw
-    ``==`` against the non-string literal would reject. ``bool`` is a ``str``
-    subclass-free ``int`` here, so excluding non-``str`` covers it.
-    """
-    return isinstance(expected, str)
-
-
-def _entity_primary_key_properties(config: CoreConfig, entity_type: str) -> set[str]:
-    entity_schema = config.entity_types.get(entity_type)
-    if entity_schema is None:
-        return set()
-    return {name for name, prop in entity_schema.properties.items() if prop.primary_key}
-
-
-def _resolve_collection_pushdown_expected(value: Any, params: dict[str, Any]) -> Any:
-    if isinstance(value, str) and value.startswith("$"):
-        prefix, sep, path = value[1:].partition(".")
-        if prefix != "input" or not sep or not path:
-            return _NO_COLLECTION_PUSHDOWN
-        resolved = resolve_path(params, path.split("."))
-        if is_missing_path(resolved):
-            raise QueryExecutionError(f"Missing query input reference '{value}'")
-        return resolved
-    return value
-
-
-def _collection_relationship_contexts(
-    config: CoreConfig,
-    graph: EntityGraph,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    params: dict[str, Any],
-    *,
-    relationship_state: QueryVisibilityState,
-    lifecycle_status: LifecycleStatus | None,
-    builder: ReceiptBuilder,
-) -> tuple[list[QueryRowContext], dict[str, int]]:
-    resolved = config.resolve_relationship_reference(query_schema.returns)
-    if resolved is None:
-        raise RelationshipNotFoundError(query_schema.returns)
-    relationship_schema, is_reverse = resolved
-    if is_reverse:
-        raise QueryExecutionError(
-            f"Entryless relationship query '{query_name}' must return canonical "
-            f"relationship name '{relationship_schema.name}', not reverse alias "
-            f"'{query_schema.returns}'"
-        )
-    if query_schema.where is not None:
-        # Fail-closed parity with service_list("edges"): an edge `where` may only
-        # reference properties configured on the relationship schema. Validated
-        # up front (data-independent) so the same ConfigError is raised whether or
-        # not any stored edge happens to match.
-        validate_edge_where_property_fields(
-            config,
-            relationship_schema.name,
-            iter_edge_where_property_fields(query_schema.where),
-            subject=f"relationship type '{relationship_schema.name}'",
-        )
-    contexts: list[QueryRowContext] = []
-    policy_summary: dict[str, int] = {}
-    policies = _active_query_policies(config, query_name, relationship_schema.name)
-    for relationship in sorted(
-        graph.iter_relationships(relationship_schema.name),
-        key=lambda item: _relationship_instance_identity(item),
-    ):
-        if not relationship_matches_query_state(relationship.metadata, relationship_state):
-            continue
-        if lifecycle_status is not None and not relationship_matches_lifecycle_status(
-            relationship.metadata, lifecycle_status
-        ):
-            continue
-        from_entity = graph.get_entity(relationship.from_type, relationship.from_id)
-        to_entity = graph.get_entity(relationship.to_type, relationship.to_id)
-        if from_entity is None or to_entity is None:
-            continue
-        source = entity_with_identity_properties(config, from_entity)
-        target = entity_with_identity_properties(config, to_entity)
-        segment = QueryPathSegment.model_validate(relationship.model_dump(mode="python"))
-        base_predicate_context = build_predicate_context(
-            entry=source,
-            current=source,
-            candidate=target,
-            segment=segment,
-            path=(segment,),
-            entities=(source, target),
-        )
-        predicate_context = replace(base_predicate_context, result=segment)
-        if query_schema.where is not None and not evaluate_query_predicates(
-            config,
-            query_schema.where,
-            predicate_context,
-            params,
-        ):
-            continue
-        if policies and _policy_should_suppress(
-            config=config,
-            policies=policies,
-            from_entity=source,
-            to_entity=target,
-            edge_props=segment.properties,
-            context={
-                "query_name": query_name,
-                "relationship_type": relationship_schema.name,
-                "direction": "outgoing",
-            },
-            policy_summary=policy_summary,
-            builder=builder,
-            parent_id=None,
-        ):
-            continue
-        row = QueryRelationshipRow(
-            relationship_type=relationship.relationship_type,
-            from_type=relationship.from_type,
-            from_id=relationship.from_id,
-            to_type=relationship.to_type,
-            to_id=relationship.to_id,
-            edge_key=relationship.edge_key,
-            claim_id=relationship.claim_id,
-            properties=dict(relationship.properties),
-            metadata=relationship.metadata,
-            entry=source,
-            from_entity=source,
-            to_entity=target,
-        )
-        contexts.append(
-            QueryRowContext(
-                row=row,
-                entry=source,
-                result=target,
-                entities=(source, target),
-                path=(segment,),
-            )
-        )
-    return contexts, policy_summary
-
-
-def _entity_collection_predicate_context(entity: EntityInstance) -> Any:
-    dummy = QueryPathSegment(
-        relationship_type="",
-        from_type=entity.entity_type,
-        from_id=entity.entity_id,
-        to_type=entity.entity_type,
-        to_id=entity.entity_id,
-        properties={},
-        metadata=RelationshipMetadata(),
-    )
-    return build_predicate_context(
-        entry=entity,
-        current=entity,
-        candidate=entity,
-        segment=dummy,
-        path=(),
-        entities=(entity,),
-    )
-
-
-def _relationship_instance_identity(relationship: Any) -> tuple[Any, ...]:
-    return (
-        relationship.relationship_type,
-        relationship.from_type,
-        relationship.from_id,
-        relationship.to_type,
-        relationship.to_id,
-        relationship.edge_key is None,
-        relationship.edge_key if relationship.edge_key is not None else -1,
-    )
-
-
-def _resolve_declared_entity_return_type(
-    config: CoreConfig,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    result_shape: QueryResultShape,
-) -> str | None:
-    """Normalize entity/path query returns to an entity type."""
-    if result_shape == "relationship":
-        return None
-    declared = _normalize_entity_returns(query_schema.returns)
-    if declared == "AnyEntity":
-        return None
-    if declared not in config.entity_types:
-        raise QueryExecutionError(
-            f"Named query '{query_name}' declares unknown result entity type "
-            f"'{query_schema.returns}'"
-        )
-    return declared
-
-
-def _normalize_entity_returns(returns: str) -> str:
-    value = returns.strip()
-    list_match = re.fullmatch(r"list\[\s*([A-Za-z_][\w-]*)\s*\]", value)
-    if list_match is not None:
-        return list_match.group(1)
-    return value
-
-
-def _validate_result_context_return_types(
-    query_name: str,
-    contexts: list[QueryRowContext],
-    *,
-    expected_entity_type: str,
-) -> None:
-    for context in contexts:
-        actual = context.result
-        if actual.entity_type == expected_entity_type:
-            continue
-        raise QueryExecutionError(
-            f"Named query '{query_name}' returned {actual.entity_type}:{actual.entity_id} "
-            f"but declares result entity type '{expected_entity_type}'"
-        )
-
-
-def _step_collect_entity_type(
-    config: CoreConfig,
-    query_schema: NamedQuerySchema,
-    result_shape: QueryResultShape,
-    declared_entity_return_type: str | None,
-    step: TraversalStep,
-    *,
-    step_index: int,
-) -> str | None:
-    """Return the final-step entity collection type, when the step can emit it."""
-    if (
-        result_shape != "entity"
-        or declared_entity_return_type is None
-        or step_index != len(query_schema.traversal) - 1
-    ):
-        return None
-    if _step_can_reach_entity_type(config, step, declared_entity_return_type):
-        return declared_entity_return_type
-    return None
-
-
-def _step_can_reach_entity_type(
-    config: CoreConfig,
-    step: TraversalStep,
-    entity_type: str,
-) -> bool:
-    """Return whether one traversal step can produce *entity_type* as a neighbor."""
-    for rel_ref in step.relationship_types:
-        resolved = config.resolve_relationship_reference(rel_ref)
-        if resolved is None:
-            raise RelationshipNotFoundError(rel_ref)
-        rel_schema, is_reverse = resolved
-        direction = _flip_relationship_direction(step.direction) if is_reverse else step.direction
-        if direction in {"outgoing", "both"} and rel_schema.to_entity == entity_type:
-            return True
-        if direction in {"incoming", "both"} and rel_schema.from_entity == entity_type:
-            return True
-    return False
-
-
-def _resolve_effective_query_options(
-    config: CoreConfig,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    relationship_state_override: QueryVisibilityState | None,
-    lifecycle_status: LifecycleStatus | None,
-) -> _EffectiveQueryOptions:
-    effective_relationship_state = (
-        query_schema.relationship_state
-        if relationship_state_override is None
-        else relationship_state_override
-    )
-    relationship_state_source = (
-        "query_config" if relationship_state_override is None else "runtime_override"
-    )
-    _validate_effective_query_options(
-        config,
-        query_name,
-        query_schema,
-        effective_relationship_state,
-        relationship_state_override=relationship_state_override,
-        lifecycle_status=lifecycle_status,
-    )
-    return _EffectiveQueryOptions(
-        relationship_state=effective_relationship_state,
-        relationship_state_source=relationship_state_source,
-        lifecycle_status=lifecycle_status,
-        result_shape=query_schema.result_shape,
-        dedupe=query_schema.dedupe,
-    )
-
-
-def _validate_effective_query_options(
-    config: CoreConfig,
-    query_name: str,
-    query_schema: NamedQuerySchema,
-    effective_relationship_state: QueryVisibilityState,
-    *,
-    relationship_state_override: QueryVisibilityState | None,
-    lifecycle_status: LifecycleStatus | None,
-) -> None:
-    """Validate execution-time query options after runtime overrides are applied."""
-    is_collection = query_schema.mode == "collection"
-    if (
-        relationship_state_override is not None
-        and not query_schema.allow_relationship_state_override
-    ):
-        raise QueryExecutionError("visibility state override is not allowed for this named query")
-    if effective_relationship_state not in {
-        "live",
-        "accepted",
-        "all",
-        "not-live",
-        "pending",
-        "reviewable",
-    }:
-        raise QueryExecutionError(f"Unsupported visibility state '{effective_relationship_state}'")
-    if lifecycle_status is not None:
-        lifecycle_kind: Literal["entity", "relationship"] = (
-            "entity"
-            if query_schema.mode == "collection" and query_schema.result_shape == "entity"
-            else "relationship"
-        )
-        try:
-            validate_lifecycle_status(lifecycle_status, kind=lifecycle_kind)
-        except ValueError as exc:
-            raise QueryExecutionError(str(exc)) from exc
-    if query_schema.result_shape == "entity" and query_schema.dedupe != "entity":
-        raise QueryExecutionError(
-            f"Named query '{query_name}' with result_shape 'entity' requires dedupe 'entity'"
-        )
-    has_non_required_step = any(not step.required for step in query_schema.traversal)
-    if query_schema.result_shape == "entity" and has_non_required_step:
-        raise QueryExecutionError(
-            f"Named query '{query_name}' with required false traversal steps requires "
-            "result_shape 'path' or 'relationship'"
-        )
-    if query_schema.result_shape == "entity" and (
-        query_schema.max_paths is not None or query_schema.max_paths_per_result is not None
-    ):
-        raise QueryExecutionError(
-            f"Named query '{query_name}' with path budgets requires "
-            "result_shape 'path' or 'relationship'"
-        )
-    if effective_relationship_state == "pending":
-        if query_schema.result_shape not in {"path", "relationship"} and not (
-            is_collection and query_schema.include
-        ):
-            raise QueryExecutionError(
-                f"Named query '{query_name}' with relationship_state 'pending' "
-                "requires result_shape 'path' or 'relationship'"
-            )
-        if query_schema.dedupe == "entity" and not (is_collection and query_schema.include):
-            raise QueryExecutionError(
-                f"Named query '{query_name}' with relationship_state 'pending' "
-                "requires dedupe 'path' or 'none'"
-            )
-    if effective_relationship_state == "reviewable":
-        if query_schema.result_shape != "path" and not (
-            (is_collection and query_schema.result_shape == "relationship")
-            or (is_collection and query_schema.include)
-        ):
-            raise QueryExecutionError(
-                f"Named query '{query_name}' with relationship_state 'reviewable' "
-                "requires result_shape 'path'"
-            )
-        if query_schema.dedupe == "entity" and not (is_collection and query_schema.include):
-            raise QueryExecutionError(
-                f"Named query '{query_name}' with relationship_state 'reviewable' "
-                "requires dedupe 'path' or 'none'"
-            )
-    if query_schema.result_shape != "relationship":
-        return
-    if query_schema.dedupe == "entity":
-        raise QueryExecutionError(
-            f"Named query '{query_name}' with result_shape 'relationship' requires "
-            "dedupe 'path' or 'none'"
-        )
-    if is_collection:
-        resolved = config.resolve_relationship_reference(query_schema.returns)
-        if resolved is None:
-            raise RelationshipNotFoundError(query_schema.returns)
-        rel_schema, is_reverse = resolved
-        if is_reverse:
-            raise QueryExecutionError(
-                f"Entryless relationship query '{query_name}' must return canonical "
-                f"relationship name '{rel_schema.name}'"
-            )
-        return
-    if not query_schema.traversal:
-        raise QueryExecutionError(
-            f"Named query '{query_name}' with result_shape 'relationship' requires traversal"
-        )
-    if has_non_required_step and not query_schema.traversal[-1].required:
-        raise QueryExecutionError(
-            f"Named query '{query_name}' with result_shape 'relationship' requires "
-            "the final traversal step to be required when using required false"
-        )
-    final_step = query_schema.traversal[-1]
-    final_relationships: list[str] = []
-    for rel_ref in final_step.relationship_types:
-        resolved = config.resolve_relationship_reference(rel_ref)
-        if resolved is None:
-            raise RelationshipNotFoundError(rel_ref)
-        rel_schema, _is_reverse = resolved
-        final_relationships.append(rel_schema.name)
-    final_relationships = list(dict.fromkeys(final_relationships))
-    if len(final_relationships) != 1 or query_schema.returns != final_relationships[0]:
-        expected = ", ".join(final_relationships) if final_relationships else "<unknown>"
-        raise QueryExecutionError(
-            f"Named query '{query_name}' with result_shape 'relationship' must set "
-            f"returns to its final relationship type ({expected})"
-        )
-
-
-def _requires_path_retention(
-    *,
-    result_shape: QueryResultShape,
-    dedupe: QueryDedupe,
-) -> bool:
-    """Return whether traversal must retain full path state.
-
-    Future path-dependent features such as projections, ordering, aggregation,
-    or predicates over ``$path`` should feed into this decision.
-    """
-    return result_shape in {"path", "relationship"} or dedupe in {"path", "none"}
-
-
-def _execute_step(
-    config: CoreConfig,
-    graph: EntityGraph,
-    step: TraversalStep,
-    current_states: list[_TraversalState],
-    params: dict[str, Any],
-    query_name: str,
-    requires_path_retention: bool,
-    relationship_state: QueryVisibilityState,
-    lifecycle_status: LifecycleStatus | None,
-    traversal_budget: _TraversalBudgetState,
-    step_index: int,
-    policy_summary: dict[str, int],
-    optional_path_aliases: frozenset[str],
-    collect_entity_type: str | None = None,
-    *,
-    builder: ReceiptBuilder | None = None,
-) -> list[_TraversalState]:
-    """Execute one traversal step via BFS with multi-relationship fan-out.
-
-    Supports multiple relationship types per step and multi-hop traversal
-    via max_depth. Entity-shaped queries can prune repeated entities during
-    expansion and can collect only declared return-type entities on the final
-    step while traversing intermediate bridge entities. Path-retaining queries
-    preserve distinct evidence paths for path or relationship-shaped output.
-    Three dedup layers:
-      1. Entity-frontier pruning: compact entity queries expand each node at most once
-      2. Result dedup: final rows are deduped by entity, path, or not at all
-      3. Evidence: all traversed edges are recorded in the receipt before dedup
-    """
-    # Validate and resolve all relationship references up front.
-    resolved_refs: list[tuple[str, str]] = []
-    for rel_ref in step.relationship_types:
-        resolved = config.resolve_relationship_reference(rel_ref)
-        if resolved is None:
-            raise RelationshipNotFoundError(rel_ref)
-        rel_schema, is_reverse = resolved
-        direction = _flip_relationship_direction(step.direction) if is_reverse else step.direction
-        resolved_refs.append((rel_schema.name, direction))
-    step_policies = {
-        rel_name: _active_query_policies(config, query_name, rel_name)
-        for rel_name, _ in resolved_refs
-    }
-
-    next_states: list[_TraversalState] = []
-
-    # BFS state
-    # Queue entries: (root input index, path state, current_depth)
-    queue: deque[tuple[int, _TraversalState, int]] = deque()
-    seen_expanded: set[str] = set()  # nodes already expanded (neighbors queried)
-    seen_results: set[str] = set()  # nodes already in result list
-    produced_roots: set[int] = set()
-
-    indexed_states = list(enumerate(current_states))
-    if requires_path_retention and traversal_budget.max_paths is not None:
-        indexed_states.sort(key=lambda item: _traversal_state_identity(item[1]))
-
-    # Seed queue with input entities (they are inputs, not results)
-    for root_index, state in indexed_states:
-        nid = state.current.node_id()
-        if not requires_path_retention:
-            seen_expanded.add(nid)
-            seen_results.add(nid)
-        queue.append((root_index, state, 0))
-
-    while queue:
-        root_index, state, depth = queue.popleft()
-        entity = state.current
-
-        if depth >= step.max_depth:
-            continue
-        if _retained_path_cap_reached(
-            next_states,
-            requires_path_retention=requires_path_retention,
-            traversal_budget=traversal_budget,
-        ):
-            _record_max_paths_truncation(
-                traversal_budget,
-                builder,
-                step_index=step_index,
-                step=step,
-                retained_path_count=len(next_states),
-            )
-            queue.clear()
-            break
-
-        for rel_type, direction in resolved_refs:
-            if _retained_path_cap_reached(
-                next_states,
-                requires_path_retention=requires_path_retention,
-                traversal_budget=traversal_budget,
-            ):
-                _record_max_paths_truncation(
-                    traversal_budget,
-                    builder,
-                    step_index=step_index,
-                    step=step,
-                    retained_path_count=len(next_states),
-                )
-                queue.clear()
-                break
-            rel_policies = step_policies.get(rel_type, [])
-            relationships = _step_relationships_for_execution(
-                graph,
-                entity,
-                relationship_type=rel_type,
-                direction=direction,
-                alias=step.alias,
-                stable=requires_path_retention and traversal_budget.max_paths is not None,
-            )
-            for neighbor, segment, relative_direction in relationships:
-                if _retained_path_cap_reached(
-                    next_states,
-                    requires_path_retention=requires_path_retention,
-                    traversal_budget=traversal_budget,
-                ):
-                    _record_max_paths_truncation(
-                        traversal_budget,
-                        builder,
-                        step_index=step_index,
-                        step=step,
-                        retained_path_count=len(next_states),
-                    )
-                    queue.clear()
-                    break
-                if not relationship_matches_query_state(segment.metadata, relationship_state):
-                    continue
-                if lifecycle_status is not None and not relationship_matches_lifecycle_status(
-                    segment.metadata, lifecycle_status
-                ):
-                    continue
-
-                nid = neighbor.node_id()
-                if requires_path_retention and any(
-                    path_entity.node_id() == nid for path_entity in state.entities
-                ):
-                    continue
-                if requires_path_retention and traversal_budget.max_paths is not None:
-                    traversal_budget.evaluated_path_candidate_count += 1
-
-                # Record evidence regardless of dedup
-                traversal_id = None
-                if builder is not None:
-                    traversal_id = builder.record_traversal(
-                        from_entity_type=entity.entity_type,
-                        from_entity_id=entity.entity_id,
-                        to_entity_type=neighbor.entity_type,
-                        to_entity_id=neighbor.entity_id,
-                        relationship=rel_type,
-                        edge_props=segment.properties,
-                        edge_key=segment.edge_key,
-                        parent_id=state.parent_id,
-                    )
-
-                # Apply edge filter (blocks subtree on failure)
-                if step.filter:
-                    passed = matches_exact_filter(segment.properties, step.filter)
-                    if builder is not None and traversal_id is not None:
-                        builder.record_filter(
-                            filter_spec=step.filter,
-                            passed=passed,
-                            parent_id=traversal_id,
-                        )
-                    if not passed:
-                        continue
-
-                matches_collect_type = _matches_collect_entity_type(
-                    collect_entity_type,
-                    neighbor,
-                )
-
-                # Apply target entity filter to emitted candidates. In typed
-                # collection mode, non-return intermediates remain bridge nodes.
-                if step.target_filter and matches_collect_type:
-                    passed = matches_exact_filter(
-                        entity_properties_with_identity(
-                            config,
-                            neighbor.entity_type,
-                            neighbor.entity_id,
-                            neighbor.properties,
-                        ),
-                        step.target_filter,
-                    )
-                    if builder is not None and traversal_id is not None:
-                        builder.record_filter(
-                            filter_spec=step.target_filter,
-                            passed=passed,
-                            parent_id=traversal_id,
-                        )
-                    if not passed:
-                        continue
-
-                predicate_context = None
-                if matches_collect_type:
-                    predicate_context = build_predicate_context(
-                        entry=state.entry,
-                        current=entity,
-                        candidate=neighbor,
-                        segment=segment,
-                        path=state.path,
-                        entities=state.entities,
-                        optional_path_aliases=optional_path_aliases,
-                    )
-                    if step.where is not None:
-                        passed = evaluate_query_predicates(
-                            config,
-                            step.where,
-                            predicate_context,
-                            params,
-                        )
-                        if builder is not None and traversal_id is not None:
-                            builder.record_filter(
-                                filter_spec={"where": step.where.model_dump(mode="python")},
-                                passed=passed,
-                                parent_id=traversal_id,
-                            )
-                        if not passed:
-                            continue
-
-                # Apply constraint to emitted candidates. Non-return
-                # intermediates may still bridge to return-type entities.
-                if step.constraint and matches_collect_type:
-                    passed = _evaluate_constraint(
-                        config,
-                        step.constraint,
-                        neighbor,
-                        params,
-                        value_type=step.constraint_value_type,
-                    )
-                    if builder is not None and traversal_id is not None:
-                        builder.record_constraint(
-                            constraint=step.constraint,
-                            passed=passed,
-                            entity_type=neighbor.entity_type,
-                            entity_id=neighbor.entity_id,
-                            parent_id=traversal_id,
-                        )
-                    if not passed:
-                        continue
-
-                if step.exclude_if_related and matches_collect_type:
-                    excluded = False
-                    for exclusion in step.exclude_if_related:
-                        passed = not related_edge_exists(
-                            graph,
-                            current_entity=entity,
-                            candidate_entity=neighbor,
-                            relationship_type=exclusion.relationship,
-                            direction=exclusion.direction,
-                            relationship_state=relationship_state,
-                        )
-                        if builder is not None and traversal_id is not None:
-                            builder.record_filter(
-                                filter_spec={
-                                    "exclude_if_related": {
-                                        "relationship": exclusion.relationship,
-                                        "direction": exclusion.direction,
-                                    }
-                                },
-                                passed=passed,
-                                parent_id=traversal_id,
-                            )
-                        if not passed:
-                            excluded = True
-                            break
-                    if excluded:
-                        continue
-
-                if step.where_related and matches_collect_type:
-                    if predicate_context is None:
-                        predicate_context = build_predicate_context(
-                            entry=state.entry,
-                            current=entity,
-                            candidate=neighbor,
-                            segment=segment,
-                            path=state.path,
-                            entities=state.entities,
-                            optional_path_aliases=optional_path_aliases,
-                        )
-                    passed = all(
-                        evaluate_related_predicate(
-                            graph,
-                            related,
-                            predicate_context,
-                            params,
-                            config=config,
-                            relationship_state=relationship_state,
-                        )
-                        for related in step.where_related
-                    )
-                    if builder is not None and traversal_id is not None:
-                        builder.record_filter(
-                            filter_spec={
-                                "where_related": [
-                                    related.model_dump(mode="python")
-                                    for related in step.where_related
-                                ]
-                            },
-                            passed=passed,
-                            parent_id=traversal_id,
-                        )
-                    if not passed:
-                        continue
-
-                if step.where_not_related and matches_collect_type:
-                    if predicate_context is None:
-                        predicate_context = build_predicate_context(
-                            entry=state.entry,
-                            current=entity,
-                            candidate=neighbor,
-                            segment=segment,
-                            path=state.path,
-                            entities=state.entities,
-                            optional_path_aliases=optional_path_aliases,
-                        )
-                    passed = not any(
-                        evaluate_related_predicate(
-                            graph,
-                            related,
-                            predicate_context,
-                            params,
-                            config=config,
-                            relationship_state=relationship_state,
-                        )
-                        for related in step.where_not_related
-                    )
-                    if builder is not None and traversal_id is not None:
-                        builder.record_filter(
-                            filter_spec={
-                                "where_not_related": [
-                                    related.model_dump(mode="python")
-                                    for related in step.where_not_related
-                                ]
-                            },
-                            passed=passed,
-                            parent_id=traversal_id,
-                        )
-                    if not passed:
-                        continue
-
-                if relative_direction == "outgoing":
-                    policy_from_entity = entity
-                    policy_to_entity = neighbor
-                else:
-                    policy_from_entity = neighbor
-                    policy_to_entity = entity
-
-                if rel_policies and _policy_should_suppress(
-                    config=config,
-                    policies=rel_policies,
-                    from_entity=policy_from_entity,
-                    to_entity=policy_to_entity,
-                    edge_props=segment.properties,
-                    context={
-                        "query_name": query_name,
-                        "relationship_type": rel_type,
-                        "direction": direction,
-                    },
-                    policy_summary=policy_summary,
-                    builder=builder,
-                    parent_id=traversal_id,
-                ):
-                    continue
-
-                next_state = _TraversalState(
-                    entry=state.entry,
-                    current=neighbor,
-                    entities=(*state.entities, neighbor),
-                    path=(*state.path, segment),
-                    parent_id=traversal_id,
-                )
-                if _retained_path_cap_reached(
-                    next_states,
-                    requires_path_retention=requires_path_retention,
-                    traversal_budget=traversal_budget,
-                ):
-                    _record_max_paths_truncation(
-                        traversal_budget,
-                        builder,
-                        step_index=step_index,
-                        step=step,
-                        retained_path_count=len(next_states),
-                    )
-                    queue.clear()
-                    break
-
-                # Result dedup: first path owns the lineage
-                if not requires_path_retention and matches_collect_type:
-                    if nid not in seen_results:
-                        seen_results.add(nid)
-                        next_states.append(next_state)
-                        produced_roots.add(root_index)
-                else:
-                    if requires_path_retention:
-                        next_states.append(next_state)
-                        produced_roots.add(root_index)
-
-                # Expansion dedup: enqueue for deeper hops if not yet expanded
-                if not requires_path_retention and nid not in seen_expanded:
-                    seen_expanded.add(nid)
-                    queue.append((root_index, next_state, depth + 1))
-                elif requires_path_retention:
-                    if _retained_path_cap_reached(
-                        next_states,
-                        requires_path_retention=requires_path_retention,
-                        traversal_budget=traversal_budget,
-                    ):
-                        if depth + 1 < step.max_depth:
-                            _record_max_paths_truncation(
-                                traversal_budget,
-                                builder,
-                                step_index=step_index,
-                                step=step,
-                                retained_path_count=len(next_states),
-                            )
-                    else:
-                        queue.append((root_index, next_state, depth + 1))
-
-    if not step.required:
-        fallback_states = (
-            indexed_states
-            if (requires_path_retention and traversal_budget.max_paths is not None)
-            else list(enumerate(current_states))
-        )
-        for root_index, state in fallback_states:
-            if root_index in produced_roots:
-                continue
-            if _retained_path_cap_reached(
-                next_states,
-                requires_path_retention=requires_path_retention,
-                traversal_budget=traversal_budget,
-            ):
-                _record_max_paths_truncation(
-                    traversal_budget,
-                    builder,
-                    step_index=step_index,
-                    step=step,
-                    retained_path_count=len(next_states),
-                )
-                break
-            if builder is not None:
-                builder.record_validation(
-                    passed=True,
-                    detail={
-                        "optional_traversal_preserved": True,
-                        "relationship": step.relationship,
-                        "direction": step.direction,
-                        "alias": step.alias,
-                        "reason": "no_matching_segment",
-                    },
-                    parent_id=state.parent_id,
-                )
-            next_states.append(state)
-
-    return next_states
-
-
-def _matches_collect_entity_type(
-    collect_entity_type: str | None,
-    candidate: EntityInstance,
-) -> bool:
-    return collect_entity_type is None or candidate.entity_type == collect_entity_type
-
-
-def _step_relationships_for_execution(
-    graph: EntityGraph,
-    entity: EntityInstance,
-    *,
-    relationship_type: str,
-    direction: str,
-    alias: str | None,
-    stable: bool,
-) -> list[tuple[EntityInstance, QueryPathSegment, str]]:
-    relationships = iter_step_relationships(
-        graph,
-        entity,
-        relationship_type=relationship_type,
-        direction=direction,
-        alias=alias,
-    )
-    if not stable:
-        return relationships
-    return sorted(relationships, key=_relationship_candidate_identity)
-
-
-def _relationship_candidate_identity(
-    row: tuple[EntityInstance, QueryPathSegment, str],
-) -> tuple[Any, ...]:
-    neighbor, segment, relative_direction = row
-    return (
-        segment.relationship_type,
-        segment.from_type,
-        segment.from_id,
-        segment.to_type,
-        segment.to_id,
-        segment.edge_key is None,
-        segment.edge_key if segment.edge_key is not None else -1,
-        neighbor.entity_type,
-        neighbor.entity_id,
-        relative_direction,
-    )
-
-
-def _traversal_state_identity(state: _TraversalState) -> tuple[Any, ...]:
-    return (
-        state.current.entity_type,
-        state.current.entity_id,
-        _path_identity(state.path),
-    )
-
-
-def _retained_path_cap_reached(
-    retained_states: list[_TraversalState],
-    *,
-    requires_path_retention: bool,
-    traversal_budget: _TraversalBudgetState,
-) -> bool:
-    return (
-        requires_path_retention
-        and traversal_budget.max_paths is not None
-        and len(retained_states) >= traversal_budget.max_paths
-    )
-
-
-def _record_max_paths_truncation(
-    traversal_budget: _TraversalBudgetState,
-    builder: ReceiptBuilder | None,
-    *,
-    step_index: int,
-    step: TraversalStep,
-    retained_path_count: int,
-) -> None:
-    traversal_budget.truncated = True
-    if builder is None or traversal_budget.truncation_recorded:
-        return
-    traversal_budget.truncation_recorded = True
-    builder.record_validation(
-        passed=False,
-        detail={
-            "path_truncated": True,
-            "truncation_reason": "max_paths",
-            "max_paths": traversal_budget.max_paths,
-            "retained_path_count": retained_path_count,
-            "evaluated_path_candidate_count": (traversal_budget.evaluated_path_candidate_count),
-            "step": step_index,
-            "relationship": step.relationship,
-            "direction": step.direction,
-        },
-    )
-
-
-def _dedupe_states(
-    states: list[_TraversalState],
-    dedupe: QueryDedupe,
-) -> list[_TraversalState]:
-    """Apply final query result dedupe while preserving deterministic first paths."""
-    if dedupe == "none":
-        return list(states)
-
-    seen: set[Any] = set()
-    deduped: list[_TraversalState] = []
-    for state in states:
-        key = state.current.node_id() if dedupe == "entity" else _path_identity(state.path)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(state)
-    return deduped
-
-
-def _path_identity(path: tuple[QueryPathSegment, ...]) -> tuple[tuple[Any, ...], ...]:
-    """Return a stable graph identity for one evidence path.
-
-    ``edge_key`` may be ``None`` for some segments and an ``int`` for others
-    between identical endpoints. A raw ``None`` in the sort tuple would raise a
-    ``TypeError`` when this identity is used as a sort key (see the path
-    traversal sort under ``max_paths``), so the key is encoded None-safely,
-    mirroring ``query.projection._path_identity``.
-    """
-    return tuple(
-        (
-            segment.relationship_type,
-            segment.from_type,
-            segment.from_id,
-            segment.to_type,
-            segment.to_id,
-            segment.edge_key is None,
-            segment.edge_key if segment.edge_key is not None else -1,
-        )
-        for segment in path
-    )
-
-
-def _build_result_contexts(
-    config: CoreConfig,
-    states: list[_TraversalState],
-    result_shape: QueryResultShape,
-    *,
-    optional_path_aliases: frozenset[str] = frozenset(),
-) -> list[QueryRowContext]:
-    contexts: list[QueryRowContext] = []
-    for state in states:
-        entry = entity_with_identity_properties(config, state.entry)
-        result = entity_with_identity_properties(config, state.current)
-        entities = tuple(
-            entity_with_identity_properties(config, entity) for entity in state.entities
-        )
-        row: BaseQueryRow | None
-        if result_shape == "path":
-            row = QueryPathRow(
-                entry=entry,
-                result=result,
-                entities=list(entities),
-                path=list(state.path),
-            )
-        elif result_shape == "relationship":
-            row = _build_relationship_row(config, state) if state.path else None
-        else:
-            row = result
-        if row is None:
-            continue
-        contexts.append(
-            QueryRowContext(
-                row=row,
-                entry=entry,
-                result=result,
-                entities=entities,
-                path=state.path,
-                parent_id=state.parent_id,
-                optional_path_aliases=optional_path_aliases,
-            )
-        )
-    return contexts
-
-
-def _apply_includes(
-    config: CoreConfig,
-    graph: EntityGraph,
-    query_schema: NamedQuerySchema,
-    contexts: list[QueryRowContext],
-    params: dict[str, Any],
-    *,
-    relationship_state: QueryVisibilityState,
-    lifecycle_status: LifecycleStatus | None,
-    builder: ReceiptBuilder | None,
-) -> list[QueryRowContext]:
-    """Attach one-hop include side context to base query row contexts."""
-    if not query_schema.include:
-        return contexts
-
-    retained: list[QueryRowContext] = []
-    summaries: dict[str, dict[str, Any]] = {
-        alias: {
-            "alias": alias,
-            "from": spec.from_,
-            "relationship": spec.relationship,
-            "direction": spec.direction,
-            "many": spec.many,
-            "required": spec.required,
-            "limit": spec.limit,
-            "relationship_state": relationship_state,
-            "rows_evaluated": 0,
-            "rows_with_matches": 0,
-            "total_matches": 0,
-            "truncated_rows": 0,
-        }
-        for alias, spec in query_schema.include.items()
-    }
-    # Under `dedupe: path`, several retained rows can share the same include
-    # anchor (e.g. the same `$result` entity reached by distinct evidence
-    # paths). Each row's `$include.*.count` is independently correct, but a
-    # naive sum over rows double-counts those shared anchors. An anchor-only
-    # dedupe key, however, *under*-counts when the include `where`/`where_related`
-    # predicates reference `$entry.*`: the same anchor reached under two
-    # different entry rows can legitimately match different neighbors, so
-    # collapsing on anchor alone drops the matches found under the later entry.
-    # Track the set of distinct matched-neighbor identities per alias instead.
-    # Identical matches (same anchor, same edges) collapse to one; genuinely
-    # different matches (entry-sensitive includes) each contribute. This is
-    # exact regardless of whether the include depends on entry scope.
-    counted_matches: dict[str, set[tuple[Any, ...]]] = {
-        alias: set() for alias in query_schema.include
-    }
-
-    for context in contexts:
-        includes: dict[str, QueryIncludeResult] = {}
-        drop_row = False
-        for alias, spec in query_schema.include.items():
-            result = _evaluate_include(
-                config,
-                graph,
-                alias,
-                spec,
-                context,
-                params,
-                relationship_state=relationship_state,
-                lifecycle_status=lifecycle_status,
-            )
-            summary = summaries[alias]
-            summary["rows_evaluated"] += 1
-            seen = counted_matches[alias]
-            for identity in result.match_identities:
-                if identity not in seen:
-                    seen.add(identity)
-                    summary["total_matches"] += 1
-            if result.exists:
-                summary["rows_with_matches"] += 1
-            if result.truncated:
-                summary["truncated_rows"] += 1
-            includes[alias] = result
-            if spec.required and not result.exists:
-                drop_row = True
-                break
-        if drop_row:
-            continue
-        retained.append(_context_with_includes(context, includes))
-
-    if builder is not None:
-        builder.record_validation(
-            passed=True,
-            detail={"include_summary": list(summaries.values())},
-        )
-    return retained
-
-
-def _evaluate_include(
-    config: CoreConfig,
-    graph: EntityGraph,
-    alias: str,
-    spec: QueryIncludeSpec,
-    context: QueryRowContext,
-    params: dict[str, Any],
-    *,
-    relationship_state: QueryVisibilityState,
-    lifecycle_status: LifecycleStatus | None,
-) -> QueryIncludeResult:
-    anchor = _resolve_include_anchor(alias, spec.from_, context)
-    if anchor is None:
-        return QueryIncludeResult(
-            alias=alias,
-            many=spec.many,
-            limit=spec.limit,
-        )
-    resolved = config.resolve_relationship_reference(spec.relationship)
-    if resolved is None:
-        raise RelationshipNotFoundError(spec.relationship)
-    relationship_schema, is_reverse = resolved
-    direction = _flip_relationship_direction(spec.direction) if is_reverse else spec.direction
-    relationships = sorted(
-        iter_step_relationships(
-            graph,
-            anchor,
-            relationship_type=relationship_schema.name,
-            direction=direction,
-            alias=alias,
-        ),
-        key=_relationship_candidate_identity,
-    )
-    items: list[QueryIncludeItem] = []
-    for neighbor, segment, _relative_direction in relationships:
-        if not relationship_matches_query_state(segment.metadata, relationship_state):
-            continue
-        if lifecycle_status is not None and not relationship_matches_lifecycle_status(
-            segment.metadata, lifecycle_status
-        ):
-            continue
-        predicate_context = build_predicate_context(
-            entry=context.entry,
-            current=anchor,
-            candidate=neighbor,
-            segment=segment,
-            path=context.path,
-            entities=context.entities,
-            optional_path_aliases=context.optional_path_aliases,
-        )
-        if spec.where is not None and not evaluate_query_predicates(
-            config,
-            spec.where,
-            predicate_context,
-            params,
-        ):
-            continue
-        if spec.where_related and not all(
-            evaluate_related_predicate(
-                graph,
-                related,
-                predicate_context,
-                params,
-                config=config,
-                relationship_state=relationship_state,
-            )
-            for related in spec.where_related
-        ):
-            continue
-        if spec.where_not_related and any(
-            evaluate_related_predicate(
-                graph,
-                related,
-                predicate_context,
-                params,
-                config=config,
-                relationship_state=relationship_state,
-            )
-            for related in spec.where_not_related
-        ):
-            continue
-
-        source, target = segment_endpoint_entities(anchor, neighbor, segment)
-        items.append(
-            QueryIncludeItem(
-                edge=segment,
-                source=entity_with_identity_properties(config, source),
-                target=entity_with_identity_properties(config, target),
-            )
-        )
-
-    ordered_items = _sort_include_items(items, spec.order_by, params, config)
-    count = len(ordered_items)
-    if not spec.many and count > 1:
-        raise QueryExecutionError(
-            f"Include '{alias}' matched {count} relationships; set many: true "
-            "or narrow the include predicates"
-        )
-    returned_items = ordered_items[: spec.limit] if spec.limit is not None else ordered_items
-    # Carry the identities of *all* matched neighbors (before `limit`
-    # truncation) so the include summary can count distinct matches even when
-    # the displayed `items` are truncated.
-    match_identities = tuple(_include_match_identity(item) for item in ordered_items)
-    return QueryIncludeResult(
-        alias=alias,
-        many=spec.many,
-        exists=count > 0,
-        count=count,
-        limit=spec.limit,
-        truncated=spec.limit is not None and count > spec.limit,
-        items=returned_items,
-        match_identities=match_identities,
-    )
-
-
-def _include_match_identity(item: QueryIncludeItem) -> tuple[Any, ...]:
-    """Stable identity of one matched include neighbor.
-
-    Combines the matched edge identity (including ``edge_key`` so parallel
-    multigraph edges stay distinct) with the resolved source/target endpoints.
-    Two include matches share an identity iff they are the same relationship
-    between the same entities -- so identical matches reached via different
-    rows collapse, while genuinely different matches (e.g. surfaced by an
-    entry-sensitive include `where`) each count once.
-    """
-    edge = item.edge
-    return (
-        edge.relationship_type,
-        edge.from_type,
-        edge.from_id,
-        edge.to_type,
-        edge.to_id,
-        edge.edge_key,
-        item.source.entity_type,
-        item.source.entity_id,
-        item.target.entity_type,
-        item.target.entity_id,
-    )
-
-
-def _context_with_includes(
-    context: QueryRowContext,
-    includes: dict[str, QueryIncludeResult],
-) -> QueryRowContext:
-    row = context.row
-    if isinstance(row, QueryPathRow | QueryRelationshipRow):
-        row = row.model_copy(update={"includes": includes})
-    return replace(context, row=row, includes=includes)
-
-
-def _resolve_include_anchor(
-    alias: str,
-    ref: str,
-    context: QueryRowContext,
-) -> EntityInstance | None:
-    if ref == "$entry":
-        return context.entry
-    if ref == "$result":
-        return context.result
-    if not ref.startswith("$path."):
-        raise QueryExecutionError(
-            f"Include '{alias}' from reference '{ref}' must use $entry, $result, "
-            "or $path.<alias>.source|target"
-        )
-    parts = ref[1:].split(".")
-    if len(parts) != 3 or parts[2] not in {"source", "target"}:
-        raise QueryExecutionError(
-            f"Include '{alias}' from reference '{ref}' must use "
-            "$path.<alias>.source or $path.<alias>.target"
-        )
-    path_alias = parts[1]
-    segment = _path_segment_by_alias(
-        path_alias,
-        context.path,
-        optional_path_aliases=context.optional_path_aliases,
-    )
-    if segment is None:
-        return None
-    if parts[2] == "source":
-        return _find_context_entity(context, segment.from_type, segment.from_id)
-    return _find_context_entity(context, segment.to_type, segment.to_id)
-
-
-def _find_context_entity(
-    context: QueryRowContext,
-    entity_type: str,
-    entity_id: str,
-) -> EntityInstance:
-    for entity in context.entities:
-        if entity.entity_type == entity_type and entity.entity_id == entity_id:
-            return entity
-    raise QueryExecutionError(
-        f"Include anchor path references missing entity {entity_type}:{entity_id}"
-    )
-
-
-def _path_segment_by_alias(
-    alias: str,
-    path: tuple[QueryPathSegment, ...],
-    *,
-    optional_path_aliases: frozenset[str],
-) -> QueryPathSegment | None:
-    matches = [segment for segment in path if segment.alias == alias]
-    if not matches:
-        if alias in optional_path_aliases:
+    def record(self, visibility: QueryClaimVisibility) -> None:
+        self.reads[visibility.claim_path] = visibility
+
+    def record_conflict(self, conflict: QueryConflict) -> None:
+        self.conflicts[canonical_bytes(conflict.model_dump(mode="json"))] = conflict
+
+    def ordered_reads(self) -> tuple[QueryClaimVisibility, ...]:
+        keys = sorted(self.reads, key=lambda item: item.encode("utf-8"))
+        return tuple(self.reads[key] for key in keys)
+
+    def ordered_conflicts(self) -> tuple[QueryConflict, ...]:
+        return tuple(self.conflicts[key] for key in sorted(self.conflicts))
+
+
+@dataclass(frozen=True)
+class _Value:
+    state: QueryValueState
+    value: object = None
+    #: A many-valued field's values, in canonical order; ``value`` is their list.
+    many: tuple[object, ...] | None = None
+
+
+_ABSENT = _Value(state="absent")
+_CONFLICT = _Value(state="conflict")
+
+_OPERATORS: dict[str, Any] = {
+    "eq": lambda order: order == 0,
+    "ne": lambda order: order != 0,
+    "gt": lambda order: order > 0,
+    "gte": lambda order: order >= 0,
+    "lt": lambda order: order < 0,
+    "lte": lambda order: order <= 0,
+}
+
+
+class _Evaluator:
+    """Filter, projection, and ordering semantics over bound Claim rows."""
+
+    def __init__(
+        self,
+        definition: QueryDefinition,
+        *,
+        backend: ClaimQueryBackendV1,
+        parameters: Mapping[str, object],
+        evaluation_time: datetime,
+        canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
+        resolve_reference: SubjectReferenceResolver | None = None,
+        key_normalizers: Mapping[str, KeyNormalizer] | None = None,
+    ) -> None:
+        self._definition = definition
+        self._backend = backend
+        self._parameters = parameters
+        self._evaluation_time = evaluation_time
+        self._canonical_forms = canonical_forms or {}
+        self._resolve_reference = resolve_reference
+        self._key_normalizers = key_normalizers or {}
+
+    def _form(self, ref: QueryValueRef) -> tuple[str, ...]:
+        """The canonical form of the predicate a Claim-value reference reads, if any."""
+
+        if isinstance(ref, QueryClaimValueRef):
+            return tuple(self._canonical_forms.get(ref.predicate, ()))
+        return ()
+
+    def _operand_form(self, ref: QueryValueRef, *others: QueryValueRef) -> tuple[str, ...]:
+        """The form an operand compared with stored Claim values is canonicalized by.
+
+        A Claim value is already canonical (the Claim law keeps it so); a literal,
+        a parameter or a Subject field compared with one takes that predicate's
+        form first, so two spellings equal under it compare equal.
+        """
+
+        if isinstance(ref, QueryClaimValueRef):
+            return ()
+        for other in others:
+            form = self._form(other)
+            if form:
+                return form
+        return ()
+
+    def _operand_key_rule(self, ref: QueryValueRef, *others: QueryValueRef) -> KeyNormalizer | None:
+        """The identity normalizer an operand compared with a key predicate's values takes.
+
+        A key Claim's value is canonical under its SubjectKind's normalizer (the
+        candidate boundary keeps it so); a literal, a parameter or a Subject
+        field compared with one is normalized after the predicate's form, so
+        two raw spellings of one key compare equal (R12).
+        """
+
+        if isinstance(ref, QueryClaimValueRef):
             return None
-        raise QueryExecutionError(f"Unknown path alias '{alias}' in include anchor")
-    if len(matches) > 1:
-        raise QueryExecutionError(f"Duplicate path alias '{alias}' in query result path")
-    return matches[0]
+        for other in others:
+            if isinstance(other, QueryClaimValueRef):
+                rule = self._key_normalizers.get(other.predicate)
+                if rule is not None:
+                    return rule
+        return None
 
+    @staticmethod
+    def _operand_vocabulary(ref: QueryValueRef, *others: QueryValueRef) -> tuple[str, ...]:
+        """The closed value set a caller parameter compared with a Claim field must be in.
 
-def _sort_include_items(
-    items: list[QueryIncludeItem],
-    order_by: list[QueryOrderSpec],
-    params: dict[str, Any],
-    config: CoreConfig,
-) -> list[QueryIncludeItem]:
-    if not order_by:
-        return sorted(items, key=_include_item_identity)
+        A literal is checked when the definition is declared; a parameter only
+        has its value here, and a role or verdict outside the field's set is a
+        type mismatch, never a filter that silently matches nothing.
+        """
 
-    def compare(left: QueryIncludeItem, right: QueryIncludeItem) -> int:
-        for order in order_by:
-            left_value = _resolve_include_order_value(order, left, params, config)
-            right_value = _resolve_include_order_value(order, right, params, config)
-            if left_value is None and right_value is None:
-                continue
-            if left_value is None:
-                return 1
-            if right_value is None:
-                return -1
-            result = compare_order_values(left_value, right_value)
-            if result != 0:
-                return -result if order.direction == "desc" else result
-        return compare_sort_keys(_include_item_identity(left), _include_item_identity(right))
+        if not isinstance(ref, QueryParameterRef):
+            return ()
+        for other in others:
+            if isinstance(other, QueryClaimFieldRef):
+                return other.vocabulary
+        return ()
 
-    return sorted(items, key=cmp_to_key(compare))
-
-
-def _resolve_include_order_value(
-    order: QueryOrderSpec,
-    item: QueryIncludeItem,
-    params: dict[str, Any],
-    config: CoreConfig,
-) -> Any:
-    value = _resolve_include_order_ref(order.by, item, params)
-    return coerce_query_order_value(value, order, config, label=order.by)
-
-
-def _resolve_include_order_ref(
-    ref: str,
-    item: QueryIncludeItem,
-    params: dict[str, Any],
-) -> Any:
-    if not ref.startswith("$"):
-        raise QueryExecutionError(f"Include order reference '{ref}' must start with '$'")
-    scope, sep, raw_path = ref[1:].partition(".")
-    if not sep or not raw_path:
-        raise QueryExecutionError(f"Invalid include order reference '{ref}'")
-    if scope == "input":
-        value = resolve_path(params, raw_path.split("."))
-        if is_missing_path(value):
-            raise QueryExecutionError(f"Missing query input reference '{ref}'")
-        return value
-    if scope == "edge":
-        base: Any = item.edge
-    elif scope == "source":
-        base = item.source
-    elif scope == "target":
-        base = item.target
-    else:
-        raise QueryExecutionError(
-            f"Include order reference '{ref}' must use $edge, $source, or $target"
+    def _claim_value(self, row: _Row, binding: str, predicate: str) -> _Value:
+        subject_path = row.bindings.get(binding)
+        if subject_path is None:
+            return _ABSENT
+        claims = self._backend.claims_on(subject_path, predicate)
+        if not claims:
+            return _ABSENT
+        distinct: dict[bytes, object] = {}
+        for claim in claims:
+            row.record(claim.visibility)
+            item = claim.row.accepted.claim.statement.object
+            if isinstance(item, SubjectClaimObject):
+                target = self._backend.subject(item.address.artifact_path)
+                if target is None:
+                    raise _refuse(
+                        SUBJECT_UNRESOLVED,
+                        "A read Claim names a Subject absent at the accepted coordinate.",
+                        statement_digests=(claim.visibility.statement_digest,),
+                    )
+                value: object = target.shell.identity.qualified
+            else:
+                value = item.model_dump(mode="json").get("value")
+            identity = value
+            distinct[canonical_bytes(identity)] = value
+        if any(claim.row.cardinality == "many" for claim in claims):
+            # A many-valued field's Claims are its values: the field projects
+            # as their list, in canonical order, and never conflicts.
+            values = tuple(distinct[key] for key in sorted(distinct))
+            return _Value(state="present", value=list(values), many=values)
+        if len(distinct) == 1:
+            return _Value(state="present", value=next(iter(distinct.values())))
+        subject = self._backend.subject(subject_path)
+        assert subject is not None
+        digests = byte_sorted(tuple(claim.visibility.statement_digest for claim in claims))
+        if self._definition.evaluation_policy.conflict_behavior == "refuse_on_conflict":
+            raise _refuse(
+                CLAIM_CONFLICT,
+                "Competing accepted Claims answer a one-cardinality read.",
+                statement_digests=digests,
+                subject_identities=(subject.shell.identity.qualified,),
+            )
+        row.record_conflict(
+            QueryConflict(
+                kind="claim_object",
+                binding=binding,
+                predicate=predicate,
+                subject_identity=subject.shell.identity.qualified,
+                statement_digests=digests,
+            )
         )
-    value = resolve_path(base, raw_path.split("."))
-    return None if is_missing_path(value) else value
+        return _CONFLICT
 
+    def _claim_field(self, row: _Row, ref: QueryClaimFieldRef) -> _Value:
+        """One field of the Claims a ``claim_value`` read of the predicate reads.
 
-def _include_item_identity(item: QueryIncludeItem) -> tuple[Any, ...]:
-    return (
-        item.edge.relationship_type,
-        item.edge.from_type,
-        item.edge.from_id,
-        item.edge.to_type,
-        item.edge.to_id,
-        item.edge.edge_key is None,
-        item.edge.edge_key if item.edge.edge_key is not None else -1,
-        item.source.entity_type,
-        item.source.entity_id,
-        item.target.entity_type,
-        item.target.entity_id,
-    )
+        The field comes from what the evaluation already holds for each read
+        Claim: the role from its statement, the verdict from the visibility the
+        shared verdict path admitted it under. Nothing else is read, so the
+        field costs what the value read costs. A conflicted value is a
+        conflicted field; Claims that agree on a one-cardinality value but not
+        on the field state no single field value either.
+        """
 
+        subject_path = row.bindings.get(ref.binding)
+        if subject_path is None:
+            return _ABSENT
+        claims = self._backend.claims_on(subject_path, ref.predicate)
+        if not claims:
+            return _ABSENT
+        if self._claim_value(row, ref.binding, ref.predicate).state == "conflict":
+            return _CONFLICT
+        values = byte_sorted(
+            tuple(
+                claim.row.accepted.claim.statement.role
+                if ref.field == "role"
+                else claim.visibility.verdict
+                for claim in claims
+            )
+        )
+        if any(claim.row.cardinality == "many" for claim in claims):
+            return _Value(state="present", value=list(values), many=values)
+        if len(values) == 1:
+            return _Value(state="present", value=values[0])
+        if self._definition.evaluation_policy.conflict_behavior == "refuse_on_conflict":
+            subject = self._backend.subject(subject_path)
+            assert subject is not None
+            raise _refuse(
+                CLAIM_CONFLICT,
+                f"Accepted Claims of one value differ in their {ref.field}.",
+                statement_digests=tuple(claim.visibility.statement_digest for claim in claims),
+                subject_identities=(subject.shell.identity.qualified,),
+            )
+        return _CONFLICT
 
-def _optional_path_aliases(query_schema: NamedQuerySchema) -> frozenset[str]:
-    """Return aliases that may be absent because their traversal step is non-required."""
-    return frozenset(
-        step.alias
-        for step in query_schema.traversal
-        if not step.required and step.alias is not None
-    )
+    def resolve(self, row: _Row, ref: QueryValueRef) -> _Value:
+        """Resolve one declared value reference against a bound row."""
 
+        if isinstance(ref, QueryLiteralRef):
+            return _Value(state="present", value=ref.value)
+        if isinstance(ref, QueryParameterRef):
+            if ref.parameter not in self._parameters:
+                return _ABSENT
+            return _Value(state="present", value=self._parameters[ref.parameter])
+        if isinstance(ref, QueryEvaluationTimeRef):
+            return _Value(state="present", value=_render_time(self._evaluation_time))
+        if isinstance(ref, QuerySubjectFieldRef):
+            subject_path = row.bindings.get(ref.binding)
+            if subject_path is None:
+                if ref.binding in row.bindings:
+                    return _ABSENT
+                raise _refuse(
+                    SUBJECT_FIELD_UNAVAILABLE,
+                    "A Subject field was read through a binding that carries no Subject.",
+                )
+            subject = self._backend.subject(subject_path)
+            assert subject is not None
+            return _Value(
+                state="present",
+                value=(
+                    subject.shell.subject_id
+                    if ref.field == "subject_id"
+                    else subject.shell.subject_kind
+                ),
+            )
+        if isinstance(ref, QueryClaimFieldRef):
+            return self._claim_field(row, ref)
+        return self._claim_value(row, ref.binding, ref.predicate)
 
-def _apply_path_budgets(
-    contexts: list[QueryRowContext],
-    *,
-    max_paths_per_result: int | None,
-    traversal_max_paths: int | None,
-    traversal_truncated: bool,
-) -> _PathBudgetResult:
-    """Apply final retained-path-per-result budget before query ordering and limit."""
-    if traversal_max_paths is None and max_paths_per_result is None:
-        return _PathBudgetResult(
-            contexts=list(contexts),
-            total_path_count=None,
-            retained_path_count=None,
-            path_truncated=False,
-            truncation_reasons=[],
+    def typed(
+        self,
+        row: _Row,
+        ref: QueryValueRef,
+        value_type: QueryValueType,
+        *,
+        form: tuple[str, ...] = (),
+        vocabulary: tuple[str, ...] = (),
+        key_rule: KeyNormalizer | None = None,
+    ) -> QueryTypedValue | None:
+        """Return the one declared-type comparable, or None when there is no one value.
+
+        Ordering reads one value per row: a many-valued field holding exactly one
+        orders as it; several have no single value to order by. ``form`` is the
+        canonical form of the stored values this operand is compared with; the
+        operand is canonicalized by it first. ``vocabulary`` is the closed value
+        set of a Claim field it is compared with.
+        """
+
+        resolved = self.resolve(row, ref)
+        if resolved.state != "present":
+            return None
+        value = resolved.value
+        if resolved.many is not None:
+            if len(resolved.many) != 1:
+                return None
+            value = resolved.many[0]
+        return self._coerce(
+            ref, value, value_type, form=form, vocabulary=vocabulary, key_rule=key_rule
         )
 
-    ordered = sorted(contexts, key=stable_row_identity)
-    total_path_count = None if traversal_truncated else len(ordered)
-    retained = ordered
-    reasons: list[str] = ["max_paths"] if traversal_truncated else []
+    def typed_values(
+        self,
+        row: _Row,
+        ref: QueryValueRef,
+        value_type: QueryValueType,
+        *,
+        form: tuple[str, ...] = (),
+        vocabulary: tuple[str, ...] = (),
+        key_rule: KeyNormalizer | None = None,
+    ) -> tuple[QueryTypedValue, ...] | None:
+        """Every declared-type comparable an operand holds, or None when it is absent.
 
-    if max_paths_per_result is not None:
-        per_result_counts: dict[tuple[str, str], int] = {}
-        per_result_retained: list[QueryRowContext] = []
-        for context in retained:
-            key = (context.result.entity_type, context.result.entity_id)
-            count = per_result_counts.get(key, 0)
-            if count >= max_paths_per_result:
-                if "max_paths_per_result" not in reasons:
-                    reasons.append("max_paths_per_result")
-                continue
-            per_result_counts[key] = count + 1
-            per_result_retained.append(context)
-        retained = per_result_retained
+        A filter compares each value of a many-valued field: it holds when any
+        value satisfies it (``ne`` and ``not in``: when no value is excluded),
+        as the compact ``--where`` reads the same field.
+        """
 
-    retained_path_count = len(retained)
-    return _PathBudgetResult(
-        contexts=retained,
-        total_path_count=total_path_count,
-        retained_path_count=retained_path_count,
-        path_truncated=bool(reasons),
-        truncation_reasons=reasons,
-    )
+        resolved = self.resolve(row, ref)
+        if resolved.state != "present":
+            return None
+        values = resolved.many if resolved.many is not None else (resolved.value,)
+        if not values:
+            return None
+        return tuple(
+            self._coerce(
+                ref, value, value_type, form=form, vocabulary=vocabulary, key_rule=key_rule
+            )
+            for value in values
+        )
+
+    def _coerce(
+        self,
+        ref: QueryValueRef,
+        value: object,
+        value_type: QueryValueType,
+        *,
+        form: tuple[str, ...],
+        vocabulary: tuple[str, ...],
+        key_rule: KeyNormalizer | None = None,
+    ) -> QueryTypedValue:
+        if form and not (key_rule is not None and isinstance(value, str)):
+            try:
+                value = canonicalize_literal(value, form)
+            except CanonicalFormDidNotConverge as exc:
+                raise _refuse(VALUE_TYPE_MISMATCH, str(exc)) from exc
+        if key_rule is not None and isinstance(value, str):
+            # The shared key canonicalization (form, normalizer, both checks):
+            # an operand no stored key can equal refuses, never silently misses.
+            try:
+                value = canonical_key_part(value, form, key_rule)
+            except KeyNormalizationRefused as exc:
+                raise _refuse(VALUE_TYPE_MISMATCH, f"not a key of this field: {exc}") from exc
+        if (
+            value_type == "subject_reference"
+            and isinstance(ref, QueryParameterRef)
+            and isinstance(value, str)
+            and split_reference(value) is None
+        ):
+            kinds = _entry_parameter_kinds(self._definition, ref.parameter)
+            if kinds is not None and len(kinds) == 1:
+                # The entry parameter binds the bare id the entry selects by;
+                # compared with stored Subject references it is that Subject.
+                value = f"Subject:{kinds[0]}/{value}"
+        if (
+            value_type == "subject_reference"
+            and self._resolve_reference is not None
+            and isinstance(ref, QueryLiteralRef | QueryParameterRef)
+            and isinstance(value, str)
+        ):
+            # A Subject reference the definition or caller wrote resolves
+            # exactly as at every other entry point: the exact Subject, else
+            # one alias of its kind. The stored definition is never rewritten.
+            try:
+                value = self._resolve_reference(value)
+            except SubjectReferenceAmbiguous as exc:
+                raise _refuse(ALIAS_AMBIGUOUS, str(exc)) from exc
+        coerced = coerce_query_value(value, value_type)
+        if not coerced.ok:
+            raise _refuse(
+                VALUE_TYPE_MISMATCH,
+                f"A query value is not of its declared {value_type} type.",
+            )
+        if vocabulary and value not in vocabulary:
+            raise _refuse(
+                VALUE_TYPE_MISMATCH,
+                f"A query value compared with a Claim field is not one of {', '.join(vocabulary)}.",
+            )
+        return coerced
+
+    def matches(self, row: _Row, filter_: QueryFilter) -> bool:
+        """Evaluate one declared filter; an absent or conflicted value never matches.
+
+        A many-valued operand matches when any of its values does; ``ne``
+        matches when none of them equals the other side.
+        """
+
+        if isinstance(filter_, QueryConjunctionFilter):
+            return all(self.matches(row, item) for item in filter_.filters)
+        if isinstance(filter_, QueryDisjunctionFilter):
+            return any(self.matches(row, item) for item in filter_.filters)
+        if isinstance(filter_, QueryNegationFilter):
+            return not self.matches(row, filter_.operand)
+        if isinstance(filter_, QueryClaimPresenceFilter):
+            subject_path = row.bindings.get(filter_.binding)
+            present = False
+            if subject_path is not None:
+                claims = self._backend.claims_on(subject_path, filter_.predicate)
+                for claim in claims:
+                    row.record(claim.visibility)
+                present = bool(claims)
+            return present != filter_.negated
+        if isinstance(filter_, QueryComparisonFilter):
+            left = self.typed_values(
+                row,
+                filter_.left,
+                filter_.value_type,
+                form=self._operand_form(filter_.left, filter_.right),
+                vocabulary=self._operand_vocabulary(filter_.left, filter_.right),
+                key_rule=self._operand_key_rule(filter_.left, filter_.right),
+            )
+            right = self.typed_values(
+                row,
+                filter_.right,
+                filter_.value_type,
+                form=self._operand_form(filter_.right, filter_.left),
+                vocabulary=self._operand_vocabulary(filter_.right, filter_.left),
+                key_rule=self._operand_key_rule(filter_.right, filter_.left),
+            )
+            if left is None or right is None:
+                return False
+            orders = (
+                _compare(one.value, other.value, filter_.value_type)
+                for one in left
+                for other in right
+            )
+            if filter_.operator == "ne":
+                return not any(order == 0 for order in orders)
+            return any(_OPERATORS[filter_.operator](order) for order in orders)
+        return self._membership(row, filter_)
+
+    def _membership(self, row: _Row, filter_: QueryMembershipFilter) -> bool:
+        left = self.typed_values(
+            row,
+            filter_.left,
+            filter_.value_type,
+            form=self._operand_form(filter_.left, *filter_.values),
+            vocabulary=self._operand_vocabulary(filter_.left, *filter_.values),
+            key_rule=self._operand_key_rule(filter_.left, *filter_.values),
+        )
+        if left is None:
+            return filter_.negated
+        found = False
+        for candidate in filter_.values:
+            right = self.typed_values(
+                row,
+                candidate,
+                filter_.value_type,
+                form=self._operand_form(candidate, filter_.left),
+                vocabulary=self._operand_vocabulary(candidate, filter_.left),
+                key_rule=self._operand_key_rule(candidate, filter_.left),
+            )
+            if right is not None and any(
+                _compare(one.value, other.value, filter_.value_type) == 0
+                for one in left
+                for other in right
+            ):
+                found = True
+                break
+        return found != filter_.negated
+
+    def order(
+        self,
+        rows: Sequence[_Row],
+        orderings: tuple[QueryOrdering, ...],
+        *,
+        tiebreaks: Sequence[bytes] | None = None,
+    ) -> list[int]:
+        """Return the declared row order with a canonical byte-order tiebreak.
+
+        A row whose ordering key is absent or conflicted always sorts last,
+        in both ascending and descending directions, so declared direction can
+        never reorder unknowns against each other.
+        """
+
+        keys = [[self.typed(row, item.key, item.value_type) for item in orderings] for row in rows]
+        identities = [
+            row.identity() if tiebreaks is None else row.identity() + tiebreaks[index]
+            for index, row in enumerate(rows)
+        ]
+
+        def compare(left: int, right: int) -> int:
+            for index, ordering in enumerate(orderings):
+                first, second = keys[left][index], keys[right][index]
+                if first is None and second is None:
+                    continue
+                if first is None:
+                    return 1
+                if second is None:
+                    return -1
+                order = _compare(first.value, second.value, ordering.value_type)
+                if order != 0:
+                    return -order if ordering.direction == "descending" else order
+            if identities[left] == identities[right]:
+                return 0
+            return -1 if identities[left] < identities[right] else 1
+
+        return sorted(range(len(rows)), key=cmp_to_key(compare))
 
 
-def _build_relationship_row(
-    config: CoreConfig,
-    state: _TraversalState,
-) -> QueryRelationshipRow:
-    segment = state.path[-1]
-    return QueryRelationshipRow(
-        relationship_type=segment.relationship_type,
-        from_type=segment.from_type,
-        from_id=segment.from_id,
-        to_type=segment.to_type,
-        to_id=segment.to_id,
-        edge_key=segment.edge_key,
-        claim_id=segment.claim_id,
-        properties=dict(segment.properties),
-        metadata=segment.metadata,
-        entry=entity_with_identity_properties(config, state.entry),
-        from_entity=_find_path_entity(
-            config,
-            state.entities,
-            segment.from_type,
-            segment.from_id,
-        ),
-        to_entity=_find_path_entity(
-            config,
-            state.entities,
-            segment.to_type,
-            segment.to_id,
-        ),
-    )
+class OperandProbe:
+    """The evaluator's own coercion of a filter's row-independent operands.
+
+    A literal or a parameter coerces the same way on every row (the predicate's
+    canonical form, its key normalizer, a Claim field's vocabulary, a Subject
+    reference's alias resolution), so planning can ask, before any row is read,
+    what an operand compares as and whether coercing it refuses. Nothing here
+    reads a Claim.
+    """
+
+    def __init__(
+        self,
+        definition: QueryDefinition,
+        *,
+        parameters: Mapping[str, object],
+        evaluation_time: datetime,
+        canonical_forms: Mapping[str, tuple[str, ...]],
+        key_normalizers: Mapping[str, KeyNormalizer],
+        resolve_reference: SubjectReferenceResolver | None,
+    ) -> None:
+        self._evaluator = _Evaluator(
+            definition,
+            backend=cast(ClaimQueryBackendV1, None),
+            parameters=parameters,
+            evaluation_time=evaluation_time,
+            canonical_forms=canonical_forms,
+            resolve_reference=resolve_reference,
+            key_normalizers=key_normalizers,
+        )
+
+    def values(
+        self, ref: QueryValueRef, value_type: QueryValueType, *others: QueryValueRef
+    ) -> tuple[QueryTypedValue, ...] | None:
+        """What a literal or parameter compares as against ``others``; raises its refusal."""
+
+        assert isinstance(ref, QueryLiteralRef | QueryParameterRef)
+        evaluator = self._evaluator
+        return evaluator.typed_values(
+            _Row(bindings={}),
+            ref,
+            value_type,
+            form=evaluator._operand_form(ref, *others),
+            vocabulary=evaluator._operand_vocabulary(ref, *others),
+            key_rule=evaluator._operand_key_rule(ref, *others),
+        )
+
+    def refuses(self, filter_: QueryFilter) -> bool:
+        """Whether coercing any literal or parameter operand of ``filter_`` refuses."""
+
+        def pairs(
+            item: QueryFilter,
+        ) -> list[tuple[QueryValueRef, QueryValueType, tuple[QueryValueRef, ...]]]:
+            if isinstance(item, QueryConjunctionFilter | QueryDisjunctionFilter):
+                return [pair for child in item.filters for pair in pairs(child)]
+            if isinstance(item, QueryNegationFilter):
+                return pairs(item.operand)
+            if isinstance(item, QueryComparisonFilter):
+                return [
+                    (item.left, item.value_type, (item.right,)),
+                    (item.right, item.value_type, (item.left,)),
+                ]
+            if isinstance(item, QueryMembershipFilter):
+                return [
+                    (item.left, item.value_type, item.values),
+                    *((value, item.value_type, (item.left,)) for value in item.values),
+                ]
+            return []
+
+        try:
+            for ref, value_type, others in pairs(filter_):
+                if isinstance(ref, QueryLiteralRef | QueryParameterRef):
+                    self.values(ref, value_type, *others)
+        except _RefusalSignal:
+            return True
+        return False
 
 
-def _find_path_entity(
-    config: CoreConfig,
-    entities: tuple[EntityInstance, ...],
-    entity_type: str,
-    entity_id: str,
-) -> EntityInstance | None:
-    for entity in entities:
-        if entity.entity_type == entity_type and entity.entity_id == entity_id:
-            return entity_with_identity_properties(config, entity)
+# -- the direct evaluator -------------------------------------------------
+
+
+def _entry_parameter_kinds(definition: QueryDefinition, name: str) -> tuple[str, ...] | None:
+    entry = definition.entry
+    if isinstance(entry, QueryEntry) and entry.subject_id is not None:
+        if entry.subject_id.parameter == name:
+            return entry.subject_kinds
     return None
 
 
-def _flip_relationship_direction(
-    direction: str,
-) -> str:
-    if direction == "outgoing":
-        return "incoming"
-    if direction == "incoming":
-        return "outgoing"
-    return direction
-
-
-def _active_query_policies(
-    config: CoreConfig,
-    query_name: str,
-    relationship_type: str,
-) -> list[Any]:
-    """Return non-expired query policies applicable to one traversal relationship."""
-    return [
-        policy
-        for policy in config.decision_policies
-        if policy.applies_to == "query"
-        and policy.query_name == query_name
-        and policy.relationship_type == relationship_type
-        and not is_expired(policy.expires_at)
-    ]
-
-
-def _policy_should_suppress(
+def bind_reference_form(
+    definition: QueryDefinition,
+    name: str,
+    value_type: QueryValueType,
+    value: object,
     *,
-    config: CoreConfig,
-    policies: list[Any],
-    from_entity: EntityInstance,
-    to_entity: EntityInstance,
-    edge_props: dict[str, Any],
-    context: dict[str, Any],
-    policy_summary: dict[str, int],
-    builder: ReceiptBuilder | None,
-    parent_id: str | None,
-) -> bool:
-    """Apply query-side suppress policies to one traversed edge."""
-    for policy in policies:
-        from_props = entity_properties_with_identity(
-            config, from_entity.entity_type, from_entity.entity_id, from_entity.properties
-        )
-        to_props = entity_properties_with_identity(
-            config, to_entity.entity_type, to_entity.entity_id, to_entity.properties
-        )
-        if not matches_exact_filter(from_props, policy.match.from_match):
-            continue
-        if not matches_exact_filter(to_props, policy.match.to):
-            continue
-        if not matches_exact_filter(edge_props, policy.match.edge):
-            continue
-        if not matches_exact_filter(context, policy.match.context):
-            continue
-        policy_summary[policy.name] = policy_summary.get(policy.name, 0) + 1
-        if builder is not None and parent_id is not None:
-            builder.record_validation(
-                passed=True,
-                detail={
-                    "policy_name": policy.name,
-                    "policy_effect": policy.effect,
-                    "applies_to": "query",
-                },
-                parent_id=parent_id,
-            )
-        return True
-    return False
+    strict: bool = True,
+) -> object:
+    """Spell one Subject-reference parameter the way its position compares it.
 
-
-_CONSTRAINT_RE = re.compile(rf"^(target|source)\.([\w-]+)\s*{COMPARISON_SYMBOL_PATTERN}\s*(.+)$")
-
-
-def _evaluate_constraint(
-    config: CoreConfig,
-    constraint: str,
-    target_entity: EntityInstance,
-    params: dict[str, Any],
-    *,
-    value_type: PredicateValueType | None = None,
-) -> bool:
-    """Evaluate a simple constraint expression.
-
-    Supported format: "target.<property> <op> $<param>" or literal.
-    Source-side constraints are rejected because traversal source semantics
-    depend on relationship direction and are not implemented.
-
-    Examples:
-        "target.vehicle_id == $vehicle_id"
-        "target.category != brakes"
-        "target.year >= 2024"
+    A caller may write a Subject as its bare id, ``kind/id`` or
+    ``Subject:kind/id``. The entry's Subject-id parameter selects by the bare
+    id of an entry kind; a ``subject_reference`` parameter compares as
+    ``Subject:kind/id``, the spelling every stored Subject reference has. A
+    form a position cannot match refuses with its repair (``strict``; else it
+    is left as given for the evaluator to refuse). Forms that already matched
+    bind unchanged, so their parameter digests do not move.
     """
-    match = _CONSTRAINT_RE.match(constraint.strip())
-    if match is None:
-        return True  # Unknown constraint format — don't filter
 
-    side, prop, operator, rhs = match.groups()
-    rhs = rhs.strip()
+    if not isinstance(value, str):
+        return value
+    entry_kinds = _entry_parameter_kinds(definition, name)
+    if entry_kinds is None and value_type != "subject_reference":
+        return value
+    parts = split_reference(value)
+    if entry_kinds is not None:
+        if parts is None:
+            # The bare id, or an alias the entry resolves within its kinds.
+            return value
+        prefix, kind, subject_id = parts
+        if kind in entry_kinds:
+            return subject_id
+        if prefix and strict:
+            raise _refuse(
+                PARAMETER_TYPE_MISMATCH,
+                f"Parameter {name!r} selects the query entry, a {' or '.join(entry_kinds)} "
+                f"Subject, and {value!r} names a {kind}. Repair: pass the Subject of an "
+                "entry kind as its id, kind/id or Subject:kind/id.",
+            )
+        return value
+    if parts is None:
+        if strict:
+            raise _refuse(
+                PARAMETER_TYPE_MISMATCH,
+                f"Parameter {name!r} is a Subject reference compared with stored Subject "
+                f"references, and {value!r} names no Subject kind. Repair: pass it as "
+                "kind/id or Subject:kind/id.",
+            )
+        return value
+    _prefix, kind, subject_id = parts
+    return f"Subject:{kind}/{subject_id}"
 
-    if side == "target":
-        lhs_value = entity_properties_with_identity(
-            config, target_entity.entity_type, target_entity.entity_id, target_entity.properties
-        ).get(prop)
-    else:
-        raise QueryExecutionError(
-            "source-side traversal constraints are not supported; use target.<property> constraints"
+
+def bind_reference_forms(
+    definition: QueryDefinition, parameters: Mapping[str, object]
+) -> dict[str, object]:
+    """Every supplied Subject-reference parameter in its position's spelling; never refuses."""
+
+    declared = {item.name: item.value_type for item in definition.parameters}
+    return {
+        name: (
+            bind_reference_form(definition, name, declared[name], value, strict=False)
+            if name in declared
+            else value
         )
+        for name, value in parameters.items()
+    }
 
-    if rhs.startswith("$"):
-        rhs_value = params.get(rhs[1:])
-    else:
-        rhs_value = _parse_literal(rhs)
 
-    return evaluate_typed_comparison(
-        lhs_value,
-        operator,
-        rhs_value,
-        value_type=value_type,
+def resolve_query_parameters(
+    definition: QueryDefinition,
+    parameters: Mapping[str, object] | None,
+) -> tuple[QueryParameterBinding, ...]:
+    """Bind caller parameters to their declarations or refuse fail-closed.
+
+    A Subject-reference parameter binds in the spelling its position compares
+    (:func:`bind_reference_form`), whichever of its forms the caller wrote.
+    """
+
+    supplied = dict(parameters or {})
+    declared = {item.name: item for item in definition.parameters}
+    unknown = byte_sorted(tuple(set(supplied) - set(declared)))
+    if unknown:
+        raise _refuse(
+            PARAMETER_UNDECLARED,
+            f"The query does not declare the parameter {unknown[0]!r}.",
+        )
+    bindings: list[QueryParameterBinding] = []
+    for name in sorted(declared, key=lambda item: item.encode("utf-8")):
+        declaration = declared[name]
+        value = supplied[name] if name in supplied else declaration.default
+        if value is None and declaration.required:
+            # An omitted key and an explicit null both leave a required
+            # parameter without a value: binding evaluation drops a None
+            # value the same way it drops an absent one, so a required
+            # parameter supplied as null must refuse here, not complete with
+            # the row field it feeds silently absent.
+            raise _refuse(PARAMETER_MISSING, f"The query requires the parameter {name!r}.")
+        if value is not None:
+            value = bind_reference_form(definition, name, declaration.value_type, value)
+        if (
+            value is not None
+            and not coerce_query_value(normalize_canonical(value), declaration.value_type).ok
+        ):
+            raise _refuse(
+                PARAMETER_TYPE_MISMATCH,
+                f"Parameter {name!r} is not of its declared {declaration.value_type} type.",
+            )
+        bindings.append(
+            QueryParameterBinding(name=name, value_type=declaration.value_type, value=value)
+        )
+    return tuple(bindings)
+
+
+def procedure_read_budgets(
+    definition: QueryDefinition, ceiling: ProcedureReadCeiling
+) -> QueryBudgets:
+    """A Procedure read's budgets: every result and path limit lifted to its ceiling.
+
+    The declared traversal depth is kept. The ceiling is the run's remaining
+    ``max_read_rows``; anything it clips refuses the read, never truncates it.
+    """
+
+    return QueryBudgets(
+        max_results=ceiling.rows,
+        max_traversal_depth=definition.default_budgets.max_traversal_depth,
+        max_paths=ceiling.rows,
+        max_paths_per_result=ceiling.rows,
     )
 
 
-def _parse_literal(value: str) -> Any:
-    """Parse a literal value from a constraint string."""
-    if value.lower() == "true":
-        return True
-    if value.lower() == "false":
-        return False
+def _effective_budgets(
+    definition: QueryDefinition,
+    budgets: QueryBudgets | None,
+    procedure_read: ProcedureReadCeiling | None = None,
+) -> QueryBudgets:
+    if procedure_read is not None:
+        # A Procedure read is not an interactive read: its ceiling replaces the
+        # definition's interactive limits for this one call.
+        return procedure_read_budgets(definition, procedure_read)
+    effective = budgets or definition.default_budgets
+    if not effective.within(definition.maximum_budgets):
+        raise _refuse(
+            BUDGET_EXCEEDS_MAXIMUM,
+            "The caller budget exceeds the QueryDefinition's declared ceiling.",
+        )
+    if len(definition.traversal) > effective.max_traversal_depth:
+        raise _refuse(
+            BUDGET_BELOW_DECLARED_DEPTH,
+            "The caller budget cannot admit the declared traversal depth.",
+        )
+    return effective
+
+
+def _expiry(definition: QueryDefinition, evaluation_time: datetime) -> datetime | None:
+    expiry = definition.evaluation_policy.result_expiry
+    if expiry is None:
+        return None
+    return evaluation_time + timedelta(microseconds=expiry.microseconds)
+
+
+_ROW_BINDINGS: ValueMemo[QueryRowBinding] = ValueMemo(capacity=4096)
+_TRUNCATIONS: ValueMemo[QueryTruncation] = ValueMemo(capacity=256)
+
+
+def _query_truncation(
+    *,
+    clipped_budgets: tuple[QueryClippedBudget, ...],
+    truncated_includes: tuple[str, ...],
+    candidate_result_count: int,
+    returned_result_count: int,
+    evaluated_path_count: int | None,
+    retained_path_count: int | None,
+) -> QueryTruncation:
+    # Accounting still comes from this evaluation. Only the identical immutable
+    # result metadata is shared; no query answer or visibility is memoized.
+    key = (
+        clipped_budgets,
+        truncated_includes,
+        candidate_result_count,
+        returned_result_count,
+        evaluated_path_count,
+        retained_path_count,
+    )
+
+    def build() -> QueryTruncation:
+        return QueryTruncation(
+            clipped_budgets=clipped_budgets,
+            truncated_includes=truncated_includes,
+            candidate_result_count=candidate_result_count,
+            returned_result_count=returned_result_count,
+            evaluated_path_count=evaluated_path_count,
+            retained_path_count=retained_path_count,
+        )
+
+    return build() if sum(map(len, truncated_includes)) > 4096 else _TRUNCATIONS.derive(key, build)
+
+
+def _binding_row(
+    backend: ClaimQueryBackendV1,
+    binding: str,
+    path: str | None,
+) -> QueryRowBinding:
+    if path is None:
+        return QueryRowBinding(binding=binding)
+    subject = backend.subject(path)
+    assert subject is not None
+    # A query can use the same subject binding in its result and truncation
+    # witness. These are the complete scalar inputs of the served contract.
+    identity = subject.shell.identity.qualified
+    kind, identifier = subject.shell.subject_kind, subject.shell.subject_id
+    key = (binding, identity, kind, identifier, path)
+
+    def build() -> QueryRowBinding:
+        return QueryRowBinding(
+            binding=binding,
+            subject_identity=identity,
+            subject_kind=kind,
+            subject_id=identifier,
+            subject_path=path,
+        )
+
+    if is_sealed(subject.shell):
+        return _ROW_BINDINGS.derive(key, build)
+    # Caller-owned mutable backends keep the existing request-only carrier.
+    return request_derive(("query.row_binding", *key), build)
+
+
+def _dedupe_key(row: _Row, definition: QueryDefinition) -> bytes | None:
+    if definition.dedupe == "none":
+        return None
+    if definition.dedupe == "subject":
+        return canonical_bytes(row.bindings.get(definition.result_binding))
+    return row.identity()
+
+
+def evaluate_claim_query(
+    definition: AcceptedQueryDefinition,
+    *,
+    facts: ClaimQueryFactsV1,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    parameters: Mapping[str, object] | None = None,
+    budgets: QueryBudgets | None = None,
+    backend_factory: ClaimQueryBackendFactoryV1 = DirectClaimFactIndex,
+    resolve_reference: SubjectReferenceResolver | None = None,
+    entry_paths: tuple[str, ...] | None = None,
+    entry_candidate_count: int | None = None,
+    canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
+    key_normalizers: Mapping[str, KeyNormalizer] | None = None,
+) -> ClaimQueryResult:
+    """Evaluate one accepted QueryDefinition against accepted Claim facts.
+
+    ``procedure_read`` evaluates for a Procedure: result, path and include
+    limits are lifted to its ceiling for this call (``procedure_read_budgets``).
+
+    The result is a pure function of the definition digest, the resolved
+    parameters, the accepted coordinate, and the explicit evaluation time. The
+    backend is materialized from those accepted facts inside the evaluation, so
+    a caller can choose how state is stored but never what it says.
+    ``resolve_reference`` resolves the Subject references a literal or a
+    parameter compares, at the same coordinate (``indexes.subject_aliases``).
+    """
+
+    query = definition.query
+    if isinstance(query.entry, QueryArtifactsEntry):
+        raise ValueError("artifact definition queries require the indexed artifact reader")
+    if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+        raise ClaimQueryError(
+            EVALUATION_TIME_NOT_ABSOLUTE,
+            "a query evaluation time must be an explicit absolute instant",
+        )
+    bindings: tuple[QueryParameterBinding, ...] | None = None
     try:
-        return int(value)
-    except ValueError:
-        pass
+        if not canonical_equal(
+            coordinate.model_dump(mode="json"), facts.coordinate.model_dump(mode="json")
+        ):
+            raise _refuse(
+                COORDINATE_MISMATCH,
+                "The evaluation coordinate differs from the supplied accepted facts.",
+            )
+        bindings = resolve_query_parameters(query, parameters)
+        return _evaluate(
+            definition,
+            facts=facts,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            bindings=bindings,
+            budgets=_effective_budgets(query, budgets, procedure_read),
+            include_cap=None if procedure_read is None else procedure_read.rows,
+            backend_factory=backend_factory,
+            resolve_reference=resolve_reference,
+            entry_paths=entry_paths,
+            entry_candidate_count=entry_candidate_count,
+            canonical_forms=canonical_forms,
+            key_normalizers=key_normalizers,
+        )
+    except _RefusalSignal as signal:
+        return ClaimQueryResult(
+            verdict="refused",
+            definition_path=definition.path,
+            definition_digest=definition.artifact_digest,
+            parameter_digest=(
+                query_attempted_parameter_digest(parameters)
+                if bindings is None
+                else query_parameter_digest(bindings)
+            ),
+            coordinate=coordinate,
+            evaluated_at=evaluation_time,
+            expires_at=_expiry(query, evaluation_time),
+            budgets=budgets or query.default_budgets,
+            result_shape=query.result_shape,
+            result_cardinality=query.result_cardinality,
+            result_binding=query.result_binding,
+            dedupe=query.dedupe,
+            truncation=QueryTruncation(),
+            refusal=signal.refusal,
+        )
+
+
+def evaluate_artifact_query(
+    definition: AcceptedQueryDefinition,
+    *,
+    read: Callable[[QueryArtifactsEntry, int], tuple[int, tuple[QueryArtifactDefinition, ...]]],
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    parameters: Mapping[str, object] | None = None,
+    budgets: QueryBudgets | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
+) -> ClaimQueryResult:
+    """Evaluate definition membership using the coordinate-bound indexed reader."""
+    query = definition.query
+    assert isinstance(query.entry, QueryArtifactsEntry)
+    if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+        raise ClaimQueryError(EVALUATION_TIME_NOT_ABSOLUTE, "query time must be absolute")
+    bindings = None
+    refusal = None
+    rows: tuple[QueryResultRow, ...] = ()
+    truncation = QueryTruncation()
+    effective = budgets or query.default_budgets
     try:
-        return float(value)
-    except ValueError:
-        pass
-    # Strip quotes if present
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-        return value[1:-1]
-    return value
+        bindings = resolve_query_parameters(query, parameters)
+        effective = _effective_budgets(query, budgets, procedure_read)
+        count, definitions = read(query.entry, effective.max_results)
+        rows = tuple(
+            QueryResultRow(tag="playbill-query-result-row-v2", bindings=(), artifact=item)
+            for item in definitions
+        )
+        truncation = QueryTruncation(
+            clipped_budgets=("max_results",) if count > len(rows) else (),
+            candidate_result_count=count,
+            returned_result_count=len(rows),
+        )
+    except _RefusalSignal as signal:
+        refusal = signal.refusal
+    return ClaimQueryResult(
+        tag="playbill-query-result-v2",
+        verdict="refused" if refusal else "completed",
+        definition_path=definition.path,
+        definition_digest=definition.artifact_digest,
+        parameters=bindings or (),
+        parameter_digest=query_attempted_parameter_digest(parameters)
+        if bindings is None
+        else query_parameter_digest(bindings),
+        coordinate=coordinate,
+        evaluated_at=evaluation_time,
+        expires_at=_expiry(query, evaluation_time),
+        budgets=effective,
+        result_shape=query.result_shape,
+        result_cardinality=query.result_cardinality,
+        result_binding=query.result_binding,
+        dedupe=query.dedupe,
+        rows=rows,
+        truncation=truncation,
+        refusal=refusal,
+    )
+
+
+def _entry_rows(
+    query: QueryDefinition,
+    backend: ClaimQueryBackendV1,
+    parameters: Mapping[str, object],
+) -> list[_Row]:
+    assert isinstance(query.entry, QueryEntry)
+    subject_id: str | None = None
+    if query.entry.subject_id is not None:
+        supplied = parameters.get(query.entry.subject_id.parameter)
+        if not isinstance(supplied, str):
+            raise _refuse(
+                PARAMETER_MISSING,
+                "The query entry binds a Subject identifier parameter that is unbound.",
+            )
+        subject_id = supplied
+    return [
+        _Row(bindings={query.entry.binding: path})
+        for path in backend.subjects(query.entry.subject_kinds, subject_id=subject_id)
+    ]
+
+
+def _traverse(
+    query: QueryDefinition,
+    evaluator: _Evaluator,
+    backend: ClaimQueryBackendV1,
+    rows: list[_Row],
+    budgets: QueryBudgets,
+    clipped: set[QueryClippedBudget],
+) -> list[_Row]:
+    for step in query.traversal:
+        produced: list[_Row] = []
+        for row in rows:
+            if isinstance(step, QueryPairStep):
+                matched = False
+                for edge, pair, reads in pair_edges(backend, step, row.bindings):
+                    candidate = row.copy()
+                    candidate.bindings[step.binding] = pair
+                    candidate.edges = (*candidate.edges, (step.binding, edge))
+                    for visibility in reads:
+                        candidate.record(visibility)
+                    if step.where is not None and not evaluator.matches(candidate, step.where):
+                        continue
+                    matched = True
+                    produced.append(candidate)
+                if not matched and not step.required:
+                    relaxed = row.copy()
+                    relaxed.bindings[step.binding] = None
+                    produced.append(relaxed)
+                continue
+            source = row.bindings.get(step.from_binding)
+            matched = False
+            if source is not None:
+                for claim, target in relation_edges(
+                    backend, source, step.predicate, step.direction
+                ):
+                    subject = backend.subject(target)
+                    assert subject is not None
+                    if (
+                        step.target_subject_kinds
+                        and subject.shell.subject_kind not in step.target_subject_kinds
+                    ):
+                        continue
+                    candidate = row.copy()
+                    candidate.bindings[step.binding] = target
+                    candidate.edges = (*candidate.edges, (step.binding, claim.visibility))
+                    candidate.record(claim.visibility)
+                    if step.where is not None and not evaluator.matches(candidate, step.where):
+                        continue
+                    matched = True
+                    produced.append(candidate)
+            if not matched and not step.required:
+                relaxed = row.copy()
+                relaxed.bindings[step.binding] = None
+                produced.append(relaxed)
+        produced.sort(key=lambda item: item.identity())
+        if budgets.max_paths is not None and len(produced) > budgets.max_paths:
+            produced = produced[: budgets.max_paths]
+            clipped.add("max_paths")
+        rows = produced
+    return rows
+
+
+def _hydrate(
+    evaluator: _Evaluator,
+    backend: ClaimQueryBackendV1,
+    row: _Row,
+    include: QueryInclude,
+    *,
+    cap: int | None = None,
+) -> QueryIncludeResult:
+    source = row.bindings.get(include.from_binding)
+    pairs: list[tuple[VisibleClaimRow, str | None]] = []
+    if source is not None:
+        if include.direction == "forward":
+            pairs = [
+                (claim, claim.object_subject_path)
+                for claim in backend.claims_on(source, include.predicate)
+            ]
+        else:
+            pairs = [
+                (claim, claim.subject_path)
+                for claim in backend.claims_to(source, include.predicate)
+            ]
+    scoped: list[_Row] = []
+    candidates: list[tuple[VisibleClaimRow, str | None]] = []
+    for claim, target in pairs:
+        candidate = row.copy()
+        candidate.bindings[include.binding] = target
+        candidate.record(claim.visibility)
+        if include.where is not None and not evaluator.matches(candidate, include.where):
+            continue
+        scoped.append(candidate)
+        candidates.append((claim, target))
+    order = evaluator.order(
+        scoped,
+        include.orderings,
+        tiebreaks=[claim.visibility.claim_path.encode("utf-8") for claim, _ in candidates],
+    )[: include.max_items if cap is None else cap]
+    for position in order:
+        for visibility in scoped[position].ordered_reads():
+            row.record(visibility)
+        for conflict in scoped[position].ordered_conflicts():
+            row.record_conflict(conflict)
+    return QueryIncludeResult(
+        name=include.name,
+        items=tuple(
+            QueryIncludeItem(
+                claim_object=candidates[position][0].row.accepted.claim.statement.object.model_dump(
+                    mode="json"
+                ),
+                subject_identity=(
+                    None
+                    if candidates[position][1] is None
+                    else _binding_row(
+                        backend, include.binding, candidates[position][1]
+                    ).subject_identity
+                ),
+                visibility=candidates[position][0].visibility,
+            )
+            for position in order
+        ),
+        candidate_count=len(candidates),
+        max_items=include.max_items if cap is None else max(cap, include.max_items),
+        truncated=len(candidates) > len(order),
+    )
+
+
+def _result_subject_identities(
+    backend: ClaimQueryBackendV1,
+    query: QueryDefinition,
+    rows: Sequence[_Row],
+) -> tuple[str, ...]:
+    return byte_sorted(
+        tuple(
+            _binding_row(
+                backend, query.result_binding, row.bindings.get(query.result_binding)
+            ).subject_identity
+            or ""
+            for row in rows
+        )
+    )
+
+
+def _evaluate(
+    definition: AcceptedQueryDefinition,
+    *,
+    facts: ClaimQueryFactsV1,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    bindings: tuple[QueryParameterBinding, ...],
+    budgets: QueryBudgets,
+    backend_factory: ClaimQueryBackendFactoryV1,
+    include_cap: int | None = None,
+    resolve_reference: SubjectReferenceResolver | None = None,
+    entry_paths: tuple[str, ...] | None = None,
+    entry_candidate_count: int | None = None,
+    canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
+    key_normalizers: Mapping[str, KeyNormalizer] | None = None,
+) -> ClaimQueryResult:
+    query = definition.query
+    backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
+    if not canonical_equal(
+        backend.coordinate.model_dump(mode="json"), coordinate.model_dump(mode="json")
+    ):
+        raise _refuse(
+            COORDINATE_MISMATCH,
+            "The backend was materialized at a different accepted coordinate.",
+        )
+    parameters = {item.name: item.value for item in bindings if item.value is not None}
+    evaluator = _Evaluator(
+        query,
+        backend=backend,
+        parameters=parameters,
+        evaluation_time=evaluation_time,
+        canonical_forms=canonical_forms
+        if canonical_forms is not None
+        else {
+            row.accepted.claim.statement.predicate: row.canonical_form
+            for row in facts.claims
+            if row.canonical_form
+        },
+        resolve_reference=resolve_reference,
+        key_normalizers=key_normalizers
+        if key_normalizers is not None
+        else {
+            row.accepted.claim.statement.predicate: row.key_normalizer
+            for row in facts.claims
+            if row.key_normalizer is not None
+        },
+    )
+    clipped: set[QueryClippedBudget] = set()
+
+    rows = _traverse(
+        query,
+        evaluator,
+        backend,
+        _entry_rows(query, backend, parameters)
+        if entry_paths is None
+        else [_Row(bindings={query.entry.binding: path}) for path in entry_paths],
+        budgets,
+        clipped,
+    )
+    if query.where is not None:
+        rows = [row for row in rows if evaluator.matches(row, query.where)]
+
+    seen: set[bytes] = set()
+    deduped: list[_Row] = []
+    for row in sorted(rows, key=lambda item: item.identity()):
+        key = _dedupe_key(row, query)
+        if key is not None:
+            if key in seen:
+                continue
+            seen.add(key)
+        deduped.append(row)
+    rows = deduped
+    evaluated_path_count = len(rows) if budgets.max_paths is not None else None
+
+    truncated_includes: set[str] = set()
+    for row in rows:
+        row.includes = tuple(
+            _hydrate(evaluator, backend, row, item, cap=include_cap) for item in query.includes
+        )
+        truncated_includes.update(item.name for item in row.includes if item.truncated)
+    if truncated_includes:
+        clipped.add("include_max_items")
+
+    if budgets.max_paths_per_result is not None:
+        counts: dict[str | None, int] = {}
+        retained: list[_Row] = []
+        for row in rows:
+            key_path = row.bindings.get(query.result_binding)
+            count = counts.get(key_path, 0)
+            if count >= budgets.max_paths_per_result:
+                clipped.add("max_paths_per_result")
+                continue
+            counts[key_path] = count + 1
+            retained.append(row)
+        rows = retained
+    retained_path_count = len(rows) if budgets.max_paths is not None else None
+
+    rows = [rows[position] for position in evaluator.order(rows, query.orderings)]
+    candidate_result_count = len(rows) if entry_candidate_count is None else entry_candidate_count
+    conflicts: dict[bytes, QueryConflict] = {}
+    if query.result_cardinality == "one" and candidate_result_count > 1:
+        identities = _result_subject_identities(backend, query, rows)
+        if query.evaluation_policy.conflict_behavior == "refuse_on_conflict":
+            raise _refuse(
+                RESULT_CONFLICT,
+                "A one-cardinality query resolves to more than one accepted row.",
+                subject_identities=identities,
+            )
+        conflict = QueryConflict(kind="result_cardinality", subject_identities=identities)
+        conflicts[canonical_bytes(conflict.model_dump(mode="json"))] = conflict
+    if candidate_result_count > budgets.max_results:
+        rows = rows[: budgets.max_results]
+        clipped.add("max_results")
+
+    result_rows: list[QueryResultRow] = []
+    for row in rows:
+        fields: list[QueryProjectedField] = []
+        for declared in () if query.projection is None else query.projection.fields:
+            resolved = evaluator.resolve(row, declared.value)
+            fields.append(
+                QueryProjectedField(
+                    name=declared.name,
+                    state=resolved.state,
+                    value=resolved.value if resolved.state == "present" else None,
+                )
+            )
+        relation = next(
+            (item for binding, item in row.edges if binding == query.result_binding),
+            None,
+        )
+        for conflict in row.ordered_conflicts():
+            conflicts[canonical_bytes(conflict.model_dump(mode="json"))] = conflict
+        result_rows.append(
+            QueryResultRow(
+                bindings=tuple(
+                    _binding_row(backend, binding, row.bindings.get(binding))
+                    for binding in query.row_bindings
+                ),
+                result_subject_identity=_binding_row(
+                    backend, query.result_binding, row.bindings.get(query.result_binding)
+                ).subject_identity,
+                path=tuple(item for _, item in row.edges),
+                relation_claim=relation if query.result_shape == "relation_claim" else None,
+                fields=QueryProjectedFields(fields),
+                read_claims=row.ordered_reads(),
+                includes=row.includes,
+                conflicts=row.ordered_conflicts(),
+            )
+        )
+
+    ordered_budgets: tuple[QueryClippedBudget, ...] = tuple(
+        item for item in _CLIPPED_BUDGET_ORDER if item in clipped
+    )
+    return ClaimQueryResult(
+        verdict="completed",
+        definition_path=definition.path,
+        definition_digest=definition.artifact_digest,
+        parameters=bindings,
+        parameter_digest=query_parameter_digest(bindings),
+        coordinate=coordinate,
+        evaluated_at=evaluation_time,
+        expires_at=_expiry(query, evaluation_time),
+        budgets=budgets,
+        result_shape=query.result_shape,
+        result_cardinality=query.result_cardinality,
+        result_binding=query.result_binding,
+        dedupe=query.dedupe,
+        rows=tuple(result_rows),
+        conflicts=tuple(conflicts[key] for key in sorted(conflicts)),
+        truncation=_query_truncation(
+            clipped_budgets=ordered_budgets,
+            truncated_includes=byte_sorted(tuple(truncated_includes)),
+            candidate_result_count=candidate_result_count,
+            returned_result_count=len(result_rows),
+            evaluated_path_count=evaluated_path_count,
+            retained_path_count=retained_path_count,
+        ),
+        verdict_visibility=_verdict_visibility(backend, policy=query.evaluation_policy),
+    )
+
+
+def _verdict_visibility(
+    backend: ClaimQueryBackendV1,
+    *,
+    policy: QueryEvaluationPolicy,
+) -> QueryVerdictVisibility | None:
+    """Account for the Claims this evaluation's policy declined to show.
+
+    None when the policy hid nothing, so a definition that shows everything it
+    reads carries no advisory at all.
+    """
+
+    excluded = tuple(backend.excluded_by_verdict)
+    if not excluded:
+        return None
+    return QueryVerdictVisibility(
+        excluded_claim_count=sum(count for _verdict, count in excluded),
+        excluded_by_verdict=tuple(
+            QueryVerdictExclusion(
+                verdict=cast(EvidenceRelativeClaimVerdictV1, verdict),
+                excluded_claim_count=count,
+            )
+            for verdict, count in excluded
+        ),
+        visible_verdicts=policy.visible_verdicts,
+    )
+
+
+_CLIPPED_BUDGET_ORDER: tuple[QueryClippedBudget, ...] = (
+    "include_max_items",
+    "max_paths",
+    "max_paths_per_result",
+    "max_results",
+)
+
+
+__all__ = [
+    "BUDGET_BELOW_DECLARED_DEPTH",
+    "BUDGET_EXCEEDS_MAXIMUM",
+    "CLAIM_CONFLICT",
+    "COORDINATE_MISMATCH",
+    "EVALUATION_TIME_NOT_ABSOLUTE",
+    "PARAMETER_MISSING",
+    "PARAMETER_TYPE_MISMATCH",
+    "PARAMETER_UNDECLARED",
+    "RESULT_CONFLICT",
+    "SUBJECT_FIELD_UNAVAILABLE",
+    "SUBJECT_UNRESOLVED",
+    "TRAVERSAL_OBJECT_NOT_SUBJECT",
+    "VALUE_TYPE_MISMATCH",
+    "ClaimFactRowV1",
+    "ClaimQueryBackendFactoryV1",
+    "ClaimQueryBackendV1",
+    "ClaimQueryError",
+    "ClaimQueryFactsV1",
+    "DirectClaimFactIndex",
+    "VisibleClaimRow",
+    "claim_query_result_digest",
+    "evaluate_claim_query",
+    "pair_edges",
+    "relation_edges",
+    "query_attempted_parameter_digest",
+    "query_execution_receipt",
+    "query_parameter_digest",
+    "bind_reference_forms",
+    "resolve_query_parameters",
+]

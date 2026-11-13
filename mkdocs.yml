@@ -6,9 +6,8 @@
 site_name: Cruxible Docs
 site_url: https://docs.cruxible.ai
 site_description: >-
-  Documentation for Cruxible — one shared truth for humans and AI agents.
-  Quickstart, concepts, kits, CLI and config reference, MCP tools, and
-  operations guides.
+  Documentation for the Cruxible development core: governed semantic
+  state, exact provenance, signed review, and reproducible accepted generations.
 repo_url: https://github.com/cruxible-ai/cruxible
 repo_name: cruxible-ai/cruxible
 edit_uri: edit/main/docs/
@@ -55,7 +54,11 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -65,25 +68,22 @@ nav:
   - Getting started:
       - Quickstart: quickstart.md
       - Concepts: concepts.md
-      - Modeling state: modeling-state.md
+      - Security walkthrough: security-walkthrough.md
+      - Architecture: architecture.md
+      - Building team knowledge: building-team-knowledge.md
+      - Evidence and admission: evidence-and-admission.md
+      - Keeping knowledge current: keeping-knowledge-current.md
+      - Asking questions: asking-questions.md
+      - Documents and notes: documents-and-notes.md
+      - Lines and automation: lines-and-automation.md
+      - Review and governance: review-and-governance.md
+      - Evolving your vocabulary: evolving-your-vocabulary.md
       - For AI agents: for-ai-agents.md
-  - Kits:
-      - Kit walkthroughs: kit-walkthroughs.md
-      - Kit authoring: kit-authoring.md
-      - KEV guide: kev-guide.md
-      - Supply chain guide: supply-chain-guide.md
-      - Case law guide: case-law-guide.md
-      - Agent operation guide: agent-operation-guide.md
+      - Kits: kits.md
   - Reference:
       - CLI reference: cli-reference.md
-      - Compact config authoring: compact-config.md
-      - Config reference: config-reference.md
       - MCP tools: mcp-tools.md
-      - Common providers: common-providers.md
   - Operations:
-      - Local state and backups: local-state-and-backups.md
-      - Auth and agent roles: runtime-auth-and-agent-roles.md
-      - State resolution and maintenance: state-resolution-and-maintenance.md
-      - Publishing states: publishing-states.md
+      - Upgrading: upgrading.md
       - Isolated deployment: isolated-deployment.md
       - Hosted runtime image: hosted-runtime-image.md

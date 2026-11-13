@@ -1,0 +1,858 @@
+"""Pure proposal admission, evaluation, and transport contracts."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import unicodedata
+from collections.abc import Mapping
+from contextlib import AbstractContextManager
+from typing import Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.actor_types import TransportCapability
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
+from cruxible_client.contracts.candidates import (
+    CandidateRecord,
+    validate_candidate_timestamp,
+)
+from cruxible_client.contracts.canonical import (
+    CandidateDigest,
+    ProposalDigest,
+    Sha256Value,
+    canonical_bytes,
+    typed_digest,
+)
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.mandate_scope import SettleScopeGap, settle_scope_gap_key
+from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccount
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.refusal_receipts import RefusedClaim
+from cruxible_client.contracts.types import GitObjectFormat
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    WorkspaceAdvertisement,
+)
+
+_ACTOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
+_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def claim_admission_account_order_key(
+    account: ClaimAdmissionEvaluationAccount,
+) -> bytes:
+    """Return the one canonical ordering key for persisted admission accounts."""
+
+    return canonical_bytes(
+        [
+            account.claim_path,
+            account.claim_type_identity,
+            account.policy_digest,
+        ]
+    )
+
+
+def canonical_proposal_ref_name(display_name: str) -> str:
+    """Lower a human display label into the closed proposal-ref grammar."""
+
+    normalized = unicodedata.normalize("NFKD", display_name).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9_.-]+", "-", normalized.strip().lower()).strip("._-")
+    if not slug:
+        raise ValueError("proposal display name has no canonical ref characters")
+    if not slug[0].isalpha():
+        slug = "proposal-" + slug
+    if len(slug) > 128:
+        suffix = hashlib.sha256(display_name.encode("utf-8")).hexdigest()[:12]
+        slug = slug[: 128 - len(suffix) - 1].rstrip("._-") + "-" + suffix
+    if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", slug):
+        raise ValueError("proposal display name cannot be lowered into ref grammar")
+    return slug
+
+
+CHANGE_SET_RATIONALE_MAX_LENGTH = 4096
+"""A commit body, not an essay: long enough for a paragraph, bounded like one."""
+
+
+def validate_change_set_rationale(value: str | None) -> str | None:
+    """Refuse prose a commit message could not carry honestly.
+
+    The rationale becomes a Git commit message, where a NUL truncates the rest
+    of the text silently and a leading or trailing blank renders as a subject
+    that is not what the author typed. Interior newlines are allowed: a
+    rationale may be a paragraph, and only its first line becomes the subject.
+    """
+
+    if value is None:
+        return None
+    if value != value.strip() or not value:
+        raise ValueError("change-set rationale must be nonblank and already normalized")
+    if "\x00" in value:
+        raise ValueError("change-set rationale must not contain a NUL byte")
+    return value
+
+
+class _StrictProposalModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class AuthenticatedActor(_StrictProposalModel):
+    """Identity established by the daemon's authentication boundary."""
+
+    tag: Literal["playbill-authenticated-actor-v1"] = "playbill-authenticated-actor-v1"
+    actor_id: str
+    capabilities: tuple[TransportCapability, ...] = ("propose",)
+
+    @field_validator("actor_id")
+    @classmethod
+    def _actor_id(cls, value: str) -> str:
+        if not _ACTOR_RE.fullmatch(value):
+            raise ValueError("authenticated actor_id is not canonical")
+        return value
+
+    @field_validator("capabilities")
+    @classmethod
+    def _capabilities(
+        cls,
+        value: tuple[TransportCapability, ...],
+    ) -> tuple[TransportCapability, ...]:
+        if tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))) != value:
+            raise ValueError("transport capabilities must be sorted and unique")
+        return value
+
+
+#: Bytes ONE change-set record ENTRY costs inside the ledger's own record of the
+#: change set. The record holds one ``members`` entry and one ``law_evidence``
+#: entry per entry in the candidate's scope, and it holds digests and paths
+#: rather than evidence: a 1,002-entry record measured 7,046,087 bytes on one
+#: corpus and 7,046,087 bytes -- identical to the byte -- on a second carrying a
+#: third of the evidence.
+#:
+#: An entry's cost varies by the artifact kind that wrote it, because the laws
+#: evaluated against a Claim are not the laws evaluated against a Subject. The
+#: marginal cost of one further entry, measured on a hermetic instance by
+#: settling each kind at two sizes and reading the accepted record back:
+#:
+#: ===========================================  ==============
+#: Entry written by                             Bytes / entry
+#: ===========================================  ==============
+#: ``SubjectAuthoringPayload``                         1,551
+#: ``ClaimTypeAuthoringPayload``                       4,027
+#: ``ClaimAuthoringPayload`` (and insertion)           6,215
+#: ``ClaimRetirementMember``                           8,670
+#: ``ClaimTypeSuccessionMember`` dependent            10,230
+#: ===========================================  ==============
+#:
+#: This is the LARGEST of those rounded up to the next kibibyte, so a projection
+#: computed from it is never smaller than the record it predicts -- which is the
+#: whole point of the bound: a set it admits must be a set the ledger can write.
+#: A per-kind cost would refuse later and admit more, and is what the post-freeze
+#: card asks for along with a record the ceiling no longer has to bound.
+CHANGE_SET_RECORD_BYTES_PER_MEMBER = 11 * 1024
+
+
+#: The bounds RECEIVE itself enforces, and therefore the only ones any stored
+#: identity is computed over. FROZEN: this set names the shape a proposal id,
+#: a preflight certificate and an admission record were written under before
+#: the advertised record ceiling existed, and a build that widened it would
+#: make every one of those written by an older build unreadable.
+PROPOSAL_RECEIVE_BOUND_KEYS = frozenset(
+    {
+        "max_files",
+        "max_changed_members",
+        "max_file_bytes",
+        "max_total_bytes",
+        "max_path_depth",
+    }
+)
+
+
+class ProposalReceiveLimits(_StrictProposalModel):
+    """Every bound proposal receive enforces before a single member is parsed.
+
+    The file-count and aggregate-byte ceilings track the adoption posture of
+    `TreeReadLimits`: a proposal carries the whole candidate tree, so a receive
+    ceiling below the tree-read ceiling would make a legally accepted instance
+    unproposable. The other three keep receive itself bounded no matter how
+    large the accepted tree has grown -- how many members one submission may
+    change, how large a single member may be, and how deep a member path may
+    nest -- so an oversized submission is refused on cheap metadata instead of
+    after parsing.
+
+    The last two are ADVERTISEMENTS rather than receive gates, and they are here
+    because this is the object a caller reads to learn what a submission may
+    carry. The ledger writes its record OF a change set as one blob, measured
+    against the per-blob ceiling; a set that satisfies every receive bound above
+    could once still exceed it, which was discovered only at activation, after
+    the compile. Advertising the ceiling and the per-entry cost next to the
+    member budget lets a caller compute the member count that fits before
+    authoring anything.
+
+    They are no longer a SECOND budget. At the 4 MiB ceiling this shipped with,
+    only 372 entries fit -- far below `max_changed_members` -- so the two numbers
+    stood side by side bounding different things, one what receive accepts and
+    one what the ledger can record. The per-blob ceiling is now 64 MiB and they
+    are ONE number: 5,000 entries at 11,264 bytes each project to 56,320,000
+    bytes, about 53.7 MiB, so the advertised member budget fits under the record
+    ceiling with room left, and `max_change_set_members` (5,957 at the defaults)
+    is a derived reading of the same budget rather than a competing one.
+
+    What both bound is RECORD ENTRIES, not authored members: the record holds one
+    entry per path the set lowers to, and a member may lower to several -- a
+    ClaimType succession writes one per dependent it dispositions, a retirement
+    one per Claim in its closure. `max_change_set_members` is therefore the
+    entry budget, and a set of that many 1:1 members is the largest set it
+    names exactly.
+    """
+
+    max_files: int = Field(default=250_000, ge=1, le=1_000_000)
+    max_changed_members: int = Field(default=5_000, ge=1, le=1_000_000)
+    max_file_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=2**40)
+    max_total_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**44)
+    max_path_depth: int = Field(default=8, ge=1, le=64)
+    # Equal to `TreeReadLimits.max_blob_bytes` by hand -- the client package
+    # cannot import core -- and held equal by `test_ledger_record_bounds`.
+    # Raising it is backward compatible: it widens a READ limit, and every
+    # record already accepted was written under the narrower 4 MiB ceiling.
+    max_change_set_record_bytes: int = Field(default=64 * 1024 * 1024, ge=1, le=2**40)
+    change_set_record_bytes_per_member: int = Field(
+        default=CHANGE_SET_RECORD_BYTES_PER_MEMBER,
+        ge=1,
+        le=2**20,
+    )
+
+    def receive_bound_payload(self) -> dict[str, object]:
+        """Render only the bounds RECEIVE enforces, for a stored identity.
+
+        Every durable identity computed over these limits -- a proposal id, a
+        preflight certificate digest, an admission record's canonical bytes --
+        is computed over THIS, never over the whole model. The advertised
+        ceilings are a preflight bound and a published number; adding one, or
+        moving one after a measurement, must not restate the identity of every
+        proposal admitted and every certificate minted before it, which is
+        exactly what a whole-model preimage would do.
+        """
+
+        return {
+            key: value
+            for key, value in self.model_dump(mode="json").items()
+            if key in PROPOSAL_RECEIVE_BOUND_KEYS
+        }
+
+    @property
+    def max_change_set_members(self) -> int:
+        """Record entries that fit under the ceiling, at the measured cost."""
+
+        return max(
+            1,
+            self.max_change_set_record_bytes // self.change_set_record_bytes_per_member,
+        )
+
+    def projected_change_set_record_bytes(self, members: int) -> int:
+        """Project the record a change set of *members* record entries writes."""
+
+        return members * self.change_set_record_bytes_per_member
+
+
+class ProposalAdmissionRequest(_StrictProposalModel):
+    tag: Literal["playbill-proposal-request-v1"] = "playbill-proposal-request-v1"
+    target_ref: str
+    proposed_base_oid: str
+    source_compilation_digest: str | None = None
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...] = ()
+    # The author's own summary of the change set, if this door had one to pass
+    # on. It becomes the candidate commit's subject and nothing else: it is
+    # deliberately OUTSIDE the proposal-id preimage, for the same reason the
+    # advertised change-set ceiling is -- prose is not identity, and a proposal
+    # would otherwise have a different id for having been described.
+    rationale: str | None = Field(
+        default=None,
+        max_length=CHANGE_SET_RATIONALE_MAX_LENGTH,
+    )
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        return validate_change_set_rationale(value)
+
+    @field_validator("target_ref")
+    @classmethod
+    def _target_ref(cls, value: str) -> str:
+        if not _PROPOSAL_REF_RE.fullmatch(value):
+            raise ValueError("target_ref must be a canonical namespaced proposal ref")
+        return value
+
+    @field_validator("proposed_base_oid")
+    @classmethod
+    def _proposed_base_oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("proposed_base_oid is malformed")
+        return value
+
+    @field_validator("source_compilation_digest")
+    @classmethod
+    def _source_compilation_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("claim_type_expansions")
+    @classmethod
+    def _claim_type_expansions(
+        cls,
+        value: tuple[ClaimTypeExpansionEvidence, ...],
+    ) -> tuple[ClaimTypeExpansionEvidence, ...]:
+        encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
+        if encoded != tuple(sorted(set(encoded))):
+            raise ValueError("ClaimType expansion evidence must be sorted and unique")
+        digests = tuple(item.expanded_artifact_digest for item in value)
+        if len(digests) != len(set(digests)):
+            raise ValueError("ClaimType expansion evidence must be unique by expanded artifact")
+        return value
+
+
+class ProposalWithdrawalRecord(_StrictProposalModel):
+    """One actor's durable statement that an open proposal will never be settled.
+
+    Out-of-band evidence, exactly like the admission and evaluation records it
+    sits beside: nothing about accepted state changes, and the candidate stays
+    readable forever. What changes is the inventory -- a proposal that cannot
+    activate stops being reported open, so `proposal list` is a list of work and
+    not a graveyard. Immutable and one per proposal: closing is a terminal
+    statement, so a second one over the same proposal is refused rather than
+    silently restating the first with a new reason.
+
+    ``kind`` says who closed it: ``withdrawn`` by its author (or a daemon-wide
+    operator), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
+    closed either way.
+
+    A rejection records each Claim the rejected candidate proposed
+    (``refused_claims``: its statement and the Captures it cites), taken while the
+    candidate is still readable, so a later proposal of the same statement on the
+    same evidence resurfaces it neutrally.
+
+    A Line run whose change differs from its Line's open proposal withdraws
+    that proposal as superseded, under the run's own identity:
+    ``superseded_by`` names the successor proposal it submitted. Nothing
+    carries over to the successor; it is reviewed afresh.
+    """
+
+    tag: Literal["playbill-proposal-withdrawal-v1"] = "playbill-proposal-withdrawal-v1"
+    proposal_id: str
+    actor_id: str
+    reason: str = Field(min_length=1, max_length=1_000)
+    withdrawn_at: str
+    kind: Literal["withdrawn", "rejected"] = Field(
+        default="withdrawn", exclude_if=lambda value: value == "withdrawn"
+    )
+    refused_claims: tuple[RefusedClaim, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: The proposal a later run of the same Line submitted in this one's place.
+    superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("superseded_by")
+    @classmethod
+    def _superseded_by(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, value: str) -> str:
+        if value.strip() != value or not value.strip():
+            raise ValueError("closing reason must be nonblank and normalized")
+        if any(character in value for character in "\r\n"):
+            raise ValueError("closing reason must be a single line")
+        return value
+
+    @field_validator("refused_claims")
+    @classmethod
+    def _refused_claims(cls, value: tuple[RefusedClaim, ...]) -> tuple[RefusedClaim, ...]:
+        paths = tuple(item.path for item in value)
+        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("refused Claims must be sorted and unique by path")
+        return value
+
+    @model_validator(mode="after")
+    def _refusals(self) -> "ProposalWithdrawalRecord":
+        if self.refused_claims and self.kind != "rejected":
+            raise ValueError("only a rejection keys the Claims it refused")
+        if self.superseded_by is not None and (
+            self.kind != "withdrawn" or self.superseded_by == self.proposal_id
+        ):
+            raise ValueError("only a withdrawal names the other proposal that superseded it")
+        return self
+
+
+#: A settle terminal whose change carries a ClaimType its settle grant's scope
+#: does not name proposes instead, for this reason, naming those ClaimTypes.
+SETTLE_OUTSIDE_MANDATE_SCOPE = "cruxible.settle.outside_mandate_scope"
+
+PROPOSAL_ITEM_REASON_MAX_LENGTH = 16_384
+"""One Procedure item's own reason: far past a change-set rationale, still bounded.
+
+Longer reasons are kept to this many characters and marked ``truncated``.
+"""
+
+
+class ProposalItemReason(_StrictProposalModel):
+    """One Procedure terminal item's own reason, kept with the member it explains.
+
+    A ``claims`` or ``claims`` item states why in its
+    ``rationale``; the change set's rationale names only the run and the item
+    count, and each item's reason is recorded here, keyed by the immutable
+    Procedure operation (``operation``: the terminal's admission binding and
+    node, the identity its core creation records use) and the path of the
+    Claim (or Subject) it lowered into. A proposal reads them only through its
+    own ``ProposalItemReasonLink``, never through its (reusable) ref. It is
+    provenance, not evidence: the Claim's Captures are unchanged.
+    """
+
+    tag: Literal["playbill-proposal-item-reason-v1"] = "playbill-proposal-item-reason-v1"
+    operation: str
+    path: str
+    item_key: str
+    child_index: int = Field(ge=0)
+    procedure: str
+    run_id: str
+    terminal: str
+    reason: str = Field(min_length=1, max_length=PROPOSAL_ITEM_REASON_MAX_LENGTH)
+    truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+    @field_validator("operation")
+    @classmethod
+    def _operation(cls, value: str) -> str:
+        return _procedure_operation(value)
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not (value.startswith(("claims/", "subjects/")) and value.endswith(".json")):
+            raise ValueError("an item reason explains one Claim or Subject member")
+        return value
+
+    @classmethod
+    def bounded(cls, reason: str, **fields: object) -> "ProposalItemReason":
+        """The record for ``reason``, cut to the bound and marked when it was longer."""
+
+        text = reason.replace("\x00", "").strip()
+        truncated = len(text) > PROPOSAL_ITEM_REASON_MAX_LENGTH
+        if truncated:
+            text = text[: PROPOSAL_ITEM_REASON_MAX_LENGTH - 1].rstrip() + "\u2026"
+        return cls(reason=text, truncated=truncated, **fields)  # type: ignore[arg-type]
+
+
+def _procedure_operation(value: str) -> str:
+    if not _PROCEDURE_OPERATION_RE.fullmatch(value):
+        raise ValueError("a Procedure operation is AIT- plus 32 lowercase hexadecimal digits")
+    return value
+
+
+_PROCEDURE_OPERATION_RE = re.compile(r"^AIT-[0-9a-f]{32}$")
+
+
+class ProposalItemReasonLink(_StrictProposalModel):
+    """The Procedure operation whose item reasons one admitted proposal carries.
+
+    Written by the daemon for the exact admission its terminal delivery
+    submitted or recovered, so a proposal's reasons never follow its ref: an
+    unrelated proposal later admitted under the same ref has no link and no
+    reasons. A readmission reads its source admission's link.
+    """
+
+    tag: Literal["playbill-proposal-item-reason-link-v1"] = "playbill-proposal-item-reason-link-v1"
+    proposal_id: str
+    operation: str
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("operation")
+    @classmethod
+    def _operation(cls, value: str) -> str:
+        return _procedure_operation(value)
+
+
+class ProposalSettleSubmission(_StrictProposalModel):
+    """How a settle terminal submitted its proposal, retained for recovery.
+
+    `delegated` asks for acceptance under the named settle mandate; `fallback`
+    is the ordinary proposal that mandate declared when it did not authorize the
+    change, for `fallback_reason`. Recovery reads this back rather than
+    inferring it from whatever later happened to the proposal.
+
+    A fallback for `cruxible.settle.outside_mandate_scope` records, in
+    `outside_scope`, each reason the grant's scope left the change out: the
+    ClaimType, change kind and evidence basis, and the scope term (ClaimType,
+    change kind, basis, value or Subject) that excluded it. All or nothing: one
+    gap proposes the whole change.
+    """
+
+    tag: Literal["playbill-proposal-settle-submission-v1"] = (
+        "playbill-proposal-settle-submission-v1"
+    )
+    mode: Literal["delegated", "fallback"]
+    mandate_digest: str
+    fallback_reason: str | None = None
+    outside_scope: tuple[SettleScopeGap, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+
+    @field_validator("mandate_digest")
+    @classmethod
+    def _mandate_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("outside_scope")
+    @classmethod
+    def _outside_scope(cls, value: tuple[SettleScopeGap, ...]) -> tuple[SettleScopeGap, ...]:
+        keys = [settle_scope_gap_key(item) for item in value]
+        if keys != sorted(set(keys)):
+            raise ValueError("outside-scope gaps must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _reason(self) -> "ProposalSettleSubmission":
+        if (self.mode == "fallback") != bool(self.fallback_reason):
+            raise ValueError("exactly a settle fallback names why it fell back")
+        if (self.fallback_reason == SETTLE_OUTSIDE_MANDATE_SCOPE) != bool(self.outside_scope):
+            raise ValueError("exactly an outside-mandate-scope fallback names why it fell outside")
+        return self
+
+
+class ProposalReadmissionLink(_StrictProposalModel):
+    """The stale proposal a readmission re-admits, and the coordinate it did so at.
+
+    Only the readmit service writes it. Its ``operation_digest`` is the one
+    readmission of the source that coordinate admits, and the admission's
+    ``source_compilation_digest`` -- part of the proposal-id preimage -- must
+    equal it, so the link is bound to the readmission's own identity: no ref
+    spelling, and no evaluation head that moved after the readmission was
+    named, can forge or lose it.
+    """
+
+    tag: Literal["playbill-proposal-readmission-link-v1"] = "playbill-proposal-readmission-link-v1"
+    source_proposal_id: str
+    coordinate: AcceptedCoordinate
+
+    @field_validator("source_proposal_id")
+    @classmethod
+    def _source_proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @property
+    def operation_digest(self) -> str:
+        """The readmission operation this link names: source and coordinate, digested."""
+
+        return typed_digest(
+            Sha256Value,
+            "playbill-proposal-readmit-v1",
+            {
+                "source_proposal_id": self.source_proposal_id,
+                "current_accepted_coordinate": self.coordinate.model_dump(mode="json"),
+            },
+        ).tagged
+
+
+class OriginatingLine(_StrictProposalModel):
+    """The root Line and exact accepted version responsible for a proposal."""
+
+    identity: ArtifactIdentity
+    artifact_digest: str
+
+    @field_validator("identity")
+    @classmethod
+    def _line(cls, value: ArtifactIdentity) -> ArtifactIdentity:
+        if value.kind != "Line":
+            raise ValueError("originating Line must name a Line")
+        return value
+
+    @field_validator("artifact_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class ProposalAdmissionRecord(_StrictProposalModel):
+    tag: Literal["playbill-proposal-admission-v2"] = "playbill-proposal-admission-v2"
+    proposal_id: str
+    actor_id: str
+    target_ref: str
+    proposed_base_oid: str
+    candidate_commit_oid: str
+    candidate_tree_oid: str
+    source_compilation_digest: str | None
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...] = ()
+    limits: ProposalReceiveLimits
+    admitted_at: str
+    # Persisted so the advisory review-ref projection, which rebuilds the commit
+    # message from stored evidence alone, writes the same bytes the submission
+    # did. Absent from the canonical record when unset, so every admission
+    # already on disk re-renders and stays readable.
+    rationale: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    # A settle terminal's submission mode; absent, like `rationale`, for every
+    # other proposal, so admissions already on disk keep their bytes.
+    settle_submission: ProposalSettleSubmission | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # A readmission's source; absent, like `settle_submission`, for every other
+    # proposal, so admissions already on disk keep their bytes.
+    readmits: ProposalReadmissionLink | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # The Procedure operation (AIT-...: its terminal's admission binding and
+    # node) whose terminal submitted this admission. Set only by the Procedure
+    # terminal door -- no public request carries it -- and absent, like
+    # `readmits`, for every other proposal, so admissions already on disk keep
+    # their bytes. A terminal's item reasons attach only to an admission that
+    # names its exact operation here.
+    procedure_operation: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    originating_line: OriginatingLine | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        return validate_change_set_rationale(value)
+
+    @field_validator("procedure_operation")
+    @classmethod
+    def _procedure_operation(cls, value: str | None) -> str | None:
+        return None if value is None else _procedure_operation(value)
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("actor_id")
+    @classmethod
+    def _actor_id(cls, value: str) -> str:
+        return AuthenticatedActor(actor_id=value).actor_id
+
+    @field_validator("target_ref")
+    @classmethod
+    def _target_ref(cls, value: str) -> str:
+        if not _PROPOSAL_REF_RE.fullmatch(value):
+            raise ValueError("proposal admission target_ref is malformed")
+        return value
+
+    @field_validator("proposed_base_oid", "candidate_commit_oid", "candidate_tree_oid")
+    @classmethod
+    def _oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("proposal admission Git OID is malformed")
+        return value
+
+    @field_validator("source_compilation_digest")
+    @classmethod
+    def _compilation_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("admitted_at")
+    @classmethod
+    def _admitted_at(cls, value: str) -> str:
+        return validate_candidate_timestamp(value)
+
+    @model_validator(mode="after")
+    def _namespace_binding(self) -> "ProposalAdmissionRecord":
+        if self.target_ref.split("/")[2] != self.actor_id:
+            raise ValueError("admission target namespace differs from authenticated actor")
+        if (
+            self.readmits is not None
+            and self.source_compilation_digest != self.readmits.operation_digest
+        ):
+            raise ValueError("a readmission's source compilation digest is its operation digest")
+        if (
+            len(
+                {
+                    len(self.proposed_base_oid),
+                    len(self.candidate_commit_oid),
+                    len(self.candidate_tree_oid),
+                }
+            )
+            != 1
+        ):
+            raise ValueError("proposal admission mixes Git object formats")
+        return self
+
+
+class ProposalEvaluationRecord(_StrictProposalModel):
+    tag: Literal["playbill-proposal-evaluation-v1"] = "playbill-proposal-evaluation-v1"
+    proposal_id: str
+    verdict: Literal["candidate", "refused"]
+    evaluated_base_oid: str
+    evaluated_tree_oid: str | None
+    rebased: bool
+    candidate_digest: str | None = None
+    diagnostics: tuple[CompilerDiagnostic, ...] = ()
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] = ()
+    evaluated_at: str
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            CandidateDigest.from_tagged(value)
+        return value
+
+    @field_validator("evaluated_base_oid", "evaluated_tree_oid")
+    @classmethod
+    def _oid(cls, value: str | None) -> str | None:
+        if value is not None and not _OID_RE.fullmatch(value):
+            raise ValueError("proposal evaluation Git OID is malformed")
+        return value
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def _evaluated_at(cls, value: str) -> str:
+        return validate_candidate_timestamp(value)
+
+    @field_validator("claim_admission_accounts")
+    @classmethod
+    def _claim_admission_accounts(
+        cls, value: tuple[ClaimAdmissionEvaluationAccount, ...]
+    ) -> tuple[ClaimAdmissionEvaluationAccount, ...]:
+        keys = tuple(claim_admission_account_order_key(item) for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("claim admission accounts must be canonically sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _verdict_shape(self) -> "ProposalEvaluationRecord":
+        if self.verdict == "candidate":
+            if self.candidate_digest is None or self.evaluated_tree_oid is None or self.diagnostics:
+                raise ValueError("candidate evaluation record is incomplete")
+        elif self.candidate_digest is not None:
+            raise ValueError("refused evaluation cannot carry a candidate digest")
+        if self.evaluated_tree_oid is not None and len(self.evaluated_tree_oid) != len(
+            self.evaluated_base_oid
+        ):
+            raise ValueError("proposal evaluation mixes Git object formats")
+        return self
+
+
+class ProposalResult(_StrictProposalModel):
+    admission: ProposalAdmissionRecord
+    evaluation: ProposalEvaluationRecord
+    candidate: CandidateRecord | None = None
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+
+    @model_validator(mode="after")
+    def _result_shape(self) -> "ProposalResult":
+        if (self.evaluation.verdict == "candidate") != (self.candidate is not None):
+            raise ValueError("proposal result candidate shape differs from evaluation verdict")
+        return self
+
+
+class ProposalPreviewEvaluation(_StrictProposalModel):
+    """A submission's evaluation, from a preview: no proposal was admitted (R12)."""
+
+    tag: Literal["playbill-proposal-preview-evaluation-v1"] = (
+        "playbill-proposal-preview-evaluation-v1"
+    )
+    verdict: Literal["candidate", "refused"]
+    evaluated_base_oid: str
+    rebased: bool
+    candidate_digest: str | None = None
+    diagnostics: tuple[CompilerDiagnostic, ...] = ()
+
+    @field_validator("evaluated_base_oid")
+    @classmethod
+    def _oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("proposal evaluation Git OID is malformed")
+        return value
+
+
+class ProposalPreview(_StrictProposalModel):
+    """What a submission would admit: its evaluation and candidate, nothing written."""
+
+    tag: Literal["playbill-proposal-preview-v1"] = "playbill-proposal-preview-v1"
+    evaluation: ProposalPreviewEvaluation
+    candidate: CandidateRecord | None = None
+
+    @model_validator(mode="after")
+    def _preview_shape(self) -> "ProposalPreview":
+        if (self.evaluation.verdict == "candidate") != (self.candidate is not None):
+            raise ValueError("proposal preview candidate shape differs from evaluation verdict")
+        return self
+
+
+class ProposalTransportProtocol(Protocol):
+    def object_format(self) -> GitObjectFormat: ...
+    def activation_lock(self) -> AbstractContextManager[None]: ...
+    def read_main(self) -> str: ...
+    def read_tree(self, oid: str) -> dict[str, bytes]: ...
+    def read_proposal_ref(self, target_ref: str) -> str | None: ...
+    def create_proposal_commit(
+        self,
+        tree: Mapping[str, bytes],
+        *,
+        base_oid: str,
+        target_ref: str,
+        actor_id: str,
+        timestamp: str,
+        expected_ref_oid: str | None,
+        message: str,
+    ) -> tuple[str, str]: ...
+    def retain_proposal_review(self, proposal_id: str, oid: str) -> None: ...
+
+    def archive_proposal_commits(self, oids: tuple[str, ...]) -> None: ...
+    def object_exists(self, oid: str) -> bool: ...
+    def proposal_review_commit_oid(
+        self, *, tree_oid: str, base_oid: str, actor_id: str, timestamp: str, message: str
+    ) -> str: ...
+    def proposal_review_commit(
+        self, *, tree_oid: str, base_oid: str, actor_id: str, timestamp: str, message: str
+    ) -> str: ...
+    def write_proposal_note(self, kind: str, oid: str, content: bytes) -> None: ...
+    def read_proposal_note(self, kind: str, oid: str) -> bytes | None: ...
+
+
+__all__ = [
+    "AuthenticatedActor",
+    "ProposalPreviewEvaluation",
+    "ProposalPreview",
+    "ProposalAdmissionRecord",
+    "ProposalReadmissionLink",
+    "ProposalSettleSubmission",
+    "SETTLE_OUTSIDE_MANDATE_SCOPE",
+    "PROPOSAL_ITEM_REASON_MAX_LENGTH",
+    "ProposalItemReason",
+    "ProposalItemReasonLink",
+    "ProposalAdmissionRequest",
+    "ProposalEvaluationRecord",
+    "CHANGE_SET_RECORD_BYTES_PER_MEMBER",
+    "PROPOSAL_RECEIVE_BOUND_KEYS",
+    "ProposalReceiveLimits",
+    "ProposalWithdrawalRecord",
+    "ProposalResult",
+    "ProposalTransportProtocol",
+    "claim_admission_account_order_key",
+    "canonical_proposal_ref_name",
+]

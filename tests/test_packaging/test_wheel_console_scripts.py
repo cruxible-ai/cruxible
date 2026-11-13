@@ -5,6 +5,7 @@ catch packaging regressions that the in-repo ``uv run`` developer flow hides:
 
 * a wheel that cannot be built at all (e.g. a redundant ``force-include`` that
   double-adds files into the archive), and
+* a wheel that omits the governed Procedure runtime-policy seed, and
 * declared ``[project.scripts]`` aliases that are missing or broken once the
   package is actually installed into a fresh interpreter.
 
@@ -32,10 +33,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.wheel
 
 # Aliases that are runnable with only the base install. The ``cruxible-mcp``
-# script imports optional dependencies (the ``mcp`` extra) and starts a
-# long-lived daemon, so it is exercised at the import-resolution level rather
-# than invoked. The Cruxible daemon launches via ``cruxible server start`` (a
-# subcommand of the runnable ``cruxible`` CLI), not a console-script of its own.
+# script starts a long-lived stdio server, so it is exercised at the
+# import-resolution level rather than invoked; ``mcp`` is a base dependency, so
+# that import must resolve on the base install. The Cruxible daemon launches via
+# ``cruxible server start`` (a subcommand of the runnable ``cruxible`` CLI), not a
+# console-script of its own.
 _BASE_RUNNABLE_ALIASES = ("cruxible",)
 
 
@@ -106,7 +108,7 @@ def _script_path(venv: Path, name: str) -> Path:
 
 @pytest.fixture(scope="module")
 def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the wheels and install ``cruxible[mcp,server]`` into a fresh venv."""
+    """Build the wheels and install the base ``cruxible`` (no extras) into a fresh venv."""
     uv = _require_uv()
     work = tmp_path_factory.mktemp("wheel-install")
     wheel_dir = work / "wheels"
@@ -121,9 +123,9 @@ def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     venv = work / "venv"
     _run([uv, "venv", str(venv)], skip_on_failure=True, skip_reason="could not create venv")
 
-    # Install with all extras so the optional MCP/server entry points are
-    # importable; --find-links lets the workspace-local cruxible-client resolve
-    # offline from the wheel we just built.
+    # The base install only: every entry point, including the MCP server, must
+    # import without an extra. --find-links lets the workspace-local
+    # cruxible-client resolve offline from the wheel we just built.
     install = subprocess.run(
         [
             uv,
@@ -133,7 +135,7 @@ def installed_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
             str(_venv_bin(venv) / "python"),
             "--find-links",
             str(wheel_dir),
-            f"cruxible[mcp,server] @ {core_wheel}",
+            f"cruxible @ {core_wheel}",
         ],
         capture_output=True,
         text=True,
@@ -157,8 +159,8 @@ def test_pyproject_declares_expected_aliases() -> None:
     """
     scripts = _declared_scripts()
     assert scripts == {
-        "cruxible": "cruxible_core.cli.main:cli",
-        "cruxible-mcp": "cruxible_core.mcp.server:main",
+        "cruxible": "cruxible_core.entrypoints:cli",
+        "cruxible-mcp": "cruxible_core.entrypoints:mcp",
     }
 
 
@@ -194,9 +196,48 @@ def test_installed_entry_point_targets_resolve(installed_venv: Path) -> None:
     assert resolved == _declared_scripts()
 
 
+def test_installed_wheel_carries_the_procedure_runtime_policy_seed(
+    installed_venv: Path,
+) -> None:
+    """Genesis policy authority must survive source-tree to wheel packaging."""
+
+    python = _venv_bin(installed_venv) / "python"
+    completed = _run(
+        [
+            str(python),
+            "-c",
+            (
+                "from cruxible_core.ledger.bootstrap import "
+                "seeded_procedure_runtime_policy; "
+                "print(seeded_procedure_runtime_policy().provider_output_bytes_cap)"
+            ),
+        ]
+    )
+    assert completed.stdout.strip() == "67108864"
+
+
 @pytest.mark.parametrize("alias", _BASE_RUNNABLE_ALIASES)
 def test_base_runnable_alias_responds(installed_venv: Path, alias: str) -> None:
     """The user-facing ``cruxible`` CLI actually runs from the installed wheel."""
     script = _script_path(installed_venv, alias)
     completed = _run([str(script), "--version"])
     assert "cruxible" in completed.stdout.lower()
+
+
+def test_installed_wheel_ships_the_uv_provider_installs_need(installed_venv: Path) -> None:
+    """C1: a plain pip install carries uv; Provider preparation finds it there."""
+
+    python = _venv_bin(installed_venv) / "python"
+    completed = _run(
+        [
+            str(python),
+            "-c",
+            (
+                "from pathlib import Path; "
+                "from cruxible_core.providers.package_materialization import uv_executable; "
+                "uv = Path(uv_executable()); "
+                "print(uv.is_file(), uv.is_relative_to(Path(__import__('sys').prefix)))"
+            ),
+        ]
+    )
+    assert completed.stdout.split() == ["True", "True"]

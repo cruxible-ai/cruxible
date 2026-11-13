@@ -2,24 +2,50 @@
 
 from __future__ import annotations
 
+import faulthandler
 import os
+import signal
+import socket
+import sqlite3
+import stat
 import sys
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from fastapi.utils import generate_unique_id
+from starlette.routing import BaseRoute
+from starlette.types import ASGIApp
 
-from cruxible_core import __version__
-from cruxible_core.errors import CoreError
-from cruxible_core.runtime.instance import CruxibleInstance, enforce_config_integrity
+from cruxible_client.contracts.authoring.models import (
+    AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+)
+from cruxible_client.contracts.errors import (
+    ClaimAttestationRequestInvalid,
+    SinceRequestInvalid,
+)
+from cruxible_client.contracts.repairs import hand_edit_repair
+from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
+from cruxible_client.contracts.validation_messages import internal_validation_segment
+from cruxible_client.contracts.write import WRITE_REQUEST_REFUSAL_REPAIRS
+from cruxible_core import __version__, startup_progress
+from cruxible_core.errors import ConfigError, CoreError
+from cruxible_core.ledger.checkpoints import QUIET_CHECKPOINT_SECONDS
+from cruxible_core.runtime.execution_policy import discover_isolated_executors
 from cruxible_core.runtime.permissions import init_permissions
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
+from cruxible_core.server.bootstrap_secret import prepare_bootstrap_secret
 from cruxible_core.server.config import (
+    auth_off_startup_notice,
+    get_server_fatal_log_path,
+    get_server_state_root,
     is_server_auth_enabled,
     validate_server_startup_settings,
     volatile_state_path_warnings,
@@ -30,46 +56,28 @@ from cruxible_core.server.errors import (
     ErrorResponse,
     error_to_response,
 )
-from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+from cruxible_core.server.registry import get_registry
+from cruxible_core.server.request_context import HTTPRequestContextMiddleware
 from cruxible_core.server.request_logging import configure_request_logging
-from cruxible_core.server.routes.attestations import router as attestations_router
-from cruxible_core.server.routes.decision_records import router as decision_records_router
-from cruxible_core.server.routes.feedback import router as feedback_router
-from cruxible_core.server.routes.gates import router as gates_router
-from cruxible_core.server.routes.groups import router as groups_router
+from cruxible_core.server.restart import PROCESS_BOOT_ID
 from cruxible_core.server.routes.hosted_instances import router as hosted_instances_router
 from cruxible_core.server.routes.instances import router as instances_router
-from cruxible_core.server.routes.mutations import router as mutations_router
-from cruxible_core.server.routes.outcome_contracts import (
-    router as outcome_contracts_router,
-)
-from cruxible_core.server.routes.procedures import router as procedures_router
-from cruxible_core.server.routes.queries import router as queries_router
+from cruxible_core.server.routes.playbill import router as playbill_router
 from cruxible_core.server.routes.runtime_credentials import (
     router as runtime_credentials_router,
 )
-from cruxible_core.server.routes.snapshots import router as snapshots_router
-from cruxible_core.server.routes.source_artifacts import router as source_artifacts_router
-from cruxible_core.server.routes.state import router as state_router
-from cruxible_core.server.routes.telemetry import router as telemetry_router
-from cruxible_core.server.routes.workflows import router as workflows_router
-from cruxible_core.server.telemetry import (
-    boundary_telemetry_middleware,
-    mark_boundary_scope_refusal,
-)
-from cruxible_core.storage import StorageDatabaseError, StorageIntegrityError
-from cruxible_core.temporal import ISO_8601_FORMAT_HINT
-
-UI_STATIC_DIR = Path(__file__).resolve().parents[1] / "ui_static"
+from cruxible_core.server.state_lock import StateRootLock
+from cruxible_core.server.upload_part_limit import UploadPartBodyLimit
 
 _log = structlog.get_logger("cruxible.server.app")
 
 # Generic, schema-free client message for any database error. The real sqlite
-# detail (e.g. "UNIQUE constraint failed: graph_entities.entity_id") names live
+# detail (e.g. "UNIQUE constraint failed: internal_table.internal_column") names live
 # tables and columns and must never reach the client; it is logged server-side
 # instead. See wi-daemon-network-security-hardening (#5).
 _DB_CONSTRAINT_MESSAGE = "database constraint violation"
 _DB_ERROR_MESSAGE = "database error"
+REQUEST_INVALID_CODE = "request.invalid"
 
 # Pydantic tags every datetime/date failure with a type starting "datetime" or
 # "date" (datetime_parsing, datetime_type, date_from_datetime_parsing, ...).
@@ -80,7 +88,11 @@ _TEMPORAL_ERROR_TYPE_PREFIXES = ("datetime", "date")
 
 def _format_request_validation_error(error: Mapping[str, Any]) -> str:
     """Render one pydantic request-validation error, self-correcting when temporal."""
-    location = ".".join(str(part) for part in (error.get("loc") or ()))
+    # Pydantic's validator names (function-after[...], constrained-str, union
+    # tags) say how a model validates, not where the caller's fault is.
+    location = ".".join(
+        str(part) for part in (error.get("loc") or ()) if not internal_validation_segment(part)
+    )
     message = str(error.get("msg", "invalid"))
     error_type = str(error.get("type", ""))
     if error_type.startswith(_TEMPORAL_ERROR_TYPE_PREFIXES):
@@ -88,34 +100,129 @@ def _format_request_validation_error(error: Mapping[str, Any]) -> str:
     return f"{location}: {message}"
 
 
+class _HTTPRequestContextApp(FastAPI):
+    """Mark requests outside framework error handlers as well as user middleware."""
+
+    def build_middleware_stack(self) -> ASGIApp:
+        return HTTPRequestContextMiddleware(super().build_middleware_stack())
+
+
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
-    app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
+    # Fails CLOSED and BEFORE any route exists: a distribution that advertises
+    # an isolated executor this build cannot load leaves the shared hosted
+    # profile refusing every Provider run for a reason no caller could see, so
+    # the daemon refuses to start instead and names the entry point.
+    registrations = discover_isolated_executors()
+    if registrations:
+        _log.info(
+            "isolated_executors_registered",
+            backend_ids=[item.backend_id for item in registrations],
+        )
+    manager = get_playbill_manager()
+    try:
+        manager.recover_provider_runtime()
+    except Exception as exc:
+        # Last-resort isolation: Provider fence recovery must never prevent the
+        # non-Provider daemon surfaces from starting.
+        manager.cached_provider_runtime_operator().mark_unavailable(
+            "provider_runtime_recovery_failed",
+            f"Provider runtime startup recovery failed: {exc}",
+            retryable=True,
+        )
+    # Core built-ins run in-process with no lease to recover: their unmatched
+    # starts are closed here, before any request can start another.
+    manager.recover_in_process_provider_invocations()
+    # Proposal terminals prepared before a crash are resolved after the Provider
+    # fences, so a recovered run reads as one complete attempt: the receipt of
+    # the proposal it produced, then its finalization. Recovery logs and
+    # continues per instance; it never keeps the daemon from starting.
+    manager.recover_proposal_egress()
+    # A kit add whose provider installs activated just before a crash resumes
+    # here, from its pending rows alone.
+    manager.resume_pending_kits()
+    # Still before serving: no writer can be mid-flight, so unreachable ledger
+    # objects may be pruned; live compaction runs later on a generation stride.
+    manager.compact_ledgers_at_start()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        manager.consumer_runner.start()
+        try:
+            yield
+        finally:
+            manager.consumer_runner.close()
+            manager.flush_replay_checkpoints()
+
+    app = _HTTPRequestContextApp(
+        title="cruxible", responses=STANDARD_ERROR_RESPONSES, lifespan=lifespan
+    )
+    # Added first, so it sits inside the auth middleware: a part body is bounded
+    # after the caller is authenticated and before FastAPI buffers it.
+    app.add_middleware(UploadPartBodyLimit)
     app.middleware("http")(token_auth_middleware)
-    app.middleware("http")(boundary_telemetry_middleware)
 
     @app.exception_handler(CoreError)
     async def core_error_handler(request: Request, exc: CoreError) -> JSONResponse:
         request.state.error_type = exc.__class__.__name__
-        mark_boundary_scope_refusal(request, exc)
         status_code, body = error_to_response(exc)
         return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error_handler(
-        _request: Request, exc: RequestValidationError
+        request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        if request.url.path.endswith("/since"):
+            typed = SinceRequestInvalid.from_validation_errors(exc.errors())
+            request.state.error_type = typed.__class__.__name__
+            status_code, body = error_to_response(typed)
+            content = body.model_dump(mode="json")
+            content["errors"] = [_format_request_validation_error(err) for err in exc.errors()]
+            return JSONResponse(status_code=status_code, content=content)
+        if request.url.path.endswith("/claim-attestations"):
+            attestation_error = ClaimAttestationRequestInvalid.from_validation_errors(exc.errors())
+            request.state.error_type = attestation_error.__class__.__name__
+            status_code, body = error_to_response(attestation_error)
+            content = body.model_dump(mode="json")
+            content["errors"] = [_format_request_validation_error(err) for err in exc.errors()]
+            return JSONResponse(status_code=status_code, content=content)
         errors = [_format_request_validation_error(err) for err in exc.errors()]
+        # A request model that raises one of its declared typed refusals keeps
+        # that code and its repair: the caller learns the rule, not just a 422.
+        typed_codes = {str(err.get("type", "")) for err in exc.errors()}
+        if len(typed_codes) == 1 and (code := typed_codes.pop()) in WRITE_REQUEST_REFUSAL_REPAIRS:
+            body = ErrorResponse(
+                error_type="RequestValidationError",
+                message=str(exc.errors()[0].get("msg", code)),
+                error_code=code,
+                errors=errors,
+                repair=hand_edit_repair(code, required_change=WRITE_REQUEST_REFUSAL_REPAIRS[code]),
+            )
+            return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
         body = ErrorResponse(
             error_type="RequestValidationError",
             message="Request validation failed",
+            error_code=REQUEST_INVALID_CODE,
             errors=errors,
+            repair=hand_edit_repair(
+                REQUEST_INVALID_CODE,
+                required_change="Correct each field the errors name; the route's request "
+                "schema is in /openapi.json.",
+            ),
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(StorageIntegrityError)
-    async def integrity_error_handler(request: Request, exc: StorageIntegrityError) -> JSONResponse:
+    # Deliberately no blanket pydantic ValidationError handler: it cannot tell a
+    # caller's malformed request from a frozen model failing deep inside a
+    # service, so it would turn internal invariant breaches into 400s and put
+    # internal model names on the wire. Request-shaped refusals are raised as
+    # typed CoreErrors where the request is understood; anything else is a real
+    # server fault and takes the generic 500 below.
+    @app.exception_handler(sqlite3.IntegrityError)
+    async def integrity_error_handler(
+        request: Request, exc: sqlite3.IntegrityError
+    ) -> JSONResponse:
         # An unhandled sqlite IntegrityError (UNIQUE/FOREIGN KEY/CHECK/NOT NULL)
         # otherwise surfaces through the catch-all handler below, echoing the raw
         # message (e.g. "UNIQUE constraint failed: <table.col>") and leaking the
@@ -129,13 +236,13 @@ def create_app() -> FastAPI:
             detail=str(exc),
         )
         body = ErrorResponse(
-            error_type="ConstraintViolationError",
+            error_type="DatabaseIntegrityError",
             message=_DB_CONSTRAINT_MESSAGE,
         )
         return JSONResponse(status_code=409, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(StorageDatabaseError)
-    async def database_error_handler(request: Request, exc: StorageDatabaseError) -> JSONResponse:
+    @app.exception_handler(sqlite3.DatabaseError)
+    async def database_error_handler(request: Request, exc: sqlite3.DatabaseError) -> JSONResponse:
         # Any other low-level sqlite error (OperationalError, etc.) may also carry
         # SQL fragments / schema names. Keep the client message generic and log
         # the detail server-side.
@@ -147,7 +254,7 @@ def create_app() -> FastAPI:
             detail=str(exc),
         )
         body = ErrorResponse(
-            error_type="MutationError",
+            error_type="DatabaseError",
             message=_DB_ERROR_MESSAGE,
         )
         return JSONResponse(status_code=500, content=body.model_dump(mode="json"))
@@ -189,69 +296,465 @@ def create_app() -> FastAPI:
 
     @app.get("/version")
     async def version() -> dict[str, str]:
-        return {"version": __version__}
+        return {
+            "version": __version__,
+            "sdk_contract_snapshot_digest": AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+            "boot_id": PROCESS_BOOT_ID,
+        }
 
-    @app.get("/ui", include_in_schema=False)
-    async def ui_index() -> FileResponse:
-        return FileResponse(UI_STATIC_DIR / "index.html")
-
-    app.include_router(instances_router)
-    app.include_router(hosted_instances_router)
-    app.include_router(state_router)
-    app.include_router(telemetry_router)
-    app.include_router(queries_router)
-    app.include_router(runtime_credentials_router)
-    app.include_router(decision_records_router)
-    app.include_router(attestations_router)
-    app.include_router(outcome_contracts_router)
-    app.include_router(mutations_router)
-    app.include_router(feedback_router)
-    app.include_router(gates_router)
-    app.include_router(groups_router)
-    app.include_router(procedures_router)
-    app.include_router(workflows_router)
-    app.include_router(snapshots_router)
-    app.include_router(source_artifacts_router)
-    app.mount("/ui", StaticFiles(directory=UI_STATIC_DIR, html=True), name="ui")
+    for router in (
+        instances_router,
+        hosted_instances_router,
+        runtime_credentials_router,
+        playbill_router,
+    ):
+        _public_route_names(router.routes)
+        app.include_router(router)
+    _public_route_names(app.routes)
     return app
+
+
+def iter_api_routes(routes: Iterable[BaseRoute]) -> Iterator[APIRoute]:
+    """Yield every ``APIRoute`` under ``routes``, original objects, depth first.
+
+    Before FastAPI 0.137 an included router's routes are copied into the
+    including router, so ``routes`` is flat. From 0.137 an included router is a
+    tree node carrying ``original_router``; this follows it into the original
+    routes without building FastAPI's derived per-inclusion copies. The yielded
+    path is the route's own path, so it equals the served path only where
+    includes add no prefix, as every include in ``create_app`` does.
+    """
+
+    for route in routes:
+        included = getattr(route, "original_router", None)
+        if isinstance(included, APIRouter):
+            yield from iter_api_routes(included.routes)
+        elif isinstance(route, APIRoute):
+            yield route
+
+
+def _public_route_names(routes: Iterable[BaseRoute]) -> None:
+    """Name each route for the public API, not for the module that serves it.
+
+    OpenAPI summaries and operation ids come from the handler's name, and some
+    handlers keep internal names (``query_playbill``); the served name drops
+    the internal qualifier.
+
+    Routers are renamed before they are included. FastAPI before 0.137 copies
+    each route into the including router, so the copies must inherit the public
+    names; from 0.137 an included router stays a node of a route tree
+    (``original_router``), and FastAPI derives each served route from the
+    original lazily, copying name, summary and operation id when it first
+    builds it. Walking that tree through ``fastapi.routing.iter_route_contexts``
+    would build (and cache) those copies before the rename, so the walk
+    (``iter_api_routes``) follows ``original_router`` and renames the originals
+    instead. Renaming is idempotent, so a router shared by several apps is
+    renamed once.
+    """
+
+    for route in iter_api_routes(routes):
+        if "playbill" not in route.name:
+            continue
+        route.name = route.name.replace("playbill_", "").replace("_playbill", "")
+        route.summary = route.summary or route.name.replace("_", " ").title()
+        route.unique_id = generate_unique_id(route)
+        route.operation_id = route.operation_id or route.unique_id
 
 
 def run_server(
     *,
     host: str | None = None,
     port: int | None = None,
-    state_dir: str | None = None,
+    state_root: str | None = None,
     socket_path: str | None = None,
     capability_ceiling: str | None = None,
+    auth: bool = False,
+    bootstrap_secret_file: str | None = None,
 ) -> None:
     """Launch the Cruxible daemon over UDS or host/port transport.
 
     This is the single daemon-launch path, invoked by ``cruxible server start``.
     Explicit arguments override the corresponding environment variables
-    (``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` / ``CRUXIBLE_SERVER_STATE_DIR`` /
+    (``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` / ``CRUXIBLE_STATE_ROOT`` /
     ``CRUXIBLE_SERVER_SOCKET`` / ``CRUXIBLE_MODE``); when an argument is ``None``
     the env default is used. Overrides are applied to ``os.environ`` before any
     config is resolved so the registry, credential store, permission ceiling,
     and startup validation all observe the same effective settings, and so an
     in-place re-exec (``cruxible server restart``) reproduces them via
     ``sys.argv``.
+
+    ``auth=True`` is the explicit local opt-in (``server start --auth``); it sets
+    ``CRUXIBLE_SERVER_AUTH=true``, which stays the env form of the same switch.
+    A Unix-socket daemon defaults to auth off; a TCP daemon refuses without it.
     """
+    if auth:
+        os.environ["CRUXIBLE_SERVER_AUTH"] = "true"
     if host is not None:
         os.environ["CRUXIBLE_HOST"] = host
     if port is not None:
         os.environ["CRUXIBLE_PORT"] = str(port)
-    if state_dir is not None:
-        os.environ["CRUXIBLE_SERVER_STATE_DIR"] = state_dir
+    if state_root is not None:
+        os.environ["CRUXIBLE_STATE_ROOT"] = state_root
     if socket_path is not None:
         os.environ["CRUXIBLE_SERVER_SOCKET"] = socket_path
     if capability_ceiling is not None:
         os.environ["CRUXIBLE_MODE"] = capability_ceiling
 
+    # Take exclusive ownership of the state root BEFORE any store is opened, so
+    # a second daemon over the same root refuses without touching its SQLite
+    # files or its ledger. Two daemons over one root can both answer a probe and
+    # both write the accepted tree.
+    resolved_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
+    transport = (
+        f"unix socket {resolved_socket}"
+        if resolved_socket
+        else f"{os.environ.get('CRUXIBLE_HOST', '127.0.0.1')}:"
+        f"{os.environ.get('CRUXIBLE_PORT', '8100')}"
+    )
+    with StateRootLock(get_server_state_root(), transport=transport, boot_id=PROCESS_BOOT_ID):
+        _serve(
+            resolved_socket,
+            bootstrap_secret_file=(
+                None if bootstrap_secret_file is None else Path(bootstrap_secret_file)
+            ),
+        )
+
+
+#: The fatal-fault log handle, held for the life of the process. faulthandler
+#: writes through the file DESCRIPTOR it was handed; a handle that went out of
+#: scope would be closed and the fault trace would land nowhere.
+_fatal_fault_log: IO[bytes] | None = None
+
+
+def enable_fatal_fault_handler(path: Path | None = None) -> Path | None:
+    """Point the fatal-fault handler at the daemon's own log directory.
+
+    A daemon death is never silent. A fatal fault -- a segfault, an abort, a bus
+    error, a stack overflow -- otherwise takes the process out between two
+    access-log lines, leaving the last request logged without a response and
+    nothing at all about the exit; that is exactly how a large compile looked
+    when it killed a daemon hosting two instances.
+
+    faulthandler's default target is stderr, and stderr is NOT where this
+    daemon's log is: `configure_request_logging` binds structlog to a rotating
+    file under `<state-root>/daemon/logs/`, so under a terminal multiplexer a
+    fault trace written to stderr lands in a scrollback nobody keeps and the
+    death still reads as silent in the log an operator actually follows. The
+    trace goes to `fatal.log` beside the request log instead.
+
+    Returns the path the handler writes to, or None when no file could be
+    opened -- an unwritable log directory, or a build where enabling the
+    handler is refused. Losing the trace is not worth refusing to serve, so
+    both degrade to a debug line. A SIGKILL from the kernel's OOM killer still
+    cannot be observed from inside the process; the MemoryError path in
+    authoring preflight is what covers the allocation failure this build sees.
+    """
+
+    global _fatal_fault_log
+    resolved = get_server_fatal_log_path() if path is None else path
+    handle: IO[bytes] | None = None
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        # Append, unbuffered: the writer is a signal handler that may be the
+        # last thing this process does, so nothing may be left in a buffer.
+        handle = resolved.open("ab", buffering=0)
+        faulthandler.enable(file=handle)
+    except (ValueError, OSError):
+        if handle is not None:
+            handle.close()
+        _log.debug("faulthandler_unavailable", path=str(resolved))
+        return None
+    _fatal_fault_log = handle
+    return resolved
+
+
+_SOCKET_LOCATION_REPAIR = (
+    "pass a --socket path inside a directory only you own and can access (mode 0700), "
+    "under ancestors other users cannot write"
+)
+
+
+def _refuse_socket_location(detail: str) -> ConfigError:
+    return ConfigError(
+        f"Unsafe daemon socket location: {detail}. Repair: {_SOCKET_LOCATION_REPAIR}."
+    )
+
+
+def _check_socket_ancestor(path: Path, status: os.stat_result) -> None:
+    """An ancestor no other user can use to replace the directory below it.
+
+    Only root or this user may own it, and group/other write is allowed only on
+    a sticky root-owned directory such as ``/tmp``, where nobody but the entry's
+    owner (or root) may rename or remove an entry.
+    """
+    uid = os.getuid()
+    if status.st_uid not in (0, uid):
+        raise _refuse_socket_location(
+            f"{path} is owned by uid {status.st_uid}, who could replace the directory below it"
+        )
+    writable = status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    sticky_root = bool(status.st_mode & stat.S_ISVTX) and status.st_uid == 0
+    if writable and not sticky_root:
+        raise _refuse_socket_location(
+            f"{path} is writable by group or others (mode {stat.S_IMODE(status.st_mode):04o}), "
+            "so the directory below it could be replaced"
+        )
+
+
+def _check_socket_parent(path: Path, status: os.stat_result) -> None:
+    """The socket's own directory: a real directory this user owns, owner-only."""
+    if not stat.S_ISDIR(status.st_mode):
+        raise _refuse_socket_location(f"{path} is not a directory (a symlink is refused)")
+    if status.st_uid != os.getuid():
+        raise _refuse_socket_location(f"{path} is owned by uid {status.st_uid}, not by you")
+    if stat.S_IMODE(status.st_mode) & 0o077:
+        raise _refuse_socket_location(
+            f"{path} is not owner-only (mode {stat.S_IMODE(status.st_mode):04o}); "
+            f"run `chmod 700 {path}`"
+        )
+
+
+_MAX_SOCKET_PATH_SYMLINKS = 40
+
+
+def _inspect_socket_path_entry(path: Path) -> os.stat_result:
+    try:
+        return os.lstat(path)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not inspect {path}: {exc}") from exc
+
+
+def _check_socket_ancestors(directory: Path) -> None:
+    """Apply the ancestor rule to every directory the path actually traverses.
+
+    The path is walked one component at a time and each symlink is resolved
+    here, so every directory a lookup passes through -- including the ones a
+    symlink target leads through on the way to the next symlink -- is checked.
+    A directory another user could write would let them replace whatever the
+    path resolves through it. The socket's own directory is checked separately.
+    """
+    current = Path(os.sep)
+    _check_socket_ancestor(current, _inspect_socket_path_entry(current))
+    remaining = list(directory.parts[1:])
+    followed = 0
+    while remaining:
+        part = remaining.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
+            continue
+        entry = current / part
+        status = _inspect_socket_path_entry(entry)
+        if stat.S_ISLNK(status.st_mode):
+            # A link's owner can repoint it at any time, whatever its directory
+            # allows (a sticky /tmp keeps others from removing the link, not its
+            # owner from replacing it).
+            if status.st_uid not in (0, os.getuid()):
+                raise _refuse_socket_location(
+                    f"{entry} is a symlink owned by uid {status.st_uid}, who could repoint it"
+                )
+            followed += 1
+            if followed > _MAX_SOCKET_PATH_SYMLINKS:
+                raise _refuse_socket_location(f"{directory} passes through too many symlinks")
+            target = Path(os.readlink(entry))
+            if target.is_absolute():
+                current = Path(os.sep)
+                remaining = list(target.parts[1:]) + remaining
+            else:
+                remaining = list(target.parts) + remaining
+            continue
+        if not stat.S_ISDIR(status.st_mode):
+            raise _refuse_socket_location(f"{entry} is not a directory")
+        if remaining:
+            _check_socket_ancestor(entry, status)
+        current = entry
+
+
+def _socket_location(path: str | os.PathLike[str]) -> Path:
+    """The path exactly as a client will look it up, never lexically normalized.
+
+    A relative path is joined to the working directory without normalizing it.
+    ``..`` is refused outright: collapsing it lexically, before the symlinks
+    ahead of it are resolved, names a different directory than the one a
+    lookup actually walks.
+    """
+    raw = os.fspath(path)
+    located = Path(raw if os.path.isabs(raw) else os.path.join(os.getcwd(), raw))
+    if ".." in located.parts:
+        raise _refuse_socket_location(
+            f"{raw} contains a `..` component; name the socket path without `..`"
+        )
+    return located
+
+
+def prepare_socket_directory(directory: Path) -> None:
+    """Make sure no other user can create or replace the daemon socket.
+
+    A missing directory is created 0700. The socket's own directory must be a
+    real directory this user owns with no group or other access, and no
+    ancestor may let another user replace it: anyone who can swap the socket
+    receives every bearer token clients send.
+    """
+    directory = _socket_location(directory)
+    if not os.path.lexists(directory):
+        directory.mkdir(mode=0o700, parents=True)
+    try:
+        status = os.lstat(directory)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not inspect {directory}: {exc}") from exc
+    _check_socket_parent(directory, status)
+    _check_socket_ancestors(directory)
+
+
+def _bind_socket_path(sock: socket.socket, path: str) -> None:
+    sock.bind(path)
+
+
+def bind_private_unix_socket(socket_file: Path) -> socket.socket:
+    """Bind the daemon socket owner-only (0600) inside the directory it validated.
+
+    uvicorn's own bind makes the socket 0666, so the daemon binds it and hands
+    uvicorn the descriptor. The validated directory is held open; after the
+    bind, the path must still name that same directory and the bound entry must
+    be the one inside it, or the socket is unlinked and startup is refused.
+    """
+    socket_file = _socket_location(socket_file)
+    directory, name = socket_file.parent, socket_file.name
+    prepare_socket_directory(directory)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        dir_fd = os.open(directory, flags)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not open {directory}: {exc}") from exc
+    try:
+        pinned = os.fstat(dir_fd)
+        _check_socket_parent(directory, pinned)
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except FileNotFoundError:
+            pass
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        previous_umask = os.umask(0o177)
+        try:
+            _bind_socket_path(sock, str(socket_file))
+        except OSError as exc:
+            sock.close()
+            if "too long" in str(exc).lower() or len(os.fsencode(str(socket_file))) >= 104:
+                raise ConfigError(
+                    f"Daemon socket path is too long for a Unix socket "
+                    f"({len(os.fsencode(str(socket_file)))} bytes; the limit is about 100): "
+                    f"{socket_file}. Repair: pass a shorter --socket, for example under "
+                    "~/.cruxible/run/"
+                ) from exc
+            raise
+        finally:
+            os.umask(previous_umask)
+        try:
+            _verify_bound_socket(socket_file, name=name, dir_fd=dir_fd, pinned=pinned)
+        except ConfigError:
+            sock.close()
+            raise
+        # The entry was just verified to be our socket, not a link.
+        os.chmod(name, 0o600, dir_fd=dir_fd)
+        sock.set_inheritable(True)
+        return sock
+    finally:
+        os.close(dir_fd)
+
+
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _verify_bound_socket(
+    socket_file: Path, *, name: str, dir_fd: int, pinned: os.stat_result
+) -> None:
+    """Refuse, and remove what was bound, unless the bind landed in the pinned directory."""
+    try:
+        current = os.stat(socket_file.parent)
+        inside = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        at_path = os.lstat(socket_file)
+        intact = (
+            _same_file(current, pinned)
+            and _same_file(inside, at_path)
+            and stat.S_ISSOCK(at_path.st_mode)
+            and at_path.st_uid == os.getuid()
+        )
+    except OSError:
+        intact = False
+    if intact:
+        return
+    try:
+        stray = os.lstat(socket_file)
+        if stat.S_ISSOCK(stray.st_mode) and stray.st_uid == os.getuid():
+            os.unlink(socket_file)
+    except OSError:
+        pass
+    raise _refuse_socket_location(
+        f"the socket directory {socket_file.parent} changed while the socket was being bound"
+    )
+
+
+@contextmanager
+def _sigterm_unwinds() -> Iterator[None]:
+    """Let a SIGTERM stop unwind this process instead of killing it outright.
+
+    uvicorn shuts down gracefully on SIGTERM and then re-raises the signal under
+    the handler it found. Under the default handler that re-raise ends the
+    process on the spot, so no ``finally`` below ever runs and the socket file
+    `server stop` promised to release is left behind. A handler that raises
+    SystemExit(0) turns the re-raise into an ordinary unwind.
+    """
+
+    def _exit(_signum: int, _frame: object) -> None:
+        raise SystemExit(0)
+
+    try:
+        previous = signal.signal(signal.SIGTERM, _exit)
+    except ValueError:  # not the main thread: uvicorn installs no handlers either
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def provider_lane_start_warning() -> str | None:
+    """Say, at start, that the Provider lane's precondition is unmet, with its repair.
+
+    The precondition is checked once, when ``create_app`` builds the Provider
+    operator: a private runtime directory short enough for the control
+    sockets. The daemon still starts (a warning, not a refusal) because only
+    installed Provider code needs the lane; reads, writes, proposals and the
+    core built-ins are served without it. ``server status`` keeps reporting it.
+    """
+
+    operator = get_playbill_manager().cached_provider_runtime_operator()
+    refusal = operator.environment_refusal
+    if refusal is None or operator.lane_status()[0] != "unavailable":
+        return None
+    return (
+        "Provider lane unavailable; Provider-backed kit add and Procedure and Line "
+        f"runs will refuse until it is repaired, everything else is served: {refusal}"
+    )
+
+
+def _serve(resolved_socket: str | None, *, bootstrap_secret_file: Path | None = None) -> None:
+    """Start uvicorn under an already-held state-root lock."""
+    enable_fatal_fault_handler()
+    if resolved_socket:
+        # Refuse an unsafe socket directory before any store is opened.
+        prepare_socket_directory(Path(resolved_socket).parent)
     # Resolve and freeze the process ceiling before registry/config access or
     # uvicorn startup. Unknown names and attempts to reinitialize this process
     # at a different tier therefore fail closed before the daemon serves.
     init_permissions()
 
+    # Under the lock, so a daemon refused by it never replaces the running
+    # daemon's secret file. Only the path is printed, never the secret.
+    prepare_bootstrap_secret(get_server_state_root(), extra_file=bootstrap_secret_file)
     credential_store = get_runtime_credential_store()
     registry = get_registry()
     runtime_credentials_available = credential_store.has_active_credentials()
@@ -262,14 +765,10 @@ def run_server(
     )
     if is_server_auth_enabled():
         credential_store.mark_auth_required("server_startup_auth_enabled")
-    for record in registry.list_instances():
-        if record.backend != GOVERNED_DAEMON_BACKEND:
-            continue
-        instance_root = Path(record.location)
-        if not (instance_root / CruxibleInstance.INSTANCE_DIR / "instance.json").exists():
-            continue
-        instance = CruxibleInstance.load(instance_root)
-        enforce_config_integrity(instance, context=f"daemon startup for {record.instance_id}")
+    else:
+        # Only a Unix-socket daemon gets here without auth (validation above
+        # refuses TCP), so this one line is the whole local trust model.
+        print(auth_off_startup_notice(), file=sys.stderr)
     for warning in volatile_state_path_warnings(
         instance_locations=[
             (record.instance_id, record.location) for record in registry.list_instances()
@@ -280,14 +779,28 @@ def run_server(
     import uvicorn
 
     configure_request_logging()
-    app = create_app()
+    # Slow start steps log a start and a done line, which `server restart` and
+    # `server info` read back, and print them here for a foreground start.
+    startup_progress.configure(boot_id=PROCESS_BOOT_ID, echo=True)
+    get_playbill_manager().quiet_checkpoint_seconds = QUIET_CHECKPOINT_SECONDS
+    # Nothing answers until this returns: every instance opens and recovers here.
+    with startup_progress.slow_step(
+        "daemon_start", instance_id=None, instances=len(registry.list_instances())
+    ):
+        app = create_app()
+    lane_warning = provider_lane_start_warning()
+    if lane_warning is not None:
+        print(f"Warning: {lane_warning}", file=sys.stderr)
 
-    resolved_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
     if resolved_socket:
         socket_file = Path(resolved_socket)
-        socket_file.parent.mkdir(parents=True, exist_ok=True)
-        socket_file.unlink(missing_ok=True)
-        uvicorn.run(app, uds=str(socket_file))
+        sock = bind_private_unix_socket(socket_file)
+        try:
+            with _sigterm_unwinds():
+                uvicorn.run(app, fd=sock.fileno())
+        finally:
+            sock.close()
+            socket_file.unlink(missing_ok=True)
         return
 
     resolved_host = os.environ.get("CRUXIBLE_HOST", "127.0.0.1")

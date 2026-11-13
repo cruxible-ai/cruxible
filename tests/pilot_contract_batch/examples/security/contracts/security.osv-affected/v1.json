@@ -1,0 +1,14 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One (component, CVE) pair osv.match found, with its advisory (the versions OSV lists as fixed stay in the cited document).",
+  "fields": {
+    "osv_id": {
+      "type": {
+        "kind": "string",
+        "max_len": 128
+      }
+    }
+  },
+  "name": "security.osv-affected",
+  "version": 1
+}

@@ -1,0 +1,16 @@
+{
+  "citation_role": "evidence",
+  "kind": "claim",
+  "object": {
+    "kind": "literal",
+    "value": "done"
+  },
+  "predicate": "project.work_item.status",
+  "rationale": "The migration handbook records the reviewer's acceptance.",
+  "role": "observation",
+  "source": {
+    "kind": "working_selection",
+    "source_id": "corpus.handbook.md"
+  },
+  "subject": "project.work_item/wi-101"
+}

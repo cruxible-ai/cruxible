@@ -1,0 +1,19 @@
+{
+  "artifact_format": "cruxible-trigger-v2",
+  "identity": {
+    "kind": "Trigger",
+    "name": "prediction-anchor-retry"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "schedule": {
+    "interval_seconds": 3600,
+    "kind": "cadence"
+  },
+  "target": {
+    "action": "prediction.anchor_retry",
+    "kind": "action"
+  }
+}

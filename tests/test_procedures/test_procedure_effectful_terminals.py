@@ -1,0 +1,701 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.procedure_mandates import (
+    procedure_mandate_digest,
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    DIRECT_NODE_KINDS,
+    LINE_NODE_KINDS,
+)
+from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.egress import (
+    MANDATE_FREE_RUNG_CEILING,
+    ProcedureProducerReceiptV1,
+    TerminalAuthorityRefusal,
+    TerminalEgressChildReceiptV1,
+    TerminalEgressError,
+    TerminalEgressItemV1,
+    TerminalEgressReceiptV1,
+    TerminalEgressReceiptV2,
+    TerminalEgressRequestV1,
+    TerminalEgressRequestV2,
+    build_terminal_egress_request_v2,
+    compute_effective_rung,
+    procedure_producer_receipt_digest,
+    require_procedure_mandate,
+    terminal_operation_key,
+    verify_terminal_egress_receipt,
+)
+from cruxible_core.procedures.execution import (
+    ProcedureRunAdmission,
+    prepare_direct_procedure_run,
+)
+from cruxible_core.procedures.reference_binding import authored_procedure
+from cruxible_core.procedures.terminal_services import (
+    ProposalTerminalAdapter,
+)
+from tests.core_support._subject_kind_support import core_assigned
+from tests.core_support._support import initialize_local
+from tests.support.procedures import bind_fixture, procedure_members
+from tests.test_procedures.test_procedure_execution import (
+    _actor,
+    _coordinate,
+    _digest,
+    _fixture,
+    _line_admission,
+    _pin,
+    _StateReader,
+)
+from tests.test_procedures.test_procedure_mandates import (
+    _accepted_line,
+    _line,
+    _mandate,
+    _procedure,
+)
+from tests.test_procedures.test_procedure_source_runs import _accept_more
+
+NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+
+
+def test_direct_lane_requires_line_authority_for_effectful_terminals() -> None:
+    effectful = {"emit_capture", "post_inbox", "claims"}
+    assert DIRECT_NODE_KINDS.isdisjoint(effectful)
+    # Every terminal, the inbox included, runs under a Line's authority.
+    assert LINE_NODE_KINDS == effectful
+
+
+def test_a_post_inbox_procedure_runs_on_a_line() -> None:
+    from cruxible_client.contracts.procedures.artifacts import procedure_runnability
+    from tests.test_procedures.test_line_track_records import _artifacts
+
+    procedure, _line = _artifacts()
+    runnable, rows = procedure_runnability(procedure.procedure.definition)
+    assert runnable == "line"
+    assert [(row.kind, row.runs_on) for row in rows] == [("post_inbox", "line")]
+
+
+def _item(path: str, *, value: object = "value") -> TerminalEgressItemV1:
+    return TerminalEgressItemV1(
+        child_index=0,
+        item_key=path,
+        manifest_digest=_digest("manifest"),
+        value=value,
+    )
+
+
+def _base_request(
+    kind: str,
+    *,
+    admission: ProcedureRunAdmission,
+    item: TerminalEgressItemV1,
+    bound: ArtifactPin | None = None,
+    rung: int = 3,
+) -> TerminalEgressRequestV1:
+    from cruxible_core.procedures.claims_changes import CoreSubjectChange
+
+    return TerminalEgressRequestV1(
+        kind=kind,
+        run_id=admission.run_id,
+        node_id="terminal",
+        accepted_coordinate=admission.accepted_coordinate,
+        procedure_identity=admission.procedure_identity,
+        procedure_artifact_digest=admission.procedure_artifact_digest,
+        admission_binding_digest=admission.admission_binding_digest,
+        effective_rung=0 if kind == "emit_capture" else rung,
+        required_rung=0 if kind == "emit_capture" else rung,
+        capped_by="line_requested_rung" if kind == "claims" and rung == 2 else None,
+        claims_changes={
+            item.item_key: CoreSubjectChange(
+                subject_kind="project.work_item",
+                key={"slug": "wi-1"},
+                rationale="The terminal names the work item.",
+            )
+        }
+        if kind == "claims"
+        else {},
+        limiting_term="line_requested_rung"
+        if kind == "claims" and rung == 2
+        else "procedure_terminal_capability",
+        granted_operation="compile_capture"
+        if kind == "emit_capture"
+        else "propose_change_set"
+        if rung == 2
+        else "activate_change_set",
+        bound_artifact_pin=bound,
+        actor_context=admission.actor_context,
+        items=(item,),
+        prepared_at=admission.admitted_at,
+    )
+
+
+def _admission(
+    tmp_path,
+    *,
+    coordinate=None,
+    actor=None,
+    admitted_at: datetime = NOW,
+) -> ProcedureRunAdmission:
+    root = tmp_path / "admission"
+    root.mkdir()
+    fixture = _fixture(root)
+    accepted = bind_fixture(_procedure())
+    return prepare_direct_procedure_run(
+        accepted,
+        instance_id="instance-a",
+        accepted_coordinate=coordinate or _coordinate(),
+        invocation_input={"value": 7},
+        actor_context=actor or _actor(),
+        state_reader=_StateReader(),
+        bodies=fixture.bodies,
+        journal_stream=fixture.stream,
+        journal_partition_id=None,
+        admitted_at=admitted_at,
+    ).admission
+
+
+def _runtime_mandate(
+    admission: ProcedureRunAdmission,
+    *,
+    namespace: tuple[str, ...],
+    grants: str = "settle",
+):
+    # settle-grants by default so a settle_change_set request's rung is covered;
+    # callers whose namespace reaches outside claims/ pass grants="propose" (a
+    # settle grant may only reach accepted Claims). A direct (non-Line) admission
+    # has no line identity to pin against, so such callers get the base
+    # mandate's own (unrelated) Line.
+    base = _mandate(grants=grants)
+    line_identity = admission.line_identity
+    line_digest = admission.line_spec_digest
+    update: dict[str, object] = {
+        "namespace": namespace,
+    }
+    if line_identity is not None and line_digest is not None:
+        update["line"] = base.line.model_copy(
+            update={"target": line_identity, "artifact_digest": line_digest}
+        )
+    return base.model_copy(update=update)
+
+
+def _line_run_admission(
+    tmp_path,
+    *,
+    coordinate: AcceptedCoordinate | None = None,
+    actor: GovernedActorContext | None = None,
+    admitted_at: datetime = NOW,
+    line_identity: ArtifactIdentity | None = None,
+    line_spec_digest: str | None = None,
+) -> ProcedureRunAdmission:
+    root = tmp_path / "admission"
+    root.mkdir(exist_ok=True)
+    fixture = _fixture(root)
+    accepted = bind_fixture(_procedure())
+    return _line_admission(
+        accepted,
+        fixture,
+        admitted_at=admitted_at,
+        coordinate=coordinate,
+        actor_context=actor,
+        line_identity=line_identity,
+        line_spec_digest=line_spec_digest,
+    )
+
+
+def _effectful_request(
+    kind: str,
+    *,
+    admission: ProcedureRunAdmission,
+    item: TerminalEgressItemV1,
+    target_paths: tuple[str, ...],
+    mandate_digest: str,
+    bound: ArtifactPin | None = None,
+    prepared_at: datetime | None = None,
+    rung: int = 3,
+):
+    base = _base_request(kind, admission=admission, item=item, bound=bound, rung=rung)
+    if prepared_at is not None:
+        base = base.model_copy(update={"prepared_at": prepared_at})
+    return build_terminal_egress_request_v2(
+        base,
+        admission=admission,
+        procedure_mandate_digest=mandate_digest,
+        calibration_reading_digests=(),
+        target_paths=target_paths,
+    )
+
+
+def test_producer_receipt_is_topological_and_mutation_sensitive(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    contract = _pin("capture-contract", "CaptureContract", "capture")
+    base = _base_request("emit_capture", admission=admission, item=_item("capture"), bound=contract)
+    request = build_terminal_egress_request_v2(
+        base,
+        admission=admission,
+        procedure_mandate_digest=None,
+        calibration_reading_digests=(),
+        target_paths=(),
+    )
+    producer = request.producer_receipt
+    assert isinstance(producer, ProcedureProducerReceiptV1)
+    digest = procedure_producer_receipt_digest(producer)
+    assert (
+        producer.model_dump(mode="json")
+        .keys()
+        .isdisjoint({"capture_digests", "terminal_receipt_digest", "run_receipt_digest"})
+    )
+    assert (
+        procedure_producer_receipt_digest(producer.model_copy(update={"run_id": "run-2"})) != digest
+    )
+
+
+def test_terminal_operation_key_excludes_clocks_and_commits_authority_scope(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    path = "subjects/project.work_item/wi-1.json"
+    mandate_digest = _digest("procedure-mandate")
+    request = _effectful_request(
+        "claims",
+        rung=2,
+        admission=admission,
+        item=_item(path),
+        target_paths=(path,),
+        mandate_digest=mandate_digest,
+    )
+    key = terminal_operation_key(request)
+    assert key == terminal_operation_key(
+        request.model_copy(
+            update={
+                "prepared_at": NOW.replace(hour=13),
+                "evaluation_time": NOW.replace(hour=14),
+            }
+        )
+    )
+    mutations = (
+        {"capped_by": None, "required_rung": 3},
+        {"target_paths": ("documents/other.md",)},
+        {"procedure_mandate_digest": _digest("other-mandate")},
+        {"procedure_artifact_digest": _digest("other-procedure")},
+    )
+    assert all(
+        terminal_operation_key(request.model_copy(update=update)) != key for update in mutations
+    )
+
+
+def test_v2_builder_derives_authority_and_uses_monotone_prepared_time(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    path = "subjects/project.work_item/wi-1.json"
+    prepared_at = admission.admitted_at + timedelta(hours=1)
+    request = _effectful_request(
+        "claims",
+        rung=2,
+        admission=admission,
+        item=_item(path),
+        target_paths=(path,),
+        mandate_digest=_digest("procedure-mandate"),
+        prepared_at=prepared_at,
+    )
+    assert not hasattr(request, "requested_authority")
+    assert request.evaluation_time == prepared_at
+    assert request.mandate_pin is None and request.mandate_basis_digests == ()
+
+    forged = request.model_copy(update={"evaluation_time": prepared_at + timedelta(seconds=1)})
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        require_procedure_mandate(forged, admission=admission, accepted_mandates={})
+    assert caught.value.codes == ("procedure_authority_admission_mismatch",)
+    assert caught.value.repair_kind == "rebind_admission"
+
+
+def test_egress_refuses_an_inherited_mandate_pin_or_basis(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    request = _effectful_request(
+        "claims",
+        admission=admission,
+        item=_item("candidate"),
+        target_paths=(path,),
+        mandate_digest=_digest("procedure-mandate"),
+    )
+    inherited = (
+        {"mandate_pin": _pin("mandate", "ProcedureMandate", "settlement")},
+        {"mandate_basis_digests": (_digest("inherited-basis"),)},
+    )
+    for update in inherited:
+        with pytest.raises(ValueError, match="inherited mandate pin or basis"):
+            TerminalEgressRequestV2.model_validate({**request.model_dump(mode="python"), **update})
+        v1 = _base_request("claims", admission=admission, item=_item("candidate"))
+        with pytest.raises(ValueError, match="inherited mandate pin or basis"):
+            TerminalEgressRequestV1.model_validate({**v1.model_dump(mode="python"), **update})
+
+
+def test_non_effectful_mandate_check_names_the_declared_rung_repair(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    contract = _pin("capture-contract", "CaptureContract", "capture")
+    base = _base_request(
+        "emit_capture",
+        admission=admission,
+        item=_item("capture"),
+        bound=contract,
+    )
+    request = build_terminal_egress_request_v2(
+        base,
+        admission=admission,
+        procedure_mandate_digest=None,
+        calibration_reading_digests=(),
+        target_paths=(),
+    )
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        require_procedure_mandate(request, admission=admission, accepted_mandates={})
+    assert caught.value.codes == ("procedure_mandate_not_applicable",)
+    assert caught.value.repair_kind == "use_declared_rung"
+    assert caught.value.repair.hand_edit.required_change == "use_declared_terminal_rung"
+
+
+def test_mandate_free_fold_stops_below_proposal() -> None:
+    rung = compute_effective_rung(
+        procedure_terminal_capability=3,
+        requested_terminal_rung=3,
+        selector_privacies={},
+        taint_labels=(),
+        procedure_definition_digest=_digest("definition"),
+        line_spec_digest=_digest("line"),
+        sensitivity_policy_digest=_digest("sensitivity"),
+        mandate_coordinate_digest=_digest("mandates"),
+        calibration_coordinate_digest=_digest("calibration"),
+    )
+    assert MANDATE_FREE_RUNG_CEILING == 1
+    assert rung.effective_rung == 1
+    assert not rung.effective_rung >= 2
+
+
+def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    base = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    admission = _admission(
+        tmp_path,
+        coordinate=base,
+        actor=_actor().model_copy(update={"actor_id": "owner"}),
+    )
+    subject = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-1"),
+        subject_kind="project.work_item",
+        subject_id="wi-1",
+    )
+    path = subject_path("project.work_item", "wi-1")
+    candidate_tree = {**instance.tree_at(base.git_oid), path: render_subject(subject)}
+    mandate = _runtime_mandate(admission, namespace=("subjects",), grants="propose")
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    request = _effectful_request(
+        "claims",
+        rung=2,
+        admission=admission,
+        item=_item(path),
+        target_paths=(path,),
+        mandate_digest=mandate_digest,
+    )
+    adapter = ProposalTerminalAdapter(
+        service=instance.proposal_service(), bind_projection=instance.bind_accepted_projection
+    )
+    assert request.operation_key is not None
+    target_ref = (
+        "refs/proposals/owner/procedure-" + request.operation_key.removeprefix("sha256:")[:64]
+    )
+    assert instance.proposal_service().transport.read_proposal_ref(target_ref) is None
+    with pytest.raises(TerminalAuthorityRefusal, match="procedure_mandate_required") as caught:
+        adapter.deliver(
+            request=request,
+            admission=admission,
+            settle_submission=ProposalSettleSubmission(
+                mode="fallback",
+                mandate_digest=request.procedure_mandate_digest or _digest("mandate"),
+                fallback_reason="cruxible.settle.capped_by_line_requested_rung",
+            ),
+            candidate_tree=candidate_tree,
+            accepted_mandates={},
+        )
+    assert caught.value.codes == ("procedure_mandate_required",)
+    assert caught.value.procedure_name == "triage"
+    assert caught.value.required_rung == 2
+    assert caught.value.target_namespace == (path,)
+    assert caught.value.repair_kind == "create_mandate"
+    assert caught.value.repair.operation == "cruxible.authoring.example"
+    assert caught.value.repair.arguments == {"example": "procedure-mandate"}
+    assert instance.proposal_service().transport.read_proposal_ref(target_ref) is None
+
+
+@pytest.mark.parametrize("retire_at_head", [False, True])
+def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_at_head) -> None:
+    instance, owner = initialize_local(tmp_path)
+    # The mandate the adapter is handed must be one accepted state carries: the
+    # door re-establishes it against the head tree before any ref moves.
+    accepted = _procedure()
+    line = _line(procedure=accepted)
+    accepted_line = _accepted_line(line)
+    (tmp_path / "shape").mkdir()
+    shape = _line_run_admission(
+        tmp_path / "shape",
+        actor=_actor().model_copy(update={"actor_id": "owner"}),
+        line_identity=line.identity,
+        line_spec_digest=accepted_line.artifact_digest,
+    )
+    # Creating a keyed Subject writes its key Claim beside it.
+    mandate = _runtime_mandate(shape, namespace=("claims", "subjects"), grants="propose")
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    _accept_more(
+        instance,
+        owner,
+        core_assigned(
+            instance,
+            {
+                **procedure_members(authored_procedure(accepted)),
+                line_spec_path(line.identity.name): render_line_spec(line),
+                procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+                # A first work item declares the kind the terminal creates wi-2 of.
+                subject_path("project.work_item", "wi-1"): render_subject(
+                    SubjectShell(
+                        identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-1"),
+                        subject_kind="project.work_item",
+                        subject_id="wi-1",
+                    )
+                ),
+            },
+        ),
+        name="adapter-mandate",
+    )
+    base = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    admission = _line_run_admission(
+        tmp_path,
+        coordinate=base,
+        actor=_actor().model_copy(update={"actor_id": "owner"}),
+        line_identity=line.identity,
+        line_spec_digest=accepted_line.artifact_digest,
+    )
+    subject = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-2"),
+        subject_kind="project.work_item",
+        subject_id="wi-2",
+    )
+    path = subject_path("project.work_item", "wi-2")
+    # Core creates wi-2 by its slug (declaring the work items' kind with it).
+    head = instance.tree_at(base.git_oid)
+    candidate_tree = core_assigned(instance, {**head, path: render_subject(subject)})
+    request = _effectful_request(
+        "claims",
+        rung=2,
+        admission=admission,
+        item=_item(path),
+        target_paths=tuple(
+            sorted(item for item in candidate_tree if head.get(item) != candidate_tree[item])
+        ),
+        mandate_digest=mandate_digest,
+    )
+    if retire_at_head:
+        retired = mandate.model_copy(
+            update={
+                "lifecycle": mandate.lifecycle.model_copy(
+                    update={"state": "retired", "predecessor_digest": mandate_digest}
+                )
+            }
+        )
+        _accept_more(
+            instance,
+            owner,
+            {procedure_mandate_path(mandate.identity.name): render_procedure_mandate(retired)},
+            name="retire-adapter-mandate",
+        )
+    service = instance.proposal_service()
+    adapter = ProposalTerminalAdapter(
+        service=service, bind_projection=instance.bind_accepted_projection
+    )
+
+    def deliver():
+        return adapter.deliver(
+            request=request,
+            admission=admission,
+            settle_submission=ProposalSettleSubmission(
+                mode="fallback",
+                mandate_digest=request.procedure_mandate_digest or _digest("mandate"),
+                fallback_reason="cruxible.settle.capped_by_line_requested_rung",
+            ),
+            candidate_tree=candidate_tree,
+            accepted_mandates={mandate_digest: mandate},
+        )
+
+    if retire_at_head:
+        with pytest.raises(TerminalAuthorityRefusal, match="procedure_mandate_superseded"):
+            deliver()
+        target_ref = "refs/proposals/owner/procedure-" + request.operation_key.removeprefix(
+            "sha256:"
+        )
+        assert service.transport.read_proposal_ref(target_ref) is None
+        return
+    receipt = deliver()
+    verify_terminal_egress_receipt(request, receipt)
+    assert receipt.disposition == "received"
+    assert AcceptedCoordinate.from_internal(instance.accepted_coordinate()) == base
+
+
+def test_egress_refuses_mandate_expired_between_admission_and_egress(tmp_path) -> None:
+    admission = _line_run_admission(tmp_path, admitted_at=NOW - timedelta(days=10))
+    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    mandate = _runtime_mandate(admission, namespace=("claims",)).model_copy(
+        update={"expires_at": NOW - timedelta(days=9)}
+    )
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    request = _effectful_request(
+        "claims",
+        admission=admission,
+        item=_item("candidate"),
+        target_paths=(target_path,),
+        mandate_digest=mandate_digest,
+        prepared_at=NOW,
+    )
+
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        require_procedure_mandate(
+            request=request,
+            admission=admission,
+            accepted_mandates={mandate_digest: mandate},
+        )
+
+    assert caught.value.codes == ("procedure_mandate_expired",)
+    assert request.evaluation_time == request.prepared_at == NOW
+
+
+def test_egress_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    honest_admission = _line_admission(bind_fixture(_procedure()), fixture, admitted_at=NOW)
+    rewound_admission = type(honest_admission).model_validate(
+        {
+            **honest_admission.model_dump(mode="python"),
+            "admitted_at": NOW - timedelta(days=30),
+        }
+    )
+    assert rewound_admission.admission_binding_digest == (honest_admission.admission_binding_digest)
+
+    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    mandate = _runtime_mandate(rewound_admission, namespace=("claims",)).model_copy(
+        update={"expires_at": NOW - timedelta(days=9)}
+    )
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    request = _effectful_request(
+        "claims",
+        admission=rewound_admission,
+        item=_item("candidate"),
+        target_paths=(target_path,),
+        mandate_digest=mandate_digest,
+        prepared_at=NOW,
+    )
+
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        require_procedure_mandate(
+            request=request,
+            admission=rewound_admission,
+            accepted_mandates={mandate_digest: mandate},
+        )
+
+    assert caught.value.codes == ("procedure_mandate_expired",)
+
+
+def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path) -> None:
+    admission = _line_run_admission(tmp_path)
+    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    base = _runtime_mandate(admission, namespace=("claims",))
+    refused = base.model_copy(
+        update={
+            "line": base.line.model_copy(update={"artifact_digest": _digest("other-line")}),
+            "grants": "propose",
+            "namespace": ("documents",),
+            "expires_at": NOW - timedelta(days=1),
+            "lifecycle": base.lifecycle.model_copy(update={"state": "retired"}),
+        }
+    )
+    refused_digest = procedure_mandate_digest(refused).tagged
+    request = _effectful_request(
+        "claims",
+        admission=admission,
+        item=_item("candidate"),
+        target_paths=(target_path,),
+        mandate_digest=refused_digest,
+    )
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        require_procedure_mandate(
+            request=request,
+            admission=admission,
+            accepted_mandates={refused_digest: refused},
+        )
+    assert caught.value.codes == (
+        "procedure_mandate_expired",
+        "procedure_mandate_grant_insufficient",
+        "procedure_mandate_line_mismatch",
+        "procedure_mandate_namespace_mismatch",
+        "procedure_mandate_superseded",
+    )
+    assert caught.value.procedure_name == "triage"
+    assert caught.value.required_rung == 3
+    assert caught.value.target_namespace == (target_path,)
+    assert caught.value.repair_kind == "author_successor"
+    assert caught.value.repair.operation == "cruxible.authoring.example"
+    assert caught.value.repair.arguments == {"example": "procedure-mandate"}
+
+
+def test_a_v1_claims_receipt_that_changes_state_is_refused(tmp_path) -> None:
+    """Only a prepared no-op answers a v1 claims request; a plain v1 receipt never does."""
+
+    admission = _admission(tmp_path)
+    request = _base_request(
+        "claims",
+        rung=2,
+        admission=admission,
+        item=_item("subjects/project.work_item/wi-1.json"),
+    )
+    receipt = TerminalEgressReceiptV1(
+        kind="claims",
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="received",
+        children=(
+            TerminalEgressChildReceiptV1(
+                child_index=0,
+                item_key=request.items[0].item_key,
+                egress_digest=_digest("candidate-member"),
+            ),
+        ),
+    )
+    with pytest.raises(TerminalEgressError, match="requires its v2 request"):
+        verify_terminal_egress_receipt(request, receipt)
+
+
+def test_v2_receipt_checks_apply_even_when_request_is_v1(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    request = _base_request(
+        "claims",
+        rung=2,
+        admission=admission,
+        item=_item("subjects/project.work_item/wi-1.json"),
+    )
+    receipt = TerminalEgressReceiptV2(
+        kind="claims",
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="received",
+        children=(
+            TerminalEgressChildReceiptV1(
+                child_index=0,
+                item_key=request.items[0].item_key,
+                egress_digest=_digest("candidate-member"),
+            ),
+        ),
+        operation_key=_digest("forged-operation"),
+    )
+    with pytest.raises(TerminalEgressError, match="v2 terminal receipt"):
+        verify_terminal_egress_receipt(request, receipt)

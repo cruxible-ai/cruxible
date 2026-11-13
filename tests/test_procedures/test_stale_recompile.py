@@ -1,0 +1,557 @@
+"""Retained Procedure requests recompile without re-running their providers."""
+
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_PATH,
+    ApprovalPolicy,
+    render_approval_policy,
+)
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.procedure_mandates import (
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    line_spec_digest,
+    line_spec_path,
+    render_line_spec,
+)
+from cruxible_client.contracts.recompilation import ProposalRecompiled
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_inspect_playbill_proposal,
+)
+from cruxible_core.service.proposals.proposals import _proposal_result
+from cruxible_core.service.proposals.recompile import recompile_proposal
+from tests.core_support._knowledge_loop_support import accept_proposal
+from tests.test_procedures import test_procedure_source_runs as fixtures
+from tests.test_procedures.test_procedure_proposal_delivery import proposal_world, run_line
+from tests.test_procedures.test_procedure_settlement_delivery import (
+    _level_item,
+    _level_kind_members,
+)
+
+# Executor-only fixtures: these tests author Procedure step kinds the template
+# closes at authoring (D-R37 h1) to cover their executor handlers (h3).
+pytestmark = pytest.mark.executor_only
+
+
+def _level_severity_members():
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from tests.core_support._light_capture_support import record_contract
+    from tests.test_procedures.test_procedure_proposal_delivery import _claim_type
+
+    definition = _claim_type(record_contract().identity.name).model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="security.severity_level.severity"),
+            "predicate": "security.severity_level.severity",
+            "allowed_subject_kinds": ("security.severity_level",),
+        }
+    )
+    return {claim_type_path(definition.predicate): render_claim_type(definition)}
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_eight_distinct_product_proposals_recompile_lazily(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, required: bool
+) -> None:
+    # A Subject item plus its key Claim is the SBOM product-creation shape.
+    instance, owner, root, line, procedure = proposal_world(
+        tmp_path,
+        templates=(_level_item(),),
+        additional_members={**_level_kind_members(rules=False), **_level_severity_members()},
+    )
+    lines = [
+        line.model_copy(
+            update={"identity": ArtifactIdentity(kind="Line", name=f"product-import-{i}")}
+        )
+        for i in range(8)
+    ]
+    # A Mandate pins one exact Line (ruling C3): each of the 8 Lines needs its own.
+    mandates = [
+        fixtures._line_mandate(item, procedure).model_copy(
+            update={
+                "identity": ArtifactIdentity(kind="ProcedureMandate", name=f"product-mandate-{i}"),
+                "namespace": ("claims", "subjects"),
+            }
+        )
+        for i, item in enumerate(lines)
+    ]
+    fixtures._accept_more(
+        instance,
+        owner,
+        {
+            **_level_kind_members(rules=False),
+            **{
+                procedure_mandate_path(item.identity.name): render_procedure_mandate(item)
+                for item in mandates
+            },
+            **{line_spec_path(item.identity.name): render_line_spec(item) for item in lines},
+        },
+        name="parallel-import-lines",
+    )
+    if required:
+        fixtures._accept_more(
+            instance,
+            owner,
+            {
+                APPROVAL_POLICY_PATH: render_approval_policy(
+                    ApprovalPolicy(mode="independent_approval_required")
+                )
+            },
+            name="require-review",
+        )
+    proposals = []
+    for index, item in enumerate(lines):
+        (root / fixtures.RELATIVE_PATH).write_bytes(
+            fixtures.canonical_bytes({"severity": f"product-{index}"})
+        )
+        state = run_line(instance, root, item, at=fixtures.NOW + timedelta(seconds=index))
+        assert state.status == "succeeded", state.terminal
+        (egress,) = state.terminal_egress
+        assert egress.proposal_id is not None
+        proposals.append(egress.proposal_id)
+    # First acceptance advances the common head. Later activations must lower
+    # from their own retained requests, with the original ids and times.
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=proposals[0])
+    )
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("recompilation ran a provider")
+
+    monkeypatch.setattr(fixtures._WorkspaceInvoker, "invoke_provider", forbidden)
+    for proposal_id in proposals[1:]:
+        source = _proposal_result(instance, proposal_id)
+        oracle = recompile_proposal(instance, source, preview=True)
+        assert oracle is not None and oracle.proposal.candidate is not None
+        result = service_activate_playbill_proposal(
+            instance, proposal_id=proposal_id, activated_by="owner"
+        )
+        assert result.proposal_id != proposal_id
+        if required:
+            assert isinstance(result, ProposalRecompiled) and result.status == "pending_review"
+            assert instance.proposal_evidence().read_approvals(result.candidate_digest) == ()
+        else:
+            assert result.status == "accepted"
+        successor = _proposal_result(instance, result.proposal_id)
+        assert successor.candidate is not None
+        assert successor.candidate.members == oracle.proposal.candidate.members
+        assert successor.admission.admitted_at == source.admission.admitted_at
+        assert successor.admission.originating_line == source.admission.originating_line
+        assert (
+            successor.admission.originating_line.identity
+            == lines[proposals.index(proposal_id)].identity
+        )
+
+
+def test_missing_prepared_journal_leaves_the_proposal_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.errors import ProposalStale
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+
+    instance, _owner, root, line, _ = proposal_world(tmp_path)
+    state = run_line(instance, root, line)
+    (egress,) = state.terminal_egress
+    assert egress.proposal_id is not None
+    source = _proposal_result(instance, egress.proposal_id)
+    select = LocalJournalBackend.select_records
+
+    def records(self, stream, **filters):  # type: ignore[no-untyped-def]
+        if filters.get("run_id") == state.run_id and filters.get("event_kind") == "terminal_egress":
+            return ()
+        return select(self, stream, **filters)
+
+    monkeypatch.setattr(LocalJournalBackend, "select_records", records)
+    before = instance.proposal_evidence().list_admissions()
+    with pytest.raises(ProposalStale) as refusal:
+        recompile_proposal(instance, source)
+    assert refusal.value.reason == "input_unavailable"
+    assert instance.proposal_evidence().list_admissions() == before
+    assert instance.proposal_evidence().read_withdrawal(egress.proposal_id) is None
+
+
+def test_a_provider_free_directs_proposal_readmits_instead_of_input_unavailable(
+    tmp_path: Path,
+) -> None:
+    """A provider-free direct run's stale proposal readmits at the moved head.
+
+    Before the fix, ``_retained_run`` in ``procedure_recompile.py`` filtered
+    its ``admission_bound`` fold on ``plans_providers``, so a provider-free
+    direct Procedure's admission was never read back and every readmission of
+    its proposal refused ``input_unavailable`` even though the run's
+    admission and prepared terminal were both intact. Eligibility is the
+    run's terminal records and authority, never whether it planned a
+    Provider.
+    """
+    from cruxible_client.contracts.authoring.inputs import SubjectKindInput
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+    from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
+    from tests.support import operation_world
+    from tests.test_authoring.test_derivation_admission import derivation_world
+    from tests.test_procedures.test_b2_operations import (
+        _plain_terminal_spec,
+    )
+
+    instance = derivation_world(tmp_path).instance
+    name = "test.propose-plain-direct-readmit"
+    operation_world.author_procedure(instance, _plain_terminal_spec(name=name, verb="propose"))
+    result = service_run_playbill_procedure(
+        instance,
+        name=name,
+        request=ProcedureRunRequest(input={}, evaluation_time=operation_world.NOW),
+        actor_context=operation_world.actor(),
+    )
+    assert result.status == "succeeded", result.terminal
+    (egress,) = result.terminal_egress
+    assert egress.verdict == "delivered"
+    pid = egress.proposal_id
+    assert pid is not None
+
+    # An unrelated acceptance moves the head behind the still-open proposal.
+    operation_world.author(
+        instance,
+        SubjectKindInput(
+            kind="subject_kind", name="test.widget_unrelated_readmit_head", minted=True
+        ),
+        name="unrelated-head",
+    )
+
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=pid, actor_id="owner", dry_run=False
+    )
+    admission = readmitted.proposal.proposal.admission
+    assert admission.readmits is not None and admission.readmits.source_proposal_id == pid
+    assert admission.proposal_id != pid
+
+
+def test_procedure_recompile_matches_fresh_prepare_at_head_and_never_lowers_at_old_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.procedures.egress import PreparedTerminalEgressV1, TerminalEgressRequestV2
+    from cruxible_core.procedures.proposal_delivery import (
+        ProposalTerminalEgressSink,
+        proposal_lowering_digest,
+    )
+    from cruxible_core.service.change_preview import preview_guards
+    from cruxible_core.service.procedures.procedure_runs import _accepted_line_mandates
+    from tests.test_procedures.test_procedure_settlement_delivery import _egress_records
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    state = run_line(instance, root, line)
+    (egress,) = state.terminal_egress
+    assert egress.proposal_id is not None
+    (payload,) = [
+        item for item in _egress_records(instance, state) if item.get("verdict") == "prepared"
+    ]
+    request = TerminalEgressRequestV2.model_validate(payload["request"])
+    admission = fixtures._admission(instance, state)
+    fixtures._accept_more(instance, owner, _level_kind_members(rules=False), name="oracle-head")
+    head = instance.accepted_coordinate()
+    mandates = _accepted_line_mandates(
+        instance,
+        line.identity,
+        line_spec_digest(line).tagged,
+        coordinate=head,
+        evaluation_time=request.evaluation_time,
+    )
+    sink = ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates))
+    original = instance.immutable_tree_at
+
+    def tree_at(oid: str):  # type: ignore[no-untyped-def]
+        assert oid != request.accepted_coordinate.git_oid
+        return original(oid)
+
+    monkeypatch.setattr(instance, "immutable_tree_at", tree_at)
+    with preview_guards(True):
+        fresh = sink.prepare_terminal_egress(
+            request=request.model_copy(
+                update={"accepted_coordinate": AcceptedCoordinate.from_internal(head)}
+            ),
+            admission=admission,
+            evidence=payload["evidence"],
+            journaled=PreparedTerminalEgressV1.model_validate(payload["prepared"]),
+        )
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=egress.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    result = _proposal_result(instance, receipt.proposal_id)
+    tree = instance._ledger.blobs_at(result.admission.candidate_tree_oid, fresh.target_paths)
+    assert (
+        proposal_lowering_digest(tuple((path, tree[path]) for path in fresh.target_paths))
+        == fresh.lowering_digest
+    )
+
+
+# --- a Line proposal recompiles at the head (no replay of the old decision) ----
+
+
+def _two_line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """One fan-out Procedure behind two accepted Lines: they propose independently."""
+
+    from cruxible_client.contracts.procedure_mandates import (
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+    from tests.test_procedures.test_proposal_fan_out import FAN_OUT
+
+    instance, owner, root, line, procedure = proposal_world(
+        tmp_path,
+        templates=FAN_OUT,  # type: ignore[arg-type]
+    )
+    other = line.model_copy(update={"identity": ArtifactIdentity(kind="Line", name="other-import")})
+    # Each Line runs under its own Mandate, which pins that Line's exact digest.
+    mandate = fixtures._line_mandate(other, procedure).model_copy(
+        update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="other-import-mandate")}
+    )
+    fixtures._accept_more(
+        instance,
+        owner,
+        {
+            line_spec_path(other.identity.name): render_line_spec(other),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
+        name="other-import-line",
+    )
+    return instance, owner, root, line, other
+
+
+def _delivered(state):  # type: ignore[no-untyped-def]
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is not None, egress
+    return egress.proposal_id
+
+
+def _readmit(instance, proposal_id: str, *, dry_run: bool = False):  # type: ignore[no-untyped-def]
+    from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
+
+    return service_readmit_playbill_proposal(
+        instance, proposal_id=proposal_id, actor_id="owner", dry_run=dry_run
+    )
+
+
+def test_a_line_proposal_partly_live_at_the_head_readmits_what_is_left(tmp_path: Path) -> None:
+    """Readmit re-decides the Line's open proposal at the head instead of replaying it.
+
+    The proposal restates a value another Line's proposal landed first. Its
+    journaled Line decision was made about the whole change, so replaying it
+    refused (``effectful_operation_payload_mismatch``) and readmit named itself
+    as the repair. Now the successor carries what is left, and the Line's open
+    proposal moves to it: the Line's next run finds it still current.
+    """
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+    from tests.test_procedures.test_proposal_fan_out import _element, _write_feed
+
+    instance, owner, root, line, other = _two_line_world(tmp_path)
+    _write_feed(root, [_element(None)])
+    first = _delivered(run_line(instance, root, other))
+    _write_feed(root, [_element(None), _element("vendor")])
+    later = fixtures.NOW + timedelta(minutes=1)
+    stale = _delivered(run_line(instance, root, line, at=later))
+    accept_proposal(instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first))
+    assert service_playbill_proposal_status(instance, proposal_id=stale).status == (
+        "awaiting_readmit"
+    )
+
+    readmitted = _readmit(instance, stale)
+
+    assert readmitted.status == "readmitted" and readmitted.proposal is not None
+    successor = readmitted.proposal.proposal
+    assert successor.candidate is not None
+
+    def claim_paths(proposal_id: str) -> set[str]:
+        candidate = _proposal_result(instance, proposal_id).candidate
+        assert candidate is not None
+        return {member.path for member in candidate.members if member.path.startswith("claims/")}
+
+    # At the head the restated value is the landed Claim's lineage (its new
+    # content refreshes that Claim's evidence), not the new Claim the stale
+    # proposal created at its old base; the vendor value is still new.
+    (landed,) = claim_paths(first)
+    source = claim_paths(stale)
+    assert landed not in source and len(source) == 2
+    after = claim_paths(successor.admission.proposal_id)
+    assert landed not in after and len(after) == 1 and len(after & source) == 1
+    from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+    from cruxible_core.service.procedures.procedure_runs import (
+        service_get_playbill_procedure_run,
+    )
+
+    run = service_get_playbill_procedure_run(instance, run_id=_run_of(instance, stale))
+    (node_id,) = {egress.node_id for egress in run.terminal_egress}
+    record = LineDispatchStore(instance).open_proposal(line_identity_digest(line.identity), node_id)
+    assert record is not None and record.proposal_id == successor.admission.proposal_id
+    assert record.superseded == stale
+
+    again = run_line(instance, root, line, at=later + timedelta(minutes=1))
+
+    assert again.status == "succeeded", again.terminal
+    (egress,) = again.terminal_egress
+    assert egress.proposal_id is None, egress  # no duplicate of the successor
+    assert egress.line_open_proposal is not None
+    assert egress.line_open_proposal.outcome == "still_current"
+    assert egress.line_open_proposal.proposal_id == successor.admission.proposal_id
+
+
+def _run_of(instance, proposal_id: str) -> str:  # type: ignore[no-untyped-def]
+    """The run whose terminal proposed ``proposal_id``, from its item reasons."""
+
+    source = _proposal_result(instance, proposal_id)
+    operation = source.admission.procedure_operation
+    assert operation is not None and source.candidate is not None
+    for member in source.candidate.members:
+        reason = instance.proposal_evidence().read_item_reason(operation, member.path)
+        if reason is not None:
+            return reason.run_id
+    raise AssertionError("no item reason")
+
+
+def test_a_line_proposal_wholly_live_at_the_head_closes_as_answered(tmp_path: Path) -> None:
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.service.proposals.proposals import (
+        service_playbill_proposal_status,
+        stale_unreadmitted_proposals,
+    )
+    from cruxible_core.service.proposals.recompile import ALREADY_LIVE_REASON
+    from tests.test_procedures.test_proposal_fan_out import _element, _write_feed
+
+    instance, owner, root, line, other = _two_line_world(tmp_path)
+    _write_feed(root, [_element(None)])
+    first = _delivered(run_line(instance, root, other))
+    stale = _delivered(run_line(instance, root, line, at=fixtures.NOW + timedelta(minutes=1)))
+    accept_proposal(instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first))
+    (live,) = [
+        member.path.rsplit("/", 1)[-1].removesuffix(".json")
+        for member in _proposal_result(instance, first).candidate.members  # type: ignore[union-attr]
+        if member.path.startswith("claims/")
+    ]
+    admissions = len(instance.proposal_evidence().list_admissions())
+    # Index the head before the read-only preview fence, as a status read does.
+    # Stale by overlap: the first import's Claim landed in its slot.
+    entry = service_playbill_proposal_status(instance, proposal_id=stale)
+    assert entry.status == "awaiting_readmit"
+    assert {
+        member.path
+        for member in _proposal_result(instance, first).candidate.members  # type: ignore[union-attr]
+        if member.path.startswith("claims/")
+    } <= set(entry.stale_paths)
+
+    preview = _readmit(instance, stale, dry_run=True)
+    assert (preview.status, preview.proposal) == ("already_live", None)
+    assert instance.proposal_evidence().read_withdrawal(stale) is None  # a preview closes nothing
+
+    answered = _readmit(instance, stale)
+
+    assert (answered.status, answered.proposal) == ("already_live", None)
+    assert answered.accepted_coordinate is not None
+    closed = instance.proposal_evidence().read_withdrawal(stale)
+    assert closed is not None and closed.reason == ALREADY_LIVE_REASON
+    assert closed.superseded_by is None and closed.actor_id == "owner"
+    entry = service_playbill_proposal_status(instance, proposal_id=stale)
+    assert (entry.status, entry.terminal_reason) == ("settled", "withdrawn")
+    assert len(instance.proposal_evidence().list_admissions()) == admissions  # nothing proposed
+    head = instance.accepted_coordinate()
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    assert stale_unreadmitted_proposals(instance, AcceptedCoordinate.from_internal(head)) == ()
+    # The unchanged item's re-observation is recorded, as delivery records it.
+    assert len(ClaimReobservationStore(instance).history(live)) == 1
+
+
+def test_a_refused_line_recompile_names_the_lines_next_run_not_readmit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.errors import ProposalReadmitRefused
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+    from tests.core_support._support import every_moved_base_overlaps
+
+    every_moved_base_overlaps(monkeypatch)
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    stale = _delivered(run_line(instance, root, line))
+    fixtures._accept_more(instance, owner, _level_kind_members(rules=False), name="move-head")
+
+    def refuse(self, **kwargs):  # type: ignore[no-untyped-def]
+        raise ProposalDeliveryRefused("proposal_lowering_refused", "The terminal no longer lowers.")
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "prepare_recompilation", refuse)
+    with pytest.raises(ProposalReadmitRefused) as refused:
+        _readmit(instance, stale)
+
+    error = refused.value
+    assert error.error_code == "cruxible.proposal.readmit_refused"
+    assert (error.reason, error.origin, error.origin_name) == (
+        "proposal_lowering_refused",
+        "line",
+        line.identity.name,
+    )
+    assert error.repair is not None
+    assert (error.repair.operation, error.repair.arguments) == (
+        "cruxible.line.run",
+        {"line": line.identity.name},
+    )
+    message = str(error)
+    assert f"cruxible line run {line.identity.name}" in message
+    assert f"cruxible proposal withdraw {stale}" in message
+    assert "proposal readmit" not in message
+    # Nothing is dropped: the proposal still awaits its author.
+    assert service_playbill_proposal_status(instance, proposal_id=stale).status == (
+        "awaiting_readmit"
+    )
+
+
+def test_a_readmission_reports_a_reobservation_it_could_not_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Claim retired between recompilation and publication: the refusal is reported."""
+
+    from pathlib import PurePosixPath
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+    from tests.core_support._retirement_support import retire_claim
+    from tests.test_procedures.test_proposal_fan_out import _element, _write_feed
+
+    instance, owner, root, line, other = _two_line_world(tmp_path)
+    _write_feed(root, [_element(None)])
+    first = _delivered(run_line(instance, root, other))
+    stale = _delivered(run_line(instance, root, line, at=fixtures.NOW + timedelta(minutes=1)))
+    accept_proposal(instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first))
+
+    after = ProposalTerminalEgressSink.after_recompiled
+    retired: list[str] = []
+
+    def retire_first(self, request, prepared, *, successor_id):  # type: ignore[no-untyped-def]
+        # An ordinary accepted retirement lands between lowering at the old
+        # head and the re-observation's admission at the current one.
+        for child in prepared.prepared.unchanged:
+            if hasattr(child, "reobserving_capture_digest"):
+                claim_id = PurePosixPath(child.path).stem
+                retire_claim(instance, owner, claim_id)
+                retired.append(claim_id)
+        return after(self, request, prepared, successor_id=successor_id)
+
+    monkeypatch.setattr(ProposalTerminalEgressSink, "after_recompiled", retire_first)
+    answered = _readmit(instance, stale)
+    assert retired
+    assert answered.status == "already_live"
+    assert answered.reobservations_refused == {"claim_not_live": len(retired)}
+    assert answered.model_dump(mode="json")["reobservations_refused"] == {
+        "claim_not_live": len(retired)
+    }
+    store = ClaimReobservationStore(instance)
+    assert all(store.history(claim_id) == () for claim_id in retired)

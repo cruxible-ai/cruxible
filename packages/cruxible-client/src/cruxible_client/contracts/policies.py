@@ -1,0 +1,826 @@
+"""Closed Claim admission, evidence-eligibility, and resolution policy law."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.artifacts import ArtifactRef
+from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
+    Sha256Value,
+    canonical_bytes,
+    normalize_canonical,
+)
+from cruxible_client.contracts.captures import CaptureShape
+from cruxible_client.contracts.claim_type_structure import ClaimCardinality, ClaimRole
+from cruxible_client.contracts.content_memo import sealed_memo
+from cruxible_client.contracts.governance import governance_identifier
+
+ClaimVerdict = Literal[
+    "supported",
+    "contradicted",
+    "unresolved",
+    "uncovered",
+    "stale",
+]
+AttestationRequirement = Literal[
+    "none",
+    "verified_provider",
+    "verified_principal",
+    "any_verified",
+]
+VerifiedAttestationGrade = Literal[
+    "none",
+    "verified_provider",
+    "verified_principal",
+]
+
+_PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
+_EVIDENCE_KIND_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_CLAIM_ID_RE = re.compile(r"^CLM-[0-9a-f]{32}$")
+
+
+class _StrictPolicyModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _sorted_unique(
+    values: tuple[str, ...],
+    *,
+    label: str,
+    nonempty: bool = False,
+) -> tuple[str, ...]:
+    if nonempty and not values:
+        raise ValueError(f"{label} must not be empty")
+    if values != tuple(sorted(set(values), key=lambda item: item.encode("utf-8"))):
+        raise ValueError(f"{label} must be sorted and unique")
+    return values
+
+
+def _predicate(value: str) -> str:
+    if not _PREDICATE_RE.fullmatch(value):
+        raise ValueError("policy predicate must be a canonical qualified identifier")
+    return value
+
+
+def _canonical_tuple(values: tuple[object, ...], *, label: str) -> tuple[object, ...]:
+    normalized = tuple(normalize_canonical(value) for value in values)
+    encoded = tuple(canonical_bytes(value) for value in normalized)
+    if encoded != tuple(sorted(set(encoded))):
+        raise ValueError(f"{label} must be canonically sorted and unique")
+    return normalized
+
+
+class CorroborationRequirement(_StrictPolicyModel):
+    tag: Literal["playbill-corroboration-requirement-v1"] = "playbill-corroboration-requirement-v1"
+    requirement_id: str
+    query_definition_digest: str
+    min_count: int = Field(ge=1)
+
+    @field_validator("requirement_id")
+    @classmethod
+    def _requirement_id(cls, value: str) -> str:
+        return governance_identifier(value, label="corroboration requirement_id")
+
+    @field_validator("query_definition_digest")
+    @classmethod
+    def _query_digest(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
+
+
+class FreezeRequirement(_StrictPolicyModel):
+    tag: Literal["playbill-freeze-requirement-v1"] = "playbill-freeze-requirement-v1"
+    requirement_id: str
+    while_predicate: str
+    while_values: tuple[object, ...]
+    frozen_predicates: tuple[str, ...]
+    except_transition_requirements: tuple[str, ...] = ()
+
+    @field_validator("requirement_id")
+    @classmethod
+    def _requirement_id(cls, value: str) -> str:
+        return governance_identifier(value, label="freeze requirement_id")
+
+    @field_validator("while_predicate")
+    @classmethod
+    def _while_predicate(cls, value: str) -> str:
+        return _predicate(value)
+
+    @field_validator("while_values")
+    @classmethod
+    def _while_values(cls, value: tuple[object, ...]) -> tuple[object, ...]:
+        return _canonical_tuple(value, label="freeze while_values")
+
+    @field_validator("frozen_predicates")
+    @classmethod
+    def _frozen_predicates(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for item in value:
+            _predicate(item)
+        return _sorted_unique(value, label="frozen predicates", nonempty=True)
+
+    @field_validator("except_transition_requirements")
+    @classmethod
+    def _exceptions(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for item in value:
+            governance_identifier(item, label="freeze transition exception")
+        return _sorted_unique(value, label="freeze transition exceptions")
+
+
+class ClaimAdmissionPolicy(_StrictPolicyModel):
+    tag: Literal["playbill-claim-admission-policy-v1"] = "playbill-claim-admission-policy-v1"
+    corroboration_requirements: tuple[CorroborationRequirement, ...] = ()
+    freeze_requirements: tuple[FreezeRequirement, ...] = ()
+
+    @model_validator(mode="after")
+    def _closed_requirement_graph(self) -> "ClaimAdmissionPolicy":
+        groups = tuple(
+            tuple(item.requirement_id for item in group)
+            for group in (
+                self.corroboration_requirements,
+                self.freeze_requirements,
+            )
+        )
+        for ids in groups:
+            if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+                raise ValueError("policy requirements must be sorted and unique by requirement_id")
+        all_ids = tuple(item for group in groups for item in group)
+        if len(all_ids) != len(set(all_ids)):
+            raise ValueError("policy requirement IDs must be unique across requirement kinds")
+        if any(item.except_transition_requirements for item in self.freeze_requirements):
+            raise ValueError("freeze exception refers to an unknown transition requirement")
+        return self
+
+
+class ClaimResolutionPolicy(_StrictPolicyModel):
+    tag: Literal["playbill-claim-resolution-policy-v1"] = "playbill-claim-resolution-policy-v1"
+    cardinality: ClaimCardinality
+    eligible_verdicts: tuple[ClaimVerdict, ...]
+    required_basis_kinds: tuple[str, ...] = ()
+    require_current: bool = True
+    selector: Literal["all", "only_contender"]
+    conflict_result: Literal["unresolved", "refuse"] = "unresolved"
+
+    @field_validator("eligible_verdicts")
+    @classmethod
+    def _eligible_verdicts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="resolution policy set", nonempty=True)
+
+    @field_validator("required_basis_kinds")
+    @classmethod
+    def _required_basis_kinds(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="resolution required basis kinds")
+
+    @model_validator(mode="after")
+    def _selector_shape(self) -> "ClaimResolutionPolicy":
+        if self.cardinality == "many" and self.selector != "all":
+            raise ValueError("many-cardinality resolution requires selector='all'")
+        if self.cardinality == "one" and self.selector == "all":
+            raise ValueError("one-cardinality resolution cannot select all contenders")
+        return self
+
+
+class _EvidenceRuleBase(_StrictPolicyModel):
+    rule_id: str
+    claim_roles: tuple[ClaimRole, ...]
+    admission: Literal["origin_only", "direct", "derivational"]
+    subject_binding: Literal["exact_claim_subject", "contract_source_mapping"]
+    attestation_requirement: AttestationRequirement = "none"
+
+    @field_validator("rule_id")
+    @classmethod
+    def _rule_id(cls, value: str) -> str:
+        return governance_identifier(value, label="evidence-admission rule_id")
+
+    @field_validator("claim_roles")
+    @classmethod
+    def _rule_sets(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
+        field_name = str(getattr(info, "field_name", "evidence-admission field"))
+        _sorted_unique(value, label=field_name, nonempty=True)
+        return value
+
+
+CAPTURE_CONTRACT_REF_ROLE = "capture-contract"
+
+CaptureContractFamily = Literal["workspace_file"]
+"""A named group of catalogued CaptureContracts, closed to one member today.
+
+``workspace_file`` is every catalogued workspace file's own foreign-source
+CaptureContract (one per file, name ``playbill.foreign-source.<name>``, built
+by ``foreign_source_capture_contract``). Membership is the contract's own
+declared ``shape`` -- always ``"foreign_span"`` for that builder -- never a
+string match on its name, so a rule naming the family admits a file added to
+the workspace catalog later with no edit, and an uncatalogued file (which has
+no CaptureContract at all) is never admitted.
+"""
+
+#: Each family's declared-shape membership test. One entry today.
+CAPTURE_CONTRACT_FAMILY_SHAPES: Mapping[CaptureContractFamily, CaptureShape] = MappingProxyType(
+    {"workspace_file": "foreign_span"}
+)
+
+
+class CaptureContractAdmission(ArtifactRef):
+    """One named contract, optionally restricted to provider-declared sources."""
+
+    logical_sources: tuple[str, ...] = ()
+
+    @field_validator("logical_sources")
+    @classmethod
+    def _sources(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        _sorted_unique(value, label="logical_sources")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_.-]{0,255}", item) for item in value):
+            raise ValueError("logical_sources must be canonical identifiers")
+        return value
+
+
+class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+    tag: Literal["cruxible-claim-evidence-admission-rule-v4"] = (
+        "cruxible-claim-evidence-admission-rule-v4"
+    )
+    capture_contracts: tuple[CaptureContractAdmission, ...] = ()
+    #: Whole families of catalogued CaptureContracts this rule admits, by their
+    #: own declared shape (D1, 2026-11-06). No logical_source restriction: the
+    #: workspace catalog is itself the admission boundary (an uncatalogued file
+    #: has no contract to restrict).
+    capture_contract_families: tuple[CaptureContractFamily, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+
+    @field_validator("capture_contracts", mode="before")
+    @classmethod
+    def _authored_contracts(cls, value: object) -> object:
+        if not isinstance(value, (list, tuple)):
+            return value
+        entries = []
+        for item in value:
+            if isinstance(item, str):
+                item = {"contract": item}
+            if isinstance(item, ArtifactRef):
+                item = item.model_dump(mode="python")
+            if isinstance(item, dict) and "contract" in item:
+                item = {
+                    **item,
+                    "role": CAPTURE_CONTRACT_REF_ROLE,
+                    "target": {"kind": "CaptureContract", "name": item["contract"]},
+                }
+                del item["contract"]
+            entries.append(item)
+        return entries
+
+    @field_validator("capture_contracts")
+    @classmethod
+    def _contracts(
+        cls, value: tuple[CaptureContractAdmission, ...]
+    ) -> tuple[CaptureContractAdmission, ...]:
+        names = tuple(item.target.qualified for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("capture_contracts must be sorted and unique by identity")
+        for item in value:
+            if item.role != CAPTURE_CONTRACT_REF_ROLE or item.target.kind != "CaptureContract":
+                raise ValueError(
+                    "capture_contracts must name CaptureContracts with role 'capture-contract'"
+                )
+        return value
+
+    @field_validator("capture_contract_families")
+    @classmethod
+    def _families(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="capture_contract_families")
+
+    @model_validator(mode="after")
+    def _admits_something(self) -> "ClaimEvidenceAdmissionRule":
+        if not self.capture_contracts and not self.capture_contract_families:
+            raise ValueError(
+                "capture_contracts must not be empty unless capture_contract_families is set"
+            )
+        return self
+
+    def names_capture_contract(
+        self, *, identity: str | None, shape: CaptureShape | str | None = None
+    ) -> bool:
+        """A rule names every accepted version of the contracts it names.
+
+        That is safe because a contract successor must be compatible with its
+        predecessor; a change that alters what the evidence means is a new
+        contract identity, which the rule does not name until someone edits it.
+
+        ``shape`` additionally matches a declared ``capture_contract_families``
+        entry by the contract's own shape, never by its name.
+        """
+
+        if any(item.target.qualified == identity for item in self.capture_contracts):
+            return True
+        if shape is None or not self.capture_contract_families:
+            return False
+        return shape in {
+            CAPTURE_CONTRACT_FAMILY_SHAPES[family] for family in self.capture_contract_families
+        }
+
+    def admits_source(
+        self,
+        *,
+        identity: str | None,
+        logical_source: str | None,
+        shape: CaptureShape | str | None = None,
+    ) -> bool:
+        if identity is not None:
+            sources = _rule_source_sets(self).get(identity)
+            if sources is not None:
+                return not sources or logical_source in sources
+        if shape is not None and self.capture_contract_families:
+            return shape in {
+                CAPTURE_CONTRACT_FAMILY_SHAPES[family] for family in self.capture_contract_families
+            }
+        return False
+
+
+@sealed_memo
+def _rule_source_sets(rule: ClaimEvidenceAdmissionRule) -> Mapping[str, frozenset[str]]:
+    return MappingProxyType(
+        {item.target.qualified: frozenset(item.logical_sources) for item in rule.capture_contracts}
+    )
+
+
+class ClaimEvidenceAdmissionPolicy(_StrictPolicyModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
+    tag: Literal["cruxible-claim-evidence-admission-policy-v4"] = (
+        "cruxible-claim-evidence-admission-policy-v4"
+    )
+    rules: tuple[ClaimEvidenceAdmissionRule, ...] = ()
+
+    @field_validator("rules")
+    @classmethod
+    def _rules(
+        cls, value: tuple[ClaimEvidenceAdmissionRule, ...]
+    ) -> tuple[ClaimEvidenceAdmissionRule, ...]:
+        ids = tuple(item.rule_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("evidence-admission rules must be sorted and unique by rule_id")
+        return value
+
+    @property
+    def capture_contract_identities(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {item.target.qualified for rule in self.rules for item in rule.capture_contracts},
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+
+
+class ClaimCorroborationResult(_StrictPolicyModel):
+    tag: Literal["playbill-claim-corroboration-result-v1"] = (
+        "playbill-claim-corroboration-result-v1"
+    )
+    requirement_id: str
+    query_definition_digest: str
+    parameter_digest: str
+    result_digest: str
+    query_verdict: Literal["completed", "refused"]
+    query_refusal_code: str | None = None
+    observed_count: int = Field(ge=0)
+    truncated: bool
+    satisfied: bool
+
+    @field_validator("requirement_id")
+    @classmethod
+    def _requirement_id(cls, value: str) -> str:
+        return governance_identifier(value, label="claim corroboration requirement_id")
+
+    @field_validator("query_definition_digest", "parameter_digest", "result_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _verdict_shape(self) -> "ClaimCorroborationResult":
+        if (self.query_verdict == "refused") != (self.query_refusal_code is not None):
+            raise ValueError("a refused corroboration query names exactly one refusal code")
+        if self.query_verdict == "refused" and (self.observed_count != 0 or self.satisfied):
+            raise ValueError("a refused corroboration query observes no rows and is unsatisfied")
+        return self
+
+
+class ClaimAdmissionEvaluationAccount(_StrictPolicyModel):
+    tag: Literal["playbill-claim-admission-evaluation-account-v1"] = (
+        "playbill-claim-admission-evaluation-account-v1"
+    )
+    claim_path: str
+    claim_type_identity: str
+    claim_type_digest: str
+    policy_digest: str
+    corroboration_results: tuple[ClaimCorroborationResult, ...] = ()
+    satisfied: bool
+
+    @field_validator("claim_type_digest", "policy_digest")
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("corroboration_results")
+    @classmethod
+    def _results(
+        cls, value: tuple[ClaimCorroborationResult, ...]
+    ) -> tuple[ClaimCorroborationResult, ...]:
+        ids = tuple(item.requirement_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("corroboration results must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _satisfaction(self) -> "ClaimAdmissionEvaluationAccount":
+        if self.satisfied and not all(item.satisfied for item in self.corroboration_results):
+            raise ValueError("a satisfied admission account cannot contain an unsatisfied result")
+        return self
+
+
+class ClaimAdmissionCandidateContext(_StrictPolicyModel):
+    evaluation_time: str
+    declared_predicates: tuple[str, ...]
+    parent_values: dict[str, tuple[object, ...]]
+    candidate_values: dict[str, tuple[object, ...]]
+    corroboration_results: tuple[ClaimCorroborationResult, ...] = ()
+
+    @field_validator("declared_predicates")
+    @classmethod
+    def _predicates(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for item in value:
+            _predicate(item)
+        return _sorted_unique(value, label="declared predicates")
+
+    @field_validator("parent_values", "candidate_values")
+    @classmethod
+    def _values(cls, value: dict[str, tuple[object, ...]]) -> dict[str, tuple[object, ...]]:
+        result: dict[str, tuple[object, ...]] = {}
+        for predicate in sorted(value, key=lambda item: item.encode("utf-8")):
+            _predicate(predicate)
+            result[predicate] = _canonical_tuple(value[predicate], label="projected values")
+        return result
+
+    @field_validator("corroboration_results")
+    @classmethod
+    def _corroboration_results(
+        cls, value: tuple[ClaimCorroborationResult, ...]
+    ) -> tuple[ClaimCorroborationResult, ...]:
+        ids = tuple(item.requirement_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("claim corroboration results must be sorted and unique")
+        return value
+
+
+class ClaimAdmissionCandidateResult(_StrictPolicyModel):
+    tag: Literal["playbill-claim-admission-candidate-result-v1"] = (
+        "playbill-claim-admission-candidate-result-v1"
+    )
+    verdict: Literal["eligible", "refused"]
+    corroboration_results: tuple[ClaimCorroborationResult, ...] = ()
+    refusal_codes: tuple[str, ...] = ()
+
+
+def evaluate_claim_admission_candidate(
+    policy: ClaimAdmissionPolicy,
+    context: ClaimAdmissionCandidateContext,
+) -> ClaimAdmissionCandidateResult:
+    """Evaluate deterministic corroboration and freeze requirements together."""
+
+    declared = set(context.declared_predicates)
+    policy_predicates = {item.while_predicate for item in policy.freeze_requirements} | {
+        predicate for item in policy.freeze_requirements for predicate in item.frozen_predicates
+    }
+    refusal_codes: set[str] = set()
+    results_by_id = {item.requirement_id: item for item in context.corroboration_results}
+    for requirement in policy.corroboration_requirements:
+        result = results_by_id.get(requirement.requirement_id)
+        if result is None or result.query_definition_digest != requirement.query_definition_digest:
+            refusal_codes.add("cruxible.claim.corroboration_query_unresolved")
+            continue
+        expected_satisfied = (
+            result.query_verdict == "completed" and result.observed_count >= requirement.min_count
+        )
+        if result.satisfied != expected_satisfied:
+            raise ValueError("corroboration result satisfaction does not reproduce")
+        elif result.query_verdict == "refused":
+            refusal_codes.add("cruxible.claim.corroboration_query_refused")
+        elif not result.satisfied:
+            refusal_codes.add("cruxible.claim.corroboration_insufficient")
+    if policy_predicates - declared:
+        refusal_codes.add("cruxible.claim_policy.unknown_predicate")
+
+    for freeze in policy.freeze_requirements:
+        parent = context.parent_values.get(freeze.while_predicate, ())
+        if len(parent) > 1:
+            refusal_codes.add("cruxible.claim_policy.ambiguous_single_value")
+            continue
+        active = bool(parent) and parent[0] in freeze.while_values
+        changed = any(
+            context.parent_values.get(predicate, ())
+            != context.candidate_values.get(predicate, context.parent_values.get(predicate, ()))
+            for predicate in freeze.frozen_predicates
+        )
+        if active and changed:
+            refusal_codes.add("cruxible.claim_policy.freeze_active")
+
+    codes = tuple(sorted(refusal_codes, key=lambda item: item.encode("utf-8")))
+    return ClaimAdmissionCandidateResult(
+        verdict="refused" if codes else "eligible",
+        corroboration_results=context.corroboration_results,
+        refusal_codes=codes,
+    )
+
+
+class EvidenceAdmissionInput(_StrictPolicyModel):
+    claim_role: ClaimRole
+    capture_contract_digest: str
+    #: The accepted identity of the exact contract version the Capture names.
+    #: Identity rules match it; exact-digest rules ignore it.
+    capture_contract_identity: str | None = None
+    #: The contract's own declared shape (never derived from its name): the
+    #: only signal a ``capture_contract_families`` entry matches against.
+    capture_contract_shape: CaptureShape | Literal["coordinator_self_source"] | None = None
+    evidence_kind: str | None = None
+    logical_source: str | None = None
+    reducer_digest: str | None = None
+    input_claim_artifact_digests: tuple[str, ...] = ()
+    has_extracted_inputs: bool = False
+    attestation_grade: VerifiedAttestationGrade = "none"
+    source_subject_bound: bool
+    capture_claims_semantic_authority: bool = False
+
+    @field_validator("capture_contract_digest", "reducer_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactDigest.from_tagged(value)
+        return value
+
+    @field_validator("input_claim_artifact_digests")
+    @classmethod
+    def _input_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        _sorted_unique(value, label="input Claim artifact digests")
+        for item in value:
+            ArtifactDigest.from_tagged(item)
+        return value
+
+    @field_validator("evidence_kind")
+    @classmethod
+    def _evidence_kind(cls, value: str | None) -> str | None:
+        if value is not None and not _EVIDENCE_KIND_RE.fullmatch(value):
+            raise ValueError("evidence kind must be a canonical identifier")
+        return value
+
+
+class ClaimEvidenceAdmissionResult(_StrictPolicyModel):
+    tag: Literal["playbill-claim-evidence-admission-result-v1"] = (
+        "playbill-claim-evidence-admission-result-v1"
+    )
+    verdict: Literal["eligible", "refused"]
+    rule_id: str | None = None
+    admission: Literal["origin_only", "direct", "derivational"] | None = None
+    refusal_code: str | None = None
+
+
+class ClaimEvidenceAdmissionTrace(_StrictPolicyModel):
+    """Internal trace from the authoritative evidence-admission evaluator."""
+
+    result: ClaimEvidenceAdmissionResult
+    closest_rule_id: str | None = None
+
+
+def _attestation_satisfied(
+    requirement: AttestationRequirement,
+    grade: VerifiedAttestationGrade,
+) -> bool:
+    if requirement == "none":
+        return True
+    if requirement == "verified_provider":
+        return grade == "verified_provider"
+    if requirement == "verified_principal":
+        return grade == "verified_principal"
+    return grade != "none"
+
+
+def _derivation_satisfied(
+    rule: ClaimEvidenceAdmissionRule,
+    evidence: EvidenceAdmissionInput,
+) -> bool:
+    if rule.admission == "derivational":
+        return evidence.reducer_digest is not None and (
+            bool(evidence.input_claim_artifact_digests) or evidence.has_extracted_inputs
+        )
+    return evidence.reducer_digest is None and not evidence.input_claim_artifact_digests
+
+
+def evidence_rule_matches_source(
+    rule: ClaimEvidenceAdmissionRule, evidence: EvidenceAdmissionInput
+) -> bool:
+    return rule.admits_source(
+        identity=evidence.capture_contract_identity,
+        logical_source=evidence.logical_source,
+        shape=evidence.capture_contract_shape,
+    )
+
+
+def evaluate_claim_evidence_admission_trace(
+    policy: ClaimEvidenceAdmissionPolicy,
+    evidence: EvidenceAdmissionInput,
+    *,
+    subject_binding_by_rule: Mapping[str, bool] | None = None,
+) -> ClaimEvidenceAdmissionTrace:
+    """Evaluate evidence and retain the deterministic nearest repair rule."""
+
+    contract_rules = tuple(
+        rule
+        for rule in policy.rules
+        if rule.names_capture_contract(
+            identity=evidence.capture_contract_identity, shape=evidence.capture_contract_shape
+        )
+    )
+    closest_rule_id: str | None = None
+    if contract_rules:
+        binding = subject_binding_by_rule or {}
+
+        def mismatch_count(rule: ClaimEvidenceAdmissionRule) -> tuple[int, bytes]:
+            mismatches = sum(
+                (
+                    evidence.claim_role not in rule.claim_roles,
+                    not evidence_rule_matches_source(rule, evidence),
+                    not binding.get(rule.rule_id, evidence.source_subject_bound),
+                    not _attestation_satisfied(
+                        rule.attestation_requirement, evidence.attestation_grade
+                    ),
+                    not _derivation_satisfied(rule, evidence),
+                )
+            )
+            return mismatches, rule.rule_id.encode("utf-8")
+
+        closest_rule_id = min(contract_rules, key=mismatch_count).rule_id
+
+    if evidence.capture_claims_semantic_authority:
+        result = ClaimEvidenceAdmissionResult(
+            verdict="refused",
+            refusal_code="cruxible.evidence.capture_cannot_grant_semantic_authority",
+        )
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    matches = [
+        rule
+        for rule in policy.rules
+        if evidence.claim_role in rule.claim_roles
+        and rule.names_capture_contract(
+            identity=evidence.capture_contract_identity, shape=evidence.capture_contract_shape
+        )
+        and evidence_rule_matches_source(rule, evidence)
+    ]
+    if len(matches) != 1:
+        result = ClaimEvidenceAdmissionResult(
+            verdict="refused",
+            refusal_code=(
+                "cruxible.evidence.admission_ambiguous"
+                if matches
+                else "cruxible.evidence.undeclared_contract_kind"
+            ),
+        )
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    rule = matches[0]
+    if not evidence.source_subject_bound:
+        result = ClaimEvidenceAdmissionResult(
+            verdict="refused",
+            refusal_code="cruxible.evidence.subject_binding_failed",
+        )
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    if not _attestation_satisfied(rule.attestation_requirement, evidence.attestation_grade):
+        result = ClaimEvidenceAdmissionResult(
+            verdict="refused",
+            refusal_code="cruxible.evidence.attestation_grade_missing",
+        )
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    if not _derivation_satisfied(rule, evidence):
+        result = ClaimEvidenceAdmissionResult(
+            verdict="refused",
+            refusal_code=(
+                "cruxible.evidence.derivation_incomplete"
+                if rule.admission == "derivational"
+                else "cruxible.evidence.reducer_not_allowed"
+            ),
+        )
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    result = ClaimEvidenceAdmissionResult(
+        verdict="eligible",
+        rule_id=rule.rule_id,
+        admission=rule.admission,
+    )
+    return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+
+
+def evaluate_claim_evidence_admission(
+    policy: ClaimEvidenceAdmissionPolicy,
+    evidence: EvidenceAdmissionInput,
+) -> ClaimEvidenceAdmissionResult:
+    """Evaluate evidence shape without granting Claim activation authority."""
+
+    return evaluate_claim_evidence_admission_trace(policy, evidence).result
+
+
+class ResolutionContender(_StrictPolicyModel):
+    claim_identity: str
+    object_value: object
+    verdict: ClaimVerdict
+    basis_kinds: tuple[str, ...] = ()
+    current: bool = True
+
+    @field_validator("claim_identity")
+    @classmethod
+    def _claim_identity(cls, value: str) -> str:
+        if not _CLAIM_ID_RE.fullmatch(value):
+            raise ValueError("Claim identity must be CLM- plus 128-bit lowercase hex")
+        return value
+
+    @field_validator("object_value")
+    @classmethod
+    def _object_value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @field_validator("basis_kinds")
+    @classmethod
+    def _basis_kinds(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="basis kinds")
+
+
+class ClaimResolutionResult(_StrictPolicyModel):
+    tag: Literal["playbill-claim-resolution-result-v1"] = "playbill-claim-resolution-result-v1"
+    status: Literal["resolved", "unresolved", "refused"]
+    selected_claim_identities: tuple[str, ...] = ()
+    contender_claim_identities: tuple[str, ...] = ()
+
+
+def resolve_claim_contenders(
+    policy: ClaimResolutionPolicy,
+    contenders: tuple[ResolutionContender, ...],
+) -> ClaimResolutionResult:
+    """Project accepted contenders without deleting them or inventing confidence."""
+
+    ordered = tuple(
+        sorted(
+            contenders,
+            key=lambda item: (
+                canonical_bytes(item.object_value),
+                item.claim_identity.encode("utf-8"),
+            ),
+        )
+    )
+    eligible = tuple(
+        item
+        for item in ordered
+        if item.verdict in policy.eligible_verdicts
+        and (not policy.require_current or item.current)
+        and set(policy.required_basis_kinds).issubset(item.basis_kinds)
+    )
+    identities = tuple(item.claim_identity for item in eligible)
+    if policy.selector == "all":
+        return ClaimResolutionResult(
+            status="resolved",
+            selected_claim_identities=identities,
+            contender_claim_identities=identities,
+        )
+    if len(eligible) == 1:
+        return ClaimResolutionResult(
+            status="resolved",
+            selected_claim_identities=identities,
+            contender_claim_identities=identities,
+        )
+    return ClaimResolutionResult(
+        status="refused" if policy.conflict_result == "refuse" else "unresolved",
+        contender_claim_identities=identities,
+    )
+
+
+__all__ = [
+    "AttestationRequirement",
+    "ClaimAdmissionCandidateContext",
+    "ClaimAdmissionCandidateResult",
+    "ClaimAdmissionPolicy",
+    "ClaimEvidenceAdmissionResult",
+    "CaptureContractAdmission",
+    "evidence_rule_matches_source",
+    "ClaimResolutionPolicy",
+    "ClaimResolutionResult",
+    "ClaimVerdict",
+    "EvidenceAdmissionInput",
+    "ClaimAdmissionEvaluationAccount",
+    "ClaimCorroborationResult",
+    "CorroborationRequirement",
+    "FreezeRequirement",
+    "ResolutionContender",
+    "evaluate_claim_admission_candidate",
+    "evaluate_claim_evidence_admission",
+    "resolve_claim_contenders",
+]

@@ -19,6 +19,13 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from contextvars import Context
+
+from cruxible_client.contracts.primitives import new_id
+
+# One token per process image. ``os.execv`` keeps the pid but re-imports every
+# module, so this is what tells a restarted daemon from the image it replaced.
+PROCESS_BOOT_ID = new_id("boot", length=32)
 
 # Grace period before the process re-execs, leaving uvicorn time to flush the
 # restart acknowledgement response and close the connection.
@@ -36,14 +43,9 @@ def _default_exec_self() -> None:
 _exec_self = _default_exec_self
 
 
-def restart_command() -> list[str]:
-    """Return the argv the daemon will re-exec with (for diagnostics/echo)."""
-    return [sys.executable, *sys.argv]
-
-
 def schedule_server_restart() -> None:
     """Schedule an in-place re-exec after the current response is flushed."""
-    timer = threading.Timer(_RESTART_DELAY_SECONDS, _exec_self)
+    timer = threading.Timer(_RESTART_DELAY_SECONDS, Context().run, args=(_exec_self,))
     timer.daemon = True
     timer.start()
 

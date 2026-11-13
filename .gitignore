@@ -13,18 +13,11 @@ build/
 htmlcov/
 *.db
 *.csv
-!kits/kev-reference/data/epss_kev_nvd.csv
-!kits/kev-reference/data/known_exploited_vulnerabilities.csv
-!kits/kev-triage/data/seed/*.csv
-!kits/kev-triage/source_data/*.csv
 .DS_Store
-/.cruxible/
-kits/*/.cruxible/
 .venv/
 venv/
 docs/dev/
 demos/**/wiki/
-kits/**/wiki/
 smoke-test-bundles/
 .claude/settings.local.json
 site/
@@ -35,3 +28,20 @@ docs/llms-full.txt
 
 # Local operation-instance config (customized agent-operation + project-domain overlay); never shipped
 /ops/
+/.b2-*
+
+# CI checks the public cruxible-providers adapter repository out here so the
+# seeding tests can reproduce the real local materialization. It is a second
+# repository inside the workspace, never core content.
+/cruxible-providers/
+
+# The workspace directory (client custody) and the captured raw history
+.cruxible/
+playbill-history/
+
+# Generated, credential-free plugin transport; personal MCP configs stay ignored.
+!/plugins/cruxible/.mcp.json
+
+# The built console `cruxible console` serves (scripts/build_console.py); release
+# builds create it, and the wheel ships it through hatch artifacts.
+/src/cruxible_core/console_dist/

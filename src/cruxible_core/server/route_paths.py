@@ -5,28 +5,27 @@ from __future__ import annotations
 API_V1_PREFIX = "/api/v1"
 HEALTH_PATH = "/health"
 VERSION_PATH = "/version"
-UI_PATH = "/ui"
 
 RUNTIME_BOOTSTRAP_CLAIM_PATH = "/{instance_id}/runtime/bootstrap/claim"
-HOSTED_INSTANCE_INIT_PATH = "/runtime/instances"
+PLAYBILL_HOST_CREATE_PATH = "/runtime/instances"
+PLAYBILL_HOST_SHOW_PATH = "/{instance_id}/host"
+PLAYBILL_FLOOR_DELIVERY_PATH = "/{instance_id}/workspace/floor-delivery"
+PLAYBILL_FLOOR_DELIVER_NOW_PATH = "/{instance_id}/floor/deliver-now"
+PLAYBILL_WORKSPACE_DETACH_PATH = "/{instance_id}/workspace-detach"
+PLAYBILL_WORKSPACE_ATTACH_PATH = "/{instance_id}/workspace-attach"
 
 # Daemon-wide server-operation routes. These act on the whole shared daemon
-# (global metadata, in-place re-exec, restore-before-target-known) rather than a
-# single tenant's instance, so they are authorized for an unscoped operator
-# credential (the runtime bootstrap secret) rather than an instance-scoped one.
+# (global metadata and in-place re-exec) rather than a single instance, so they
+# are authorized for an unscoped operator credential (the runtime bootstrap
+# secret) rather than an instance-scoped one.
 SERVER_INFO_PATH = "/server/info"
 SERVER_RESTART_PATH = "/server/restart"
-INSTANCE_RESTORE_PATH = "/instances/restore"
+SERVER_STOP_PATH = "/server/stop"
 
 
 def api_v1_path(path: str) -> str:
     """Return a full API v1 path from a router-relative path."""
     return f"{API_V1_PREFIX}{path}"
-
-
-def is_ui_static_path(path: str) -> bool:
-    """Return whether *path* targets the packaged browser UI."""
-    return path == UI_PATH or path.startswith(f"{UI_PATH}/")
 
 
 def route_template_matches(path: str, template: str) -> bool:

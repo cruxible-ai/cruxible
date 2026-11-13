@@ -1,0 +1,128 @@
+"""The read verbs show what a ClaimType v7 says: orient descriptors and the get card."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.get_reads import GetClaimTypeCard, GetRequest
+from cruxible_core.service.discovery.get import service_playbill_get
+from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
+from tests.test_claims.test_claim_type_v7_revisions import _V7World, v7_type
+from tests.test_claims.test_identity_evidence_rules import PREDICATE, SOURCE, _v6_type
+
+OWNER = OrientCaller("owner", "admin")
+KIND = "project.work_item"
+DESCRIPTION = (
+    "Where the work item stands in its lifecycle, as the tracker last reported it. "
+    "Blocked items name what they wait on."
+)
+
+
+def _described() -> object:
+    return v7_type(
+        description=DESCRIPTION,
+        member_descriptions=(
+            {"member": "done", "description": "Finished and verified."},
+            {"member": "ready", "description": "Can start now."},
+        ),
+        default_role="observation",
+        evidence_requirement="none",
+    )
+
+
+def _descriptor(world: _V7World) -> object:
+    detail = service_playbill_orient(world.instance, kind=KIND, caller=OWNER).kind_detail
+    assert detail is not None
+    (descriptor,) = [item for item in detail.predicates if item.predicate == PREDICATE]
+    return descriptor
+
+
+def _card(world: _V7World) -> GetClaimTypeCard:
+    card = service_playbill_get(
+        world.instance,
+        request=GetRequest(
+            ref=f"ClaimType:{PREDICATE}", evaluation_time=datetime(2026, 8, 22, tzinfo=UTC)
+        ),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).card
+    assert isinstance(card, GetClaimTypeCard)
+    return card
+
+
+@pytest.fixture
+def world(tmp_path: Path) -> _V7World:
+    return _V7World(tmp_path)
+
+
+def test_orient_names_fields_only_and_the_full_meaning_under_kind(world: _V7World) -> None:
+    world.seed(_described())  # type: ignore[arg-type]
+
+    # The default map's kind line names fields; no descriptor rides it (round-3 3c).
+    (summary,) = [
+        item
+        for item in service_playbill_orient(world.instance, caller=OWNER).kinds or ()
+        if item.kind == KIND
+    ]
+    assert PREDICATE.removeprefix(f"{KIND}.") in summary.fields
+    assert set(summary.model_dump(mode="json")) <= {
+        "kind",
+        "subjects",
+        "identity",
+        "fields",
+        "more_fields",
+    }
+
+    full = _descriptor(world)
+    assert full.description == DESCRIPTION  # type: ignore[attr-defined]
+    assert full.evidence_requirement == "none"  # type: ignore[attr-defined]
+    assert [(item.member, item.description) for item in full.member_descriptions] == [  # type: ignore[attr-defined]
+        ("done", "Finished and verified."),
+        ("ready", "Can start now."),
+    ]
+    assert full.default_role == "observation"  # type: ignore[attr-defined]
+    assert full.revision_evidence == "replace"  # type: ignore[attr-defined]
+
+
+def test_orient_leaves_a_pre_v7_descriptor_as_it_was_but_names_accumulate(
+    world: _V7World,
+) -> None:
+    world.seed(_v6_type())
+    full = _descriptor(world)
+    wire = full.model_dump(mode="json")  # type: ignore[attr-defined]
+    assert not {"description", "evidence_requirement", "member_descriptions"} & set(wire)
+    assert full.revision_evidence == "accumulate"  # type: ignore[attr-defined]
+
+
+def test_the_get_card_names_roles_rules_members_and_evidence_semantics(world: _V7World) -> None:
+    world.seed(_described())  # type: ignore[arg-type]
+    card = _card(world)
+    assert card.description == DESCRIPTION
+    assert card.members == ("blocked", "done", "ready")
+    assert [(item.member, item.description) for item in card.member_descriptions] == [
+        ("done", "Finished and verified."),
+        ("ready", "Can start now."),
+    ]
+    assert card.roles == ("normative", "observation")
+    assert card.default_role == "observation"
+    assert (card.evidence_requirement, card.revision_evidence) == ("none", "replace")
+    (rule,) = card.evidence_rules
+    assert (rule.rule_id, rule.roles, rule.contracts, rule.admission) == (
+        "source",
+        ("normative", "observation"),
+        (f"CaptureContract:playbill.foreign-source.{SOURCE}",),
+        "direct",
+    )
+
+
+def test_the_get_card_of_a_pre_v7_claim_type_states_its_implied_semantics(
+    world: _V7World,
+) -> None:
+    world.seed(_v6_type())
+    card = _card(world)
+    assert (card.evidence_requirement, card.revision_evidence) == ("self", "accumulate")
+    wire = card.model_dump(mode="json")
+    assert not {"description", "member_descriptions", "default_role"} & set(wire)

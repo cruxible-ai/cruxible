@@ -1,0 +1,596 @@
+"""Service orchestration for direct Procedure runs and exact exhaust promotion."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal, cast
+
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.canonical import CanonicalValue
+from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
+from cruxible_client.contracts.claims import SubjectClaimObject
+from cruxible_client.contracts.errors import ExecutionError, JournalError
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.contracts import AcceptedProcedureContractValidator
+from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS, ProcedureReadCeiling
+from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.query.results import (
+    ClaimQueryResult,
+)
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver, KeyCanonicalizer
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
+from cruxible_core.documents.workspace_file import WorkspaceFileReader
+from cruxible_core.exhaust import (
+    PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+    ExhaustPromotionLawResultV1,
+    ExhaustPromotionV1,
+    ExhaustReducerProtocol,
+    JournalStreamIdentityV1,
+    LocalJournalBackend,
+    evaluate_exhaust_promotion_law,
+)
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.claims_context import ClaimsContext
+from cruxible_core.procedures.egress import (
+    EffectiveRungV1,
+    TerminalEgressSinkProtocol,
+)
+from cruxible_core.procedures.execution import (
+    ContractValidatorProtocol,
+    PreparedProcedureRun,
+    ProcedureActivationAuthorityProtocol,
+    ProcedureClockProtocol,
+    ProcedureExecutor,
+    ProcedureRunResultV1,
+    ProviderRuntimeInvokerProtocol,
+    QueryContractViolated,
+    ReadCeilingExceeded,
+    StateTapReaderProtocol,
+    StateTapReadResultV1,
+)
+from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
+from cruxible_core.procedures.ports import ResolvedAcquisitionRules
+from cruxible_core.procedures.run_index import ProcedureRunIndex
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.query import service_run_playbill_query
+from cruxible_core.service.discovery.query_definitions import accepted_query_definition
+from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+
+class ExhaustReducerRegistry:
+    """Closed digest-keyed runtime registry; callers cannot select by mutable label."""
+
+    def __init__(self, reducers: Mapping[str, ExhaustReducerProtocol] | None = None) -> None:
+        self._reducers = dict(reducers or {})
+        for digest, reducer in self._reducers.items():
+            if digest != reducer.reducer_digest:
+                raise ValueError("ExhaustReducer registry key differs from reducer digest")
+
+    def require(self, digest: str) -> ExhaustReducerProtocol:
+        try:
+            return self._reducers[digest]
+        except KeyError as exc:
+            raise JournalError(f"pinned ExhaustReducer is unavailable: {digest}") from exc
+
+
+class LocalExhaustPromotionVerifier:
+    """Replay a promotion against one local portable journal and exact reducer bytes."""
+
+    def __init__(
+        self,
+        *,
+        instance_id: str,
+        journal: LocalJournalBackend,
+        bodies: ContentAddressedBodyStore,
+        reducers: ExhaustReducerRegistry,
+    ) -> None:
+        self.instance_id = instance_id
+        self.journal = journal
+        self.bodies = bodies
+        self.reducers = reducers
+
+    def verify_promotion(
+        self,
+        promotion: ExhaustPromotionV1,
+    ) -> ExhaustPromotionLawResultV1:
+        try:
+            stream = JournalStreamIdentityV1(
+                instance_id=self.instance_id,
+                journal_family=PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+                stream_id=promotion.stream_id,
+            )
+            journal_range = self.journal.range_from_sequences(
+                stream,
+                promotion.partition_id,
+                first_sequence=promotion.first_sequence,
+                last_sequence=promotion.last_sequence,
+            )
+            records = self.journal.read_exact_range(journal_range)
+            reducer = self.reducers.require(promotion.reducer_digest)
+        except (JournalError, ValueError) as exc:
+            return ExhaustPromotionLawResultV1(
+                verdict="refused",
+                refusal_code="promotion.operational_basis_unavailable",
+                message=str(exc),
+            )
+        return evaluate_exhaust_promotion_law(
+            promotion,
+            records=records,
+            bodies=self.bodies,
+            reducer=reducer,
+        )
+
+
+def _pinned_contract(
+    resolve: Callable[[ContractRef], Contract | None], ref: ContractRef
+) -> Contract:
+    contract = resolve(ref)
+    if contract is None:
+        raise ExecutionError(
+            f"the Query's pinned Contract {ref.spelling} is not accepted at this coordinate"
+        )
+    return contract
+
+
+def _first_problem(record: Any) -> dict[str, object] | None:
+    from cruxible_client.contracts.shapes import FieldInvalid
+
+    for name, result in sorted(record.fields.items()):
+        if isinstance(result, FieldInvalid):
+            return {"field": name, "problem": result.problem.model_dump(mode="json")}
+    return None
+
+
+def _first_number_problem(
+    value: Mapping[str, object],
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+) -> dict[str, object] | None:
+    from cruxible_client.contracts.provider_operations import (
+        OperationValueRefused,
+        validate_typed_number_encoding,
+    )
+
+    for name, declared in contract.fields.items():
+        if name not in value:
+            continue
+        try:
+            validate_typed_number_encoding(value[name], declared.type, resolve=resolve, path=name)
+        except OperationValueRefused as exc:
+            return {"field": name, "problem": {"code": "noncanonical_number", "message": str(exc)}}
+    return None
+
+
+def effective_query_parameters(
+    definition: Any, parameters: Mapping[str, object]
+) -> dict[str, object] | None:
+    """The bound parameter record a Query evaluates: defaults applied, references normalized.
+
+    It is the Query's own binding (``resolve_query_parameters``), so a Contract
+    checks exactly what the Query will evaluate. ``None`` when the Query itself
+    refuses the parameters; its own run then refuses them the same way.
+    """
+
+    from cruxible_core.query.engine import resolve_query_parameters
+
+    try:
+        bindings = resolve_query_parameters(definition, parameters)
+    except Exception:  # the Query's own typed refusal follows from its run
+        return None
+    return {item.name: item.value for item in bindings if item.value is not None}
+
+
+def enforce_query_parameter_contract(
+    parameters: Mapping[str, object],
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
+) -> None:
+    """Refuse a Procedure read whose effective parameters break the parameter Contract."""
+
+    from cruxible_client.contracts.shapes import check_record
+
+    problem = _first_problem(
+        check_record(
+            parameters, contract, record="parameters", resolve=resolve, enum_members=enum_members
+        )
+    ) or _first_number_problem(parameters, contract, resolve)
+    if problem is not None:
+        raise QueryContractViolated(
+            direction="parameters",
+            details={"contract": f"{contract.name}@{contract.version}", **problem},
+        )
+
+
+def enforce_query_row_contract(
+    result: ClaimQueryResult,
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
+) -> None:
+    """Refuse a Procedure read any of whose rows breaks the Query's row Contract.
+
+    A row's projected fields are checked by name: a present field's value is
+    checked against its declared type; an absent one satisfies only an
+    optional field; a conflicted one satisfies none.
+    """
+
+    from cruxible_client.contracts.shapes import check_record
+
+    for index, row in enumerate(result.rows):
+        present: dict[str, object] = {}
+        conflicted: list[str] = []
+        for item in row.fields:
+            if item.state == "present":
+                present[item.name] = item.value
+            elif item.state == "conflict":
+                conflicted.append(item.name)
+        declared_conflicts = sorted(set(conflicted) & set(contract.fields))
+        problem: dict[str, object] | None = (
+            {"field": declared_conflicts[0], "problem": {"code": "conflict"}}
+            if declared_conflicts
+            else _first_problem(
+                check_record(
+                    present, contract, record="row", resolve=resolve, enum_members=enum_members
+                )
+            )
+            or _first_number_problem(present, contract, resolve)
+        )
+        if problem is not None:
+            raise QueryContractViolated(
+                direction="row",
+                details={
+                    "contract": f"{contract.name}@{contract.version}",
+                    "row": index,
+                    **problem,
+                },
+            )
+
+
+class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
+    """Read accepted state for a Procedure: one exact Query or ClaimType, to the end."""
+
+    def __init__(
+        self,
+        *,
+        instance: PlaybillInstance,
+        evaluation_time: datetime,
+    ) -> None:
+        self.instance = instance
+        self.evaluation_time = evaluation_time
+
+    def read_accepted_state(
+        self,
+        *,
+        query: ArtifactPin,
+        parameters: CanonicalValue,
+        coordinate: AcceptedCoordinate,
+        ceiling: int = DEFAULT_MAX_READ_ROWS,
+    ) -> StateTapReadResultV1:
+        """Run one Query to the end under ``ceiling`` rows, or refuse if anything clips."""
+        if query.target.kind != "QueryDefinition":
+            raise ExecutionError("state tap pin must target QueryDefinition")
+        if not isinstance(parameters, Mapping):
+            raise ExecutionError("state tap query parameters must be an object")
+        internal = self.instance.resolve_accepted_coordinate(
+            git_oid=coordinate.git_oid,
+            semantic_root=coordinate.semantic_root,
+            generation_root=coordinate.generation_root,
+            compiler_digest=coordinate.compiler_digest,
+        )
+        accepted = accepted_query_definition(
+            self.instance,
+            name=query.target.name,
+            coordinate=internal,
+        )
+        if accepted.artifact_digest != query.artifact_digest:
+            raise ExecutionError(
+                "state tap QueryDefinition pin does not match the admitted coordinate"
+            )
+        definition = accepted.query
+        resolve = None
+        enum_members: EnumResolver | None = None
+        if definition.parameter_contract is not None or definition.row_contract is not None:
+            from cruxible_core.service.procedures.procedure_runs import (
+                accepted_contract_resolver,
+            )
+
+            resolve = accepted_contract_resolver(self.instance, internal)
+            enum_members = accepted_enum_resolver(self.instance, internal)
+        if definition.parameter_contract is not None:
+            assert resolve is not None
+            effective = effective_query_parameters(definition, dict(parameters))
+            if effective is not None:
+                enforce_query_parameter_contract(
+                    effective,
+                    _pinned_contract(resolve, definition.parameter_contract),
+                    resolve,
+                    enum_members,
+                )
+        run = service_run_playbill_query(
+            self.instance,
+            name=query.target.name,
+            evaluation_time=self.evaluation_time,
+            parameters=dict(parameters),
+            at=coordinate,
+            procedure_read=ProcedureReadCeiling(rows=ceiling),
+        )
+        if run.result.verdict != "completed":
+            code = None if run.result.refusal is None else run.result.refusal.code
+            raise ExecutionError(f"state tap query refused: {code or 'unknown'}")
+        truncation = run.result.truncation
+        if truncation.clipped_budgets:
+            raise ReadCeilingExceeded(
+                clipped=truncation.clipped_budgets,
+                candidates=truncation.candidate_result_count,
+                ceiling=ceiling,
+            )
+        if definition.row_contract is not None:
+            assert resolve is not None
+            enforce_query_row_contract(
+                run.result,
+                _pinned_contract(resolve, definition.row_contract),
+                resolve,
+                enum_members,
+            )
+        return StateTapReadResultV1(
+            value=state_tap_value(run.result),
+            effective_budgets=run.result.budgets,
+            rows=len(run.result.rows),
+        )
+
+    def read_accepted_claim(
+        self,
+        *,
+        claim_type: ArtifactPin,
+        subject_kind: str,
+        subject_id: str,
+        cardinality: Literal["one", "all"],
+        limit: int | None = None,
+        coordinate: AcceptedCoordinate,
+        ceiling: int = DEFAULT_MAX_READ_ROWS,
+    ) -> StateTapReadResultV1:
+        """Select one ClaimType's Claims about a Subject, to the end, under ``ceiling`` rows.
+
+        ``one()`` selects exactly one Claim; ``all(limit)`` selects every Claim,
+        at most ``limit``. The selection pages through the accepted Claims (no
+        interactive result budget clips it) and refuses when it is incomplete:
+        past the run's remaining read ceiling it refuses
+        ``read_ceiling_exceeded``, and past its declared ``limit`` it refuses
+        as an incomplete selection. The rows returned are charged to the run.
+        """
+        from cruxible_client.contracts.claim_reads import (
+            MAX_CLAIM_READ_BATCH,
+            ClaimReadBatchRequest,
+        )
+        from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+        from cruxible_client.contracts.claims import claim_artifact_digest, claim_statement_digest
+        from cruxible_client.contracts.subjects import SubjectShell, subject_path
+        from cruxible_core.service.claims.claim_reads import service_read_claim_batch
+        from cruxible_core.service.claims.claims import _claim_from_view
+
+        if claim_type.target.kind != "ClaimType":
+            raise ExecutionError("A Claim field read requires an exact ClaimType")
+        internal = self.instance.resolve_accepted_coordinate(
+            **coordinate.model_dump(mode="json", exclude={"tag"})
+        )
+        path = subject_path(subject_kind, subject_id)
+        with self.instance.bind_accepted_projection(internal) as projection:
+            selected_type = projection.typed.source(claim_type.target.qualified)
+            subject = projection.typed.source(f"Subject:{subject_kind}/{subject_id}")
+        if (
+            not isinstance(selected_type, ClaimType)
+            or claim_type_digest(selected_type).tagged != claim_type.artifact_digest
+        ):
+            raise ExecutionError("ClaimType differs from the admitted field binding")
+        if (
+            subject_kind not in selected_type.allowed_subject_kinds
+            or not isinstance(subject, SubjectShell)
+            or subject.lifecycle.state != "live"
+        ):
+            raise ExecutionError(
+                "Subject is absent, retired, or outside the ClaimType's admitted kinds"
+            )
+        if cardinality == "all" and (limit is None or limit <= 0):
+            raise ExecutionError("A plural Claim read requires an explicit positive limit")
+        # One more than the selection may hold, so a selection past its bound
+        # (one Claim for one(), limit for all(), the read ceiling for both) is
+        # seen, never silently cut.
+        bound = 1 if cardinality == "one" else int(limit or 0)
+        wanted = min(bound, ceiling) + 1
+        selected: list[Any] = []
+        cursor: str | None = None
+        while True:
+            request = ClaimReadBatchRequest.model_validate(
+                dict(
+                    at=coordinate.model_dump(mode="json"),
+                    subject_paths=(path,),
+                    predicates=(selected_type.predicate,),
+                    limit=min(MAX_CLAIM_READ_BATCH, wanted - len(selected)),
+                    cursor=cursor,
+                    evaluation_time=self.evaluation_time,
+                )
+            )
+            batch = service_read_claim_batch(self.instance, request=request)
+            selected.extend(batch.claims)
+            if not batch.truncated or len(selected) >= wanted or batch.cursor is None:
+                break
+            cursor = batch.cursor
+        more = len(selected) >= wanted or batch.truncated
+        if len(selected) > ceiling or (more and ceiling < bound):
+            raise ReadCeilingExceeded(
+                clipped=("max_results",), candidates=len(selected), ceiling=ceiling
+            )
+        if more or (cardinality == "one" and len(selected) != 1):
+            raise ExecutionError(
+                "Claim selection must be complete and satisfy its declared cardinality"
+            )
+        from cruxible_client.contracts.procedures.views import claim_view_contract
+        from cruxible_client.contracts.provider_operations import validate_operation_value
+        from cruxible_client.contracts.shapes import tree_contract_resolver
+        from cruxible_core.claims.enum_resolution import accepted_enum_resolver
+
+        view_contract = claim_view_contract(selected_type.structure)
+        contract_lookup = tree_contract_resolver(self.instance.immutable_tree_at(internal.git_oid))
+        enum_lookup = accepted_enum_resolver(self.instance, internal)
+        from cruxible_core.indexes.subject_identity import tree_key_rules
+
+        key_lookup = tree_key_rules(self.instance.immutable_tree_at(internal.git_oid))
+
+        def subject_value(path: str) -> str:
+            if path.startswith("claim-types/"):
+                return "semantic.claim_type/" + path.removeprefix("claim-types/").removesuffix(
+                    ".json"
+                ).replace("/", ".")
+            return path.removeprefix("subjects/").removesuffix(".json")
+
+        values = []
+        for view in selected:
+            claim = _claim_from_view(view)
+            facts = {item["schema_id"]: item["value"] for item in view.facts}
+            verdict = facts.get("cruxible.claim.current_verdict")
+            if (
+                not isinstance(verdict, dict)
+                or "verdict" not in verdict
+                or "currency" not in verdict
+            ):
+                raise ExecutionError("Selected Claim has no current verdict and currency")
+            obj = claim.statement.object.model_dump(mode="json")
+            value = obj.get("value") if obj["kind"] == "literal" else obj
+            payload = dict(
+                value=value,
+                claim_id=claim.identity.name,
+                revision=claim_artifact_digest(claim).tagged,
+                subject=subject_value(claim.statement.subject.artifact_path),
+                predicate=claim.statement.predicate,
+                qualifier=claim.statement.qualifier,
+                role=claim.statement.role,
+                object_kind=obj["kind"],
+                lifecycle_state=claim.lifecycle.state,
+                captures=list(claim.backing.capture_digests),
+                verdict=verdict["verdict"],
+                currency=verdict["currency"],
+                identity=claim.identity.qualified,
+                artifact_digest=claim_artifact_digest(claim).tagged,
+                statement_digest=claim_statement_digest(claim.statement).tagged,
+                path=view.envelope["path"],
+            )
+            if obj["kind"] == "subject":
+                payload["value"] = subject_value(
+                    cast(SubjectClaimObject, claim.statement.object).address.artifact_path
+                )
+            elif obj["kind"] == "none":
+                payload.pop("value", None)
+            if payload["qualifier"] is None:
+                payload.pop("qualifier")
+
+            validate_operation_value(
+                payload,
+                view_contract,
+                resolve=contract_lookup,
+                enum_members=enum_lookup,
+                keys=key_lookup,
+            )
+            values.append(payload)
+        return StateTapReadResultV1(
+            value=values[0] if cardinality == "one" else values,
+            # What the selection ran under: the read ceiling, no interactive cap.
+            effective_budgets=QueryBudgets(max_results=max(1, ceiling), max_traversal_depth=0),
+            rows=len(values),
+        )
+
+
+def state_tap_value(result: ClaimQueryResult) -> dict[str, object]:
+    """Render one query result as the governed value a state tap consumes.
+
+    A tap consumes governed data, not advisories. `verdict_visibility` is
+    accounting of the rows the policy declined to show, and it is kept out of
+    the query's own result digest for exactly that reason; letting it into this
+    value would put it straight back into the state-result digest that admits
+    and replays the run, so which rows were hidden could change a run's
+    identity.
+    """
+
+    value = result.model_dump(mode="json")
+    value.pop("verdict_visibility", None)
+    return value
+
+
+def service_execute_direct_procedure(
+    prepared: PreparedProcedureRun,
+    accepted: AcceptedProcedure,
+    *,
+    journal: LocalJournalBackend,
+    bodies: ContentAddressedBodyStore,
+    run_index_path: Path,
+    fencing_token: str,
+    activation_authority: ProcedureActivationAuthorityProtocol,
+    contract_validator: ContractValidatorProtocol | None = None,
+    provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
+    provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol] | None = None,
+    acquisition_rules: Mapping[str, AcquisitionRule] | None = None,
+    capture_contracts: Mapping[str, CaptureContract] | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
+    effective_rung: EffectiveRungV1 | None = None,
+    egress_sink: TerminalEgressSinkProtocol | None = None,
+    clock: ProcedureClockProtocol | None = None,
+    nested_runner: NestedProcedureRunner | None = None,
+    parent_context: ParentInvocationContext | None = None,
+    ephemeral_spec_digest: str | None = None,
+    enum_resolver: EnumResolver | None = None,
+    contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
+    key_rules: KeyCanonicalizer | None = None,
+    claims_context: ClaimsContext | None = None,
+    state_reader: StateTapReaderProtocol | None = None,
+) -> ProcedureRunResultV1:
+    """Execute through the shared runtime; no transport duplicates orchestration.
+
+    ``state_reader`` reads the run's late reads (D-R38) at its admitted coordinate.
+    """
+
+    if contract_validator is None:
+        if contract_resolver is None:
+            raise ExecutionError("a Procedure run checks its boundaries against governed Contracts")
+        contract_validator = AcceptedProcedureContractValidator(contract_resolver, enum_resolver)
+    validator = contract_validator
+    index = ProcedureRunIndex(run_index_path)
+    try:
+        return ProcedureExecutor(
+            journal=journal,
+            bodies=bodies,
+            run_index=index,
+            fencing_token=fencing_token,
+            activation_authority=activation_authority,
+            contract_validator=validator,
+            provider_runtime_invoker=provider_runtime_invoker,
+            provider_runtime_invoker_factory=provider_runtime_invoker_factory,
+            acquisition_rules=(
+                None if acquisition_rules is None else ResolvedAcquisitionRules(acquisition_rules)
+            ),
+            capture_contracts=capture_contracts,
+            workspace_file_reader=workspace_file_reader,
+            effective_rung=effective_rung,
+            egress_sink=egress_sink,
+            clock=clock,
+            nested_runner=nested_runner,
+            parent_context=parent_context,
+            enum_resolver=enum_resolver,
+            contract_resolver=contract_resolver,
+            key_rules=key_rules,
+            claims_context=claims_context,
+            ephemeral_spec_digest=ephemeral_spec_digest,
+            state_reader=state_reader,
+        ).execute(prepared, accepted)
+    finally:
+        index.close()
+
+
+__all__ = [
+    "ExhaustReducerRegistry",
+    "LocalExhaustPromotionVerifier",
+    "PlaybillProcedureStateTapReader",
+    "service_execute_direct_procedure",
+]

@@ -1,0 +1,358 @@
+"""PB-E local file-catalog compilation, alignment, and frozen proposal tests."""
+
+from __future__ import annotations
+
+import base64
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.file_catalog import (
+    FileCatalog,
+    FileCatalogEntry,
+    ProcedureProjectionCatalogEntry,
+    merge_file_catalogs,
+)
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.evidence.file_catalog import (
+    service_check_playbill_file_bundle,
+    service_propose_playbill_file_bundle,
+)
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.test_ledger.test_activation import _sign
+from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
+
+
+def service_compile_playbill_files(
+    instance,  # type: ignore[no-untyped-def]
+    *,
+    catalog,
+    repository_root: Path,
+    root_aliases: dict[str, Path] | None = None,
+):
+    """Compile as the adapters do: the daemon's source context, compiled client-side."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.authoring.files import compile_client_file_context
+    from cruxible_core.service.evidence.file_catalog import service_playbill_file_context
+
+    context = SimpleNamespace(file_context=lambda _id: service_playbill_file_context(instance))
+    return compile_client_file_context(
+        context,  # type: ignore[arg-type]
+        instance.descriptor.instance_id,
+        catalog=catalog,
+        repository_root=repository_root,
+        aliases=root_aliases or {},
+    )
+
+
+def _entry(*, locator: str = "specs/design.md", root_alias: str | None = None):
+    return FileCatalogEntry(
+        name="playbill-design",
+        locator=locator,
+        root_alias=root_alias,
+        document_id="design",
+        document_kind="design",
+        title="Cruxible design",
+        media_type="text/markdown",
+        required_tier="graph_write",
+        governance_scope=("project:playbill",),
+    )
+
+
+def _catalog(entry: FileCatalogEntry, *, kind: str = "portable") -> FileCatalog:
+    return FileCatalog(catalog_kind=kind, entries=(entry,))  # type: ignore[arg-type]
+
+
+def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> None:
+    instance, _owner, reviewer = _instance(tmp_path)
+    repository = tmp_path / "authoring"
+    source = repository / "specs" / "design.md"
+    source.parent.mkdir(parents=True)
+    original = b"# Cruxible v1\n"
+    source.write_bytes(original)
+    catalog = _catalog(_entry())
+
+    bundle = service_compile_playbill_files(
+        instance,
+        catalog=catalog,
+        repository_root=repository,
+    )
+    assert instance.body_store().verify(bundle.documents[0].source.body_digest) is False
+    assert (
+        service_check_playbill_file_bundle(
+            instance,
+            bundle=bundle,
+        )
+        .alignments[0]
+        .state
+        == "untracked"
+    )
+    assert "authoring" not in bundle.model_dump_json()
+    assert "specs/design.md" not in bundle.model_dump_json()
+
+    source.write_bytes(b"# Cruxible changed after compile\n")
+    proposed = service_propose_playbill_file_bundle(
+        instance,
+        bundle=bundle,
+        file="playbill-design",
+        actor_id="owner",
+        proposal_name="catalog-design",
+        timestamp=TIMESTAMP,
+    ).proposal
+    assert proposed.candidate is not None
+    stored = instance.body_store().read(
+        bundle.documents[0].source.body_digest,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+    )
+    assert stored == original
+    assert base64.b64decode(bundle.documents[0].body_base64) == original
+
+    def no_inventory(*_args, **_kwargs):
+        pytest.fail("pending source checks must use indexed candidate and history lookups")
+
+    with pytest.MonkeyPatch.context() as patch:
+        for name in ("tree_at", "proposal_tree", "accepted_history"):
+            patch.setattr(instance, name, no_inventory)
+        evidence_type = type(instance.proposal_evidence())
+        patch.setattr(evidence_type, "list_admissions", no_inventory)
+        patch.setattr(evidence_type, "list_evaluations", no_inventory)
+        assert (
+            service_check_playbill_file_bundle(instance, bundle=bundle).alignments[0].state
+            == "pending"
+        )
+
+    approval = _sign(
+        reviewer,
+        proposed.candidate.candidate_digest,
+        proposed.candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposed.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="relay",
+    )
+    service_activate_playbill_proposal(
+        instance,
+        proposal_id=proposed.admission.proposal_id,
+        activated_by="owner",
+    )
+    assert (
+        service_check_playbill_file_bundle(
+            instance,
+            bundle=bundle,
+        )
+        .alignments[0]
+        .state
+        == "aligned"
+    )
+    modified = service_compile_playbill_files(
+        instance,
+        catalog=catalog,
+        repository_root=repository,
+    )
+    assert service_check_playbill_file_bundle(instance, bundle=modified).alignments[0].state == (
+        "modified"
+    )
+    saved_manifest = instance.proposal_evidence().read_source_compilation(
+        bundle.manifest.compilation_digest
+    )
+    assert saved_manifest == bundle.manifest
+
+    second = service_propose_playbill_file_bundle(
+        instance,
+        bundle=modified,
+        file="playbill-design",
+        actor_id="owner",
+        proposal_name="catalog-design-v2",
+        timestamp=TIMESTAMP,
+    ).proposal
+    assert second.candidate is not None
+    second_approval = _sign(
+        reviewer,
+        second.candidate.candidate_digest,
+        second.candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=second.admission.proposal_id,
+        attestation=second_approval.attestation,
+        authenticated_submitter="relay",
+    )
+    service_activate_playbill_proposal(
+        instance,
+        proposal_id=second.admission.proposal_id,
+        activated_by="owner",
+    )
+    assert (
+        service_check_playbill_file_bundle(instance, bundle=bundle).alignments[0].state == "behind"
+    )
+
+
+def test_catalog_merge_and_path_guards_refuse_ambiguity_and_escape(tmp_path: Path) -> None:
+    portable = _catalog(_entry())
+    local_root = tmp_path / "private-specs"
+    local_root.mkdir()
+    (local_root / "design.md").write_text("# Local\n")
+    local = _catalog(
+        _entry(locator="design.md", root_alias="private"),
+        kind="local",
+    )
+    merged = merge_file_catalogs(portable, local)
+    assert merged.entries[0].root_alias == "private"
+
+    instance_root = tmp_path / "instance"
+    instance_root.mkdir()
+    instance, _owner, _reviewer = _instance(instance_root)
+    bundle = service_compile_playbill_files(
+        instance,
+        catalog=merged,
+        repository_root=tmp_path,
+        root_aliases={"private": local_root},
+    )
+    assert bundle.documents[0].source.public_uri is None
+
+    conflicting = _catalog(
+        _entry(locator="design.md", root_alias="private").model_copy(
+            update={"document_id": "other"}
+        ),
+        kind="local",
+    )
+    with pytest.raises(FormatError, match="ambiguously"):
+        merge_file_catalogs(portable, conflicting)
+
+    symlink = local_root / "linked.md"
+    symlink.symlink_to(local_root / "design.md")
+    with pytest.raises(FormatError, match="symlink"):
+        service_compile_playbill_files(
+            instance,
+            catalog=_catalog(
+                _entry(locator="linked.md", root_alias="private"),
+                kind="local",
+            ),
+            repository_root=tmp_path,
+            root_aliases={"private": local_root},
+        )
+    with pytest.raises(ValueError, match="normalized"):
+        _entry(locator="../escape.md")
+    for local_uri in (
+        "file://" + "/" + "tmp/private.md",
+        "/" + "tmp/private.md",
+    ):
+        with pytest.raises(ValueError, match="non-file URI"):
+            FileCatalogEntry(
+                **{
+                    **_entry().model_dump(mode="python"),
+                    "public_uri": local_uri,
+                }
+            )
+
+
+def test_procedure_projection_entries_are_explicit_intent_not_document_inputs(
+    tmp_path: Path,
+) -> None:
+    entry = _entry()
+    projection = ProcedureProjectionCatalogEntry(
+        procedure_identity=ArtifactIdentity(kind="Procedure", name="release-guard"),
+        locator="runbooks/release-guard.md",
+    )
+    catalog = FileCatalog(catalog_kind="portable", entries=(projection, entry))
+
+    assert catalog.entries == (entry, projection)
+    assert FileCatalog.model_validate(catalog.model_dump(mode="json")) == catalog
+
+    repository = tmp_path / "authoring"
+    source = repository / "specs" / "design.md"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"# Design\n")
+    instance_root = tmp_path / "instance"
+    instance_root.mkdir()
+    instance = _instance(instance_root)[0]
+    bundle = service_compile_playbill_files(
+        instance,
+        catalog=catalog,
+        repository_root=repository,
+    )
+    document_only = service_compile_playbill_files(
+        instance,
+        catalog=FileCatalog(catalog_kind="portable", entries=(entry,)),
+        repository_root=repository,
+    )
+
+    assert [item.source.name for item in bundle.documents] == ["playbill-design"]
+    assert bundle == document_only
+
+
+def test_procedure_only_catalog_compiles_as_a_typed_document_noop(tmp_path: Path) -> None:
+    projection = ProcedureProjectionCatalogEntry(
+        procedure_identity=ArtifactIdentity(kind="Procedure", name="release-guard"),
+        locator="runbooks/release-guard.md",
+    )
+    instance_root = tmp_path / "instance"
+    instance_root.mkdir()
+    instance = _instance(instance_root)[0]
+
+    bundle = service_compile_playbill_files(
+        instance,
+        catalog=FileCatalog(catalog_kind="portable", entries=(projection,)),
+        repository_root=tmp_path,
+    )
+
+    assert bundle.documents == ()
+    assert bundle.manifest.inputs == ()
+    assert bundle.notes == ("no_document_entries_to_compile",)
+
+
+def test_a_sources_proposal_previews_and_writes_neither_the_cas_nor_a_proposal(
+    tmp_path: Path,
+) -> None:
+    """F-006: the preview runs the propose path and stores no body, manifest or proposal."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    instance, _owner, _reviewer = _instance(tmp_path)
+    repository = tmp_path / "authoring"
+    source = repository / "specs" / "design.md"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"# Previewed, never stored\n")
+    bundle = service_compile_playbill_files(
+        instance, catalog=_catalog(_entry()), repository_root=repository
+    )
+    digest = bundle.documents[0].source.body_digest
+
+    def propose(**control: object):  # type: ignore[no-untyped-def]
+        return service_propose_playbill_file_bundle(
+            instance,
+            bundle=bundle,
+            file="playbill-design",
+            actor_id="owner",
+            proposal_name="catalog-design",
+            timestamp=TIMESTAMP,
+            **control,  # type: ignore[arg-type]
+        )
+
+    preview = assert_writes_nothing([tmp_path], lambda: propose(dry_run=True))
+
+    assert preview.status == "would_propose"
+    assert preview.proposal.candidate is not None
+    assert instance.body_store().verify(digest) is False
+    assert instance.proposal_evidence().list_admissions() == ()
+    committed = propose(dry_run=False, at=preview.accepted_coordinate.git_oid)
+    assert committed.status == "admitted"
+    assert instance.body_store().verify(digest) is True
+
+
+def test_an_entry_declares_all_document_fields_or_none() -> None:
+    evidence_only = FileCatalogEntry(name="notes", locator="notes.md")
+    assert evidence_only.is_document is False
+    with pytest.raises(ValueError, match="only some Document fields"):
+        FileCatalogEntry(name="notes", locator="notes.md", document_id="notes")
+    with pytest.raises(ValueError, match="public_uri"):
+        FileCatalogEntry(name="notes", locator="notes.md", public_uri="https://x.test/n")

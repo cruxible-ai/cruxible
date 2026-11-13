@@ -1,0 +1,302 @@
+"""A settle mandate replaces candidate approval only when it covers and its condition holds."""
+
+from __future__ import annotations
+
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+from cruxible_client.contracts.claims import ClaimType
+from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMENTS
+from cruxible_client.contracts.procedure_mandates import (
+    MandateClaimScope,
+    MandateCondition,
+    procedure_mandate_digest,
+    procedure_mandate_path,
+    render_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    procedure_artifact_digest,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    line_spec_digest,
+    line_spec_path,
+    render_line_spec,
+)
+from cruxible_client.contracts.query.definitions import (
+    QueryDefinition,
+    QueryEvaluationPolicy,
+    query_definition_digest,
+    query_definition_path,
+    render_query_definition,
+)
+from cruxible_client.contracts.query.grammar import (
+    QueryBudgets,
+    QueryComparisonFilter,
+    QueryEntry,
+    QueryLiteralRef,
+    QueryParameterDeclaration,
+    QueryParameterRef,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
+)
+from cruxible_core.authoring import lowering
+from cruxible_core.proposals import proposals
+from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
+from tests.core_support._support import initialize_local
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate, scope_changes
+from tests.support.procedures import procedure_members
+from tests.test_authoring.test_authoring_change_set_intents import (
+    SUBJECT_KIND,
+    TIMESTAMP,
+    _claim,
+    _coordinator,
+)
+from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+from tests.test_indexes.test_resolution_contracts import _accept_tree
+from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+STATUS = "project.work_item.status"
+
+
+def _condition_query(*, only_subject: str | None = None) -> QueryDefinition:
+    where = (
+        None
+        if only_subject is None
+        else QueryComparisonFilter(
+            left=QuerySubjectFieldRef(binding="item", field="subject_id"),
+            operator="eq",
+            right=QueryLiteralRef(value=only_subject),
+            value_type="string",
+        )
+    )
+    return QueryDefinition(
+        identity=ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
+        entry=QueryEntry(
+            binding="item",
+            subject_kinds=(SUBJECT_KIND,),
+            subject_id=QueryParameterRef(parameter="item_id"),
+        ),
+        where=where,
+        result_binding="item",
+        result_shape="subject",
+        result_cardinality="one",
+        dedupe="subject",
+        projection=QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+            )
+        ),
+        parameters=(QueryParameterDeclaration(name="item_id", value_type="string"),),
+        evaluation_policy=QueryEvaluationPolicy(
+            visible_verdicts=("supported",),
+            visible_currency=("current",),
+            conflict_behavior="refuse_on_conflict",
+        ),
+        default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _authored_claims_count_as_extracted(monkeypatch):  # type: ignore[no-untyped-def]
+    """These Claims are authored directly, so they carry no Procedure receipt.
+
+    The verifier reads a change's basis off that receipt (and a Claim without
+    one never settles); here it is fixed to ``extracted`` so the condition law
+    is exercised alone. Basis scope is proved through real Procedure runs in
+    tests/test_procedures/test_procedure_settlement_delivery.py.
+    """
+
+    from cruxible_core.proposals import delegated_authority
+
+    monkeypatch.setattr(delegated_authority, "_change_basis", lambda _claim, _kind: "extracted")
+
+
+def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create", "revise")):
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    status_type = ClaimType.model_validate_json(tree[claim_type_path(STATUS)])
+    from tests.support.procedures import revalidated
+
+    query = _condition_query(only_subject=only_subject)
+    procedure = revalidated(
+        _artifact(
+            _definition(
+                terminal_capability=3,
+                query=ArtifactPin(
+                    role="query",
+                    target=query.identity,
+                    artifact_digest=query_definition_digest(query).tagged,
+                ),
+            )
+        )
+    )
+    # A Mandate pins an exact Line, not a Procedure (ruling C3): this
+    # Procedure has no provider slots (a closed-form Claims-terminal graph),
+    # so its Line binds none either.
+    caps = procedure.definition.hard_caps
+    line = line_spec(
+        "triage-line",
+        procedure=ArtifactPin(
+            role="procedure",
+            target=procedure.identity,
+            artifact_digest=procedure_artifact_digest(procedure).tagged,
+        ),
+        max_authority="settle",
+        budgets=line_budgets(caps=caps),
+    )
+    mandate = procedure_mandate(
+        "triage",
+        line=ArtifactPin(
+            role="line",
+            target=line.identity,
+            artifact_digest=line_spec_digest(line).tagged,
+        ),
+        grants="settle",
+        scope=(
+            MandateClaimScope(
+                claim_type=ArtifactPin(
+                    role="claim-type",
+                    target=status_type.identity,
+                    artifact_digest=claim_type_digest(status_type).tagged,
+                ),
+                changes=scope_changes(*change_kinds),
+            ),
+        ),
+        condition=MandateCondition(
+            query=ArtifactPin(
+                role="condition-query",
+                target=query.identity,
+                artifact_digest=query_definition_digest(query).tagged,
+            ),
+            binding_parameter="item_id",
+            required_fields=("id",),
+            fallback="propose",
+        ),
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **tree,
+            **procedure_members(procedure),
+            query_definition_path(query.identity.name): render_query_definition(query),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            procedure_mandate_path("triage"): render_procedure_mandate(mandate),
+        },
+        timestamp=TIMESTAMP,
+        proposal_name="settle-world",
+    )
+    return instance, mandate
+
+
+def _settle(instance, mandate, *, digest: str | None = None, payload=None):
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor, payload=payload or _claim(), canonical_timestamp=TIMESTAMP
+    ).intent
+    lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+    current = instance.accepted_coordinate()
+    base = instance.tree_at(current.git_oid)
+    return evaluate_proposal_tree(
+        base_tree=base,
+        current_tree=base,
+        proposed_tree=lowered.proposed_tree,
+        current=current,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id=actor.actor_id,
+        query_facts_provider=lambda coordinate, *, predicates=None, subject_kinds=None: (
+            instance._accepted_query_facts(
+                instance, coordinate, predicates=predicates, subject_kinds=subject_kinds
+            )
+        ),
+        delegated_mandate_digest=digest or procedure_mandate_digest(mandate).tagged,
+    )
+
+
+def _codes(evaluation) -> set[str]:
+    return {item.code for item in evaluation.diagnostics}
+
+
+def test_a_covered_true_condition_settles_without_candidate_approval(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        proposals, "_approval_requirements", lambda _tree: INDEPENDENT_APPROVAL_REQUIREMENTS
+    )
+    instance, mandate = _world(tmp_path)
+    settled = _settle(instance, mandate)
+    assert settled.diagnostics == ()
+    assert settled.candidate is not None and settled.candidate.approval_requirements == ()
+
+
+def test_a_false_condition_grants_nothing(tmp_path) -> None:
+    instance, mandate = _world(tmp_path, only_subject="someone-else")
+    refused = _settle(instance, mandate)
+    assert refused.candidate is None
+    assert "cruxible.settle.condition_false" in _codes(refused)
+
+
+def test_an_uncovered_change_kind_grants_nothing(tmp_path) -> None:
+    instance, mandate = _world(tmp_path, change_kinds=("revise",))
+    refused = _settle(instance, mandate)
+    assert refused.candidate is None
+    assert "cruxible.settle.scope_uncovered" in _codes(refused)
+
+
+def test_an_unknown_mandate_digest_grants_nothing(tmp_path) -> None:
+    instance, mandate = _world(tmp_path)
+    refused = _settle(instance, mandate, digest="sha256:" + "e" * 64)
+    assert refused.candidate is None
+    assert _codes(refused) == {"cruxible.settle.mandate_unresolved"}
+
+
+def test_a_settled_generation_publishes_without_approvals_and_replays(
+    tmp_path, monkeypatch
+) -> None:
+    import shutil
+
+    import pytest
+
+    from cruxible_core.proposals.settlement import ChangeActorBinding, SettlementIntegrityError
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    monkeypatch.setattr(
+        proposals, "_approval_requirements", lambda _tree: INDEPENDENT_APPROVAL_REQUIREMENTS
+    )
+    instance, mandate = _world(tmp_path)
+    digest = procedure_mandate_digest(mandate).tagged
+    settled = _settle(instance, mandate)
+    assert settled.candidate is not None
+    base = instance.accepted_coordinate()
+    publish = dict(
+        base=base,
+        candidate_tree=dict(settled.tree),
+        candidate=settled.candidate,
+        approvals=(),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+    )
+    # Without the mandate, the approval-free candidate cannot be reproduced.
+    with pytest.raises(SettlementIntegrityError):
+        instance.settle_and_activate(**publish)
+    result = instance.settle_and_activate(**publish, mandate_digest=digest)
+    assert result.status == "accepted"
+    head = instance.accepted_coordinate()
+    assert instance.accepted_history()[-1].record.mandate_digest == digest
+
+    # Replay from genesis re-derives the delegated authority from the parent state.
+    # Queued advisory review-ref refreshes bind projections; let them finish first.
+    instance.settled_workspace_advertisement()
+    shutil.rmtree(instance.root / "projections")
+    (instance.root / "projections").mkdir()
+    shutil.rmtree(instance._checkpoint_directory(instance.root))
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.accepted_coordinate() == head

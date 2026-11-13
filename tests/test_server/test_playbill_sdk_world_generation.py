@@ -1,0 +1,360 @@
+"""The typed world facade against a live daemon: define, state, accept, read back."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+from fastapi.testclient import TestClient
+
+from cruxible_client import Cruxible
+from cruxible_client import contracts as api
+from cruxible_client.authoring.sdk_types import (
+    AbsentSubject,
+    Cardinality,
+    ClaimValueError,
+    PendingClaimTypeRef,
+    PendingSubjectRef,
+)
+from cruxible_client.authoring.world_stub import (
+    STUB_HEADER_TAG,
+    render_vocabulary_stub,
+    stub_vocabulary_digest,
+)
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.cli.main import cli
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from tests.core_support._subject_kind_support import declare_by_slug
+from tests.support.claim_types import claim_type as build_claim_type
+from tests.support.claim_types import claim_type_changes
+
+PACKAGE_KIND = "sec.package"
+VULNERABILITY_KIND = "sec.vulnerability"
+SEVERITY = "sec.vuln.severity"
+AFFECTS = "sec.vuln.affects_package"
+
+
+def _workspace(root: Path) -> Path:
+    workspace = root / "world-workspace"
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / "corpus").mkdir()
+    (workspace / "corpus" / "advisory.md").write_text("# advisory\n", encoding="utf-8")
+    (workspace / ".cruxible" / "files.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        "  - name: corpus.advisory\n"
+        "    locator: corpus/advisory.md\n"
+        "    document_id: advisory\n"
+        "    document_kind: note\n"
+        "    title: Advisory\n"
+        "    media_type: text/markdown\n"
+        "    governance_scope: [Document:advisory]\n",
+        encoding="utf-8",
+    )
+    return workspace
+
+
+def _severity_type() -> ClaimType:
+    return build_claim_type(
+        predicate=SEVERITY,
+        value_type={"type": "string", "enum": ["high", "low"]},
+        allowed_subject_kinds=(VULNERABILITY_KIND,),
+        permitted_roles=("observation",),
+    )
+
+
+def _affects_type() -> ClaimType:
+    return build_claim_type(
+        predicate=AFFECTS,
+        value_type=(PACKAGE_KIND,),
+        allowed_subject_kinds=(VULNERABILITY_KIND,),
+        cardinality="many",
+        permitted_roles=("observation",),
+    )
+
+
+def _shell(subject_kind: str, subject_id: str) -> SubjectShell:
+    return SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name=f"{subject_kind}/{subject_id}"),
+        subject_kind=subject_kind,
+        subject_id=subject_id,
+        lifecycle=ArtifactLifecycle(),
+    )
+
+
+def _approve_and_activate(
+    client: TestClient,
+    instance_id: str,
+    private_key_path: Path,
+    proposal_id: str,
+) -> api.ActivationReceipt:
+    challenge = client.post(
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
+        json={"signer_id": "reviewer"},
+    )
+    assert challenge.status_code == 200, challenge.text
+    body = challenge.json()
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id="reviewer",
+        private_key_path=private_key_path,
+        expected_public_key=body["signer_principal"]["public_key"],
+        forbidden_roots=(),
+    )
+    attestation = signer.sign(ApprovalStatement.model_validate(body["statement"]))
+    approved = client.post(
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
+        json={"attestation": attestation.model_dump(mode="json")},
+    )
+    assert approved.status_code == 200, approved.text
+    activated = approved.json()["activation"]
+    assert activated["status"] == "accepted", approved.text
+    return api.ActivationReceipt.model_validate(activated)
+
+
+@pytest.fixture
+def connection(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+) -> tuple[Cruxible, TestClient, str, Path]:
+    http, instance_id, private_key_path = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    playbill = Cruxible._from_client(
+        transport,
+        instance_id=instance_id,
+        workspace=_workspace(tmp_path),
+    )
+    return playbill, http, instance_id, private_key_path
+
+
+def _accept_vocabulary(
+    playbill: Cruxible,
+    http: TestClient,
+    instance_id: str,
+    private_key_path: Path,
+) -> None:
+    """Land the vocabulary and one Subject the later sets read."""
+
+    draft = playbill.changes(rationale="Open the vulnerability vocabulary.")
+    draft.claim_type(_severity_type())
+    draft.claim_type(_affects_type())
+    # Advisories and packages are named by their slug (identity D6).
+    declare_by_slug(draft, VULNERABILITY_KIND, PACKAGE_KIND)
+    draft.subject(playbill.new_subject(VULNERABILITY_KIND, key="cve-2026-69247"))
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit(accept="never")
+    assert submitted._candidate_status is not None
+    proposal_id = submitted._candidate_status.proposal_id
+    assert proposal_id is not None
+    _approve_and_activate(http, instance_id, private_key_path, proposal_id)
+    playbill.refresh()
+
+
+def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generation(
+    connection: tuple[Cruxible, TestClient, str, Path],
+) -> None:
+    """A ref to an unaccepted Subject must not refuse against the base tree."""
+
+    playbill, http, instance_id, private_key_path = connection
+    _accept_vocabulary(playbill, http, instance_id, private_key_path)
+
+    world = playbill.world()
+    vulnerability = world.sec.vulnerability["cve-2026-69247"]
+    assert world.sec.vuln.severity.cardinality is Cardinality.ONE
+    assert world.sec.vuln.affects_package.value_type.kind == "subject"
+
+    draft = playbill.changes(rationale="Name the package this advisory affects.")
+    package = draft.subject(playbill.new_subject("sec.package", key="click"))
+    assert isinstance(package, PendingSubjectRef)
+    draft.claim(
+        subject=vulnerability,
+        predicate=world.sec.vuln.affects_package,
+        value=package,
+        role="observation",
+        rationale="The advisory names this package.",
+        supported_by=None,
+        copied_from=None,
+        self_source="affects: click\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    draft.claim(
+        subject=vulnerability,
+        predicate=world.sec.vuln.severity,
+        value=world.sec.vuln.severity.high,
+        role="observation",
+        rationale="The advisory rates this vulnerability.",
+        supported_by=None,
+        copied_from=None,
+        self_source="severity: high\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    assert len(intent._raw["payload"]["members"]) == 3
+
+    submitted = intent.submit(accept="never")
+    assert submitted._candidate_status is not None
+    proposal_id = submitted._candidate_status.proposal_id
+    assert proposal_id is not None
+    receipt = _approve_and_activate(http, instance_id, private_key_path, proposal_id)
+    assert receipt.accepted_coordinate is not None
+    # Another client accepted. The live connection has not refreshed or read
+    # the new head, and its old World still has no Claims at the vocabulary base.
+    assert playbill.coordinate == world.coordinate
+    assert world.sec.vulnerability["cve-2026-69247"].severity == ()
+    landed = playbill.at(receipt.accepted_coordinate).world()
+    assert landed.sec.package["click"].address == "sec.package/click"
+    # The advisory's key Claim (its slug) sits beside the two this set stated.
+    slug = f"{VULNERABILITY_KIND}.slug"
+    claims = landed.sec.vulnerability["cve-2026-69247"].claims
+    assert {claim.predicate for claim in claims} == {AFFECTS, SEVERITY, slug}
+    assert playbill.coordinate == world.coordinate
+    latest = [playbill.get(claim.claim_id).value for claim in claims]
+    assert {claim.predicate for claim in latest} == {AFFECTS, SEVERITY, slug}
+    assert playbill.coordinate.git_oid == receipt.accepted_coordinate.git_oid
+    assert landed.sec.vulnerability["cve-2026-69247"].severity[0].value == "high"
+
+
+def test_a_same_set_claim_type_ref_states_a_claim_under_the_type_it_defines(
+    connection: tuple[Cruxible, TestClient, str, Path],
+) -> None:
+    playbill, http, instance_id, private_key_path = connection
+    _accept_vocabulary(playbill, http, instance_id, private_key_path)
+
+    draft = playbill.changes(rationale="Open the severity note slot and use it once.")
+    note_type = _severity_type().model_copy(
+        update=claim_type_changes(
+            predicate="sec.vuln.note",
+            value_type={"type": "string"},
+            identity=ArtifactIdentity(kind="ClaimType", name="sec.vuln.note"),
+        )
+    )
+    predicate = draft.claim_type(note_type)
+    assert isinstance(predicate, PendingClaimTypeRef)
+    draft.claim(
+        subject=f"{VULNERABILITY_KIND}/cve-2026-69247",
+        predicate=predicate,
+        value="Escalated by the platform leads.",
+        role="observation",
+        rationale="The runbook records the escalation.",
+        supported_by=None,
+        copied_from=None,
+        self_source="note: escalated\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    intent = draft.prepare()
+
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit(accept="never")
+    assert submitted._candidate_status is not None
+    proposal_id = submitted._candidate_status.proposal_id
+    assert proposal_id is not None
+    _approve_and_activate(http, instance_id, private_key_path, proposal_id)
+    playbill.refresh()
+
+    assert "sec.vuln.note" in playbill.world().predicates
+
+
+def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_name(
+    connection: tuple[Cruxible, TestClient, str, Path],
+) -> None:
+    playbill, http, instance_id, private_key_path = connection
+    _accept_vocabulary(playbill, http, instance_id, private_key_path)
+
+    world = playbill.world()
+
+    assert world.kinds == (PACKAGE_KIND, VULNERABILITY_KIND)
+    # The builtin ClaimTypes every instance seeds are vocabulary too.
+    assert world.predicates == (
+        f"{PACKAGE_KIND}.slug",
+        AFFECTS,
+        SEVERITY,
+        f"{VULNERABILITY_KIND}.slug",
+        "semantic.alias",
+        "semantic.distinct_from",
+    )
+    assert world.unstructured_predicates == ()
+    assert world.sec.vuln.severity.members == ("high", "low")
+    with pytest.raises(ClaimValueError):
+        world.sec.vuln.severity("critical")
+    with pytest.raises(AbsentSubject):
+        world.sec.package["click"]
+
+
+def test_the_cli_leaf_writes_a_vocabulary_stub_the_daemon_renders_identically(
+    connection: tuple[Cruxible, TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbill, http, instance_id, private_key_path = connection
+    _accept_vocabulary(playbill, http, instance_id, private_key_path)
+    transport = playbill._client
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    out_path = tmp_path / "generated" / "world.pyi"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "http://cruxible",
+            "--instance-id",
+            instance_id,
+            "stub",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    rendered = out_path.read_text(encoding="utf-8")
+    assert rendered.startswith(f"# {STUB_HEADER_TAG}:")
+    assert stub_vocabulary_digest(rendered) is not None
+    assert playbill.coordinate.git_oid not in rendered
+    assert "class _W_sec__vuln__severity(ClaimTypeRef):" in rendered
+    assert "    high: LiteralValue" in rendered
+    assert rendered == playbill.world().stub()
+    # The stub the daemon's own world renders is a file a type checker reads.
+    ast.parse(rendered)
+    # Floor delivery renders it from the ClaimTypes its floor index holds, with
+    # no client; the bytes are the ones `cruxible stub` wrote.
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.discovery.orient import accepted_subject_kinds
+    from cruxible_core.service.floor.floor_index import advance_floor_index
+
+    instance = get_playbill_manager().get(instance_id)
+    held = advance_floor_index(instance).inputs.types
+    # ... and the SubjectKinds of the head's projection, which type define().
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        kinds = accepted_subject_kinds(projection.typed)
+    assert kinds, "the vocabulary declares SubjectKinds, so the parity covers define()"
+    assert (
+        render_vocabulary_stub(
+            (claim_type.model_dump(mode="json") for claim_type in held.values()),
+            coordinate=playbill.coordinate,
+            subject_kinds=kinds,
+        )
+        == rendered
+    )

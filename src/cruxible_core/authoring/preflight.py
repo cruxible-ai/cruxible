@@ -1,0 +1,1320 @@
+"""Complete-vector, coordinate-binding preflight for AuthoringIntents."""
+
+from __future__ import annotations
+
+import base64
+import json
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal
+
+import structlog
+
+from cruxible_client.contracts.authoring.models import (
+    AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN,
+    AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN,
+    AUTHORING_RESOLVED_DIGEST_DOMAIN,
+    MAX_BLOCKED_CHECKS,
+    MAX_DIAGNOSTICS,
+    AuthoringDiagnostic,
+    AuthoringIntent,
+    AuthoringPayload,
+    AuthoringReferenceExpectation,
+    AuthoringReferenceSuccessor,
+    AuthoringSlotExpectation,
+    BlockedCheck,
+    CandidateStatus,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
+    ClaimRetirementMember,
+    ClaimTypeSuccessionMember,
+    DiagnosticFrontier,
+    DiagnosticFrontierLimits,
+    PreflightResult,
+    RepairAlternative,
+    ResolvedTriggerCaptureContract,
+    TriggerAuthoringPayload,
+    WorkingSelectionObservation,
+    build_preflight_certificate,
+)
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    parse_capture_contract,
+)
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claims import (
+    claim_artifact_digest,
+    claim_path,
+    parse_claim,
+)
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.errors import CruxibleError, ProposalAdmissionError
+from cruxible_client.contracts.procedures.artifacts import (
+    parse_procedure,
+    procedure_artifact_digest,
+    procedure_path,
+)
+from cruxible_client.contracts.proposal_models import (
+    ProposalAdmissionRequest,
+    ProposalReceiveLimits,
+)
+from cruxible_client.contracts.query.definitions import (
+    parse_query_definition,
+    query_definition_digest,
+    query_definition_path,
+)
+from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
+from cruxible_client.contracts.triggers import (
+    parse_trigger,
+    schedule_capture_selector,
+    trigger_path,
+)
+from cruxible_core.authoring.lowering import (
+    AuthoringLoweringError,
+    LoweredAuthoring,
+    lower_authoring,
+    lowered_authority,
+)
+from cruxible_core.authoring.prepared_lowering import reuse_lowering
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.subject_identity import RecordedCreation, SubjectAssignmentAuthority
+from cruxible_core.indexes.typed_state import LIVE_SLOT_CLAIMS_SQL
+from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
+from cruxible_core.proposals.proposals import (
+    AuthenticatedActor,
+    CandidateEvaluation,
+    evaluate_proposal_tree,
+    validate_proposal_tree,
+)
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.capture_metadata import capture_envelope
+from cruxible_core.storage.read_positions import PositionedBodies
+
+
+@dataclass(frozen=True)
+class ComputedPreflight:
+    result: PreflightResult
+    status: CandidateStatus
+    lowered: LoweredAuthoring | None
+    evaluated_tree: Mapping[str, bytes]
+    evaluation: CandidateEvaluation | None
+
+
+_log = structlog.get_logger("cruxible.authoring.preflight")
+
+CHANGE_SET_RECORD_TOO_LARGE = "cruxible.authoring.change_set_record_too_large"
+COMPILE_BUDGET_EXCEEDED = "cruxible.authoring.compile_budget_exceeded"
+
+_PAYLOAD_PATH_PART_RE = re.compile(r"([^.\[\]]+)|\[([0-9]+)\]")
+
+
+def _reference_artifact_path(expectation: AuthoringReferenceExpectation) -> str:
+    if expectation.artifact_kind == "Subject":
+        kind, separator, identifier = expectation.address.partition("/")
+        if not separator:
+            raise ValueError("Subject ref must use <kind>/<id>")
+        return subject_path(kind, identifier)
+    if expectation.artifact_kind == "ClaimType":
+        return claim_type_path(expectation.address)
+    if expectation.artifact_kind == "Claim":
+        return claim_path(expectation.address)
+    if expectation.artifact_kind == "Procedure":
+        return procedure_path(expectation.address)
+    if expectation.artifact_kind == "QueryDefinition":
+        return query_definition_path(expectation.address)
+    # A Source ref carries the accepted ledger artifact path, not a workstation path.
+    if expectation.address.startswith("/") or ".." in expectation.address.split("/"):
+        raise ValueError("Source ref must use a canonical ledger artifact path")
+    return expectation.address
+
+
+def _reference_artifact_digest(
+    expectation: AuthoringReferenceExpectation,
+    *,
+    path: str,
+    content: bytes,
+) -> str:
+    if expectation.artifact_kind == "Subject":
+        return subject_digest(parse_subject(content, path=path)).tagged
+    if expectation.artifact_kind == "ClaimType":
+        return claim_type_digest(parse_claim_type(content, path=path)).tagged
+    if expectation.artifact_kind == "Claim":
+        return claim_artifact_digest(parse_claim(content, path=path)).tagged
+    if expectation.artifact_kind == "Procedure":
+        return procedure_artifact_digest(parse_procedure(content, path=path)).tagged
+    if expectation.artifact_kind == "QueryDefinition":
+        return query_definition_digest(parse_query_definition(content, path=path)).tagged
+    return typed_digest(
+        Sha256Value,
+        "playbill-authoring-source-reference-v1",
+        {"content": content.hex(), "path": path},
+    ).tagged
+
+
+def _payload_path_value(payload: object, path: str) -> object:
+    current = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload
+    offset = 0
+    for match in _PAYLOAD_PATH_PART_RE.finditer(path):
+        if match.start() != offset and path[offset : match.start()] != ".":
+            raise KeyError(path)
+        key, index = match.groups()
+        if key is not None:
+            if not isinstance(current, dict) or key not in current:
+                raise KeyError(path)
+            current = current[key]
+        else:
+            if not isinstance(current, list):
+                raise KeyError(path)
+            current = current[int(index)]
+        offset = match.end()
+    if offset != len(path):
+        raise KeyError(path)
+    return current
+
+
+def _payload_value_matches_reference(
+    value: object,
+    *,
+    expectation: AuthoringReferenceExpectation,
+    artifact_path: str,
+) -> bool:
+    if isinstance(value, str):
+        return value in {
+            expectation.address,
+            artifact_path,
+            f"{expectation.artifact_kind}:{expectation.address}",
+        }
+    if isinstance(value, dict):
+        return any(
+            value.get(key) in {expectation.address, artifact_path}
+            for key in ("address", "artifact_path", "name")
+        )
+    return False
+
+
+def _existing_capture_contract_matches_reference(
+    instance: PlaybillInstance,
+    *,
+    value: object,
+    artifact_path: str,
+    artifact_content: bytes,
+) -> bool:
+    """Bind an existing-Capture payload ref to its exact accepted contract bytes."""
+
+    if not (
+        isinstance(value, dict)
+        and value.get("tag") == "playbill-existing-capture-citation-source-v1"
+        and isinstance(value.get("capture_digest"), str)
+    ):
+        return False
+    try:
+        envelope = capture_envelope(
+            instance.body_store(),
+            value["capture_digest"],
+            access=BodyAccessContext(
+                principal_id="playbill-authoring",
+                can_read_body=True,
+            ),
+        )
+        contract = parse_capture_contract(artifact_content, path=artifact_path)
+    except (CruxibleError, ValueError):
+        return False
+    return capture_contract_digest(contract).tagged == envelope.capture_contract_digest
+
+
+def _slot_diagnostics(
+    instance: PlaybillInstance,
+    *,
+    expectations: tuple[AuthoringSlotExpectation, ...],
+    evaluated_at: AcceptedProjectionCoordinate,
+) -> tuple[AuthoringDiagnostic, ...]:
+    """Refuse every pinned slot whose live membership differs at the evaluated head.
+
+    Checked at the head the candidate is evaluated at, not at the intent base:
+    admission binds the candidate to that head, and settlement refuses any
+    other, so membership that holds here is membership at activation.
+    """
+
+    if not expectations:
+        return ()
+    diagnostics: list[AuthoringDiagnostic] = []
+    with instance.bind_accepted_projection(evaluated_at) as projection:
+        connection = projection.typed.connection
+        for expectation in expectations:
+            rows = connection.execute(
+                LIVE_SLOT_CLAIMS_SQL,
+                (expectation.subject_path, expectation.predicate, expectation.qualifier),
+            ).fetchall()
+            live = tuple(
+                sorted(
+                    {str(row[0]).removeprefix("Claim:") for row in rows},
+                    key=lambda item: item.encode("ascii"),
+                )
+            )
+            if live == expectation.live_claims:
+                continue
+            joined = sorted(set(live) - set(expectation.live_claims))
+            left = sorted(set(expectation.live_claims) - set(live))
+            changes = "; ".join(
+                part
+                for part in (
+                    f"joined: {', '.join(joined)}" if joined else "",
+                    f"left: {', '.join(left)}" if left else "",
+                )
+                if part
+            )
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.slot_membership_changed",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message=(
+                        f"The live Claims of {expectation.predicate} on "
+                        f"{expectation.subject_path} changed after this change set was "
+                        f"planned ({changes})."
+                    ),
+                    disposition="superseded",
+                    repairs=(
+                        _repair(
+                            "replan",
+                            "Plan the change again against the current accepted state.",
+                            {"live_claims": list(live)},
+                        ),
+                    ),
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _reference_diagnostics(
+    instance: PlaybillInstance,
+    *,
+    intent: AuthoringIntent,
+    base_tree: Mapping[str, bytes],
+    evaluated_at: AcceptedProjectionCoordinate,
+) -> tuple[AuthoringDiagnostic, ...]:
+    if intent.reference_expectations is None:
+        return ()
+    diagnostics: list[AuthoringDiagnostic] = list(
+        _slot_diagnostics(
+            instance,
+            expectations=tuple(
+                item
+                for item in intent.reference_expectations
+                if isinstance(item, AuthoringSlotExpectation)
+            ),
+            evaluated_at=evaluated_at,
+        )
+    )
+    for expectation in intent.reference_expectations:
+        if isinstance(expectation, AuthoringSlotExpectation):
+            continue
+        try:
+            path = _reference_artifact_path(expectation)
+            value = _payload_path_value(intent.payload, expectation.payload_path)
+        except (KeyError, TypeError, ValueError):
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.reference_payload_mismatch",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The reference assertion does not describe its emitted payload path.",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Replace the ref at the named builder expression.",
+                            {
+                                "address": expectation.address,
+                                "artifact_kind": expectation.artifact_kind,
+                            },
+                        ),
+                    ),
+                )
+            )
+            continue
+        existing_capture_contract_ref = (
+            expectation.artifact_kind == "Source"
+            and isinstance(value, dict)
+            and value.get("tag") == "playbill-existing-capture-citation-source-v1"
+        )
+        if not existing_capture_contract_ref and not _payload_value_matches_reference(
+            value,
+            expectation=expectation,
+            artifact_path=path,
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.reference_payload_mismatch",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The emitted value differs from the asserted typed reference.",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Replace the ref at the named builder expression.",
+                            {
+                                "address": expectation.address,
+                                "artifact_kind": expectation.artifact_kind,
+                            },
+                        ),
+                    ),
+                )
+            )
+            continue
+        try:
+            minted = instance.resolve_accepted_coordinate(
+                git_oid=expectation.minted_coordinate.git_oid,
+                semantic_root=expectation.minted_coordinate.semantic_root,
+                generation_root=expectation.minted_coordinate.generation_root,
+                compiler_digest=expectation.minted_coordinate.compiler_digest,
+            )
+            minted_content = instance.blob_at(minted.git_oid, path)
+        except (OSError, CruxibleError, ValueError):
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.reference_coordinate_unavailable",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message=(
+                        "The accepted coordinate that minted this ref cannot be "
+                        "verified. Re-mint the reference against the current "
+                        "coordinate, then revise the intent with cruxible authoring "
+                        "compile PAYLOAD --intent-id ID."
+                    ),
+                    owner="daemon",
+                    disposition="terminal",
+                    repairs=(),
+                )
+            )
+            continue
+        if minted_content is None:
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.reference_absent_at_minted_coordinate",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message=(
+                        "The named artifact was absent where this ref claims it was "
+                        "minted. Re-resolve the target with cruxible orient or query, then "
+                        "re-create the intent with the address it names."
+                    ),
+                    owner="daemon",
+                    disposition="terminal",
+                    repairs=(),
+                )
+            )
+            continue
+        if existing_capture_contract_ref and not _existing_capture_contract_matches_reference(
+            instance,
+            value=value,
+            artifact_path=path,
+            artifact_content=minted_content,
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.reference_payload_mismatch",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The existing Capture names another exact CaptureContract.",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Use the contract reference minted with this Capture.",
+                            {
+                                "address": expectation.address,
+                                "artifact_kind": expectation.artifact_kind,
+                            },
+                        ),
+                    ),
+                )
+            )
+            continue
+        current_content = base_tree.get(path)
+        if current_content == minted_content:
+            continue
+        if current_content is not None:
+            successor = AuthoringReferenceSuccessor(
+                payload_path=expectation.payload_path,
+                artifact_kind=expectation.artifact_kind,
+                address=expectation.address,
+                coordinate=intent.base_coordinate,
+            )
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.reference_stale",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The typed reference has a newer accepted successor.",
+                    disposition="superseded",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Replace the stale ref with the named successor generation.",
+                            successor.model_dump(mode="json"),
+                        ),
+                    ),
+                )
+            )
+            continue
+        # A moved successor is identified by the exact predecessor artifact digest.
+        try:
+            predecessor_digest = _reference_artifact_digest(
+                expectation,
+                path=path,
+                content=minted_content,
+            )
+        except ValueError:
+            predecessor_digest = ""
+        successors: list[str] = []
+        if predecessor_digest:
+            for candidate_path, candidate_content in base_tree.items():
+                try:
+                    candidate = json.loads(candidate_content)
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if not isinstance(candidate, dict):
+                    continue
+                lifecycle = candidate.get("lifecycle")
+                if (
+                    isinstance(lifecycle, dict)
+                    and lifecycle.get("predecessor_digest") == predecessor_digest
+                ):
+                    successors.append(candidate_path)
+        if len(successors) > 1:
+            code = "cruxible.authoring.reference_successor_ambiguous"
+            message = (
+                "More than one accepted artifact claims to succeed this reference. "
+                "Name the intended successor explicitly: read the candidates with "
+                "cruxible get, then re-create the intent against one of them."
+            )
+        else:
+            code = "cruxible.authoring.reference_retired"
+            message = (
+                "The typed reference has no live successor at the intent base. "
+                "Choose a live target with cruxible orient or query, then re-create "
+                "the intent against it."
+            )
+        diagnostics.append(
+            _diagnostic(
+                code=code,
+                stage="reference_assertion",
+                offending_element=expectation.payload_path,
+                message=message,
+                owner="daemon",
+                disposition="terminal",
+                repairs=(),
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _repair(
+    kind: str,
+    description: str,
+    replacement: object | None = None,
+) -> RepairAlternative:
+    return RepairAlternative(
+        kind=kind,
+        description=description,
+        replacement=replacement,
+    )
+
+
+def _diagnostic(
+    *,
+    code: str,
+    stage: str,
+    offending_element: str,
+    message: str,
+    owner: str = "writer",
+    disposition: str = "edit_and_retry",
+    repairs: tuple[RepairAlternative, ...],
+) -> AuthoringDiagnostic:
+    return AuthoringDiagnostic(
+        code=code,
+        stage=stage,
+        offending_element=offending_element,
+        message=message,
+        owner=owner,  # type: ignore[arg-type]
+        disposition=disposition,  # type: ignore[arg-type]
+        repairs=tuple(
+            sorted(
+                repairs,
+                key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+            )
+        ),
+    )
+
+
+def _compiler_diagnostic(
+    item: CompilerDiagnostic,
+    *,
+    member_by_path: Mapping[str, int],
+    claim_members: frozenset[int] = frozenset(),
+    singular_claim_path: str | None = None,
+) -> AuthoringDiagnostic:
+    """Address one compiler refusal at the change-set member that authored it.
+
+    The laws that run after lowering -- succession, permitted roles,
+    cardinality, evidence admission -- name the artifact path they refused. A
+    change set admits or refuses whole, typed to the offending member, so a path
+    this intent's own lowering attributes to one member is re-addressed to
+    `members[n].<artifact path>`, with the bare path kept alongside in the
+    repair. A singular intent owns every path it writes and is unchanged.
+
+    A refusal of one Claim statement field is addressed at the authored field
+    instead (`members[n].statement.role`, or `statement.role` for a singular
+    Claim intent): that is the payload path an SDK maps back to the keyword
+    which set it, and the artifact path stays alongside in the repair.
+    """
+
+    artifact_path = item.subject.artifact_path if item.subject is not None else None
+    field = (
+        item.subject.selector.value
+        if item.subject is not None and item.subject.selector.scheme == "claim-statement-field-v1"
+        else None
+    )
+    member = None if artifact_path is None else member_by_path.get(artifact_path)
+    offending = "payload" if artifact_path is None else artifact_path
+    owner: dict[str, object] = {}
+    if member is not None:
+        offending = (
+            f"members[{member}].statement.{field}"
+            if field is not None and member in claim_members
+            else f"members[{member}].{artifact_path}"
+        )
+        owner = {"artifact_path": artifact_path, "member": member}
+    elif field is not None and artifact_path is not None and artifact_path == singular_claim_path:
+        offending = f"statement.{field}"
+        owner = {"artifact_path": artifact_path}
+    return _diagnostic(
+        code=item.code,
+        stage="proposal_evaluation",
+        offending_element=offending,
+        message=item.message,
+        repairs=(
+            _repair(
+                "edit_authoring",
+                "Edit the named semantic element and preflight this intent again.",
+                {"offending_element": offending, **owner},
+            ),
+        ),
+    )
+
+
+def _ordered_diagnostics(
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[AuthoringDiagnostic, ...]:
+    by_key = {(item.stage, item.code, item.offending_element): item for item in diagnostics}
+    return tuple(
+        by_key[key]
+        for key in sorted(
+            by_key,
+            key=lambda item: (item[0].encode(), item[1].encode(), item[2].encode()),
+        )
+    )
+
+
+def _encoded_changes(
+    *,
+    base_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> list[dict[str, object]]:
+    from cruxible_core.derived.derived_state import changed_paths
+
+    paths = sorted(changed_paths(base_tree, candidate_tree), key=lambda item: item.encode("utf-8"))
+    return [
+        {
+            "content_base64": (
+                None
+                if path not in candidate_tree
+                else base64.b64encode(candidate_tree[path]).decode("ascii")
+            ),
+            "path": path,
+        }
+        for path in paths
+    ]
+
+
+def _authored_claims(
+    payload: AuthoringPayload,
+) -> tuple[tuple[str, ClaimAuthoringPayload], ...]:
+    """Return every Claim this intent authors, with the payload path that names it.
+
+    One intent is one changeset, so the two source-binding checks below run once
+    per authored Claim rather than once per intent -- and a set's diagnostics
+    address the member that owns them, `members[2].source`, which is
+    also exactly what `reference_expectations` already address.
+    """
+
+    if isinstance(payload, ClaimAuthoringPayload):
+        return (("", payload),)
+    if isinstance(payload, ChangeSetAuthoringPayload):
+        return tuple(
+            (f"members[{index}].", member)
+            for index, member in enumerate(payload.members)
+            if isinstance(member, ClaimAuthoringPayload)
+        )
+    return ()
+
+
+def _claim_surface_diagnostics(
+    payload: ClaimAuthoringPayload,
+    *,
+    prefix: str,
+) -> tuple[AuthoringDiagnostic, ...]:
+    """Refusals knowable from one authored Claim's own surface, before any tree."""
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    if isinstance(payload.source, WorkingSelectionObservation):
+        count = payload.source.selector.observed_occurrence_count
+        if count > 1 and payload.source.selector.selected_occurrence is None:
+            diagnostics.append(
+                _diagnostic(
+                    code="cruxible.authoring.working_selection_ambiguous",
+                    stage="source_binding",
+                    offending_element=f"{prefix}source.selector.selected_occurrence",
+                    message=(
+                        "The working-source anchor occurred more than once and the "
+                        f"client did not select one of the {count} occurrences."
+                    ),
+                    repairs=(
+                        _repair(
+                            "select_occurrence",
+                            "Select one 1-based occurrence of the working-source anchor.",
+                            {"minimum": 1, "maximum": count},
+                        ),
+                    ),
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _authored_member_count(payload: AuthoringPayload) -> int:
+    """Count the members this intent authors, before anything is lowered."""
+
+    if isinstance(payload, ChangeSetAuthoringPayload):
+        return len(payload.members)
+    return 1
+
+
+def _member_record_entries(member: object) -> int:
+    """Record entries ONE change-set member is known to lower to.
+
+    The ledger's record of a change set holds one entry per path the set lowers
+    to, not one per authored member, and two member kinds fan out: a ClaimType
+    succession writes the successor plus one entry per dependent it dispositions,
+    and a Claim retirement writes the retired Claim plus its live closure. Both
+    carry that closure on the member itself -- a succession whose `dependents`
+    are not the exact reverse-pin closure refuses at lowering, and so does a
+    retirement whose `dependents` are not its inventory -- so the count is
+    readable here, before anything is staged.
+
+    Every other kind is counted 1, which is a floor rather than a bound: a
+    `ClaimAuthoringPayload` installs its dependency drafts as further entries.
+    The exact count is known only once lowering has run, and it is checked there
+    against the same ceiling. This is the cheap pre-lowering filter; that is the
+    bound.
+    """
+
+    if isinstance(member, ClaimTypeSuccessionMember | ClaimRetirementMember):
+        return 1 + len(member.dependents)
+    return 1
+
+
+def _projected_record_entries(payload: AuthoringPayload) -> int:
+    """Project the record entries this intent writes, before anything is lowered."""
+
+    if isinstance(payload, ChangeSetAuthoringPayload):
+        return sum(_member_record_entries(member) for member in payload.members)
+    return 1
+
+
+def _record_ceiling_diagnostic(
+    *,
+    entries: int,
+    limits: ProposalReceiveLimits,
+    measured: bool,
+) -> AuthoringDiagnostic:
+    """Refuse a change set the ledger could never record, before compiling it."""
+
+    fits = limits.max_change_set_members
+    projected = limits.projected_change_set_record_bytes(entries)
+    counted = (
+        f"lowers to {entries} record entries"
+        if measured
+        else f"projects to at least {entries} record entries"
+    )
+    where = "after lowering, before the compile" if measured else "before lowering"
+    return _diagnostic(
+        code=CHANGE_SET_RECORD_TOO_LARGE,
+        stage="change_set_record",
+        offending_element="payload",
+        message=(
+            f"This change set {counted}. The ledger writes its record of a "
+            f"change set as one blob holding an entry per changed path, at up to "
+            f"{limits.change_set_record_bytes_per_member} bytes each, so this one projects "
+            f"to about {projected} bytes against a ceiling of "
+            f"{limits.max_change_set_record_bytes}. At most {fits} entries fit. Refused "
+            f"{where}: compiling it would spend the whole compile on a set that "
+            "cannot activate."
+        ),
+        repairs=(
+            _repair(
+                "split_change_set",
+                (
+                    f"Author this change set as several intents of at most {fits} record "
+                    "entries each, split so that no entity's members straddle two of them."
+                ),
+                {
+                    "record_entries": entries,
+                    "record_entries_measured": measured,
+                    "max_change_set_members": fits,
+                    "max_change_set_record_bytes": limits.max_change_set_record_bytes,
+                    "projected_change_set_record_bytes": projected,
+                },
+            ),
+        ),
+    )
+
+
+def authoring_proposal_ref(actor_id: str, intent_id: str) -> str:
+    """The proposal ref an authoring intent submits under."""
+
+    return f"refs/proposals/{actor_id}/intent-{intent_id.removeprefix('AIT-')}"
+
+
+def authoring_intent_id_for_proposal_ref(target_ref: str, *, actor_id: str) -> str | None:
+    """The intent a proposal ref was submitted for, when it is an authoring intent's ref."""
+
+    prefix = authoring_proposal_ref(actor_id, "")
+    if not target_ref.startswith(prefix) or target_ref == prefix:
+        return None
+    return f"AIT-{target_ref.removeprefix(prefix)}"
+
+
+def authoring_operation(instance: PlaybillInstance, intent: AuthoringIntent) -> bytes:
+    """Exact authored revision/minted identities, excluding computed status only."""
+    return canonical_bytes(
+        {
+            "intent": intent.model_dump(
+                mode="json", exclude={"last_preflight", "candidate_status"}
+            ),
+            "descriptor": instance.descriptor.model_dump(mode="json"),
+        }
+    )
+
+
+def _resolved_trigger_contracts(
+    payload: AuthoringPayload,
+    lowered: LoweredAuthoring | None,
+) -> tuple[ResolvedTriggerCaptureContract, ...]:
+    """Explain only authored Triggers, reading their already memoized candidate bytes."""
+
+    if lowered is None:
+        return ()
+    members = payload.members if isinstance(payload, ChangeSetAuthoringPayload) else (payload,)
+    resolutions = []
+    for member in members:
+        if not isinstance(member, TriggerAuthoringPayload):
+            continue
+        path = trigger_path(member.name)
+        trigger = parse_trigger(lowered.proposed_tree[path], path=path)
+        selector = schedule_capture_selector(trigger.schedule)
+        if selector is not None:
+            resolutions.append(
+                ResolvedTriggerCaptureContract(trigger_name=member.name, event=selector)
+            )
+    return tuple(resolutions)
+
+
+def compute_preflight(
+    instance: PlaybillInstance,
+    *,
+    intent: AuthoringIntent,
+    actor: AuthenticatedActor,
+    prepared: PreparedEvaluationScope | None = None,
+) -> ComputedPreflight:
+    """Compute every independently knowable refusal and one submit-binding certificate."""
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    blocked: list[BlockedCheck] = []
+    for prefix, claim in _authored_claims(intent.payload):
+        diagnostics.extend(_claim_surface_diagnostics(claim, prefix=prefix))
+    current = instance.accepted_coordinate()
+    current_public = AcceptedCoordinate.from_internal(current)
+    current_tree = instance.immutable_tree_at(current.git_oid)
+    base = instance.resolve_accepted_coordinate(
+        git_oid=intent.base_coordinate.git_oid,
+        semantic_root=intent.base_coordinate.semantic_root,
+        generation_root=intent.base_coordinate.generation_root,
+        compiler_digest=intent.base_coordinate.compiler_digest,
+    )
+    base_tree = instance.immutable_tree_at(base.git_oid)
+    diagnostics.extend(
+        _reference_diagnostics(instance, intent=intent, base_tree=base_tree, evaluated_at=current)
+    )
+    service = instance.proposal_service()
+    proposal_ref = authoring_proposal_ref(actor.actor_id, intent.intent_id)
+    proposal_ref_oid = service.transport.read_proposal_ref(proposal_ref)
+    lowered: LoweredAuthoring | None = None
+    evaluation: CandidateEvaluation | None = None
+    evaluated_tree: Mapping[str, bytes] = current_tree
+    resolved_payload: object
+
+    authored_members = _authored_member_count(intent.payload)
+    projected_entries = _projected_record_entries(intent.payload)
+    over_record_ceiling = projected_entries > service.receive_limits.max_change_set_members
+    if over_record_ceiling:
+        # BEFORE lowering, on the projected entry count alone. Lowering a set
+        # this size builds the whole candidate tree in memory, which is what
+        # took the daemon out on a machine under memory pressure; and even when
+        # it survives, the record it compiles toward cannot be written. Neither
+        # cost is worth paying to learn a number that is known here.
+        _log.warning(
+            "authoring_change_set_record_too_large",
+            intent_id=intent.intent_id,
+            authored_members=authored_members,
+            projected_record_entries=projected_entries,
+            record_entries_measured=False,
+            max_change_set_members=service.receive_limits.max_change_set_members,
+            max_change_set_record_bytes=service.receive_limits.max_change_set_record_bytes,
+        )
+        diagnostics.append(
+            _record_ceiling_diagnostic(
+                entries=projected_entries,
+                limits=service.receive_limits,
+                measured=False,
+            )
+        )
+        blocked.append(
+            BlockedCheck(
+                check="proposal_evaluation",
+                blocked_by=(CHANGE_SET_RECORD_TOO_LARGE,),
+                reason=(
+                    "A change set the ledger cannot record is not compiled: lowering runs "
+                    "only for a set that could be settled."
+                ),
+            )
+        )
+        resolved_payload = {
+            "change_set_record_refusal": {
+                "code": CHANGE_SET_RECORD_TOO_LARGE,
+                "authored_members": authored_members,
+                "record_entries": projected_entries,
+            },
+            "semantic_identity": intent.semantic_identity,
+        }
+    if not over_record_ceiling:
+        try:
+            lowered = reuse_lowering(
+                instance,
+                intent=intent,
+                actor=actor,
+                accepted=current_public,
+                receive_limits=service.receive_limits,
+                # One Capture verification context for lowering and the laws.
+                compute=lambda: lower_authoring(
+                    instance,
+                    intent=intent,
+                    actor_id=actor.actor_id,
+                    captures=service.producer_receipt_resolver,
+                ),
+            )
+            record_entries = len(lowered.changed_members)
+            if lowered.idempotent:
+                evaluated_tree = current_tree
+                resolved_payload = lowered.resolved_authoring
+            elif record_entries > service.receive_limits.max_change_set_members:
+                # The bound, where the projection above is only a filter.
+                # Lowering is what turns authored members into the entries the
+                # record holds -- a succession's dependents, a retirement's
+                # closure, a Claim's dependency drafts -- so this is the first
+                # point at which the record's size is known rather than
+                # projected, and it is still before the compile. A set that
+                # cannot be written is refused with everything spent on it so
+                # far being one lowering, not a ten-minute evaluation ending in
+                # a proposal that can never activate.
+                _log.warning(
+                    "authoring_change_set_record_too_large",
+                    intent_id=intent.intent_id,
+                    authored_members=authored_members,
+                    projected_record_entries=projected_entries,
+                    record_entries=record_entries,
+                    record_entries_measured=True,
+                    max_change_set_members=service.receive_limits.max_change_set_members,
+                    max_change_set_record_bytes=(
+                        service.receive_limits.max_change_set_record_bytes
+                    ),
+                )
+                diagnostics.append(
+                    _record_ceiling_diagnostic(
+                        entries=record_entries,
+                        limits=service.receive_limits,
+                        measured=True,
+                    )
+                )
+                blocked.append(
+                    BlockedCheck(
+                        check="proposal_evaluation",
+                        blocked_by=(CHANGE_SET_RECORD_TOO_LARGE,),
+                        reason=(
+                            "A change set the ledger cannot record is not compiled: "
+                            "evaluation runs only for a set that could be settled."
+                        ),
+                    )
+                )
+                resolved_payload = lowered.resolved_authoring
+            else:
+                proposed_tree = lowered.proposed_tree
+                try:
+                    proposed_tree = validate_proposal_tree(
+                        proposed_tree,
+                        limits=service.receive_limits,
+                        base_tree=base_tree,
+                    )
+                except ProposalAdmissionError as exc:
+                    diagnostics.append(
+                        _diagnostic(
+                            code="cruxible.authoring.proposal_receive_refused",
+                            stage="proposal_receive",
+                            offending_element="payload",
+                            message=str(exc),
+                            repairs=(
+                                _repair(
+                                    "reduce_authoring",
+                                    "Reduce the authored member count or byte size named by this "
+                                    "refusal.",
+                                ),
+                            ),
+                        )
+                    )
+                    blocked.append(
+                        BlockedCheck(
+                            check="proposal_evaluation",
+                            blocked_by=("cruxible.authoring.proposal_receive_refused",),
+                            reason=(
+                                "The candidate tree must pass bounded receive before "
+                                "semantic laws run."
+                            ),
+                        )
+                    )
+                else:
+                    evaluation = evaluate_proposal_tree(
+                        base_tree=base_tree,
+                        current_tree=current_tree,
+                        proposed_tree=proposed_tree,
+                        current=current,
+                        bodies=(
+                            PositionedBodies(instance.body_store())
+                            if prepared is None
+                            else prepared.bodies(PositionedBodies(instance.body_store()))
+                        ),
+                        timestamp=intent.canonical_timestamp,
+                        rebased=base.git_oid != current.git_oid,
+                        actor_id=actor.actor_id,
+                        promotion_verifier=(
+                            service.promotion_verifier
+                            if prepared is None
+                            else prepared.promotion(service.promotion_verifier)
+                        ),
+                        producer_receipt_resolver=(
+                            service.producer_receipt_resolver
+                            if prepared is None
+                            else prepared.receipts(service.producer_receipt_resolver)
+                        ),
+                        query_facts_provider=(
+                            service.query_facts_provider
+                            if prepared is None
+                            else prepared.operational(service.query_facts_provider)
+                        ),
+                        tree_state_provider=service.tree_state_provider,
+                        principal_registry_provider=service.principal_registry_provider,
+                        retained_tree=instance.immutable_tree_at,
+                        claim_law_provider=service.claim_law_provider,
+                        attestation_principal_provider=service.attestation_principal_provider,
+                        historical_artifact_provider=service.historical_artifact_provider,
+                        accepted_referents_provider=service.accepted_referents_provider,
+                        subject_assignment_authority=_with_lowering_in_hand(
+                            service.subject_assignment_authority, intent, lowered
+                        ),
+                    )
+                    if prepared is not None:
+                        prepared.retain(
+                            evaluation,
+                            operation=authoring_operation(instance, intent),
+                            current=current,
+                            actor=actor,
+                            request=ProposalAdmissionRequest(
+                                target_ref=proposal_ref,
+                                proposed_base_oid=current.git_oid,
+                                rationale=(
+                                    intent.payload.rationale
+                                    if isinstance(intent.payload, ChangeSetAuthoringPayload)
+                                    else None
+                                ),
+                            ),
+                            limits=service.receive_limits,
+                            timestamp=intent.canonical_timestamp,
+                        )
+                    evaluated_tree = evaluation.tree
+                    claim_members = (
+                        frozenset(
+                            index
+                            for index, member in enumerate(intent.payload.members)
+                            if isinstance(member, ClaimAuthoringPayload)
+                        )
+                        if isinstance(intent.payload, ChangeSetAuthoringPayload)
+                        else frozenset()
+                    )
+                    diagnostics.extend(
+                        _compiler_diagnostic(
+                            item,
+                            member_by_path=lowered.member_by_path,
+                            claim_members=claim_members,
+                            singular_claim_path=(
+                                claim_path(intent.semantic_identity)
+                                if isinstance(intent.payload, ClaimAuthoringPayload)
+                                else None
+                            ),
+                        )
+                        for item in evaluation.diagnostics
+                    )
+                resolved_payload = lowered.resolved_authoring
+        except ValueError as raised:
+            if isinstance(raised, AuthoringLoweringError):
+                refusal = raised
+            else:
+                # A contract validator refusing deep inside lowering is still a
+                # refusal of the request that reached it, and it used to escape
+                # as an unhandled 500 whose only diagnosis was the daemon log.
+                # It is rendered typed, with the validator's own message, and
+                # still logged so a genuine invariant breach is not downgraded
+                # silently.
+                _log.warning(
+                    "authoring_lowering_fault",
+                    intent_id=intent.intent_id,
+                    error_type=raised.__class__.__name__,
+                    detail=str(raised),
+                )
+                refusal = AuthoringLoweringError(
+                    code="cruxible.authoring.lowering_invalid",
+                    offending_element="payload",
+                    message=f"The payload could not be lowered: {raised}",
+                    repairs=(
+                        _repair(
+                            "revise_payload",
+                            "Revise the element the message names and compile again.",
+                            None,
+                        ),
+                    ),
+                )
+            diagnostics.append(
+                _diagnostic(
+                    code=refusal.code,
+                    stage="lowering",
+                    offending_element=refusal.offending_element,
+                    message=refusal.message,
+                    repairs=refusal.repairs,
+                )
+            )
+            blocked.append(
+                BlockedCheck(
+                    check="proposal_evaluation",
+                    blocked_by=(refusal.code,),
+                    reason="Artifact lowering must succeed before semantic laws can evaluate it.",
+                )
+            )
+            resolved_payload = {
+                "lowering_refusal": {
+                    "code": refusal.code,
+                    "offending_element": refusal.offending_element,
+                },
+                "semantic_identity": intent.semantic_identity,
+            }
+        except MemoryError:
+            # The one exception this path may not let through untyped. A compile
+            # that runs the process out of memory has already cost everything it
+            # was going to cost; letting the allocation failure propagate as a
+            # 500 tells the caller nothing, and the process it happened in hosts
+            # every other instance on this daemon. Log the reason and refuse in
+            # the caller's own vocabulary, so a death that follows anyway is
+            # never the first thing anybody hears about it.
+            _log.error(
+                "authoring_compile_budget_exceeded",
+                intent_id=intent.intent_id,
+                authored_members=authored_members,
+                max_change_set_members=service.receive_limits.max_change_set_members,
+            )
+            diagnostics.append(
+                _diagnostic(
+                    code=COMPILE_BUDGET_EXCEEDED,
+                    stage="lowering",
+                    offending_element="payload",
+                    message=(
+                        f"Compiling this intent's {authored_members} members exhausted the "
+                        "memory available to the daemon. At most "
+                        f"{service.receive_limits.max_change_set_members} members fit under "
+                        "the ledger's change-set record ceiling; a set at or under that "
+                        "bound is the one this daemon compiles."
+                    ),
+                    owner="daemon",
+                    disposition="edit_and_retry",
+                    repairs=(
+                        _repair(
+                            "split_change_set",
+                            (
+                                "Author this change set as several smaller intents and "
+                                "preflight each of them."
+                            ),
+                            {
+                                "authored_members": authored_members,
+                                "max_change_set_members": (
+                                    service.receive_limits.max_change_set_members
+                                ),
+                            },
+                        ),
+                    ),
+                )
+            )
+            blocked.append(
+                BlockedCheck(
+                    check="proposal_evaluation",
+                    blocked_by=(COMPILE_BUDGET_EXCEEDED,),
+                    reason="Lowering must complete before semantic laws can evaluate it.",
+                )
+            )
+            resolved_payload = {
+                "compile_refusal": {
+                    "code": COMPILE_BUDGET_EXCEEDED,
+                    "authored_members": authored_members,
+                },
+                "semantic_identity": intent.semantic_identity,
+            }
+
+    ordered_diagnostics = _ordered_diagnostics(diagnostics)
+    ordered_blocked = tuple(sorted(blocked, key=lambda item: item.check.encode()))
+    frontier_complete = True
+    if len(ordered_diagnostics) > MAX_DIAGNOSTICS or len(ordered_blocked) > MAX_BLOCKED_CHECKS:
+        frontier_complete = False
+        ordered_diagnostics = ordered_diagnostics[: MAX_DIAGNOSTICS - 1]
+        budget = _diagnostic(
+            code="cruxible.authoring.diagnostic_budget_exhausted",
+            stage="frontier",
+            offending_element="payload",
+            message=(
+                "The bounded diagnostic frontier was exhausted. Repair the diagnostics "
+                "already listed and preflight again; the next pass reports what this "
+                "one had no room for."
+            ),
+            owner="daemon",
+            disposition="terminal",
+            repairs=(),
+        )
+        ordered_diagnostics = _ordered_diagnostics([*ordered_diagnostics, budget])
+        ordered_blocked = ordered_blocked[:MAX_BLOCKED_CHECKS]
+    frontier = DiagnosticFrontier(
+        diagnostics=ordered_diagnostics,
+        blocked_checks=ordered_blocked,
+        frontier_complete=frontier_complete,
+    )
+    candidate_tree_digest = typed_digest(
+        Sha256Value,
+        AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN,
+        {
+            "accepted_coordinate": current_public.model_dump(mode="json"),
+            "changed_members": _encoded_changes(
+                base_tree=current_tree,
+                candidate_tree=evaluated_tree,
+            ),
+        },
+    ).tagged
+    resolved_authoring_digest = typed_digest(
+        Sha256Value,
+        AUTHORING_RESOLVED_DIGEST_DOMAIN,
+        {
+            "canonical_timestamp": intent.canonical_timestamp,
+            "resolved_authoring": resolved_payload,
+            "semantic_identity": intent.semantic_identity,
+        },
+    ).tagged
+    descriptor_preimage = instance.descriptor.model_dump(mode="json")
+    descriptor_preimage.pop("tag", None)
+    descriptor_digest = typed_digest(
+        Sha256Value,
+        AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN,
+        descriptor_preimage,
+    ).tagged
+    certificate = build_preflight_certificate(
+        instance_id=intent.instance_id,
+        intent_id=intent.intent_id,
+        intent_revision=intent.intent_revision,
+        actor=actor,
+        payload_digest=intent.payload_digest,
+        resolved_authoring_digest=resolved_authoring_digest,
+        accepted_coordinate=current_public,
+        compiler_coordinate=current.compiler,
+        instance_descriptor_digest=descriptor_digest,
+        receive_limits=service.receive_limits,
+        canonical_timestamp=intent.canonical_timestamp,
+        proposal_ref=proposal_ref,
+        proposal_ref_oid=proposal_ref_oid,
+        candidate_tree_digest=candidate_tree_digest,
+        frontier_digest=frontier.digest,
+        frontier_limits=DiagnosticFrontierLimits(),
+    )
+    verdict: Literal["passed", "refused"] = (
+        "passed" if not frontier.diagnostics and not frontier.blocked_checks else "refused"
+    )
+    result = PreflightResult(
+        verdict=verdict,
+        certificate=certificate,
+        frontier=frontier,
+        resolved_trigger_contracts=_resolved_trigger_contracts(intent.payload, lowered),
+    )
+    candidate_digest = None
+    if evaluation is not None and evaluation.candidate is not None:
+        candidate_digest = evaluation.candidate.candidate_digest
+    status = CandidateStatus(
+        state="ready_to_submit" if verdict == "passed" else "preflight_refused",
+        candidate_digest=candidate_digest,
+        current_accepted_coordinate=current_public,
+    )
+    return ComputedPreflight(
+        result=result,
+        status=status,
+        lowered=lowered,
+        evaluated_tree=evaluated_tree,
+        evaluation=evaluation,
+    )
+
+
+def _with_lowering_in_hand(
+    authority: SubjectAssignmentAuthority | None,
+    intent: AuthoringIntent,
+    lowered: LoweredAuthoring | None,
+) -> SubjectAssignmentAuthority:
+    """The recorded creations, plus those the lowering being preflighted assigned.
+
+    A preview's lowering is never recorded; a stored intent's is recorded right
+    after its preflight, with these same entries (review F-001).
+    """
+
+    own = None if lowered is None else lowered_authority(intent.intent_id, lowered)
+
+    def creates(operation: str, creation: RecordedCreation) -> bool:
+        if own is not None and own(operation, creation):
+            return True
+        return authority is not None and authority(operation, creation)
+
+    return creates
+
+
+__all__ = ["ComputedPreflight", "compute_preflight"]

@@ -1,0 +1,43 @@
+{
+  "decoding": {
+    "encoding": "identity",
+    "format": "json",
+    "limits": {
+      "decoded_bytes": 1048576,
+      "depth": 16,
+      "records": 1000
+    }
+  },
+  "layout": {
+    "records": {
+      "scores": {
+        "at": "/data/*",
+        "fields": {
+          "date": {
+            "at": "date",
+            "parse": "date"
+          },
+          "percentile": {
+            "at": "percentile",
+            "parse": "decimal"
+          },
+          "score": {
+            "at": "epss",
+            "parse": "decimal"
+          }
+        },
+        "key": {
+          "cve_id": {
+            "at": "cve"
+          }
+        },
+        "row": {
+          "digest": "sha256:c87071597d8c0acb652d8bed03018de5134311ee844347548fa38939be0a2782",
+          "name": "security.epss-row",
+          "version": 1
+        }
+      }
+    }
+  },
+  "name": "security.epss-scores"
+}

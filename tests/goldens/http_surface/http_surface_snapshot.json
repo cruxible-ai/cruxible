@@ -1,12 +1,6 @@
 {
-  "/api/v1/instances": {
-    "POST": "InitResult"
-  },
-  "/api/v1/instances/restore": {
-    "POST": "InstanceRestoreResult"
-  },
   "/api/v1/runtime/instances": {
-    "POST": "HostedInstanceInitResult"
+    "POST": "HostResult"
   },
   "/api/v1/server/info": {
     "GET": "ServerInfoResult"
@@ -14,213 +8,285 @@
   "/api/v1/server/restart": {
     "POST": "ServerRestartResult"
   },
-  "/api/v1/states/overlays": {
-    "POST": "StateOverlayResult"
+  "/api/v1/server/stop": {
+    "POST": "ServerStopResult"
   },
-  "/api/v1/validate": {
-    "POST": "ValidateResult"
+  "/api/v1/{instance_id}/actions/run": {
+    "POST": "ActionRunResult"
   },
-  "/api/v1/{instance_id}/attestations": {
-    "GET": "ListResult"
+  "/api/v1/{instance_id}/audit": {
+    "POST": "AuditResult"
   },
-  "/api/v1/{instance_id}/attestations/queue": {
-    "GET": "ListResult"
+  "/api/v1/{instance_id}/authoring/compile": {
+    "POST": "AuthoringPreflightResult"
   },
-  "/api/v1/{instance_id}/attestations/record": {
-    "POST": "AttestationRecordResult"
+  "/api/v1/{instance_id}/authoring/intents": {
+    "GET": "AuthoringIntentListRecord"
   },
-  "/api/v1/{instance_id}/attestations/{attestation_id}/resolve": {
-    "POST": "AttestationDispositionResult"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}": {
+    "GET": "AuthoringIntentViewRecord"
   },
-  "/api/v1/{instance_id}/claims/{claim_id}/retract": {
-    "POST": "ClaimLifecycleResult"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight": {
+    "POST": "AuthoringPreflightResult"
   },
-  "/api/v1/{instance_id}/claims/{claim_id}/supersede": {
-    "POST": "ClaimLifecycleResult"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/status": {
+    "GET": "CandidateStatusRecord"
   },
-  "/api/v1/{instance_id}/config/reload": {
-    "POST": "ReloadConfigResult"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/submit": {
+    "POST": "AuthoringSubmitResultRecord"
   },
-  "/api/v1/{instance_id}/config/status": {
-    "POST": "ConfigStatusResult"
+  "/api/v1/{instance_id}/authoring/submit": {
+    "POST": "AuthoringSubmitResultRecord | AuthoringPreflightResult"
   },
-  "/api/v1/{instance_id}/constraints": {
-    "POST": "AddConstraintResult"
+  "/api/v1/{instance_id}/backlinks": {
+    "POST": "BacklinksResult"
   },
-  "/api/v1/{instance_id}/decision-policies": {
-    "POST": "AddDecisionPolicyResult"
+  "/api/v1/{instance_id}/blocks/declare": {
+    "POST": "BlockDeclareResult"
   },
-  "/api/v1/{instance_id}/decision-records": {
-    "GET": "DecisionRecordListResult",
-    "POST": "DecisionRecordResult"
+  "/api/v1/{instance_id}/blocks/depublish": {
+    "POST": "BlockDepublishResult"
   },
-  "/api/v1/{instance_id}/decision-records/events": {
-    "GET": "DecisionEventListResult"
+  "/api/v1/{instance_id}/blocks/observe": {
+    "POST": "BlockObserveResult"
   },
-  "/api/v1/{instance_id}/decision-records/{decision_record_id}": {
-    "GET": "DecisionRecordResult"
+  "/api/v1/{instance_id}/bodies": {
+    "POST": "CasObjectResult"
   },
-  "/api/v1/{instance_id}/decision-records/{decision_record_id}/abandon": {
-    "POST": "DecisionRecordResult"
+  "/api/v1/{instance_id}/capture-contracts/proposals": {
+    "POST": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/decision-records/{decision_record_id}/finalize": {
-    "POST": "DecisionRecordResult"
+  "/api/v1/{instance_id}/captures/erase": {
+    "POST": "CaptureEraseResult"
   },
-  "/api/v1/{instance_id}/direct-writes/batch": {
-    "POST": "BatchDirectWriteResult"
+  "/api/v1/{instance_id}/captures/read": {
+    "POST": "CaptureRead"
   },
-  "/api/v1/{instance_id}/entities": {
-    "POST": "AddEntityResult"
+  "/api/v1/{instance_id}/claim-attestations": {
+    "POST": "ClaimAttestationAppendResult"
   },
-  "/api/v1/{instance_id}/entities/{entity_type}/{entity_id}": {
-    "GET": "GetEntityResult"
+  "/api/v1/{instance_id}/claim-attestations/evidence": {
+    "POST": "ClaimAttestationEvidenceResult"
   },
-  "/api/v1/{instance_id}/entities/{entity_type}/{entity_id}/retire": {
-    "POST": "EntityLifecycleResult"
+  "/api/v1/{instance_id}/claim-types/migrations": {
+    "POST": "ClaimTypeMigrationPreflight | ClaimTypeMigrationResult"
   },
-  "/api/v1/{instance_id}/entities/{entity_type}/{entity_id}/supersede": {
-    "POST": "EntityLifecycleResult"
+  "/api/v1/{instance_id}/claim-types/proposals": {
+    "POST": "ClaimTypeInputProposalResult"
   },
-  "/api/v1/{instance_id}/evaluate": {
-    "POST": "EvaluateResult"
+  "/api/v1/{instance_id}/claims/backings": {
+    "POST": "ClaimBackingsResult"
   },
-  "/api/v1/{instance_id}/feedback": {
-    "POST": "FeedbackResult"
+  "/api/v1/{instance_id}/claims/read-batch": {
+    "POST": "ClaimReadBatchResult"
   },
-  "/api/v1/{instance_id}/feedback/analyze": {
-    "POST": "AnalyzeFeedbackResult"
+  "/api/v1/{instance_id}/compiler/proposals": {
+    "POST": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/feedback/batch": {
-    "POST": "FeedbackBatchResult"
+  "/api/v1/{instance_id}/coverage/resolve": {
+    "POST": "CoverageResult"
   },
-  "/api/v1/{instance_id}/feedback/from-query": {
-    "POST": "FeedbackResult"
+  "/api/v1/{instance_id}/curation/accept-fixed": {
+    "POST": "CurationActionResult"
   },
-  "/api/v1/{instance_id}/feedback/profiles/{relationship_type}": {
-    "GET": "FeedbackProfileResult"
+  "/api/v1/{instance_id}/curation/duplicates": {
+    "POST": "DuplicatesAuditResult"
   },
-  "/api/v1/{instance_id}/gates/{gate_name}/check": {
-    "POST": "GateEvaluationResult"
+  "/api/v1/{instance_id}/curation/list": {
+    "POST": "CurationListResult"
   },
-  "/api/v1/{instance_id}/group-status/{signature}": {
-    "GET": "GroupBucketStatusToolResult"
+  "/api/v1/{instance_id}/curation/overrule": {
+    "POST": "CurationActionResult"
   },
-  "/api/v1/{instance_id}/groups": {
-    "GET": "ListGroupsToolResult"
+  "/api/v1/{instance_id}/curation/suppress": {
+    "POST": "CurationActionResult"
   },
-  "/api/v1/{instance_id}/groups/propose": {
-    "POST": "ProposeGroupToolResult"
+  "/api/v1/{instance_id}/curation/unsuppress": {
+    "POST": "CurationActionResult"
   },
-  "/api/v1/{instance_id}/groups/{group_id}": {
-    "GET": "GetGroupToolResult"
+  "/api/v1/{instance_id}/documents/proposals": {
+    "POST": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/groups/{group_id}/resolve": {
-    "POST": "ResolveGroupToolResult"
+  "/api/v1/{instance_id}/files/check": {
+    "POST": "FileCheckResult"
   },
-  "/api/v1/{instance_id}/groups/{group_id}/status": {
-    "GET": "GroupBucketStatusToolResult"
+  "/api/v1/{instance_id}/files/context": {
+    "GET": "FileContext"
   },
-  "/api/v1/{instance_id}/inspect/entity-history/{entity_type}": {
-    "GET": "EntityChangeHistoryResult"
+  "/api/v1/{instance_id}/files/proposals": {
+    "POST": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/inspect/entity/{entity_type}/{entity_id}": {
-    "GET": "InspectEntityResult | InspectNeighborhoodResult"
+  "/api/v1/{instance_id}/floor/deliver-now": {
+    "POST": "FloorDeliveryResult"
   },
-  "/api/v1/{instance_id}/inspect/{view}": {
-    "GET": "CanonicalViewResult"
+  "/api/v1/{instance_id}/floor/delta": {
+    "POST": "FloorDelta"
   },
-  "/api/v1/{instance_id}/instance/backup": {
-    "POST": "InstanceBackupResult"
+  "/api/v1/{instance_id}/floor/export": {
+    "POST": "FloorExport"
   },
-  "/api/v1/{instance_id}/instance/relocate": {
-    "POST": "InstanceRelocateResult"
+  "/api/v1/{instance_id}/get": {
+    "POST": "GetResult"
   },
-  "/api/v1/{instance_id}/lint": {
-    "POST": "LintResult"
+  "/api/v1/{instance_id}/get-batch": {
+    "POST": "GetBatchResult"
   },
-  "/api/v1/{instance_id}/list/{resource_type}": {
-    "GET": "ListResult"
+  "/api/v1/{instance_id}/head": {
+    "GET": "Head"
   },
-  "/api/v1/{instance_id}/outcome": {
-    "POST": "OutcomeResult"
+  "/api/v1/{instance_id}/host": {
+    "GET": "HostInspection"
   },
-  "/api/v1/{instance_id}/outcome-contracts": {
-    "GET": "ListResult"
+  "/api/v1/{instance_id}/inbox": {
+    "GET": "InboxList"
   },
-  "/api/v1/{instance_id}/outcome-contracts/open": {
-    "POST": "OutcomeContractResult"
+  "/api/v1/{instance_id}/inbox/{item_id}": {
+    "GET": "InboxItem"
   },
-  "/api/v1/{instance_id}/outcome-contracts/queue": {
-    "GET": "ListResult"
+  "/api/v1/{instance_id}/inbox/{item_id}/ack": {
+    "POST": "InboxDispositionResult"
   },
-  "/api/v1/{instance_id}/outcome-contracts/{contract_id}/resolve": {
-    "POST": "OutcomeResolutionResult"
+  "/api/v1/{instance_id}/inbox/{item_id}/dismiss": {
+    "POST": "InboxDispositionResult"
   },
-  "/api/v1/{instance_id}/outcome-resolutions/{resolution_id}/dispose": {
-    "POST": "OutcomeDispositionResult"
+  "/api/v1/{instance_id}/inbox/{item_id}/link": {
+    "POST": "InboxDispositionResult"
   },
-  "/api/v1/{instance_id}/outcome/profile": {
-    "GET": "OutcomeProfileResult"
+  "/api/v1/{instance_id}/init": {
+    "POST": "InitResult"
   },
-  "/api/v1/{instance_id}/outcomes/analyze": {
-    "POST": "AnalyzeOutcomesResult"
+  "/api/v1/{instance_id}/instance/decommission": {
+    "POST": "InstanceDecommissionResult"
   },
-  "/api/v1/{instance_id}/procedures": {
-    "GET": "ListResult"
+  "/api/v1/{instance_id}/instance/rebuild-next": {
+    "POST": "NextRebuildResult"
   },
-  "/api/v1/{instance_id}/procedures/propose": {
+  "/api/v1/{instance_id}/kits": {
+    "GET": "KitStatus",
+    "POST": "KitChangeResult"
+  },
+  "/api/v1/{instance_id}/kits/build": {
+    "POST": "KitBuildResult"
+  },
+  "/api/v1/{instance_id}/kits/remove": {
+    "POST": "KitChangeResult"
+  },
+  "/api/v1/{instance_id}/ledger/mirror": {
+    "POST": "LedgerMirror"
+  },
+  "/api/v1/{instance_id}/ledger/mirror/clear": {
+    "POST": "LedgerMirrorCleared"
+  },
+  "/api/v1/{instance_id}/ledger/publish": {
+    "POST": "LedgerMirror"
+  },
+  "/api/v1/{instance_id}/lines/{line}/disable": {
+    "POST": "LineEnablement"
+  },
+  "/api/v1/{instance_id}/lines/{line}/dispatch": {
+    "POST": "LineDispatchResult"
+  },
+  "/api/v1/{instance_id}/lines/{line}/enable": {
+    "POST": "LineEnablement"
+  },
+  "/api/v1/{instance_id}/lines/{line}/evaluate": {
+    "POST": "LineEvaluateResult"
+  },
+  "/api/v1/{instance_id}/lines/{line}/runs": {
+    "POST": "ProcedureRunState"
+  },
+  "/api/v1/{instance_id}/next": {
+    "POST": "NextResult"
+  },
+  "/api/v1/{instance_id}/orient": {
+    "GET": "OrientResult"
+  },
+  "/api/v1/{instance_id}/predictions": {
+    "POST": "PredictResult"
+  },
+  "/api/v1/{instance_id}/predictions/query": {
+    "POST": "ResolutionContractsResult"
+  },
+  "/api/v1/{instance_id}/predictions/{prediction_id}/settlements": {
+    "POST": "SettleResult"
+  },
+  "/api/v1/{instance_id}/principals/proposals": {
+    "POST": "ProposalInspection"
+  },
+  "/api/v1/{instance_id}/procedure-runs/{run_id}": {
+    "GET": "ProcedureRunState"
+  },
+  "/api/v1/{instance_id}/procedures/{name}/measurements": {
+    "POST": "ProcedureMeasureResult"
+  },
+  "/api/v1/{instance_id}/procedures/{name}/readiness": {
+    "GET": "ProcedureReadiness"
+  },
+  "/api/v1/{instance_id}/procedures/{name}/readings": {
+    "POST": "ProcedureReadingsResult"
+  },
+  "/api/v1/{instance_id}/procedures/{name}/resolution-dispositions": {
+    "POST": "ProcedureResolutionDispositionResult"
+  },
+  "/api/v1/{instance_id}/procedures/{name}/runs": {
+    "POST": "ProcedureRunState"
+  },
+  "/api/v1/{instance_id}/projections/check": {
+    "POST": "ProjectionCheckResult"
+  },
+  "/api/v1/{instance_id}/projections/sync-backing": {
+    "POST": "BlockSyncReadResult"
+  },
+  "/api/v1/{instance_id}/proposal-selector": {
+    "GET": "ProposalSelectorResult"
+  },
+  "/api/v1/{instance_id}/proposals": {
+    "GET": "ProposalList"
+  },
+  "/api/v1/{instance_id}/proposals/{proposal_id}/activate": {
+    "POST": "ActivationReceipt | ProposalRecompiled"
+  },
+  "/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge": {
+    "POST": "ApprovalChallenge"
+  },
+  "/api/v1/{instance_id}/proposals/{proposal_id}/approvals": {
+    "POST": "ApprovalReceipt | ActivationReceipt | ProposalRecompiled"
+  },
+  "/api/v1/{instance_id}/proposals/{proposal_id}/readmit": {
+    "POST": "ProposalReadmitResult"
+  },
+  "/api/v1/{instance_id}/proposals/{proposal_id}/reject": {
+    "POST": "ProposalRejectResult"
+  },
+  "/api/v1/{instance_id}/proposals/{proposal_id}/review": {
     "POST": null
   },
-  "/api/v1/{instance_id}/procedures/{procedure_id}": {
-    "GET": null
+  "/api/v1/{instance_id}/proposals/{proposal_id}/withdraw": {
+    "POST": "ProposalWithdrawResult"
   },
-  "/api/v1/{instance_id}/procedures/{procedure_id}/resolve": {
-    "POST": null
+  "/api/v1/{instance_id}/providers": {
+    "GET": "ProviderCatalog"
   },
-  "/api/v1/{instance_id}/procedures/{procedure_id}/retire": {
-    "POST": null
+  "/api/v1/{instance_id}/providers/install": {
+    "POST": "ProviderInstallResult"
   },
-  "/api/v1/{instance_id}/procedures/{procedure_id}/run": {
-    "POST": null
+  "/api/v1/{instance_id}/providers/move": {
+    "POST": "ProviderMoveResult"
   },
-  "/api/v1/{instance_id}/procedures/{procedure_id}/runs": {
-    "GET": "ListResult"
+  "/api/v1/{instance_id}/providers/retire": {
+    "POST": "ProviderRetireResult"
   },
-  "/api/v1/{instance_id}/procedures/{procedure_id}/withdraw": {
-    "POST": null
+  "/api/v1/{instance_id}/query": {
+    "POST": "QueryResultRecord"
   },
-  "/api/v1/{instance_id}/queries": {
-    "GET": "QueryListResult | QueryListDetailResult"
+  "/api/v1/{instance_id}/retire": {
+    "POST": "WriteOutcome"
   },
-  "/api/v1/{instance_id}/queries/run": {
-    "POST": "QueryToolResult | QueryGraphToolResult"
+  "/api/v1/{instance_id}/runbooks/{name}/preview": {
+    "GET": "RunbookPreview"
   },
-  "/api/v1/{instance_id}/queries/run-inline": {
-    "POST": "QueryToolResult | QueryGraphToolResult"
-  },
-  "/api/v1/{instance_id}/queries/{query_name}": {
-    "GET": "NamedQueryInfoResult"
-  },
-  "/api/v1/{instance_id}/receipts/{receipt_id}": {
-    "GET": "Receipt"
-  },
-  "/api/v1/{instance_id}/receipts/{receipt_id}/explain": {
-    "GET": "ReceiptExplanationResult"
-  },
-  "/api/v1/{instance_id}/relationships": {
-    "POST": "AddRelationshipResult"
-  },
-  "/api/v1/{instance_id}/relationships/lineage": {
-    "GET": "RelationshipLineageResult"
-  },
-  "/api/v1/{instance_id}/relationships/lookup": {
-    "GET": "GetRelationshipResult"
-  },
-  "/api/v1/{instance_id}/resolutions": {
-    "GET": "ListResolutionsToolResult"
-  },
-  "/api/v1/{instance_id}/resolutions/{resolution_id}/trust": {
-    "PATCH": "UpdateTrustStatusToolResult"
+  "/api/v1/{instance_id}/runbooks/{name}/runs": {
+    "POST": "RunbookRunResult"
   },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
     "POST": "RuntimeCredentialBootstrapResult"
@@ -235,84 +301,41 @@
   "/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate": {
     "POST": "RuntimeCredentialResult"
   },
-  "/api/v1/{instance_id}/sample/{entity_type}": {
-    "GET": "SampleResult"
+  "/api/v1/{instance_id}/set": {
+    "POST": "WriteOutcome"
   },
-  "/api/v1/{instance_id}/schema": {
-    "GET": null
+  "/api/v1/{instance_id}/since": {
+    "POST": "SinceResult"
   },
-  "/api/v1/{instance_id}/snapshots": {
-    "GET": "SnapshotListResult",
-    "POST": "SnapshotCreateResult"
+  "/api/v1/{instance_id}/uploads": {
+    "POST": "CaptureUploadSession"
   },
-  "/api/v1/{instance_id}/snapshots/clone": {
-    "POST": "CloneSnapshotResult"
+  "/api/v1/{instance_id}/uploads/{upload_id}": {
+    "GET": "CaptureUploadSession"
   },
-  "/api/v1/{instance_id}/source-artifacts": {
-    "GET": "SourceArtifactListResult"
+  "/api/v1/{instance_id}/uploads/{upload_id}/complete": {
+    "POST": "CaptureUploadCompleteResult"
   },
-  "/api/v1/{instance_id}/source-artifacts/register": {
-    "POST": "RegisterSourceArtifactResult"
+  "/api/v1/{instance_id}/uploads/{upload_id}/parts/{part}": {
+    "POST": "CaptureUploadSession"
   },
-  "/api/v1/{instance_id}/source-artifacts/{artifact_id}": {
-    "GET": "SourceArtifactReadResult"
+  "/api/v1/{instance_id}/whoami": {
+    "GET": "WhoAmI"
   },
-  "/api/v1/{instance_id}/source-evidence/dereference": {
-    "POST": "DereferenceSourceEvidenceResult"
+  "/api/v1/{instance_id}/workspace-attach": {
+    "POST": "HostWorkspaceAttachResult"
   },
-  "/api/v1/{instance_id}/state/diff": {
-    "POST": "StateDiffResult"
+  "/api/v1/{instance_id}/workspace-detach": {
+    "POST": "WorkspaceDetachResult"
   },
-  "/api/v1/{instance_id}/state/diff/artifacts/{diff_digest}": {
-    "GET": "StateDiffArtifactResult"
+  "/api/v1/{instance_id}/workspace-registration": {
+    "GET": "HostWorkspaceRegistration"
   },
-  "/api/v1/{instance_id}/state/health": {
-    "GET": "StateHealthResult"
+  "/api/v1/{instance_id}/workspace/floor-delivery": {
+    "POST": "HostWorkspaceRegistration"
   },
-  "/api/v1/{instance_id}/state/publish": {
-    "POST": "StatePublishResult"
-  },
-  "/api/v1/{instance_id}/state/pull/apply": {
-    "POST": "StatePullApplyResult"
-  },
-  "/api/v1/{instance_id}/state/pull/preview": {
-    "POST": "StatePullPreviewResult"
-  },
-  "/api/v1/{instance_id}/state/status": {
-    "GET": "StateStatusResult"
-  },
-  "/api/v1/{instance_id}/stats": {
-    "GET": "StatsResult"
-  },
-  "/api/v1/{instance_id}/telemetry/summary": {
-    "GET": "BoundaryTelemetrySummaryResult"
-  },
-  "/api/v1/{instance_id}/traces": {
-    "GET": "TraceListResult"
-  },
-  "/api/v1/{instance_id}/traces/{trace_id}": {
-    "GET": null
-  },
-  "/api/v1/{instance_id}/views/{query_name}": {
-    "GET": "QueryToolResult"
-  },
-  "/api/v1/{instance_id}/workflows/apply": {
-    "POST": "WorkflowApplyResult"
-  },
-  "/api/v1/{instance_id}/workflows/lock": {
-    "POST": "WorkflowLockResult"
-  },
-  "/api/v1/{instance_id}/workflows/plan": {
-    "POST": "WorkflowPlanResult"
-  },
-  "/api/v1/{instance_id}/workflows/propose": {
-    "POST": "WorkflowProposeResult"
-  },
-  "/api/v1/{instance_id}/workflows/run": {
-    "POST": "WorkflowRunResult"
-  },
-  "/api/v1/{instance_id}/workflows/test": {
-    "POST": "WorkflowTestResult"
+  "/api/v1/{instance_id}/write": {
+    "POST": "WriteOutcome"
   },
   "/health": {
     "GET": null

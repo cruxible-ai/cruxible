@@ -1,0 +1,920 @@
+"""Client-only declared-block bootstrap, backing refresh, and whole-source CAS laws."""
+
+from __future__ import annotations
+
+import hashlib
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from cruxible_client import Cruxible
+from cruxible_client import contracts as api
+from cruxible_client.authoring.blocks import (
+    ProjectionRepinConflict,
+    ProjectionRepinError,
+    parse_projection_blocks,
+    repin_projection_block,
+)
+from cruxible_client.authoring.projection_manifests import load_projection_manifests
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
+from cruxible_client.contracts.declared_blocks import ProjectionQueryBacking
+from cruxible_client.contracts.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_client.contracts.query.results import ClaimQueryResult
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.types import CompilerCoordinate
+
+COORDINATE = api.AcceptedCoordinate(
+    git_oid="1" * 64,
+    semantic_root="sha256:" + "2" * 64,
+    generation_root="sha256:" + "3" * 64,
+    compiler_digest="sha256:" + "4" * 64,
+)
+NOW = datetime(2026, 8, 25, 12, tzinfo=UTC)
+BODY = b"reflects generation 7\nstatus: ready --> preserve this prose\n"
+
+
+def _workspace(root: Path) -> Path:
+    (root / ".cruxible").mkdir()
+    (root / ".cruxible" / "files.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        "  - name: corpus.runbook\n"
+        "    locator: runbook.md\n"
+        "    document_id: runbook\n"
+        "    document_kind: runbook\n"
+        "    title: Runbook\n"
+        "    media_type: text/markdown\n"
+        "    governance_scope: [Document:runbook]\n"
+    )
+    source = root / "runbook.md"
+    source.write_bytes(
+        b"prefix\n<!-- cruxible:block:summary -->\n"
+        + BODY
+        + b"<!-- /cruxible:block:summary -->\nsuffix\n"
+    )
+    return source
+
+
+class _RepinClient:
+    def __init__(self) -> None:
+        self.query_verdict = "completed"
+        self.clipped_budgets: list[str] = []
+        self.on_claim = lambda: None
+        self.declared: list[dict[str, Any]] = []
+        self.observed: list[Any] = []
+
+    def observe_blocks(self, _instance_id: str, *, pages: Any) -> api.BlockObserveResult:
+        """Record the pages a repin reports for block-churn detection."""
+
+        self.observed.append(tuple(pages))
+        return api.BlockObserveResult(
+            coordinate=COORDINATE,
+            generation=7,
+            observation_coverage={
+                "tag": "playbill-curation-observation-coverage-v1",
+                "source_count": len(pages),
+                "observed_block_count": sum(len(page.marker_summaries) for page in pages),
+                "omitted_source_count": 0,
+                "omissions": [],
+            },
+        )
+
+    def declare_block(
+        self,
+        _instance_id: str,
+        stamp: dict[str, Any],
+    ) -> api.BlockDeclareResult:
+        """Record the declaration a repin makes after it writes the marker.
+
+        A stamped marker the instance has never heard of is an orphan to every
+        reader that asks whether a block is sanctioned, so the write is only
+        half the operation: the page carries the stamp and the instance carries
+        the registration. The stub keeps what it was told so the tests can pin
+        that the two agree.
+        """
+
+        self.declared.append(stamp)
+        return api.BlockDeclareResult(
+            source_id=stamp["source_id"],
+            block_id=stamp["block_id"],
+            outcome="declared",
+            declared_generation=stamp["declared_generation"],
+            coordinate=COORDINATE,
+        )
+
+    def head(self, instance_id: str, *, at: Any = None) -> api.Head:
+        return api.Head(
+            instance=instance_id,
+            coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
+            generation=7,
+        )
+
+    def get(self, instance_id: str, *, request: Any) -> Any:
+        assert request.detail == "proof"
+        view = self._claim_view(request.ref)
+        return SimpleNamespace(
+            proof={
+                "coordinate": view.coordinate.model_dump(mode="json"),
+                "envelope": view.envelope,
+                "facts": view.facts,
+            }
+        )
+
+    def _claim_view(self, name: str) -> SimpleNamespace:
+        self.on_claim()
+        statement = ClaimStatement(
+            subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json"),
+            claim_type=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
+            claim_type_digest="sha256:" + "8" * 64,
+            predicate="project.work_item.status",
+            object=LiteralClaimObject(value="ready"),
+            role="observation",
+        )
+        return SimpleNamespace(
+            coordinate=COORDINATE,
+            envelope={"identity": f"Claim:{name}"},
+            facts=[
+                {
+                    "schema_id": "cruxible.claim.statement",
+                    "value": statement.model_dump(mode="json"),
+                },
+                {
+                    "schema_id": "cruxible.claim.lifecycle",
+                    "value": {"lifecycle": {"state": "live"}},
+                },
+            ],
+        )
+
+    def query(self, _instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.compact_query import QueryReplay
+        from cruxible_core.query.engine import query_execution_receipt
+
+        assert request.name is not None and request.receipt == "full"
+        run = self._run(request.name, parameters=dict(request.params or {}))
+        return SimpleNamespace(
+            receipt=SimpleNamespace(
+                coordinate=run.coordinate,
+                spec_digest=run.definition_digest,
+                replay=QueryReplay(
+                    definition_path="queries/project.items.json",
+                    result=run.result,
+                    execution=query_execution_receipt(run.result),
+                ),
+            )
+        )
+
+    def _run(
+        self,
+        name: str,
+        **values: Any,
+    ) -> SimpleNamespace:
+        parameters = [
+            {
+                "tag": "playbill-query-parameter-binding-v1",
+                "name": key,
+                "value_type": "string",
+                "value": value,
+            }
+            for key, value in sorted(values["parameters"].items())
+        ]
+        return SimpleNamespace(
+            coordinate=COORDINATE,
+            name=name,
+            definition_digest="sha256:" + "9" * 64,
+            result=ClaimQueryResult.model_validate(
+                {
+                    "definition_path": "queries/project.items.json",
+                    "definition_digest": "sha256:" + "9" * 64,
+                    "parameter_digest": "sha256:" + "a" * 64,
+                    "coordinate": AcceptedProjectionCoordinate(
+                        instance_id="inst_projection",
+                        repository_path=str(Path.cwd()),
+                        git_object_format="sha256",
+                        git_oid=COORDINATE.git_oid,
+                        semantic_root=COORDINATE.semantic_root,
+                        generation_root=COORDINATE.generation_root,
+                        compiler=CompilerCoordinate(rule_digest=COORDINATE.compiler_digest),
+                    ),
+                    "evaluated_at": NOW,
+                    "budgets": {"max_results": 10, "max_traversal_depth": 0},
+                    "refusal": {"code": "cruxible.query.refused", "message": "Refused fixture"}
+                    if self.query_verdict == "refused"
+                    else None,
+                    "verdict": self.query_verdict,
+                    "parameters": parameters,
+                    "truncation": {
+                        "clipped_budgets": self.clipped_budgets,
+                        "candidate_result_count": 2 if self.clipped_budgets else 0,
+                    },
+                    "rows": [],
+                    "conflicts": [],
+                    "result_shape": "subject",
+                    "result_cardinality": "many",
+                    "result_binding": "item",
+                    "dedupe": "subject",
+                }
+            ),
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _repin(
+    client: _RepinClient,
+    root: Path,
+    *,
+    claims: tuple[str, ...] | None = None,
+    queries: tuple[tuple[str, dict[str, object]], ...] | None = None,
+):  # type: ignore[no-untyped-def]
+    return repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=root,
+        file="corpus.runbook",
+        block_id="summary",
+        claims=claims,
+        queries=queries,
+        evaluation_time=NOW,
+    )
+
+
+def test_bootstrap_repin_changes_only_opening_then_preserves_or_replaces_backings(
+    tmp_path: Path,
+) -> None:
+    source = _workspace(tmp_path)
+    original = source.read_bytes()
+    client = _RepinClient()
+
+    with pytest.raises(ProjectionRepinError, match="explicit backing"):
+        _repin(client, tmp_path)
+    assert source.read_bytes() == original
+
+    first = _repin(client, tmp_path, claims=("CLM-first",))
+    assert b"<!-- cruxible:block:summary:ref:" in source.read_bytes()
+    (parsed,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert parsed.stamp == first
+    assert (
+        source.read_bytes()[parsed.opening_end :]
+        == original[
+            original.index(b"<!-- cruxible:block:summary -->\n")
+            + len(b"<!-- cruxible:block:summary -->\n") :
+        ]
+    )
+    assert first.body_digest == "sha256:" + hashlib.sha256(BODY).hexdigest()
+
+    preserved = _repin(client, tmp_path)
+    assert preserved.backing[0].identity.name == "CLM-first"
+    changed = _repin(client, tmp_path, claims=("CLM-second",))
+    assert changed.backing[0].identity.name == "CLM-second"
+
+
+def test_a_repin_registers_the_marker_it_just_wrote(tmp_path: Path) -> None:
+    """The page and the instance have to agree that a block exists.
+
+    A stamped marker the instance has never heard of is what every reader that
+    asks "is this block sanctioned?" calls an orphan, and before this a block an
+    agent declared was never registered anywhere -- the question was answered by
+    whether its id happened to begin `pub-`, a spelling only the retired
+    publication road minted. A repin declares what it wrote, in that order: the
+    marker lands first, because a registration for a marker that never landed
+    would be the same disagreement in the other direction.
+    """
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+
+    stamp = _repin(client, tmp_path, claims=("CLM-first",))
+
+    assert [item["block_id"] for item in client.declared] == ["summary"]
+    assert client.declared[0] == stamp.model_dump(mode="json")
+    (block,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert block.stamp == stamp
+
+
+def test_body_edit_is_preserved_and_repin_updates_only_its_commitment(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    first = _repin(client, tmp_path, claims=("CLM-first",))
+    edited = source.read_bytes().replace(b"status: ready", b"status: blocked")
+    source.write_bytes(edited)
+
+    refreshed = _repin(client, tmp_path)
+
+    assert refreshed.body_digest != first.body_digest
+    (parsed,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert source.read_bytes()[parsed.body_start : parsed.body_end] == BODY.replace(
+        b"status: ready", b"status: blocked"
+    )
+
+
+def test_repin_of_a_stamped_block_preserves_an_adjacent_unstamped_draft(
+    tmp_path: Path,
+) -> None:
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    _repin(client, tmp_path, claims=("CLM-first",))
+    draft = b"<!-- cruxible:block:draft -->\nagent-owned draft\n<!-- /cruxible:block:draft -->\n"
+    source.write_bytes(source.read_bytes() + draft)
+
+    refreshed = _repin(client, tmp_path)
+
+    assert refreshed.backing[0].identity.name == "CLM-first"
+    assert source.read_bytes().endswith(draft)
+    blocks = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        allow_bootstrap=True,
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert [block.block_id for block in blocks] == ["summary", "draft"]
+    assert blocks[1].stamp is None
+
+
+def test_whole_file_cas_preserves_concurrent_author_edits(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    concurrent = source.read_bytes() + b"agent wrote this concurrently\n"
+    client.on_claim = lambda: source.write_bytes(concurrent)
+
+    with pytest.raises(ProjectionRepinError, match="compare-and-swap"):
+        _repin(client, tmp_path, claims=("CLM-first",))
+
+    assert source.read_bytes() == concurrent
+
+
+def test_query_backing_preserves_resolved_parameters_on_subsequent_repin(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _RepinClient()
+
+    first = _repin(client, tmp_path, queries=(("project.items", {"status": "ready"}),))
+    preserved = _repin(client, tmp_path)
+
+    assert isinstance(first.backing[0], ProjectionQueryBacking)
+    assert isinstance(preserved.backing[0], ProjectionQueryBacking)
+    assert preserved.backing[0].resolved_parameter_bindings[0].value == "ready"
+
+
+@pytest.mark.parametrize("kind", ["refused", "truncated"])
+def test_repin_refuses_incomplete_query_backings(tmp_path: Path, kind: str) -> None:
+    source = _workspace(tmp_path)
+    before = source.read_bytes()
+    client = _RepinClient()
+    if kind == "refused":
+        client.query_verdict = "refused"
+    else:
+        client.clipped_budgets = ["max_results"]
+
+    with pytest.raises(ProjectionRepinError, match=kind):
+        _repin(client, tmp_path, queries=(("project.items", {}),))
+
+    assert source.read_bytes() == before
+
+
+def test_sdk_block_facade_bootstraps_at_its_active_coordinate(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _RepinClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_projection",
+        workspace=tmp_path,
+        clock=lambda: NOW,
+    )
+
+    stamp = playbill.block.repin(
+        file="corpus.runbook",
+        block_id="summary",
+        claims=("CLM-first",),
+        evaluation_time=NOW,
+    )
+
+    assert stamp.declared_generation == 7
+    assert stamp.backing[0].identity.qualified == "Claim:CLM-first"
+    content = (tmp_path / "runbook.md").read_bytes()
+    assert b"<!-- cruxible:block:summary:ref:" in content
+    (block,) = parse_projection_blocks(
+        content, source_id="corpus.runbook", manifests=load_projection_manifests(tmp_path, content)
+    )
+    assert block.stamp == stamp
+
+
+def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit_ones(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.declared_blocks import ProjectionArtifactBacking
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    claim_proof = client.get
+
+    def proof(instance_id: str, *, request: Any) -> Any:
+        if request.ref.startswith("ClaimType:"):
+            return SimpleNamespace(proof={"artifact_digest": "sha256:" + "6" * 64})
+        if "/" in request.ref:
+            return SimpleNamespace(proof={"envelope": {"artifact_digest": "sha256:" + "5" * 64}})
+        return claim_proof(instance_id, request=request)
+
+    client.get = proof  # type: ignore[method-assign]
+
+    def repin(**kwargs: Any):  # type: ignore[no-untyped-def]
+        return repin_projection_block(
+            client,
+            "inst_projection",
+            workspace=tmp_path,
+            file="corpus.runbook",
+            block_id="summary",
+            evaluation_time=NOW,
+            **kwargs,
+        )
+
+    subject = ArtifactIdentity(kind="Subject", name="project.work_item/wi-42")
+    predicate = ArtifactIdentity(kind="ClaimType", name="project.work_item.status")
+    first = repin(
+        claims=("CLM-first",),
+        queries=(("items", {"status": "ready"}),),
+        artifacts=(subject, predicate),
+        currency_policy="require_current",
+        compact=True,
+    )
+    second = repin(claims=("CLM-second",))
+    assert second.currency_policy == "require_current"
+    assert {b.identity.qualified for b in second.backing} == {
+        "Claim:CLM-second",
+        "QueryDefinition:items",
+        subject.qualified,
+        predicate.qualified,
+    }
+    assert next(b for b in second.backing if isinstance(b, ProjectionQueryBacking)) == next(
+        b for b in first.backing if isinstance(b, ProjectionQueryBacking)
+    )
+    assert repin().backing == second.backing
+    third = repin(claims=(), queries=())
+    assert all(isinstance(b, ProjectionArtifactBacking) for b in third.backing)
+    assert repin().backing == third.backing  # artifact-only repin
+    before = source.read_bytes()
+    with pytest.raises(ProjectionRepinError, match="at least one"):
+        repin(artifacts=())
+    assert source.read_bytes() == before
+
+
+def test_old_manifest_bytes_remain_verifiable_after_repin_adds_policy(tmp_path: Path) -> None:
+    from cruxible_client.authoring.projection_manifests import load_projection_manifests
+    from cruxible_client.contracts.declared_blocks import (
+        ProjectionBlockStampV1,
+        frame_projection_block,
+        projection_manifest,
+    )
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+    current = _repin(client, tmp_path, claims=("CLM-first",))
+    old = ProjectionBlockStampV1.model_validate(
+        {
+            k: v
+            for k, v in {
+                **current.model_dump(mode="json"),
+                "tag": "playbill-projection-stamp-v1",
+            }.items()
+            if k != "currency_policy"
+        }
+    )
+    old_digest, old_bytes = projection_manifest(old)
+    assert b"currency_policy" not in old_bytes
+    source.write_bytes(frame_projection_block(stamp=old, body=BODY))
+    repin_projection_block(
+        client,
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=NOW,
+        currency_policy="require_current",
+        compact=True,
+    )
+    (parsed,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert parsed.stamp.tag == "playbill-projection-stamp-v2"
+    assert projection_manifest(old) == (old_digest, old_bytes)
+    (historical,) = parse_projection_blocks(
+        frame_projection_block(stamp=old, body=BODY), source_id="corpus.runbook"
+    )
+    assert projection_manifest(historical.stamp) == (old_digest, old_bytes)
+
+
+def test_a_dry_run_repin_computes_the_stamp_and_writes_nothing(tmp_path: Path) -> None:
+    """R12: the same stamp the commit would write, with no page edit, manifest or declaration."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    _workspace(tmp_path)
+    client = _RepinClient()
+
+    previewed = assert_writes_nothing(
+        [tmp_path],
+        lambda: repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="corpus.runbook",
+            block_id="summary",
+            claims=("CLM-first",),
+            evaluation_time=NOW,
+            dry_run=True,
+        ),
+    )
+
+    assert client.declared == []
+    committed = _repin(client, tmp_path, claims=("CLM-first",))
+    assert committed == previewed
+    assert len(client.declared) == 1
+
+
+def _row(subject: str, **fields: object) -> Any:
+    from cruxible_client.contracts.query.results import QueryResultRow
+
+    return QueryResultRow.model_validate(
+        {
+            "bindings": [],
+            "result_subject_identity": subject,
+            "fields": [
+                {"name": name, "state": "present", "value": value}
+                if value is not None
+                else {"name": name, "state": "absent"}
+                for name, value in fields.items()
+            ],
+        }
+    )
+
+
+def test_rendered_bodies_are_tables_lists_or_a_no_rows_line() -> None:
+    from cruxible_client.authoring.blocks import render_query_block_body
+
+    table = render_query_block_body(
+        (_row("Subject:a/1", status="ready", note="x | y"), _row("Subject:a/2", status=None))
+    )
+    assert table == (
+        b"| subject | status | note |\n|---|---|---|\n| a/1 | ready | x \\| y |\n| a/2 |  |  |\n"
+    )
+    assert render_query_block_body((_row("Subject:a/1"),)) == b"- a/1\n"
+    assert render_query_block_body(()) == b"_No rows._\n"
+    # Values read as written: lists comma-separated, objects as key: value pairs.
+    spelled = render_query_block_body(
+        (_row("Subject:a/1", ids=["GHSA-1", "GHSA-2"], meta={"b": 2, "a": True}),)
+    )
+    assert spelled == (
+        b"| subject | ids | meta |\n|---|---|---|\n| a/1 | GHSA-1, GHSA-2 | a: true, b: 2 |\n"
+    )
+
+
+def test_a_block_rendered_in_the_earlier_form_still_reads_as_a_rendering() -> None:
+    from cruxible_client.authoring.blocks import _render_query_block_body_v1
+
+    rows = (_row("Subject:a/1", ids=["GHSA-1"]),)
+    assert _render_query_block_body_v1(rows) == (
+        b'| subject | ids |\n|---|---|\n| Subject:a/1 | ["GHSA-1"] |\n'
+    )
+
+
+def test_render_writes_the_body_from_the_one_query_backing(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+
+    stamp = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+
+    (block,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(tmp_path, source.read_bytes()),
+    )
+    assert source.read_bytes()[block.body_start : block.body_end] == b"_No rows._\n"
+    assert stamp.body_digest == "sha256:" + hashlib.sha256(b"_No rows._\n").hexdigest()
+    with pytest.raises(ProjectionRepinError, match="exactly one query backing"):
+        repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="corpus.runbook",
+            block_id="summary",
+            queries=(),
+            claims=("CLM-1",),
+            evaluation_time=NOW,
+            render=True,
+        )
+
+
+def test_sdk_block_depublish_releases_the_registration_through_the_daemon(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _RepinClient()
+    calls: list[tuple[Any, ...]] = []
+
+    def depublish(instance_id: str, source_id: str, block_id: str, **kwargs: Any) -> Any:
+        calls.append((instance_id, source_id, block_id, kwargs))
+        return api.BlockDepublishResult(
+            source_id=source_id, block_id=block_id, outcome="depublished", coordinate=COORDINATE
+        )
+
+    client.depublish_block = depublish  # type: ignore[attr-defined]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_projection", workspace=tmp_path, clock=lambda: NOW
+    )
+
+    (tmp_path / "runbook.md").unlink()
+    (tmp_path / ".cruxible/files.yaml").unlink()
+    result = playbill.block.depublish(file_id="corpus.runbook", block_id="summary", dry_run=True)
+
+    assert result.outcome == "depublished"
+    assert calls == [
+        ("inst_projection", "corpus.runbook", "summary", {"dry_run": True, "at": None})
+    ]
+    with pytest.raises(ValueError, match="at least one page"):
+        playbill.block.detach()
+
+
+def test_sdk_get_source_ref_reads_its_document_or_its_evidence_only_entry(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.authoring.sdk_types import RefKind, SourceRef
+    from cruxible_client.contracts.get_reads import GetCoordinate, GetResult
+
+    _workspace(tmp_path)
+    catalog = tmp_path / ".cruxible" / "files.yaml"
+    catalog.write_text(
+        catalog.read_text() + "  - name: corpus.notes\n    locator: notes.md\n", encoding="utf-8"
+    )
+    client = _RepinClient()
+    read: list[str] = []
+
+    def get(_instance_id: str, *, request: Any) -> GetResult:
+        read.append(request.ref)
+        return GetResult(
+            ref=request.ref,
+            kind="document",
+            detail="summary",
+            proof={"document_id": "runbook"},
+            coordinate=GetCoordinate(git_oid=COORDINATE.git_oid[:12], generation=7),
+            accepted_coordinate=COORDINATE,
+            evaluation_time=NOW,
+        )
+
+    client.get = get  # type: ignore[method-assign]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_projection", workspace=tmp_path, clock=lambda: NOW
+    )
+
+    document = playbill.get(SourceRef("corpus.runbook", COORDINATE))
+    entry = playbill.get(SourceRef("corpus.notes", COORDINATE))
+
+    assert read == ["Document:runbook"]
+    assert (document.kind, document.identity) == (RefKind.SOURCE, "corpus.runbook")
+    assert document.value == {"document_id": "runbook"}
+    assert entry.value["locator"] == "notes.md"
+    assert entry.value["document_id"] is None
+
+
+def _attach(root: Path) -> None:
+    """Bind the workspace to the fake's instance, as `block sync` requires."""
+
+    (root / ".cruxible" / "coverage.json").write_text(
+        '{"tag":"playbill-coverage-workspace-config-v2",'
+        '"server_url":"https://sync.example.test","instance_id":"inst_projection"}',
+        encoding="utf-8",
+    )
+
+
+class _StaleClient(_RepinClient):
+    """Every held backing moved under its stamp (a `successor` verdict at the head)."""
+
+    def check_projection_blocks(self, _instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.authoring.models import BlockSyncReadResult
+
+        head = AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json"))
+        return SimpleNamespace(
+            results=tuple(
+                BlockSyncReadResult(
+                    status="successor",
+                    original_artifact_digest="sha256:" + "5" * 64,
+                    artifact_digest="sha256:" + "6" * 64,
+                    coordinate=head,
+                    generation=7,
+                    current_backings=stamp.backing,
+                    moved_backings=stamp.backing,
+                )
+                for stamp in request.stamps
+            )
+        )
+
+
+def _stamp_of(source: Path, root: Path) -> Any:
+    (block,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(root, source.read_bytes()),
+    )
+    assert block.stamp is not None
+    return block.stamp
+
+
+def test_repin_records_its_page_for_block_churn(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _RepinClient()
+
+    _repin(client, tmp_path, claims=("CLM-first",))
+
+    ((page,),) = client.observed
+    assert (page.source_id, page.document_id) == ("corpus.runbook", "runbook")
+    assert [marker.stamp.block_id for marker in page.marker_summaries] == ["summary"]
+    dry = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=NOW,
+        dry_run=True,
+    )
+    assert dry.block_id == "summary"
+    assert len(client.observed) == 1
+
+
+def test_a_converging_sync_rerenders_a_stale_rendered_block_and_records_the_page(
+    tmp_path: Path,
+) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    client = _StaleClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    assert len(client.observed) == 1
+    rendered = source.read_bytes()
+
+    checked = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_files=True,
+    )
+    assert [item.outcome for item in checked.items] == ["stale"]
+    assert source.read_bytes() == rendered
+    assert len(client.observed) == 1
+
+    later = NOW + timedelta(hours=1)
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_files=True,
+        converge_at=later,
+    )
+    (item,) = converged.items
+    assert item.outcome == "rendered", item
+    assert converged.changed_file_count == 1 and not converged.has_refusals
+    (backing,) = _stamp_of(source, tmp_path).backing
+    assert isinstance(backing, ProjectionQueryBacking)
+    assert backing.declared_evaluation_time == later
+    assert len(client.observed) == 2
+    assert client.observed[-1][0].observed_source_digest == (
+        "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+
+def test_sync_preserves_prose_edited_during_render_proof(tmp_path: Path) -> None:
+    """Review clia F-001: an edit between the render proof and repin's own read survives."""
+
+    from datetime import timedelta
+
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    setup_client = _StaleClient()
+    repin_projection_block(
+        setup_client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    rendered = source.read_bytes()
+    edited = rendered.replace(b"_No rows._\n", b"Author wrote new prose.\n")
+    assert edited != rendered
+
+    class _EditDuringProofClient(_StaleClient):
+        """Edits the page the first time a query answers -- the proof's query."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._edited = False
+
+        def query(self, instance_id: str, *, request: Any) -> Any:
+            if not self._edited:
+                self._edited = True
+                source.write_bytes(edited)
+            return super().query(instance_id, request=request)
+
+    client = _EditDuringProofClient()
+
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_files=True,
+        converge_at=NOW + timedelta(hours=1),
+    )
+
+    (item,) = converged.items
+    assert (item.outcome, item.reason) == ("dirty", "block_locally_modified"), item
+    assert source.read_bytes() == edited
+
+
+def test_a_converging_sync_leaves_stale_prose_to_its_author(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    client = _StaleClient()
+    # The prose body is kept: a query backs it, but the body is not its rendering.
+    _repin(client, tmp_path, queries=(("project.items", {}),))
+    before = source.read_bytes()
+
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_files=True,
+        converge_at=NOW + timedelta(hours=1),
+    )
+
+    (item,) = converged.items
+    assert (item.outcome, item.reason) == ("stale", "block_backing_changed")
+    assert source.read_bytes() == before
+    assert len(client.observed) == 2
+
+
+def test_repin_missing_block_and_conflict_name_the_file(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    with pytest.raises(ProjectionRepinError, match="file 'corpus.runbook' has no block 'missing'"):
+        repin_projection_block(
+            _RepinClient(),  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="corpus.runbook",
+            block_id="missing",
+            evaluation_time=NOW,
+        )
+    conflict = ProjectionRepinConflict(source_id="corpus.runbook", block_id="summary")
+    assert "in file 'corpus.runbook' changed" in str(conflict)
+
+
+def test_shared_editing_reference_teaches_file_repin_operand() -> None:
+    root = Path(__file__).resolve().parents[2]
+    skill = root / "skills/create-state/SKILL.md"
+    assert "../_shared/references/concurrent-edits.md" in skill.read_text()
+    text = (root / "skills/_shared/references/concurrent-edits.md").read_text()
+    assert "cruxible block repin FILE ID" in text
+    assert "cruxible block repin SOURCE ID" not in text

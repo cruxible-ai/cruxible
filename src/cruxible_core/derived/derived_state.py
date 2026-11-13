@@ -1,0 +1,1115 @@
+"""Instance-owned immutable source snapshots and isolated prospective edits.
+
+These are acceleration handles, never verification capabilities. Only the
+instance's verified-history adapter installs accepted roots. Candidate roots
+cannot enter that namespace. Canonical bytes are the retained row boundary.
+"""
+
+from __future__ import annotations
+
+import threading
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from contextlib import AbstractContextManager
+from dataclasses import dataclass, field
+from typing import Any, Protocol, cast
+
+from cruxible_client.contracts.canonical import CARD_NAMESPACE, normalize_ledger_path
+from cruxible_client.contracts.claims import ClaimArtifact, parse_claim
+from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.persistent import PersistentMap
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.derived.derived_runtime import BoundedCache, Lease, Registry
+
+BlobLoader = Callable[[Sequence[str]], Mapping[str, bytes]]
+
+
+class ClaimPredicateKey(Protocol):
+    """What a live-Claim lookup matches on: a statement's subject and predicate.
+
+    A lowered ClaimStatement and an authored statement both carry these, so a
+    caller that has not lowered yet can still ask which Claims a slot holds.
+    """
+
+    @property
+    def subject(self) -> SemanticAddress: ...
+
+    @property
+    def predicate(self) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class BlobRef:
+    """A committed blob named by object ID; its bytes stay in Git's object store."""
+
+    oid: str
+    size: int
+    load: BlobLoader
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> BlobRef:
+        return self  # immutable; never copy the loader's repository handle
+
+
+# Recently read blob bytes, shared by every tree: object IDs are content
+# addresses, so one entry serves every root that carries that blob.
+_BLOB_CACHE_MAX_BYTES = 16 * 1024 * 1024
+_BLOB_CACHE: OrderedDict[str, bytes] = OrderedDict()
+_BLOB_CACHE_BYTES = 0
+_BLOB_CACHE_LOCK = threading.Lock()
+# Resident weight of one reference row: the path plus a small fixed overhead.
+_REF_OVERHEAD = 160
+
+
+def _size(value: bytes | BlobRef) -> int:
+    return len(value) if isinstance(value, bytes) else value.size
+
+
+def _resident(path: str, value: bytes | BlobRef) -> int:
+    return len(path.encode("utf-8")) + (len(value) if isinstance(value, bytes) else _REF_OVERHEAD)
+
+
+def _remember_blob(oid: str, content: bytes) -> None:
+    global _BLOB_CACHE_BYTES
+    if len(content) > _BLOB_CACHE_MAX_BYTES // 4:
+        return
+    with _BLOB_CACHE_LOCK:
+        if oid in _BLOB_CACHE:
+            _BLOB_CACHE.move_to_end(oid)
+            return
+        _BLOB_CACHE[oid] = content
+        _BLOB_CACHE_BYTES += len(content)
+        while _BLOB_CACHE_BYTES > _BLOB_CACHE_MAX_BYTES:
+            _old, evicted = _BLOB_CACHE.popitem(last=False)
+            _BLOB_CACHE_BYTES -= len(evicted)
+
+
+def resolve_blobs(values: Sequence[bytes | BlobRef]) -> list[bytes]:
+    """Each value's bytes, reading every uncached reference in one batch per loader."""
+
+    found: dict[str, bytes] = {}
+    missing: dict[int, dict[str, BlobRef]] = {}
+    loaders: dict[int, BlobLoader] = {}
+    with _BLOB_CACHE_LOCK:
+        for value in values:
+            if isinstance(value, bytes) or value.oid in found:
+                continue
+            cached = _BLOB_CACHE.get(value.oid)
+            if cached is not None:
+                _BLOB_CACHE.move_to_end(value.oid)
+                found[value.oid] = cached
+            else:
+                missing.setdefault(id(value.load), {})[value.oid] = value
+                loaders[id(value.load)] = value.load
+    for key, refs in missing.items():
+        loaded = loaders[key](tuple(refs))
+        for oid, ref in refs.items():
+            content = loaded[oid]
+            if len(content) != ref.size:
+                raise CruxibleError(f"ledger blob size changed while reading: {oid}")
+            found[oid] = content
+            _remember_blob(oid, content)
+    return [value if isinstance(value, bytes) else found[value.oid] for value in values]
+
+
+def row_values(tree: Mapping[str, bytes] | None) -> Mapping[str, bytes | BlobRef] | None:
+    """A snapshot's raw rows (bytes or references), or None for any other mapping."""
+    if isinstance(tree, (SnapshotTree, CandidateTree)):
+        return tree._rows
+    return None
+
+
+def paths_with_prefix(tree: Mapping[str, bytes], prefix: str) -> Iterator[str]:
+    """``tree``'s paths starting with ``prefix``, in the tree's own iteration order.
+
+    A snapshot's rows are an ordered map, so the prefix is one contiguous range
+    cut in O(log n); any other mapping is filtered path by path.
+    """
+    if isinstance(tree, (SnapshotTree, CandidateTree)):
+        return iter(tree._rows.split_prefix(prefix)[1])
+    return (path for path in tree if path.startswith(prefix))
+
+
+def row_size(value: bytes | BlobRef) -> int:
+    return _size(value)
+
+
+def same_row(left: bytes | BlobRef, right: bytes | BlobRef) -> bool:
+    """Whether two rows hold the same bytes, reading content only when forms differ."""
+    if left is right:
+        return True
+    if isinstance(left, BlobRef) and isinstance(right, BlobRef):
+        return left.oid == right.oid
+    if isinstance(left, bytes) and isinstance(right, bytes):
+        return left == right
+    if _size(left) != _size(right):
+        return False
+    return _resolve(left) == _resolve(right)
+
+
+def changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) -> tuple[str, ...]:
+    """Paths whose bytes differ between two trees, reading content only where needed.
+
+    Snapshot rows are compared by reference (the same object, or the same blob
+    ID); a plain mapping on either side falls back to comparing bytes.
+    """
+    left, right = row_values(base), row_values(candidate)
+    if left is None or right is None:
+        return tuple(
+            path for path in base.keys() | candidate.keys() if base.get(path) != candidate.get(path)
+        )
+    shared = _edited_paths(base, candidate)
+    if shared is not None:
+        return tuple(path for path in shared if not _same_entry(left, right, path))
+    return tuple(
+        path
+        for path in left.keys() | right.keys()
+        if path not in left or path not in right or not same_row(left[path], right[path])
+    )
+
+
+def _snapshot_equal(tree: Mapping[str, bytes], other: object) -> bool:
+    if not isinstance(other, Mapping):
+        return False
+    mine, theirs = row_values(tree), row_values(other)
+    if mine is None or theirs is None:
+        return dict(tree.items()) == dict(other.items())
+    if len(mine) != len(theirs):
+        return False
+    shared = _edited_paths(tree, other)
+    if shared is not None:
+        return all(_same_entry(mine, theirs, path) for path in shared)
+    return all(path in theirs and same_row(value, theirs[path]) for path, value in mine.items())
+
+
+def _root_and_edits(
+    tree: Mapping[str, bytes],
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """The immutable root a snapshot was forked from, and its edits over that root."""
+    if isinstance(tree, CandidateTree):
+        return tree._parent, tree._edits
+    if isinstance(tree, SnapshotTree):
+        return (tree, {}) if tree._parent is None else (tree._parent, tree._edits)
+    return None
+
+
+def edited_paths(left: Mapping[str, bytes], right: Mapping[str, bytes]) -> set[str] | None:
+    """Every path where two forks of one root can differ, or None if they share none."""
+    return _edited_paths(left, right)
+
+
+def root_and_edits(
+    tree: Mapping[str, bytes],
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """The immutable root a snapshot was forked from, and its edits over that root."""
+    return _root_and_edits(tree)
+
+
+def _edited_paths(left: Mapping[str, bytes], right: Mapping[str, bytes]) -> set[str] | None:
+    """Every path where two forks of one root can differ, or None if they share none.
+
+    Outside their edits both trees hold exactly the root's rows, so only edited
+    paths need comparing.
+    """
+    mine, theirs = _root_and_edits(left), _root_and_edits(right)
+    if mine is None or theirs is None or mine[0] is not theirs[0]:
+        return None
+    return {*mine[1], *theirs[1]}
+
+
+def _same_entry(
+    left: Mapping[str, bytes | BlobRef], right: Mapping[str, bytes | BlobRef], path: str
+) -> bool:
+    mine, theirs = left.get(path), right.get(path)
+    if mine is None or theirs is None:
+        return mine is None and theirs is None
+    return same_row(mine, theirs)
+
+
+def _resolve(value: bytes | BlobRef) -> bytes:
+    return value if isinstance(value, bytes) else resolve_blobs((value,))[0]
+
+
+class SnapshotTree(Mapping[str, bytes]):
+    """Immutable physical tree. Lazy derived values cannot alias caller models."""
+
+    def __init__(
+        self,
+        rows: Mapping[str, bytes | BlobRef],
+        *,
+        parent: SnapshotTree | None = None,
+        edits: PersistentMap[bytes | None] | None = None,
+        input_bytes: int | None = None,
+        semantic_bytes: int | None = None,
+        semantic_members: int | None = None,
+        resident_bytes: int | None = None,
+        claim_index: _ClaimEditIndex | None = None,
+        claim_base: SnapshotTree | None = None,
+        claim_own: tuple[str, ...] = (),
+        claim_carried: PersistentMap[bool] | None = None,
+    ) -> None:
+        # Rows hold bytes or a BlobRef whose bytes are read from Git on demand.
+        # Sizes below are logical file bytes; ``_resident_bytes`` is what the
+        # rows themselves hold in memory, which is what a cache budget weighs.
+        raw_rows: Mapping[str, bytes | BlobRef] = (
+            rows._rows if isinstance(rows, SnapshotTree) else rows
+        )
+        self._rows: PersistentMap[bytes | BlobRef] = PersistentMap(raw_rows)
+        self._input_bytes = (
+            sum(len(p.encode("utf-8")) + _size(b) for p, b in raw_rows.items())
+            if input_bytes is None
+            else input_bytes
+        )
+        self._resident_bytes = (
+            sum(_resident(p, b) for p, b in raw_rows.items())
+            if resident_bytes is None
+            else resident_bytes
+        )
+        self._semantic_bytes = (
+            sum(len(p.encode("utf-8")) + _size(b) for p, b in raw_rows.items() if semantic_path(p))
+            if semantic_bytes is None
+            else semantic_bytes
+        )
+        self._semantic_members = (
+            sum(1 for p in raw_rows if semantic_path(p))
+            if semantic_members is None
+            else semantic_members
+        )
+        self._accepted = False
+        self._parent = parent
+        self._edits = edits if edits is not None else PersistentMap()
+        self._lock = threading.RLock()
+        self._accepted_reader: Callable[[], Any] | None = (
+            None if parent is None else parent._accepted_reader
+        )
+        # The accepted root's live Claims of one statement, answered once per
+        # request by the instance that bound this root (see ``claim_items``).
+        self._accepted_claim_items: (
+            Callable[[ClaimPredicateKey], tuple[tuple[str, bytes], ...]] | None
+        ) = None if parent is None else parent._accepted_claim_items
+        # The edited Claims by statement slot (see ``_ClaimEditIndex``), kept
+        # lazily as a chain: until a lookup resolves it, this snapshot's index is
+        # ``_claim_base``'s (or ``_claim_index`` with no base) with the Claim
+        # paths in ``_claim_own`` re-decided from this snapshot's edits.
+        self._claim_index: _ClaimEditIndex | None = claim_index
+        self._claim_base: SnapshotTree | None = claim_base
+        self._claim_own: tuple[str, ...] = claim_own
+        # Claim paths a compacted chain still owes this snapshot, which has no
+        # base: shared from snapshot to snapshot, never copied, so compacting
+        # again visits only what was staged since (see ``_compacted_claim_chain``).
+        self._claim_carried: PersistentMap[bool] = (
+            claim_carried if claim_carried is not None else PersistentMap()
+        )
+        # Unresolved snapshots this one extends, counted when it was made (0 once
+        # it is resolved itself).
+        self._claim_depth: int = 0 if claim_base is None else claim_base._claim_depth + 1
+        self._proofs: Any = None
+        self._proof_seed: Any = None
+        # This root without its derivative cards, once asked for; see card_free_view.
+        self._card_free: SnapshotTree | None = None
+        # Facts about every path, once asked for; see path_facts.
+        self._path_facts: PathFacts | None = None
+        # The accepted commit whose tree these rows are, when an instance says so.
+        self._commit_oid: str | None = None
+
+    def __getitem__(self, key: str) -> bytes:
+        return _resolve(self._rows[key])
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._rows
+
+    def __eq__(self, other: object) -> bool:
+        return _snapshot_equal(self, other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._rows)
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def items(self) -> Any:
+        paths = tuple(self._rows)
+        return list(zip(paths, resolve_blobs([self._rows[p] for p in paths]), strict=True))
+
+    def values(self) -> Any:
+        return resolve_blobs(list(self._rows.values()))
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SnapshotTree:
+        return self  # Only immutable bytes and private derived roots are retained.
+
+    def snapshot(self) -> SnapshotTree:
+        return self
+
+    def fork(self) -> CandidateTree:
+        return CandidateTree(self)
+
+    def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
+        if self._accepted_reader is not None:
+            if self._accepted_claim_items is not None:
+                accepted = self._accepted_claim_items(statement)
+            else:
+                from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+                base = EvaluationRows(self._accepted_reader())
+                try:
+                    accepted = base.claim_items(statement)
+                finally:
+                    base.close()
+            if self._parent is None:
+                return accepted
+            # A claim row's match fields are the Claim's own statement and
+            # lifecycle, so the edited selection is the accepted one with edited
+            # Claim paths re-decided from their new bytes. The edited Claims are
+            # indexed by slot as they are staged: re-deciding every edit per
+            # lookup made lowering a change of n Claims O(n^2).
+            edited = self._claim_edit_index().slots.get(_slot_key(statement))
+            selected = {path: content for path, content in accepted if path not in self._edits}
+            if edited is not None:
+                selected.update(edited.items())
+            return tuple(sorted(selected.items()))
+        # Cold source-only ingress remains the exact full builder oracle.
+        rows = []
+        for path in self:
+            if path.startswith("claims/"):
+                claim = parse_claim(self[path], path=path)
+                if (
+                    claim.lifecycle.state == "live"
+                    and claim.statement.subject == statement.subject
+                    and claim.statement.predicate == statement.predicate
+                ):
+                    rows.append((path, self[path]))
+        return tuple(sorted(rows))
+
+    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifact, ...]:
+        return tuple(
+            parse_claim(content, path=path) for path, content in self.claim_items(statement)
+        )
+
+    def _claim_edit_index(self) -> _ClaimEditIndex:
+        """The edited live Claims by slot, current with this tree's edits.
+
+        Resolving it resolves, and keeps, every unresolved snapshot it extends,
+        so each staged Claim is indexed once however many trees look it up:
+        lowering looks slots up through forks of the tree it stages into, and
+        an index that only the looking tree kept re-indexed every Claim staged
+        down the chain on each lookup, O(n^2) for a change of n Claims.
+
+        Only this tree's own bytes decide its answer. An ancestor whose staged
+        bytes do not parse as a Claim (bytes a later edit may have replaced) is
+        left unresolved, and this tree's index is built from its own edits.
+        """
+        chain: list[SnapshotTree] = []
+        node = self
+        while True:
+            chain.append(node)
+            with node._lock:
+                base = node._claim_base
+            if base is None:
+                break
+            node = base
+        index: _ClaimEditIndex | None = None
+        for node in reversed(chain):
+            try:
+                index = node._resolve_claim_index(index)
+            except Exception:
+                if node is self:
+                    raise
+                return self._rebuild_claim_index()
+        return cast(_ClaimEditIndex, index)
+
+    def _resolve_claim_index(self, prior: _ClaimEditIndex | None) -> _ClaimEditIndex:
+        """This snapshot's index, from its base's (``prior``) and its own staged Claims."""
+        with self._lock:
+            if self._claim_base is None:
+                index = self._claim_index
+                if index is None:
+                    # Built once from the complete edits; forks carry it forward.
+                    index = _ClaimEditIndex().updated(
+                        (path for path in self._edits if path.startswith("claims/")),
+                        self._edits,
+                    )
+                else:
+                    if len(self._claim_carried):
+                        index = index.updated(self._claim_carried, self._edits)
+                    if self._claim_own:
+                        index = index.updated(self._claim_own, self._edits)
+            else:
+                index = cast(_ClaimEditIndex, prior).updated(self._claim_own, self._edits)
+            self._claim_index, self._claim_base, self._claim_own = index, None, ()
+            self._claim_carried = PersistentMap()
+            self._claim_depth = 0
+            return index
+
+    def _rebuild_claim_index(self) -> _ClaimEditIndex:
+        """This snapshot's index from its own complete edits alone, kept."""
+        index = _ClaimEditIndex().updated(
+            (path for path in self._edits if path.startswith("claims/")), self._edits
+        )
+        with self._lock:
+            self._claim_index, self._claim_base, self._claim_own = index, None, ()
+            self._claim_carried = PersistentMap()
+            self._claim_depth = 0
+        return index
+
+    def edits_from(self, parent: Mapping[str, bytes]) -> Mapping[str, bytes | None] | None:
+        # Identity of an internal immutable root proves correspondence, not a
+        # caller's coordinate string. External full-tree ingress has no shortcut.
+        if self is parent:
+            return PersistentMap()
+        if isinstance(parent, SnapshotTree) and self._parent is parent:
+            return self._edits
+        return None
+
+
+# (path, bytes) -> (subject address, predicate, live) for edited Claims; bytes
+# objects cache their hash, so a repeated lookup costs one dict probe. The keys
+# hold Claim bytes, so the memo is bounded by their total size as well.
+_CLAIM_MATCH_FACTS: OrderedDict[tuple[str, bytes], tuple[object, str, bool]] = OrderedDict()
+_CLAIM_MATCH_CAPACITY = 16384
+_CLAIM_MATCH_MAX_BYTES = 16 * 1024 * 1024
+_CLAIM_MATCH_LOCK = threading.Lock()
+_claim_match_bytes = 0
+
+
+def _slot_key(statement: ClaimPredicateKey) -> str:
+    """One statement's (subject, predicate) as an exact string key."""
+    return _slot_key_of(statement.subject, statement.predicate)
+
+
+def _slot_key_of(subject: SemanticAddress, predicate: str) -> str:
+    return "\x00".join(
+        (
+            subject.tag,
+            subject.artifact_path,
+            subject.selector.scheme,
+            subject.selector.value,
+            predicate,
+        )
+    )
+
+
+#: Unresolved snapshots a new one may extend before sealing resolves its base.
+_CLAIM_CHAIN_LIMIT = 64
+
+
+@dataclass(frozen=True)
+class _ClaimEditIndex:
+    """A tree's edited live Claims by (subject, predicate), shared by its forks.
+
+    Immutable: an update returns a new index that shares structure, so a fork
+    carries its parent's index in O(1) and each staged Claim costs one update.
+    """
+
+    #: slot key -> edited Claim path -> its bytes, for live Claims only.
+    slots: PersistentMap[PersistentMap[bytes]] = field(default_factory=PersistentMap)
+    #: edited Claim path -> the slot key it is indexed under.
+    slot_of: PersistentMap[str] = field(default_factory=PersistentMap)
+
+    def updated(self, paths: Iterable[str], edits: Mapping[str, bytes | None]) -> _ClaimEditIndex:
+        slots, slot_of = self.slots, self.slot_of
+        for path in paths:
+            previous = slot_of.get(path)
+            if previous is not None:
+                group = slots[previous].delete(path)
+                slots = slots.set(previous, group) if len(group) else slots.delete(previous)
+                slot_of = slot_of.delete(path)
+            content = edits.get(path)
+            if content is None:
+                continue
+            subject, predicate, live = _claim_facts(path, content)
+            if not live:
+                continue
+            key = _slot_key_of(cast(SemanticAddress, subject), predicate)
+            slots = slots.set(key, slots.get(key, PersistentMap()).set(path, content))
+            slot_of = slot_of.set(path, key)
+        return _ClaimEditIndex(slots, slot_of)
+
+
+def _claim_facts(path: str, content: bytes) -> tuple[object, str, bool]:
+    """An edited Claim's (subject address, predicate, live), memoized by its bytes."""
+    global _claim_match_bytes
+    key = (path, content)
+    with _CLAIM_MATCH_LOCK:
+        facts = _CLAIM_MATCH_FACTS.get(key)
+        if facts is not None:
+            _CLAIM_MATCH_FACTS.move_to_end(key)
+    if facts is None:
+        claim = parse_claim(content, path=path)
+        facts = (
+            claim.statement.subject,
+            claim.statement.predicate,
+            claim.lifecycle.state == "live",
+        )
+        weight = len(path) + len(content)
+        if weight <= _CLAIM_MATCH_MAX_BYTES // 16:
+            with _CLAIM_MATCH_LOCK:
+                if key not in _CLAIM_MATCH_FACTS:
+                    _CLAIM_MATCH_FACTS[key] = facts
+                    _claim_match_bytes += weight
+                while _CLAIM_MATCH_FACTS and (
+                    len(_CLAIM_MATCH_FACTS) > _CLAIM_MATCH_CAPACITY
+                    or _claim_match_bytes > _CLAIM_MATCH_MAX_BYTES
+                ):
+                    (old_path, old_content), _facts = _CLAIM_MATCH_FACTS.popitem(last=False)
+                    _claim_match_bytes -= len(old_path) + len(old_content)
+    return facts
+
+
+class CandidateTree(MutableMapping[str, bytes]):
+    """Private mutable staging cursor over immutable roots; each read can seal a revision."""
+
+    def __init__(self, parent: SnapshotTree) -> None:
+        # Keep one base plus a bounded complete edit map, never an overlay chain.
+        self._parent = parent._parent if parent._parent is not None else parent
+        self._rows = parent._rows
+        # One fork's own writes, independent of edits inherited from its root.
+        self._fork_rows = parent._rows
+        self._touched_paths: set[str] = set()
+        self._input_bytes = parent._input_bytes
+        self._resident_bytes = parent._resident_bytes
+        self._semantic_bytes = parent._semantic_bytes
+        self._semantic_members = parent._semantic_members
+        self._edits = parent._edits if parent._parent is not None else PersistentMap()
+        # The slot index of this tree's next snapshot extends the snapshot it was
+        # forked from (or sealed last) by the Claim paths staged since.
+        self._claim_base: SnapshotTree | None = parent if parent._parent is not None else None
+        self._claim_staged: set[str] = set()
+        self._cached: SnapshotTree | None = parent
+
+    def __getitem__(self, key: str) -> bytes:
+        return _resolve(self._rows[key])
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._rows
+
+    def __eq__(self, other: object) -> bool:
+        return _snapshot_equal(self, other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._rows)
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def __setitem__(self, key: str, value: bytes) -> None:
+        if normalize_ledger_path(key) != key or not isinstance(value, bytes):
+            raise ValueError("candidate edits require canonical paths and immutable bytes")
+        self._touched_paths.add(key)
+        previous = self._rows.get(key)
+        weight_delta = (
+            len(value) - _size(previous)
+            if previous is not None
+            else len(key.encode("utf-8")) + len(value)
+        )
+        self._input_bytes += weight_delta
+        self._resident_bytes += _resident(key, value) - (
+            _resident(key, previous) if previous is not None else 0
+        )
+        if semantic_path(key):
+            self._semantic_bytes += weight_delta
+            self._semantic_members += int(previous is None)
+        self._rows = self._rows.set(key, value)
+        self._edits = (
+            self._edits.delete(key)
+            if self._parent.get(key) == value
+            else self._edits.set(key, value)
+        )
+        self._stage_claim(key)
+        self._cached = None
+
+    def __delitem__(self, key: str) -> None:
+        if key not in self._rows:
+            raise KeyError(key)
+        self._touched_paths.add(key)
+        weight = len(key.encode("utf-8")) + _size(self._rows[key])
+        self._input_bytes -= weight
+        self._resident_bytes -= _resident(key, self._rows[key])
+        if semantic_path(key):
+            self._semantic_bytes -= weight
+            self._semantic_members -= 1
+        self._rows = self._rows.delete(key)
+        self._edits = self._edits.set(key, None) if key in self._parent else self._edits.delete(key)
+        self._stage_claim(key)
+        self._cached = None
+
+    def touched_paths_since(self, base: Mapping[str, bytes]) -> frozenset[str] | None:
+        """This fork's writes if it started at ``base``'s exact rows, without a diff scan."""
+        # SnapshotTree wraps PersistentMap in O(1), retaining its immutable root.
+        if (
+            isinstance(base, (SnapshotTree, CandidateTree))
+            and base._rows._root is self._fork_rows._root
+        ):
+            return frozenset(self._touched_paths)
+        return None
+
+    def _stage_claim(self, key: str) -> None:
+        # Mark this Claim path for re-indexing on the next slot lookup of a tree
+        # holding it; nothing is parsed until a lookup needs it.
+        if key.startswith("claims/"):
+            self._claim_staged.add(key)
+
+    def snapshot(self) -> SnapshotTree:
+        if self._cached is None:
+            base = self._claim_base
+            claim_index: _ClaimEditIndex | None = None if base is not None else _ClaimEditIndex()
+            staged = self._claim_staged
+            carried: PersistentMap[bool] | None = None
+            if base is not None and base._claim_depth >= _CLAIM_CHAIN_LIMIT:
+                # A chain no lookup resolves holds every snapshot along it.
+                # Compact it without parsing anything: extend the chain's
+                # resolved bottom by every Claim path staged along it, each
+                # re-decided from this tree's own bytes when a lookup needs it.
+                claim_index, carried, base = _compacted_claim_chain(base)
+            self._cached = SnapshotTree(
+                self._rows,
+                parent=self._parent,
+                edits=self._edits,
+                input_bytes=self._input_bytes,
+                semantic_bytes=self._semantic_bytes,
+                semantic_members=self._semantic_members,
+                resident_bytes=self._resident_bytes,
+                claim_index=claim_index,
+                claim_base=base,
+                claim_own=tuple(sorted(staged)),
+                claim_carried=carried,
+            )
+            self._claim_base, self._claim_staged = self._cached, set()
+        return self._cached
+
+    def fork(self) -> CandidateTree:
+        return self.snapshot().fork()
+
+    def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
+        return self.snapshot().claim_items(statement)
+
+    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifact, ...]:
+        return self.snapshot().claims_for(statement)
+
+
+def _compacted_claim_chain(
+    base: SnapshotTree,
+) -> tuple[_ClaimEditIndex | None, PersistentMap[bool], None]:
+    """(index, Claim paths still owed, no base) for a snapshot cut off ``base``'s chain.
+
+    The index is the chain's bottom's (None: built from the snapshot's complete
+    edits). The owed paths are the bottom's carried ones, shared as they are,
+    plus each path staged along the chain above it: only this chain's own
+    segments are visited, never what an earlier compaction carried, so staging
+    n Claims costs O(n log n) however many compactions it crosses. Owing a path
+    the snapshot did not edit only drops it from the edited index, which is
+    where an unedited path belongs. The snapshot's own staged paths stay its own.
+    """
+    segments: list[tuple[str, ...]] = []
+    node = base
+    while True:
+        with node._lock:
+            following = node._claim_base
+            segments.append(node._claim_own)
+            if following is None:
+                index, carried = node._claim_index, node._claim_carried
+        if following is None:
+            break
+        node = following
+    for segment in segments:
+        for path in segment:
+            carried = carried.set(path, True)
+    return index, carried, None
+
+
+def fork_tree(tree: Mapping[str, bytes]) -> CandidateTree:
+    if isinstance(tree, (SnapshotTree, CandidateTree)):
+        return tree.fork()
+    return SnapshotTree(tree).fork()
+
+
+@dataclass(frozen=True)
+class IndexDefinition:
+    name: str
+    namespace: str
+    version: str
+    source_contract: str
+
+
+class DerivedState:
+    """One local lifecycle owner. Root loading is single-flight outside its lock.
+
+    Legacy adapters retain their existing fresh-source and budget rules during
+    migration. Snapshot budgets are conservative input-byte upper bounds, not RSS.
+    Leased roots remain readable after registry eviction; no source is deleted.
+    """
+
+    # Stopgap: an accepted tree over budget is never cached, so every write
+    # would re-read the whole tree; 256 MiB keeps realistic instances cached
+    # until the tree cache holds structure instead of bytes.
+    def __init__(self, *, max_roots: int = 4, max_input_bytes: int = 256 * 1024 * 1024) -> None:
+        if max_roots < 0 or max_input_bytes < 0:
+            raise ValueError("derived-state budgets must be nonnegative")
+        self._max_roots = max_roots
+        self._max_input_bytes = max_input_bytes
+        self._lock = threading.RLock()
+        self._roots: OrderedDict[bytes, tuple[SnapshotTree, int]] = OrderedDict()
+        self._runtime = Registry()
+        self._epoch = 0
+        self._adapters: dict[str, tuple[IndexDefinition, object]] = {}
+        self._builds = 0
+        self._hits = 0
+        self._fallbacks = 0
+
+    def register(self, definition: IndexDefinition, adapter: object) -> object:
+        with self._lock:
+            if definition.name in self._adapters:
+                raise ValueError("derived index is already registered")
+            self._adapters[definition.name] = (definition, adapter)
+            clear = getattr(adapter, "clear", None) if adapter is not self else None
+            self._runtime.register(
+                definition.name, definition.namespace, definition.version, adapter, clear=clear
+            )
+        return adapter
+
+    def accepted_tree(
+        self,
+        binding: bytes,
+        load: Callable[[], Mapping[str, bytes]],
+        advance: Callable[[bytes, SnapshotTree], SnapshotTree] | None = None,
+    ) -> SnapshotTree:
+        # The instance adapter validates the complete binding before this call.
+        with self._lock:
+            entry = self._roots.get(binding)
+            if entry is not None:
+                self._roots.move_to_end(binding)
+                self._hits += 1
+                return entry[0]
+        with self._runtime.build(("accepted-tree", binding)):
+            with self._lock:
+                entry = self._roots.get(binding)
+                if entry is not None:
+                    self._hits += 1
+                    return entry[0]
+                epoch = self._epoch
+                previous = next(reversed(self._roots.items()), None) if self._roots else None
+            tree = (
+                advance(previous[0], previous[1][0])
+                if advance is not None and previous is not None
+                else SnapshotTree(load())
+            )
+            weight = tree._resident_bytes
+            tree._accepted = True
+            with self._lock:
+                self._builds += 1
+                if epoch == self._epoch and self._max_roots and weight <= self._max_input_bytes:
+                    self._roots[binding] = (tree, weight)
+                    while (
+                        len(self._roots) > self._max_roots
+                        or sum(item[1] for item in self._roots.values()) > self._max_input_bytes
+                    ):
+                        self._roots.popitem(last=False)
+                else:
+                    self._fallbacks += 1
+            return tree
+
+    def build(self, key: object) -> AbstractContextManager[None]:
+        return self._runtime.build(key)
+
+    def memo(self, name: str, *, max_entries: int, max_bytes: int) -> BoundedCache[Any]:
+        return self._runtime.memo(name, max_entries=max_entries, max_bytes=max_bytes)
+
+    def lease(self, tree: SnapshotTree) -> Lease[SnapshotTree]:
+        return self._runtime.lease(tree, estimated_bytes=tree._input_bytes)
+
+    def status(self) -> dict[str, object]:
+        with self._lock:
+            return {
+                "definitions": tuple(d for d, _ in self._adapters.values()),
+                "retained_roots": len(self._roots),
+                "input_bytes_upper_bound": sum(w for _, w in self._roots.values()),
+                "builds": self._builds,
+                "hits": self._hits,
+                "runtime": self._runtime.status(),
+                "budget_fallbacks": self._fallbacks,
+            }
+
+    def clear(self) -> None:
+        with self._lock:
+            self._epoch += 1
+            self._roots.clear()
+        self._runtime.clear()
+
+
+def advance_accepted_tree(
+    parent: SnapshotTree, edits: Mapping[str, bytes | BlobRef | None]
+) -> SnapshotTree:
+    """Carry immutable data through a verified physical delta; no ancestry chain."""
+    rows = parent._rows
+    weight = parent._input_bytes
+    resident = parent._resident_bytes
+    semantic_bytes = parent._semantic_bytes
+    semantic_members = parent._semantic_members
+    for path, content in edits.items():
+        previous = rows.get(path)
+        if previous is not None:
+            previous_weight = len(path.encode("utf-8")) + _size(previous)
+            weight -= previous_weight
+            resident -= _resident(path, previous)
+            if semantic_path(path):
+                semantic_bytes -= previous_weight
+                semantic_members -= 1
+        if content is not None:
+            content_weight = len(path.encode("utf-8")) + _size(content)
+            weight += content_weight
+            resident += _resident(path, content)
+            if semantic_path(path):
+                semantic_bytes += content_weight
+                semantic_members += 1
+        rows = rows.delete(path) if content is None else rows.set(path, content)
+    result = SnapshotTree(
+        rows,
+        input_bytes=weight,
+        semantic_bytes=semantic_bytes,
+        semantic_members=semantic_members,
+        resident_bytes=resident,
+    )
+    with parent._lock:
+        if parent._proofs is not None and parent._accepted_reader is not None:
+            result._proof_seed = (parent._proofs, parent._accepted_reader, dict(edits))
+        view = parent._card_free
+        facts = parent._path_facts
+    if facts is not None:
+        result._path_facts = facts.advanced(parent._rows, edits)
+    if view is not None:
+        # The card-free view advances by the same delta, less its cards.
+        result._card_free = advance_accepted_tree(
+            view, {path: row for path, row in edits.items() if not path.startswith(CARD_NAMESPACE)}
+        )
+    return result
+
+
+def card_free_view(root: SnapshotTree) -> SnapshotTree:
+    """``root`` without its derivative cards, as an immutable root of its own.
+
+    Cards share one key range, so the rows are cut from the root in O(log n);
+    only the first view of a root sums the cards' sizes, and each accepted
+    successor carries its view forward by its own delta.
+    """
+    if root._parent is not None:
+        raise ValueError("only an immutable root has a card-free view")
+    with root._lock:
+        view = root._card_free
+        if view is None:
+            rows, cards = root._rows.split_prefix(CARD_NAMESPACE)
+            removed = resident = 0
+            for path, row in cards.items():
+                removed += len(path.encode("utf-8")) + _size(row)
+                resident += _resident(path, row)
+            view = SnapshotTree(
+                rows,
+                input_bytes=root._input_bytes - removed,
+                semantic_bytes=root._semantic_bytes,
+                semantic_members=root._semantic_members,
+                resident_bytes=root._resident_bytes - resident,
+            )
+            root._card_free = view
+        # Cards are not Claims: the root's accepted projection answers the view.
+        view._accepted_reader = root._accepted_reader
+        view._accepted_claim_items = root._accepted_claim_items
+        # Semantic manifests and dependency proofs exclude derivative cards.
+        # A newly requested card-free view owns the exact same immutable roots.
+        if root._proofs is not None:
+            view._proofs = root._proofs
+            view._proof_seed = None
+    return view
+
+
+def without_cards(tree: SnapshotTree) -> SnapshotTree:
+    """``tree`` less every derivative card.
+
+    A root or a fork of one is its root's card-free view plus the fork's
+    non-card edits, so the cost follows the edits, not the cards.
+    """
+    found = _root_and_edits(tree)
+    if found is not None and found[0]._parent is None:
+        root, edits = found
+        builder = card_free_view(root).fork()
+        for path, row in edits.items():
+            if path.startswith(CARD_NAMESPACE):
+                continue
+            if row is None:
+                if path in builder:
+                    del builder[path]
+            else:
+                builder[path] = _resolve(row)
+        return builder.snapshot()
+    builder = tree.fork()
+    for path in tuple(tree):
+        if path.startswith(CARD_NAMESPACE):
+            del builder[path]
+    return builder.snapshot()
+
+
+def card_free_edits(
+    tree: Mapping[str, bytes], base: Mapping[str, bytes]
+) -> Mapping[str, bytes | BlobRef | None] | None:
+    """The edits that make ``tree`` from ``base``'s card-free view, if it is one's fork."""
+    found = _root_and_edits(tree)
+    if not isinstance(base, SnapshotTree) or found is None:
+        return None
+    view = base._card_free
+    return found[1] if view is not None and found[0] is view else None
+
+
+def snapshot_against(tree: Mapping[str, bytes], parent: SnapshotTree) -> SnapshotTree:
+    """Verify a full-tree ingress delta against its exact immutable parent.
+
+    This compatibility boundary intentionally enumerates external full input.
+    Once complete, downstream indexes need only the sealed changed paths.
+    An internal staging cursor forked from ``parent`` already holds its exact
+    edits, so it is sealed rather than enumerated: one retirement per Claim in
+    a change set would otherwise walk the whole tree once per member.
+    """
+    if isinstance(tree, CandidateTree):
+        tree = tree.snapshot()
+    if isinstance(tree, SnapshotTree) and tree.edits_from(parent) is not None:
+        return tree
+    builder = parent.fork()
+    for path, content in tree.items():
+        if parent.get(path) != content:
+            try:
+                builder[path] = content
+            except (CruxibleError, ValueError):
+                # External full trees preserve the original normalization and
+                # refusal boundary; only internal canonical edits get a delta.
+                return SnapshotTree(tree)
+    for path in parent:
+        if path not in tree:
+            del builder[path]
+    return builder.snapshot()
+
+
+def semantic_path(path: str) -> bool:
+    return not path.startswith(("changesets/", "cards/"))
+
+
+def fork_of(
+    tree: Mapping[str, bytes], base: Mapping[str, bytes]
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """``tree`` as a root plus edits, where the root is ``base`` or its card-free view."""
+    found = _root_and_edits(tree)
+    if found is None or not isinstance(base, SnapshotTree) or base._parent is not None:
+        return None
+    root = found[0]
+    return found if root is base or (root is base._card_free and root is not None) else None
+
+
+_Spellings = tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class PathFacts:
+    """What whole-tree path checks conclude about one tree, advanced by deltas.
+
+    Proposal receive and tree writes refuse a tree whose paths are not
+    canonical, collide after case folding, or run too deep, or whose content is
+    too large in total. Each answer here equals what a pass over every path concludes; a
+    successor's facts follow from its parent's and the changed paths alone.
+    ``folded`` maps every case-folded path prefix to the spellings that fold
+    to it, so a collision is any prefix with more than one spelling.
+    """
+
+    content_bytes: int
+    noncanonical: int
+    colliding: int
+    depths: Mapping[int, int]
+    folded: PersistentMap[_Spellings]
+
+    @property
+    def max_depth(self) -> int:
+        return max((depth for depth, count in self.depths.items() if count), default=0)
+
+    def advanced(
+        self,
+        rows: Mapping[str, bytes | BlobRef],
+        edits: Mapping[str, bytes | BlobRef | None],
+    ) -> PathFacts:
+        """These facts for ``rows`` with ``edits`` applied."""
+        content = self.content_bytes
+        noncanonical = self.noncanonical
+        colliding = self.colliding
+        depths = dict(self.depths)
+        folded = self.folded
+        # Shared directory prefixes change once per edited path, but need only
+        # one persistent path-copy per distinct prefix in this change. This
+        # staging map grows with edited prefixes, never the instance inventory.
+        changed_folded: dict[str, _Spellings] = {}
+        for path, new in edits.items():
+            old = rows.get(path)
+            if old is None and new is None:
+                continue
+            for row, sign in ((old, -1), (new, 1)):
+                if row is None:
+                    continue
+                content += sign * _size(row)
+            if (old is None) == (new is None):
+                continue  # the path stays; only its bytes changed
+            sign = 1 if old is None else -1
+            noncanonical += sign * (not _canonical(path))
+            depth = path.count("/") + 1
+            depths[depth] = depths.get(depth, 0) + sign
+            for key, spelling in _prefixes(path):
+                before = changed_folded.get(key)
+                if before is None:
+                    before = folded.get(key, ())
+                after = _respelled(before, spelling, sign)
+                colliding += (len(after) > 1) - (len(before) > 1)
+                changed_folded[key] = after
+        for key, after in changed_folded.items():
+            folded = folded.set(key, after) if after else folded.delete(key)
+        return PathFacts(content, noncanonical, colliding, depths, folded)
+
+
+def path_facts(root: SnapshotTree) -> PathFacts:
+    """``root``'s path facts: one pass over its paths the first time, then carried."""
+    if root._parent is not None:
+        raise ValueError("only an immutable root carries path facts")
+    with root._lock:
+        facts = root._path_facts
+        if facts is None:
+            content = noncanonical = colliding = 0
+            depths: dict[int, int] = {}
+            folded: dict[str, _Spellings] = {}
+            for path, row in root._rows.items():
+                content += _size(row)
+                noncanonical += not _canonical(path)
+                depth = path.count("/") + 1
+                depths[depth] = depths.get(depth, 0) + 1
+                for key, spelling in _prefixes(path):
+                    folded[key] = _respelled(folded.get(key, ()), spelling, 1)
+            colliding = sum(1 for spellings in folded.values() if len(spellings) > 1)
+            facts = PathFacts(content, noncanonical, colliding, depths, PersistentMap(folded))
+            root._path_facts = facts
+    return facts
+
+
+def _canonical(path: str) -> bool:
+    try:
+        return normalize_ledger_path(path) == path
+    except (CruxibleError, ValueError):
+        return False
+
+
+def _prefixes(path: str) -> Iterator[tuple[str, str]]:
+    # Folding is per character and never yields "/", so folding a whole prefix
+    # equals folding each part: one key per (folded parent, folded part) pair.
+    end = path.find("/")
+    while end != -1:
+        prefix = path[:end]
+        yield prefix.casefold(), prefix
+        end = path.find("/", end + 1)
+    yield path.casefold(), path
+
+
+def _respelled(spellings: _Spellings, spelling: str, sign: int) -> _Spellings:
+    counts = dict(spellings)
+    counts[spelling] = counts.get(spelling, 0) + sign
+    return tuple(sorted((name, count) for name, count in counts.items() if count > 0))

@@ -1,0 +1,8958 @@
+"""Authenticated Procedure admission and log-sufficient Procedure execution."""
+
+from __future__ import annotations
+
+import base64
+import json
+import time
+from collections import Counter
+from collections.abc import Collection, Iterable, Mapping, Sequence
+from contextlib import nullcontext
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
+
+from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
+from cruxible_client.contracts.claim_evidence import (
+    ClaimEvidenceReceipt,
+    ClaimsDiagnostic,
+    CompleteWhenResult,
+    FindingKind,
+    RunCompleteness,
+)
+from cruxible_client.contracts.procedures.claims import ClaimsNode
+from cruxible_client.contracts.refs import Ref
+from cruxible_client.contracts.shapes import (
+    AllOf,
+    AnyOf,
+    Contract,
+    ContractRef,
+    CountOperand,
+    LiteralOperand,
+    Membership,
+    Not,
+    Predicate,
+    Presence,
+    requires_complete_input,
+)
+from cruxible_core.procedures.claims_context import ClaimsContext
+from cruxible_core.procedures.claims_units import (
+    CreationIdentity,
+    claims_item_change_digest,
+    finalize_creation_identities,
+)
+
+if TYPE_CHECKING:
+    from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
+    CanonicalValue,
+    Sha256Value,
+    canonical_bytes,
+    normalize_canonical,
+    typed_digest,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureDerivation,
+    CaptureEnvelopeV1,
+    CaptureFormatError,
+    CaptureRetentionErasurePolicy,
+    InputReceiptSetManifest,
+    ProviderResultToExternalCapture,
+    build_provider_external_capture_v2,
+    capture_contract_digest,
+    derive_input_template_digest,
+    validate_provider_external_capture_result,
+)
+from cruxible_client.contracts.errors import (
+    CasError,
+    ExecutionError,
+    JournalConflictError,
+    JournalError,
+    JournalIntegrityError,
+)
+from cruxible_client.contracts.line_inbox import (
+    INBOX_ITEM_MAX_BYTES,
+    INBOX_RUN_ITEM_CAP_DEFAULT,
+    INBOX_RUN_ITEM_CAP_MAX,
+    INBOX_RUN_MAX_BYTES,
+)
+from cruxible_client.contracts.procedure_runtime_policy import (
+    ProcedureRuntimePolicy,
+)
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    AcquisitionInputDecision,
+    AcquisitionRule,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
+    procedure_artifact_digest,
+)
+from cruxible_client.contracts.procedures.contracts import (
+    ProcedureContractItemBudgetExceeded,
+    ValidatedProcedureContract,
+)
+from cruxible_client.contracts.procedures.extract import ExtractNode
+from cruxible_client.contracts.procedures.graph import (
+    analyze_procedure,
+    late_state_taps,
+    reference_templates,
+)
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractRefused
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpec,
+    line_identity_digest,
+)
+from cruxible_client.contracts.procedures.models import (
+    CLOSED_TRANSFORM_KINDS,
+    TERMINAL_REQUIRED_RUNGS,
+    CallNode,
+    CaptureEgressNode,
+    GuardNode,
+    HaltNode,
+    InboxEgressNode,
+    InvokeNode,
+    LayoutExtractNode,
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
+    ProjectNode,
+    ReadNode,
+    RepeatBodyNode,
+    RepeatNode,
+    SelectNode,
+    TransformNode,
+    authority_for_rung,
+    budget_within_caps,
+    caps_budget,
+    is_terminal_node,
+    iter_references,
+    iter_role_references,
+    predicate_step_aliases,
+)
+from cruxible_client.contracts.procedures.node_summary import (
+    ClaimsDelivery,
+    EgressRunSummary,
+    NodeRunSummary,
+    ReadRunSummary,
+    ReobservationRefusalReason,
+    RepeatRunSummary,
+)
+from cruxible_client.contracts.procedures.reads import effective_read_rows
+from cruxible_client.contracts.procedures.results import (
+    InboxPostTruncation,
+    ProcedureAcquisitionPlan,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureAdmissionMaterialMember,
+    ProcedureBudgetBoundaryObservation,
+    ProcedureBudgetRefusalDetail,
+    ProcedureFailureCause,
+    ProcedureNodeRefusalCode,
+    ProcedureProviderBinding,
+    ProcedureReplayInputProjection,
+    ProcedureRunBudget,
+    ProcedureRunBudgetDeclared,
+    ProcedureRunBudgetObserved,
+    ProcedureSelectionDecision,
+    ProcedureSourceCaptureAssociation,
+    procedure_acquisition_plan_digest,
+    procedure_admission_material_digest,
+    procedure_provider_bindings,
+    procedure_selection_decision_digest,
+)
+from cruxible_client.contracts.procedures.windows import LineTriggerBinding
+from cruxible_client.contracts.provider_execution import (
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationCompleted,
+    ProviderInvocationOutcome,
+    ProviderInvocationOutputDigest,
+    ProviderInvocationReceipt,
+    ProviderInvocationStarted,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReceiptReference,
+    build_procedure_derived_source_request,
+    provider_invocation_output_digest,
+    provider_invocation_receipt_digest,
+    provider_secret_binding_identity_digest,
+)
+from cruxible_client.contracts.provider_operations import (
+    OperationItemBudgetExceeded,
+    OperationValueRefused,
+    capture_fields,
+    capture_list_fields,
+    closure_lookup,
+    validate_operation_value,
+)
+from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.resolution_contracts import InvestigationBinding
+from cruxible_client.contracts.shapes import (
+    ANY_CAPTURE_KIND,
+    EnumResolver,
+    InvalidRecordArm,
+    KeyCanonicalizer,
+)
+from cruxible_client.contracts.source_references import ExternalSourceReference
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
+from cruxible_client.contracts.workspace_file import (
+    ExecutedWorkspaceFileSourceRequestV2,
+    SourceReadReceipt,
+    WorkspaceBindingDigestAuthored,
+    WorkspaceFileGlobRequestV1,
+    is_workspace_glob,
+    parse_authored_workspace_glob,
+    parse_authored_workspace_request,
+    source_read_receipt_digest,
+)
+from cruxible_core.documents.workspace_file import (
+    DirectoryEntryCache,
+    WorkspaceFileReader,
+    WorkspaceFileReadRefused,
+)
+from cruxible_core.evidence.source_readers import (
+    CaptureAcquisitionReceiptV1,
+    ExternalCaptureAcquisitionV1,
+)
+from cruxible_core.exhaust import (
+    JournalEventKindV1,
+    JournalStreamIdentityV1,
+    LocalJournalBackend,
+    ProcedureJournalRecordDraftV1,
+    StoredProcedureJournalRecordV1,
+    journal_payload_bytes,
+)
+from cruxible_core.exhaust.journal_index import PROOF_LOCATOR_KINDS
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.writer import note_invocation_start, note_proof_record
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.acquisition import (
+    ACQUISITION_ORIGIN_INELIGIBLE,
+    ACQUISITION_OVERSIZED,
+    ACQUISITION_REFUSED,
+    ACQUISITION_UNAVAILABLE,
+    ProcedureCaptureMaterialV1,
+    ProcedureSourceAcquisitionResultV1,
+    apply_acquisition_result,
+    disallowed_origin,
+)
+from cruxible_core.procedures.claims_changes import CoreClaimsChange
+from cruxible_core.procedures.claims_diagnostics import ClaimsDiagnostics
+from cruxible_core.procedures.completeness import (
+    Completeness,
+    CompletenessProbe,
+    Read,
+    dropped_rows,
+)
+from cruxible_core.procedures.egress import (
+    RUNG_REQUIRED_OPERATIONS,
+    SERVED_AUTHORITY_TERMS,
+    EffectiveRungTermV1,
+    EffectiveRungV1,
+    FindingsSinkProtocol,
+    InboxEgressSinkProtocol,
+    PreparedTerminalEgressV1,
+    SettleGrantHolderProtocol,
+    TerminalAuthorityRefusal,
+    TerminalEgressChildReceiptV3,
+    TerminalEgressError,
+    TerminalEgressItemV1,
+    TerminalEgressPreparerProtocol,
+    TerminalEgressReceiptV1,
+    TerminalEgressReceiptV2,
+    TerminalEgressRequestV1,
+    TerminalEgressRequestV2,
+    TerminalEgressSinkProtocol,
+    build_terminal_egress_request_v2,
+    effect_dispatch_refusal,
+    effective_rung_digest,
+    verify_terminal_egress_receipt,
+)
+from cruxible_core.procedures.extract import (
+    ExtractOutcome,
+    ExtractRefused,
+    extract_specs,
+    plan_kind_lookup,
+    run_extract,
+)
+from cruxible_core.procedures.input_planes import (
+    AcceptedClaimRunInputV1,
+    AcceptedStateRunInputV2,
+    ExhaustRunInputV1,
+    LandedCaptureRunInputV1,
+    ProcedureRunInputV1,
+    accepted_read_definition_digest,
+    merge_run_input_vector,
+    run_input_digest,
+    validate_node_input_plane,
+    validate_run_input_vector,
+)
+from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
+from cruxible_core.procedures.node_summaries import (
+    call_summary,
+    claims_delivery,
+    claims_summary,
+    extract_summary,
+    guard_summary,
+    halt_summary,
+    record_summary,
+    row_count,
+    transform_summary,
+)
+from cruxible_core.procedures.ports import (
+    WORKSPACE_FILE_BUILTIN,
+    AcquisitionRules,
+    bound_operation,
+)
+from cruxible_core.procedures.reference_binding import (
+    ProcedureExecutionPlan,
+    execution_plan,
+    resolved_pin,
+)
+from cruxible_core.procedures.run_index import ProcedureRunIndex
+from cruxible_core.procedures.terminal_dependencies import (
+    TAINT_ACCEPTED_STATE,
+    TAINT_OMITTED_OPTIONAL,
+    TAINT_UNPROMOTED_EXHAUST,
+    AcquisitionInputOutcomeV1,
+    AliasProvenanceV1,
+    CaptureRootCache,
+    DependencyEvidenceFactsV1,
+    DependencyToken,
+    TerminalChildReceiptV1,
+    TerminalItemDependencyManifestV1,
+    accepted_state_token,
+    admitted_capture_token,
+    build_terminal_item_manifest,
+    capture_root,
+    citable_captures,
+    derive_terminal_item_facts,
+    exhaust_token,
+    manifest_dependency_tokens,
+    policy_token,
+    produced_capture_token,
+    receipt_token,
+    terminal_item_key,
+    witnessed_list_capture,
+)
+from cruxible_core.procedures.transforms import (
+    TransformInputInvalid,
+    apply_closed_transform,
+)
+from cruxible_core.providers.provider_local_runtime import (
+    BoundLocalProviderV1,
+    ProviderDriverOutcomeV1,
+    ProviderLocalRuntimeRefused,
+    ProviderSpawnDeadline,
+)
+from cruxible_core.providers.provider_outcomes import (
+    RefusalDetailCheck,
+    map_provider_envelope,
+    map_provider_refusal,
+    operation_refusal_is_declared,
+    provider_canonical_value,
+    provider_refusal_is_absorbable,
+)
+from cruxible_core.providers.provider_runtime_contract import (
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
+    ProviderRuntimeWireError,
+)
+from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.storage.material_reservations import (
+    PendingAdmissionMaterialReservationV1,
+    ProcedureMaterialReservationStore,
+    ReservedCaptureStore,
+    make_run_reservation,
+)
+
+ProcedureRunStatusV1 = Literal[
+    "succeeded",
+    "refused",
+    "failed",
+    "budget_exhausted",
+    "halted",
+]
+
+PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
+#: The one admitted-run family: its admission tag is also its binding-digest
+#: domain, and its replay key hashes one explicit semantic projection.
+PROCEDURE_RUN_ADMISSION_TAG: Final = "playbill-procedure-run-admission-v11"
+PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN: Final = "playbill-procedure-replay-key-v11"
+PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
+PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
+PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
+#: The one public run receipt's tag, which is also its digest domain.
+PROCEDURE_RUN_RECEIPT_DOMAIN: Final = "playbill-procedure-run-receipt-v8"
+
+_ZERO_DIGEST: Final = "sha256:" + "0" * 64
+_ZERO_RUN_ID: Final = "RUN-" + "0" * 64
+
+
+class _StrictExecutionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _sha256(value: str, *, label: str) -> str:
+    try:
+        Sha256Value.from_tagged(value)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be tagged lowercase SHA-256") from exc
+    return value
+
+
+def _sorted_unique(value: tuple[str, ...]) -> bool:
+    return value == tuple(sorted(set(value), key=lambda item: item.encode("utf-8")))
+
+
+def run_value_digest(domain: str, value: object) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        f"playbill-procedure-run-{domain}-v1",
+        {"value": normalize_canonical(value)},
+    ).tagged
+
+
+class ProcedureNodePinSetV1(_StrictExecutionModel):
+    tag: Literal["playbill-procedure-node-pin-set-v1"] = "playbill-procedure-node-pin-set-v1"
+    node_id: str
+    pins: tuple[ArtifactPin, ...]
+
+    @field_validator("pins")
+    @classmethod
+    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
+        ordered = tuple(
+            sorted(
+                value,
+                key=lambda pin: (
+                    pin.role.encode("utf-8"),
+                    pin.target.qualified.encode("utf-8"),
+                    pin.artifact_digest.encode("ascii"),
+                ),
+            )
+        )
+        identities = tuple((pin.role, pin.target.qualified) for pin in value)
+        if value != ordered or len(identities) != len(set(identities)):
+            raise ValueError("Procedure node pins must be sorted and unique")
+        return value
+
+
+#: The accepted-state plane's two arms: a Query result and a Claim selection.
+AcceptedStateRunInput = AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
+
+
+class AcceptedStateRunMaterial(_StrictExecutionModel):
+    """One admitted accepted-state read and the exact value its digest reproduces."""
+
+    tag: Literal["playbill-accepted-state-run-material-v2"] = (
+        "playbill-accepted-state-run-material-v2"
+    )
+    input: AcceptedStateRunInput
+    value: object
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @property
+    def rows(self) -> int:
+        """The rows this read returned, as the run's read budget counts them."""
+
+        if isinstance(self.input, AcceptedClaimRunInputV1):
+            return len(self.value) if isinstance(self.value, list) else 1
+        result = self.value.get("result") if isinstance(self.value, dict) else None
+        rows = result.get("rows") if isinstance(result, dict) else None
+        return len(rows) if isinstance(rows, list) else 0
+
+    @model_validator(mode="after")
+    def _digest(self) -> "AcceptedStateRunMaterial":
+        if self.input.result_digest != run_value_digest("state-result", self.value):
+            raise ValueError("accepted-state material does not reproduce its result digest")
+        return self
+
+
+class ProcedureResourceBudgetV1(_StrictExecutionModel):
+    """Effective instance/Procedure intersection retained before execution."""
+
+    result_bytes_cap: int = Field(ge=1)
+    repeat_attempts_cap: int = Field(ge=1)
+
+
+def procedure_run_declared_budget(admission: "ProcedureRunAdmission") -> ProcedureRunBudgetDeclared:
+    """The declared half of a run's one budget grammar, read off its admission."""
+
+    return ProcedureRunBudgetDeclared(
+        budget=admission.budget,
+        hard_caps=admission.hard_caps,
+        result_bytes_cap=(
+            admission.resource_budget.result_bytes_cap
+            if admission.resource_budget is not None
+            else 1_048_576
+        ),
+        provider_output_bytes_cap=admission.provider_output_bytes_cap,
+    )
+
+
+def resolve_procedure_resource_budget(
+    budget: ProcedureBudget,
+    hard_caps: ProcedureHardCaps,
+    policy: ProcedureRuntimePolicy,
+) -> ProcedureResourceBudgetV1 | None:
+    if policy.result_bytes_cap is None and policy.repeat_attempts_cap is None:
+        if budget.max_result_bytes is not None or hard_caps.max_result_bytes is not None:
+            raise ExecutionError("explicit result budgets require a runtime result policy")
+        if hard_caps.max_repeat_attempts > 25:
+            raise ExecutionError("repeat attempts above 25 require a runtime repeat policy")
+        return None
+    return ProcedureResourceBudgetV1(
+        result_bytes_cap=min(
+            cap
+            for cap in (
+                policy.result_bytes_cap or 1_048_576,
+                budget.max_result_bytes,
+                hard_caps.max_result_bytes,
+            )
+            if cap is not None
+        ),
+        repeat_attempts_cap=min(policy.repeat_attempts_cap or 25, hard_caps.max_repeat_attempts),
+    )
+
+
+class ProcedureParentBindingV1(_StrictExecutionModel):
+    """Backend-owned link to the admitted invocation that delegated this work."""
+
+    parent_run_id: str
+    parent_admission_digest: str
+    node_id: str
+    ancestors: tuple[ArtifactPin, ...]
+    activation_policies: tuple[Literal["drain", "abort", "snapshot", "epoch-check"], ...]
+
+    @field_validator("parent_admission_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="parent_admission_digest")
+
+    @model_validator(mode="after")
+    def _lineage(self) -> ProcedureParentBindingV1:
+        identities = tuple(pin.target for pin in self.ancestors)
+        if not identities or len(set(identities)) != len(identities):
+            raise ValueError("child invocation requires a nonrecursive ancestor chain")
+        if any(identity.kind != "Procedure" for identity in identities):
+            raise ValueError("child ancestors must be exact Procedure pins")
+        if len(self.activation_policies) != len(identities):
+            raise ValueError("every ancestor binds its activation policy")
+        return self
+
+
+class ProcedureRunAdmission(_StrictExecutionModel):
+    """The one complete run binding, fixed before any result is visible.
+
+    Every supported run admits under this one schema; what kind of run it is
+    reads off explicit fields, never off a model version:
+
+    - ``invocation_origin``: an actor's direct run or a Line occurrence. A Line
+      run binds its LineSpec, occurrence, deployment snapshot, acquisition
+      policy, mandate, calibration and sensitivity coordinates together; a
+      direct run binds none of the Line's own coordinates.
+    - ``parent_binding``: present exactly for a nested child, which keeps its
+      root's actor, lane and authority coordinates.
+    - ``lane``: the current lane or exact replay.
+    - ``acquisition_plan_digest``: present exactly when the run plans external
+      Provider occurrences (every Line run, and a direct run with Source or
+      Call nodes). A pure direct run plans none, so it carries no Provider
+      bindings, selection decision or Provider output cap.
+    - ``investigation`` and ``trigger_binding``: the run's exact investigation
+      and Line trigger, when it has them.
+
+    ``accepted_coordinate.generation``, ``bound_coordinate.generation`` and
+    ``head_at_admission.generation`` read SETTLEMENT ORDER; ``admitted_at`` and
+    ``occurrence_evaluation_time`` read EVALUATION INSTANT.
+    """
+
+    resource_budget: ProcedureResourceBudgetV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    tag: Literal["playbill-procedure-run-admission-v11"] = PROCEDURE_RUN_ADMISSION_TAG
+    instance_id: str
+    run_id: str
+    attempt: int = Field(ge=1)
+    accepted_coordinate: AcceptedCoordinate
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    procedure_identity: ArtifactIdentity
+    procedure_path: str
+    procedure_artifact_digest: str
+    definition_digest: str
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
+    full_pins: tuple[ArtifactPin, ...]
+    node_pin_sets: tuple[ProcedureNodePinSetV1, ...]
+    pin_set_digest: str
+    invocation_input: object
+    #: The run's effective parameters: the Line's (or a direct run's) values
+    #: over the Procedure's ``parameter_defaults``.
+    parameters: object
+    accepted_state_inputs: tuple[AcceptedStateRunInput, ...]
+    landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = ()
+    exhaust_inputs: tuple[ExhaustRunInputV1, ...] = ()
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
+    actor_context: GovernedActorContext
+    invocation_origin: Literal["actor", "line"] = "actor"
+    journal_stream: JournalStreamIdentityV1
+    journal_partition_id: str
+    line_identity: ArtifactIdentity | None = None
+    line_spec_digest: str | None = None
+    occurrence_id: str | None = None
+    occurrence_evaluation_time: datetime
+    deployment_snapshot_digest: str | None = None
+    acquisition_policy_digest: str | None = None
+    selection_receipt_digest: str | None = None
+    selection_decision: ProcedureSelectionDecision | None = None
+    selection_decision_digest: str | None = None
+    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...] = ()
+    provider_output_bytes_cap: int | None = Field(default=None, ge=1)
+    acquisition_plan_digest: str | None = None
+    exhaust_access_binding_digest: str | None = None
+    sensitivity_policy_digest: str | None = None
+    mandate_coordinate_digest: str | None = None
+    calibration_coordinate_digest: str | None = None
+    taint_labels: tuple[str, ...] = ()
+    epsilon_member: bool = False
+    investigation: InvestigationBinding | None = None
+    trigger_binding: LineTriggerBinding | None = None
+    parent_binding: ProcedureParentBindingV1 | None = None
+    #: A manual Line run on other parameters than its Line's (D-R39): the digest
+    #: of its Line spec and its parameters. It runs without the Line's mandate,
+    #: and this is its authority basis instead: propose, never settle.
+    parameter_override_digest: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    admitted_at: datetime
+    semantic_replay_key_digest: str
+    admission_binding_digest: str
+
+    @field_validator("invocation_input", "parameters", mode="before")
+    @classmethod
+    def _invocation_input(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @field_validator(
+        "procedure_artifact_digest",
+        "definition_digest",
+        "pin_set_digest",
+        "line_spec_digest",
+        "deployment_snapshot_digest",
+        "acquisition_policy_digest",
+        "selection_receipt_digest",
+        "selection_decision_digest",
+        "acquisition_plan_digest",
+        "exhaust_access_binding_digest",
+        "sensitivity_policy_digest",
+        "mandate_coordinate_digest",
+        "calibration_coordinate_digest",
+        "parameter_override_digest",
+        "semantic_replay_key_digest",
+        "admission_binding_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        return _sha256(value, label=str(getattr(info, "field_name", "run digest")))
+
+    @field_validator("admitted_at", "occurrence_evaluation_time")
+    @classmethod
+    def _instants(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("accepted_state_inputs")
+    @classmethod
+    def _state_inputs(
+        cls, value: tuple[AcceptedStateRunInput, ...]
+    ) -> tuple[AcceptedStateRunInput, ...]:
+        if not _sorted_unique(tuple(item.input_name for item in value)):
+            raise ValueError("accepted-state run inputs must be sorted and unique")
+        return value
+
+    @field_validator("node_pin_sets")
+    @classmethod
+    def _node_pin_sets(
+        cls, value: tuple[ProcedureNodePinSetV1, ...]
+    ) -> tuple[ProcedureNodePinSetV1, ...]:
+        if not _sorted_unique(tuple(item.node_id for item in value)):
+            raise ValueError("Procedure node pin sets must be sorted and unique")
+        return value
+
+    @field_validator("resolved_provider_bindings")
+    @classmethod
+    def _provider_bindings(
+        cls, value: tuple[ProcedureProviderBinding, ...]
+    ) -> tuple[ProcedureProviderBinding, ...]:
+        if not _sorted_unique(tuple(item.node_id for item in value)):
+            raise ValueError("resolved Provider bindings must be sorted and node-id unique")
+        return value
+
+    @field_validator("taint_labels")
+    @classmethod
+    def _taint(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not _sorted_unique(value):
+            raise ValueError("admitted taint labels must be sorted and unique")
+        return value
+
+    @property
+    def run_inputs(self) -> tuple[ProcedureRunInputV1, ...]:
+        """Return the complete discriminated union bound before any result is visible."""
+
+        return merge_run_input_vector(
+            self.accepted_state_inputs,
+            self.landed_capture_inputs,
+            self.exhaust_inputs,
+        )
+
+    @property
+    def plans_providers(self) -> bool:
+        """Whether this run planned external Provider occurrences at admission."""
+
+        return self.acquisition_plan_digest is not None
+
+    @model_validator(mode="after")
+    def _admission_shape(self) -> "ProcedureRunAdmission":
+        if self.procedure_identity.kind != "Procedure":
+            raise ValueError("Procedure run admission requires a Procedure identity")
+        if self.journal_stream.instance_id != self.instance_id:
+            raise ValueError("Procedure run and journal stream instance identities differ")
+        if self.accepted_coordinate != self.bound_coordinate:
+            raise ValueError("admission bound and accepted coordinates differ")
+        validate_run_input_vector(self.run_inputs, expected_accepted=self.accepted_coordinate)
+        if self.parameter_override_digest is not None and (
+            self.invocation_origin != "line" or self.parent_binding is not None
+        ):
+            raise ValueError("only a root Line run overrides its Line's parameters")
+        self._plan_shape()
+        if bool(self.exhaust_inputs) != (self.exhaust_access_binding_digest is not None):
+            raise ValueError(
+                "exhaust_binding_carrier_required: Exhaust inputs require their opaque binding"
+            )
+        if self.parent_binding is not None and self.procedure_identity in {
+            pin.target for pin in self.parent_binding.ancestors
+        }:
+            raise ValueError("recursive Procedure invocation is not supported")
+        if self.pin_set_digest != procedure_pin_set_digest(self.full_pins, self.node_pin_sets):
+            raise ValueError("Procedure run pin_set_digest does not reproduce")
+        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
+            raise ValueError("semantic replay key does not reproduce")
+        if self.admission_binding_digest != procedure_admission_digest(self):
+            raise ValueError("Procedure run admission_binding_digest does not reproduce")
+        if self.invocation_origin == "actor":
+            self._direct_shape()
+        else:
+            self._line_shape()
+        return self
+
+    def _plan_shape(self) -> None:
+        if not self.plans_providers:
+            if (
+                self.resolved_provider_bindings
+                or self.selection_decision is not None
+                or self.selection_decision_digest is not None
+                or self.provider_output_bytes_cap is not None
+                or self.trigger_binding is not None
+            ):
+                raise ValueError(
+                    "a run that plans no Provider occurrence binds no Provider, selection, "
+                    "output cap or trigger"
+                )
+            return
+        if (
+            self.selection_decision is None
+            or self.selection_decision_digest is None
+            or self.provider_output_bytes_cap is None
+        ):
+            raise ValueError(
+                "a run that plans Provider occurrences binds its selection decision and "
+                "Provider output cap"
+            )
+        if self.acquisition_policy_digest != self.selection_decision.policy_digest:
+            raise ValueError("selection decision must name the admitted acquisition policy")
+        if self.selection_decision_digest != procedure_selection_decision_digest(
+            self.selection_decision
+        ):
+            raise ValueError("selection decision digest does not reproduce")
+
+    def _direct_shape(self) -> None:
+        # A direct run is not an occurrence of anything: it names no Line,
+        # occurrence, mandate or calibration, and evaluates at its admission
+        # instant. A run that plans Providers also binds the acquisition
+        # policy and deployment snapshot it acquires under.
+        if (
+            self.line_identity is not None
+            or self.line_spec_digest is not None
+            or self.occurrence_id is not None
+            or self.mandate_coordinate_digest is not None
+            or self.calibration_coordinate_digest is not None
+            or self.epsilon_member
+        ):
+            raise ValueError("direct admission cannot claim Line state")
+        if not self.plans_providers and (
+            self.deployment_snapshot_digest is not None
+            or self.acquisition_policy_digest is not None
+        ):
+            raise ValueError("a direct run without Provider occurrences binds no deployment")
+        if (
+            self.landed_capture_inputs
+            or self.exhaust_inputs
+            or self.selection_receipt_digest is not None
+            or self.sensitivity_policy_digest is not None
+            or self.taint_labels
+        ):
+            raise ValueError("direct admission binds only the accepted-state input plane")
+        if self.occurrence_evaluation_time != self.admitted_at:
+            raise ValueError("direct admission evaluates at the instant it was admitted")
+        if self.run_id != procedure_semantic_run_id(self.semantic_replay_key_digest):
+            raise ValueError("direct admission run_id does not reproduce")
+
+    def _line_shape(self) -> None:
+        if not self.plans_providers:
+            raise ValueError("Line run admission binds its acquisition plan")
+        if any(
+            value is None
+            for value in (
+                self.line_spec_digest,
+                self.occurrence_id,
+                self.deployment_snapshot_digest,
+                self.acquisition_policy_digest,
+                self.mandate_coordinate_digest,
+                self.calibration_coordinate_digest,
+            )
+        ):
+            raise ValueError(
+                "Line run admission must bind LineSpec, occurrence, deployment snapshot, "
+                "acquisition policy, mandate, and calibration coordinates together"
+            )
+        if self.sensitivity_policy_digest is None:
+            raise ValueError("Line run admission must bind its sensitivity policy")
+        if self.line_identity is None or self.line_identity.kind != "Line":
+            raise ValueError("Line admission line_identity must have kind Line")
+        if self.journal_stream != procedure_line_journal_stream(self.instance_id):
+            raise ValueError("Line admission must use the Procedure exhaust stream")
+        expected_partition = (
+            procedure_direct_partition(self.semantic_replay_key_digest)
+            if self.parent_binding is not None
+            else procedure_line_partition(self.line_identity)
+        )
+        if self.journal_partition_id != expected_partition:
+            raise ValueError("Line admission partition does not reproduce its Line identity")
+        assert self.occurrence_id is not None
+        if self.run_id != procedure_line_run_id(
+            occurrence_id=self.occurrence_id,
+            attempt=self.attempt,
+            admission_binding_digest=self.admission_binding_digest,
+            occurrence_evaluation_time=self.occurrence_evaluation_time,
+        ):
+            raise ValueError("Line admission run_id does not reproduce")
+
+
+class LandedCaptureRunMaterialV1(_StrictExecutionModel):
+    """One admitted landed Capture and the exact envelope its digest reproduces."""
+
+    tag: Literal["playbill-landed-capture-run-material-v1"] = (
+        "playbill-landed-capture-run-material-v1"
+    )
+    input: LandedCaptureRunInputV1
+    material: ProcedureCaptureMaterialV1
+
+    @model_validator(mode="after")
+    def _binding(self) -> "LandedCaptureRunMaterialV1":
+        if self.material.capture_digest != self.input.capture_digest:
+            raise ValueError("landed Capture material differs from its admitted input")
+        if self.material.capture_contract_digest != self.input.capture_contract_digest:
+            raise ValueError("landed Capture material names another CaptureContract")
+        return self
+
+
+class ExhaustRunMaterialV1(_StrictExecutionModel):
+    """One admitted exhaust range result; the range and reducer are already bound."""
+
+    tag: Literal["playbill-exhaust-run-material-v1"] = "playbill-exhaust-run-material-v1"
+    input: ExhaustRunInputV1
+    value: object
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _digest(self) -> "ExhaustRunMaterialV1":
+        if self.input.result_digest != run_value_digest("exhaust-result", self.value):
+            raise ValueError("exhaust material does not reproduce its result digest")
+        return self
+
+
+class _AdmissionCarrier(_StrictExecutionModel):
+    """What both the prepared run and its durable admission record carry.
+
+    The material manifest covers the landed-Capture and exhaust inputs (empty
+    when there are none). The acquisition plan is present exactly when the
+    admission planned Provider occurrences, and the admission's bindings are
+    then exactly the plan's own.
+
+    Nested coordinate generations read SETTLEMENT ORDER; nested ``admitted_at``
+    and ``occurrence_evaluation_time`` read EVALUATION INSTANT; nested retention
+    deadlines and Provider budget windows read VALIDITY WINDOW.
+    """
+
+    admission: ProcedureRunAdmission
+    admission_material_manifest: ProcedureAdmissionMaterialManifest
+    admission_material_manifest_digest: str
+    acquisition_plan: ProcedureAcquisitionPlan | None = None
+    acquisition_plan_digest: str | None = None
+    required_reservation_ids: tuple[str, ...] = ()
+
+    @field_validator("admission_material_manifest_digest", "acquisition_plan_digest")
+    @classmethod
+    def _carrier_digests(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        return _sha256(value, label=str(getattr(info, "field_name", "carrier digest")))
+
+    @field_validator("required_reservation_ids")
+    @classmethod
+    def _reservations(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("required reservation ids must be sorted and unique")
+        for item in value:
+            _sha256(item, label="required_reservation_id")
+        return value
+
+    @model_validator(mode="after")
+    def _carrier(self) -> "_AdmissionCarrier":
+        if self.admission_material_manifest_digest != procedure_admission_material_digest(
+            self.admission_material_manifest
+        ):
+            raise ValueError("admission material manifest digest does not reproduce")
+        _validate_admission_material_manifest(self.admission, self.admission_material_manifest)
+        plan = self.acquisition_plan
+        if (plan is None) != (self.acquisition_plan_digest is None):
+            raise ValueError("an acquisition plan and its digest travel together")
+        if self.acquisition_plan_digest != self.admission.acquisition_plan_digest:
+            raise ValueError("prepared acquisition plan differs from admission")
+        if plan is None:
+            return self
+        admission = self.admission
+        if self.acquisition_plan_digest != procedure_acquisition_plan_digest(plan):
+            raise ValueError("prepared acquisition plan digest does not reproduce")
+        if plan.exhaust_access_binding_digest != admission.exhaust_access_binding_digest:
+            raise ValueError("prepared Exhaust binding differs from admission")
+        if (
+            plan.accepted_coordinate != admission.accepted_coordinate
+            or plan.line_identity != admission.line_identity
+            or plan.line_spec_digest != admission.line_spec_digest
+            or plan.occurrence_id != admission.occurrence_id
+            or plan.occurrence_evaluation_time != admission.occurrence_evaluation_time
+        ):
+            raise ValueError("prepared acquisition plan names another Line coordinate")
+        if any(
+            item.budget_translation.policy_output_bytes_cap != admission.provider_output_bytes_cap
+            for item in plan.external_occurrences
+        ):
+            raise ValueError("acquisition plan budget does not use policy-in-force")
+        if admission.resolved_provider_bindings != procedure_provider_bindings(
+            plan.external_occurrences
+        ):
+            raise ValueError("Provider bindings are not the acquisition plan's own")
+        return self
+
+
+class PreparedProcedureRun(_AdmissionCarrier):
+    """An admitted run and every material it observes, ready to execute."""
+
+    tag: Literal["playbill-prepared-procedure-run-v10"] = "playbill-prepared-procedure-run-v10"
+    accepted_state_materials: tuple[AcceptedStateRunMaterial, ...]
+    landed_capture_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
+    exhaust_materials: tuple[ExhaustRunMaterialV1, ...] = ()
+    acquisition_outcomes: tuple[AcquisitionInputOutcomeV1, ...] = ()
+
+    @model_validator(mode="after")
+    def _materials(self) -> "PreparedProcedureRun":
+        admission = self.admission
+        if tuple(item.input for item in self.accepted_state_materials) != (
+            admission.accepted_state_inputs
+        ):
+            raise ValueError("prepared run materials must exactly match admitted state inputs")
+        if tuple(item.input for item in self.landed_capture_materials) != (
+            admission.landed_capture_inputs
+        ):
+            raise ValueError("prepared run materials must exactly match admitted landed Captures")
+        if tuple(item.input for item in self.exhaust_materials) != admission.exhaust_inputs:
+            raise ValueError("prepared run materials must exactly match admitted exhaust inputs")
+        if not _sorted_unique(tuple(item.input_name for item in self.acquisition_outcomes)):
+            raise ValueError("prepared acquisition outcomes must be sorted and unique")
+        return self
+
+    def bound_payload(self) -> "ProcedureAdmissionBoundPayload":
+        """The durable admission record of this prepared run."""
+
+        return ProcedureAdmissionBoundPayload.model_validate(
+            {
+                name: getattr(self, name)
+                for name in ProcedureAdmissionBoundPayload.model_fields
+                if name != "tag"
+            }
+        )
+
+
+class ProcedureAdmissionBoundPayload(_AdmissionCarrier):
+    """The ``admission_bound`` journal record: the admission and its carried commitments.
+
+    Accepted-state values are not repeated here: each admitted read already
+    names its retained body (``material_body_digest``).
+    """
+
+    tag: Literal["playbill-procedure-admission-bound-payload-v10"] = (
+        "playbill-procedure-admission-bound-payload-v10"
+    )
+
+
+class ProcedureRunRefusalV1(_StrictExecutionModel):
+    tag: Literal["playbill-procedure-run-refusal-v1"] = "playbill-procedure-run-refusal-v1"
+    code: str
+    message: str
+    node_id: str | None = None
+    detail_code: str | None = None
+    details: object = Field(default_factory=dict)
+    budget: ProcedureBudgetRefusalDetail | None = None
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class ProcedureRunReceiptV1(_StrictExecutionModel):
+    tag: Literal["playbill-procedure-run-receipt-v1"] = "playbill-procedure-run-receipt-v1"
+    run_id: str
+    admission_binding_digest: str
+    stream: JournalStreamIdentityV1
+    partition_id: str
+    first_sequence: int = Field(ge=1)
+    last_sequence: int = Field(ge=1)
+    record_digests: tuple[str, ...]
+    chain_head_digest: str
+
+    @field_validator("admission_binding_digest", "chain_head_digest")
+    @classmethod
+    def _receipt_digest(cls, value: str, info: object) -> str:
+        return _sha256(value, label=str(getattr(info, "field_name", "receipt digest")))
+
+    @field_validator("record_digests")
+    @classmethod
+    def _record_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or len(value) != len(set(value)):
+            raise ValueError("Procedure receipt record digests must be nonempty and unique")
+        for item in value:
+            _sha256(item, label="Procedure receipt record digest")
+        return value
+
+    @model_validator(mode="after")
+    def _range(self) -> "ProcedureRunReceiptV1":
+        if self.last_sequence - self.first_sequence + 1 != len(self.record_digests):
+            raise ValueError("Procedure receipt sequence range and records disagree")
+        if self.chain_head_digest != self.record_digests[-1]:
+            raise ValueError("Procedure receipt head must equal its final record digest")
+        return self
+
+
+class ProcedureRunResultV1(_StrictExecutionModel):
+    tag: Literal["playbill-procedure-run-result-v1"] = "playbill-procedure-run-result-v1"
+    run_id: str
+    status: ProcedureRunStatusV1
+    output: object | None = None
+    refusal: ProcedureRunRefusalV1 | None = None
+    receipt: ProcedureRunReceiptV1
+    completeness: RunCompleteness | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("output", mode="before")
+    @classmethod
+    def _output(cls, value: object | None) -> object | None:
+        return None if value is None else normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProcedureRunResultV1":
+        if (self.status == "succeeded") != (self.output is not None):
+            raise ValueError("only a succeeded Procedure run carries output")
+        if (self.status == "refused") != (self.refusal is not None):
+            raise ValueError("only a refused Procedure run carries a typed refusal")
+        return self
+
+
+def procedure_run_receipt_digest(receipt: ProcedureRunReceiptV1) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-procedure-run-receipt-v1",
+        {"receipt": receipt.model_dump(mode="json")},
+    ).tagged
+
+
+def _semantic_refusal_payload(refusal: ProcedureRunRefusalV1) -> CanonicalValue:
+    return normalize_canonical(
+        {
+            "code": refusal.code,
+            "node_id": refusal.node_id,
+            "detail_code": refusal.detail_code,
+            "details": refusal.details,
+            "budget": None if refusal.budget is None else refusal.budget.model_dump(mode="json"),
+        }
+    )
+
+
+def procedure_semantic_result_digest(
+    *,
+    semantic_replay_key_digest: str,
+    status: Literal["succeeded", "refused", "halted"],
+    output: CanonicalValue | None,
+    refusal: ProcedureRunRefusalV1 | None,
+    halt: CanonicalValue | None = None,
+    fetched_captures: Iterable[str] = (),
+    late_reads: Iterable[str] = (),
+) -> str:
+    """Commit only replay-stable output or refusal material.
+
+    A run is identified by its inputs and the evidence it fetched (D-R37 f1):
+    the sorted digests of the fetched, non-derived Captures it consumed join
+    the preimage. They are present only when non-empty, so a run that fetched
+    nothing keeps its digest (f2). A late read's record (D-R38) joins it the
+    same way: ``late_reads`` is the sorted run-input digests of the reads the
+    run made mid-run, present only when it made one.
+    """
+
+    if (status == "refused") != (refusal is not None):
+        raise ValueError("semantic Procedure refusal shape is inconsistent")
+    fetched = sorted(set(fetched_captures))
+    evidence: dict[str, CanonicalValue] = {"fetched_captures": [*fetched]} if fetched else {}
+    late = sorted(set(late_reads))
+    if late:
+        evidence["late_reads"] = [*late]
+    if status == "halted":
+        if halt is None or output is not None or refusal is not None:
+            raise ValueError("semantic Procedure halt shape is inconsistent")
+        return typed_digest(
+            Sha256Value,
+            PROCEDURE_SEMANTIC_RESULT_DOMAIN,
+            {
+                "semantic_replay_key_digest": semantic_replay_key_digest,
+                "status": "halted",
+                "halt": halt,
+                **evidence,
+            },
+        ).tagged
+    if halt is not None:
+        raise ValueError("only a halted Procedure semantic result carries halt material")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SEMANTIC_RESULT_DOMAIN,
+        {
+            "semantic_replay_key_digest": semantic_replay_key_digest,
+            "status": status,
+            "output": output if status == "succeeded" else None,
+            "refusal": None if refusal is None else _semantic_refusal_payload(refusal),
+            **evidence,
+        },
+    ).tagged
+
+
+class ProviderInvocationResultV1(_StrictExecutionModel):
+    tag: Literal["playbill-provider-invocation-result-v1"] = (
+        "playbill-provider-invocation-result-v1"
+    )
+    output: object
+    trace: object = Field(default_factory=dict)
+
+    @field_validator("output", "trace", mode="before")
+    @classmethod
+    def _canonical(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class StateTapReadResultV1(_StrictExecutionModel):
+    tag: Literal["playbill-state-tap-read-result-v1"] = "playbill-state-tap-read-result-v1"
+    value: object
+    effective_budgets: QueryBudgets
+    #: Rows the read returned, charged against the run's read ceiling.
+    rows: int = Field(default=0, ge=0, exclude=True)
+
+
+class QueryContractViolated(ExecutionError):
+    """A Procedure read whose parameters or a row break the Query's pinned Contract."""
+
+    def __init__(
+        self, *, direction: Literal["parameters", "row"], details: Mapping[str, object]
+    ) -> None:
+        self.direction = direction
+        self.details: dict[str, object] = dict(details)
+        self.reason = (
+            "the read's parameters do not satisfy the Query's parameter Contract"
+            if direction == "parameters"
+            else "a row the read returned does not satisfy the Query's row Contract"
+        )
+        super().__init__(f"query_contract_violated: {self.reason}")
+
+
+class ReadCeilingExceeded(ExecutionError):
+    """A Procedure read that the run's read ceiling would clip: refused, never truncated."""
+
+    def __init__(self, *, clipped: tuple[str, ...], candidates: int | None, ceiling: int) -> None:
+        self.clipped = clipped
+        self.candidates = candidates
+        self.ceiling = ceiling
+        super().__init__(
+            f"read_ceiling_exceeded: the read clips {list(clipped)} under its {ceiling}-row ceiling"
+        )
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class StateTapReaderProtocol(Protocol):
+    def read_accepted_state(
+        self,
+        *,
+        query: ArtifactPin,
+        parameters: CanonicalValue,
+        coordinate: AcceptedCoordinate,
+        ceiling: int = ...,
+    ) -> StateTapReadResultV1: ...
+
+    def read_accepted_claim(
+        self,
+        *,
+        claim_type: ArtifactPin,
+        subject_kind: str,
+        subject_id: str,
+        cardinality: Literal["one", "all"],
+        limit: int | None = None,
+        coordinate: AcceptedCoordinate,
+        ceiling: int = ...,
+    ) -> StateTapReadResultV1: ...
+
+
+class ProviderRuntimeInvokerProtocol(Protocol):
+    def bind_provider(
+        self,
+        *,
+        occurrence: ProviderExternalOccurrencePlan,
+    ) -> BoundLocalProviderV1: ...
+
+    def invoke_provider(
+        self,
+        *,
+        occurrence: ProviderExternalOccurrencePlan,
+        context: ProviderRuntimeRunContext,
+        invocation_id: str,
+        bound: BoundLocalProviderV1,
+        deadline: ProviderSpawnDeadline,
+    ) -> ProviderDriverOutcomeV1: ...
+
+
+class ContractValidatorProtocol(Protocol):
+    def validate_contract(
+        self,
+        *,
+        contract: ArtifactPin,
+        payload: CanonicalValue,
+        direction: Literal["input", "output"],
+    ) -> object: ...
+
+    def validate_contract_with_budget(
+        self,
+        *,
+        contract: ArtifactPin,
+        payload: CanonicalValue,
+        direction: Literal["input", "output"],
+        max_items: int,
+    ) -> ValidatedProcedureContract: ...
+
+
+class ProcedureActivationAuthorityProtocol(Protocol):
+    def current_procedure_digest(
+        self,
+        identity: ArtifactIdentity,
+        *,
+        coordinate: AcceptedCoordinate,
+    ) -> str | None: ...
+
+
+def _journal_refusal_code(
+    exc: JournalError,
+) -> Literal["journal_conflict", "journal_integrity_error", "journal_append_failed"]:
+    """Map one journal failure onto its served code by its exception class."""
+
+    if isinstance(exc, JournalConflictError):
+        return "journal_conflict"
+    if isinstance(exc, JournalIntegrityError):
+        return "journal_integrity_error"
+    return "journal_append_failed"
+
+
+class ProcedureClockProtocol(Protocol):
+    def now(self) -> datetime: ...
+
+    def monotonic_ns(self) -> int: ...
+
+
+@dataclass(frozen=True)
+class SystemProcedureClock:
+    def now(self) -> datetime:
+        return utc_now()
+
+    def monotonic_ns(self) -> int:
+        return time.monotonic_ns()
+
+
+def procedure_pin_set_digest(
+    pins: tuple[ArtifactPin, ...],
+    node_pin_sets: tuple[ProcedureNodePinSetV1, ...],
+) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-procedure-run-pin-set-v1",
+        {
+            "full_pins": [pin.model_dump(mode="json") for pin in pins],
+            "node_pin_sets": [item.model_dump(mode="json") for item in node_pin_sets],
+        },
+    ).tagged
+
+
+def procedure_replay_input_projection(
+    run_input: ProcedureRunInputV1,
+) -> ProcedureReplayInputProjection:
+    if isinstance(run_input, AcceptedStateRunInputV2 | AcceptedClaimRunInputV1):
+        provenance = {
+            "plane": "accepted_state",
+            (
+                "claim_type_digest"
+                if isinstance(run_input, AcceptedClaimRunInputV1)
+                else "query_definition_digest"
+            ): accepted_read_definition_digest(run_input),
+            "parameters_digest": run_input.parameters_digest,
+            "read_coordinate": run_input.read_coordinate.model_dump(mode="json"),
+            "effective_query_budgets": run_input.effective_query_budgets.model_dump(mode="json"),
+        }
+        return ProcedureReplayInputProjection(
+            input_name=run_input.input_name,
+            plane="accepted_state",
+            kind="claim_selection"
+            if isinstance(run_input, AcceptedClaimRunInputV1)
+            else "query_result",
+            value_or_body_digest=run_input.result_digest,
+            provenance_digest=typed_digest(
+                Sha256Value,
+                PROCEDURE_INPUT_PROVENANCE_DOMAIN,
+                provenance,
+            ).tagged,
+        )
+    if isinstance(run_input, LandedCaptureRunInputV1):
+        return ProcedureReplayInputProjection(
+            input_name=run_input.input_name,
+            plane="landed_capture",
+            kind="capture",
+            value_or_body_digest=run_input.capture_digest,
+            provenance_digest=typed_digest(
+                Sha256Value,
+                PROCEDURE_INPUT_PROVENANCE_DOMAIN,
+                {
+                    "plane": "landed_capture",
+                    "capture_contract_digest": run_input.capture_contract_digest,
+                    "landing_cursor": run_input.landing_cursor,
+                },
+            ).tagged,
+        )
+    return ProcedureReplayInputProjection(
+        input_name=run_input.input_name,
+        plane="exhaust",
+        kind="reduced_exhaust",
+        value_or_body_digest=run_input.result_digest,
+        provenance_digest=typed_digest(
+            Sha256Value,
+            PROCEDURE_INPUT_PROVENANCE_DOMAIN,
+            {
+                "plane": "exhaust",
+                "journal_identity": run_input.journal_identity,
+                "first_cursor": run_input.first_cursor,
+                "last_cursor": run_input.last_cursor,
+                "reducer_or_query_digest": run_input.reducer_or_query_digest,
+            },
+        ).tagged,
+    )
+
+
+def procedure_replay_input_vector(
+    admission: ProcedureRunAdmission,
+) -> tuple[ProcedureReplayInputProjection, ...]:
+    return tuple(procedure_replay_input_projection(item) for item in admission.run_inputs)
+
+
+def _validate_admission_material_manifest(
+    admission: ProcedureRunAdmission,
+    manifest: ProcedureAdmissionMaterialManifest,
+) -> None:
+    expected: dict[str, tuple[str, str, str | None]] = {
+        item.input_name: (
+            "landed_capture",
+            item.capture_digest,
+            item.capture_contract_digest,
+        )
+        for item in admission.landed_capture_inputs
+    }
+    expected.update(
+        {
+            item.input_name: ("exhaust", item.result_digest, None)
+            for item in admission.exhaust_inputs
+        }
+    )
+    names = tuple(member.input_name for member in manifest.members)
+    expected_names = tuple(sorted(expected, key=lambda item: item.encode("utf-8")))
+    if names != expected_names:
+        raise ValueError("admission material manifest must cover Capture/exhaust inputs")
+    for member in manifest.members:
+        plane, semantic_digest, retention_authority = expected[member.input_name]
+        if member.plane != plane or member.semantic_digest != semantic_digest:
+            raise ValueError("admission material member disagrees with its admitted input")
+        if (
+            retention_authority is not None
+            and member.retention_authority_digest != retention_authority
+        ):
+            raise ValueError("Capture material member names another retention authority")
+
+
+def capture_admission_material_member(
+    run_input: LandedCaptureRunInputV1,
+    *,
+    policy: CaptureRetentionErasurePolicy,
+    admitted_at: datetime,
+    body_digest: str | None,
+) -> ProcedureAdmissionMaterialMember:
+    """Freeze Capture retention into one admission member at its admission time."""
+
+    admitted_at = ensure_utc(admitted_at)
+    retain_until = (
+        admitted_at + timedelta(microseconds=policy.minimum_retention.microseconds)
+        if policy.body_retention == "required_for_duration" and policy.minimum_retention is not None
+        else None
+    )
+    return ProcedureAdmissionMaterialMember(
+        input_name=run_input.input_name,
+        plane="landed_capture",
+        semantic_digest=run_input.capture_digest,
+        body_digest=body_digest,
+        retention_authority_digest=run_input.capture_contract_digest,
+        body_retention=policy.body_retention,
+        retain_until=retain_until,
+        erasure_rule_digest=policy.erasure_rule_digest,
+    )
+
+
+def read_admission_material_body(
+    bodies: ContentAddressedBodyStore,
+    member: ProcedureAdmissionMaterialMember,
+) -> bytes:
+    """Read one admitted body or classify local absence without inventing erasure proof."""
+
+    details = {
+        "input_name": member.input_name,
+        "plane": member.plane,
+        "semantic_digest": member.semantic_digest,
+        "retention_authority_digest": member.retention_authority_digest,
+    }
+    if member.body_digest is None:
+        raise _OperationalFailure(
+            "admission_material_unavailable_by_policy",
+            details=details,
+        )
+    access = BodyAccessContext(principal_id="procedure-material-replay", can_read_body=True)
+    try:
+        metadata = bodies.metadata(member.body_digest, access=access)
+    except Exception as exc:
+        raise _OperationalFailure(
+            "replay_material_unavailable",
+            details={**details, "body_digest": member.body_digest},
+        ) from exc
+    if not metadata.present:
+        raise _OperationalFailure(
+            (
+                "admission_material_unavailable_by_policy"
+                if member.body_retention in {"never_materialize", "optional"}
+                else "replay_material_unavailable"
+            ),
+            details={**details, "body_digest": member.body_digest},
+        )
+    try:
+        return bodies.read(member.body_digest, access=access)
+    except Exception as exc:  # pragma: no cover - metadata and read share verification
+        raise _OperationalFailure(
+            "replay_material_unavailable",
+            details={**details, "body_digest": member.body_digest},
+        ) from exc
+
+
+def procedure_line_journal_stream(instance_id: str) -> JournalStreamIdentityV1:
+    return JournalStreamIdentityV1(
+        instance_id=instance_id,
+        journal_family="procedure-exhaust-v1",
+        stream_id="procedures",
+    )
+
+
+def _source_capture_association_fields(
+    occurrence_path: str | None,
+    invocation_receipt_digest: str | None,
+) -> dict[str, str]:
+    """Keep the retained graph-v3 produced-Capture payload byte-identical."""
+
+    if occurrence_path is None or invocation_receipt_digest is None:
+        return {}
+    return {
+        "occurrence_path": occurrence_path,
+        "invocation_receipt_digest": invocation_receipt_digest,
+    }
+
+
+def verify_line_admission_spec(
+    admission: ProcedureRunAdmission,
+    accepted_line: AcceptedLineSpec,
+    *,
+    procedure_binding: ArtifactPin | None = None,
+    acquisition_rules_digest: str | None = None,
+) -> None:
+    """Bind admission to exact Line bytes, its exact Procedure and its acquisition rules."""
+
+    if (
+        admission.line_identity != accepted_line.line.identity
+        or admission.line_spec_digest != accepted_line.artifact_digest
+    ):
+        raise ExecutionError("Line admission names another accepted LineSpec")
+    procedure = accepted_line.line.procedure
+    if procedure_binding is not None and procedure_binding != procedure:
+        raise ExecutionError("Line Procedure pin differs from the coordinate-resolved binding")
+    if (
+        admission.procedure_identity != procedure.target
+        or admission.procedure_artifact_digest != procedure.artifact_digest
+    ):
+        raise ExecutionError("Line admission names another Procedure artifact")
+    # A Source-free Line acquires nothing; its admission binds the accepted
+    # runtime policy digest instead, which the admission digest seals.
+    if (
+        acquisition_rules_digest is not None
+        and admission.acquisition_policy_digest != acquisition_rules_digest
+    ):
+        raise ExecutionError("Line admission names other acquisition rules")
+
+
+def procedure_line_partition(line_identity: ArtifactIdentity) -> str:
+    if line_identity.kind != "Line":
+        raise ValueError("Procedure Line partition requires a Line identity")
+    digest = line_identity_digest(line_identity)
+    return "line:" + digest.removeprefix("sha256:")
+
+
+def procedure_line_run_id(
+    *,
+    occurrence_id: str,
+    attempt: int,
+    admission_binding_digest: str,
+    occurrence_evaluation_time: datetime,
+) -> str:
+    if attempt < 1:
+        raise ValueError("Procedure Line attempt must be positive")
+    _sha256(admission_binding_digest, label="admission_binding_digest")
+    digest = typed_digest(
+        Sha256Value,
+        PROCEDURE_LINE_RUN_ID_DOMAIN,
+        {
+            "occurrence_id": occurrence_id,
+            "attempt": attempt,
+            "admission_binding_digest": admission_binding_digest,
+            "occurrence_evaluation_time": format_datetime(ensure_utc(occurrence_evaluation_time)),
+        },
+    ).tagged
+    return "RUN-" + digest.removeprefix("sha256:")
+
+
+def parse_admission_payload(payload: object) -> ProcedureAdmissionBoundPayload:
+    """Read the one current ``admission_bound`` record; any other envelope is refused."""
+
+    if not isinstance(payload, dict):
+        raise ExecutionError("admission payload is not an object")
+    if payload.get("tag") != ProcedureAdmissionBoundPayload.model_fields["tag"].default:
+        raise ExecutionError("admission payload version is unsupported")
+    return ProcedureAdmissionBoundPayload.model_validate(payload)
+
+
+def procedure_semantic_run_id(semantic_replay_key_digest: str) -> str:
+    """Return the direct lane's run id: exact replay semantics, one identity."""
+
+    _sha256(semantic_replay_key_digest, label="semantic_replay_key_digest")
+    return "RUN-" + typed_digest(
+        Sha256Value,
+        PROCEDURE_RUN_ID_V2_DOMAIN,
+        {"semantic_replay_key_digest": semantic_replay_key_digest},
+    ).tagged.removeprefix("sha256:")
+
+
+def procedure_direct_partition(semantic_replay_key_digest: str) -> str:
+    """Return the direct lane's journal partition for one replay identity."""
+
+    _sha256(semantic_replay_key_digest, label="semantic_replay_key_digest")
+    return "direct:" + semantic_replay_key_digest.removeprefix("sha256:")
+
+
+class ProcedureRuntimePolicyAbsent(ExecutionError):
+    code = "procedure_runtime_policy_absent"
+
+
+def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmission) -> str:
+    """Hash the one explicit semantic projection of an admission.
+
+    The projection names exactly what decides a run's replay identity, and
+    nothing volatile: the exact Procedure, invocation input, bound coordinate,
+    evaluation instant and pins; each admitted input as its value (or body)
+    digest beside a separate provenance digest; the budget, caps and runtime
+    resource budget; the acquisition plan and exhaust binding (which carry the
+    Line, occurrence, selection and Provider bindings); the authority
+    coordinates, lane, taint and epsilon membership; the Provider output cap;
+    and the exact investigation, trigger and parent binding. Who admitted it,
+    when the head moved, and where its material bodies are stored are not
+    replay semantics and never enter.
+    """
+
+    pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
+    pins.sort(key=canonical_bytes)
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN,
+        {
+            "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
+            "procedure_artifact_digest": admission.procedure_artifact_digest,
+            "invocation_input": admission.invocation_input,
+            "parameters": admission.parameters,
+            "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
+            "evaluation_time": format_datetime(admission.occurrence_evaluation_time),
+            "validated_pins": pins,
+            "node_pin_sets": [item.model_dump(mode="json") for item in admission.node_pin_sets],
+            "pin_set_digest": admission.pin_set_digest,
+            "replay_input_vector": [
+                item.model_dump(mode="json") for item in procedure_replay_input_vector(admission)
+            ],
+            "budget": admission.budget.model_dump(mode="json"),
+            "hard_caps": admission.hard_caps.model_dump(mode="json"),
+            "resource_budget": None
+            if admission.resource_budget is None
+            else admission.resource_budget.model_dump(mode="json"),
+            "acquisition_plan_digest": admission.acquisition_plan_digest,
+            "exhaust_access_binding_digest": admission.exhaust_access_binding_digest,
+            "mandate_coordinate_digest": admission.mandate_coordinate_digest,
+            "calibration_coordinate_digest": admission.calibration_coordinate_digest,
+            "sensitivity_policy_digest": admission.sensitivity_policy_digest,
+            "lane": admission.lane,
+            "taint_labels": list(admission.taint_labels),
+            "epsilon_member": admission.epsilon_member,
+            "provider_output_bytes_cap": admission.provider_output_bytes_cap,
+            "investigation": None
+            if admission.investigation is None
+            else admission.investigation.model_dump(mode="json"),
+            "trigger": None
+            if admission.trigger_binding is None
+            else admission.trigger_binding.model_dump(mode="json"),
+            "parent_binding": None
+            if admission.parent_binding is None
+            else admission.parent_binding.model_dump(mode="json"),
+            # Present only on an overridden Line run (D-R39), so every other
+            # run keeps its identity.
+            **(
+                {}
+                if admission.parameter_override_digest is None
+                else {"parameter_override_digest": admission.parameter_override_digest}
+            ),
+        },
+    ).tagged
+
+
+def procedure_admission_digest(admission: ProcedureRunAdmission) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        PROCEDURE_RUN_ADMISSION_TAG,
+        {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
+    ).tagged
+
+
+def seal_procedure_run_admission(
+    fields: Mapping[str, object],
+    *,
+    journal_partition_id: str | None = None,
+) -> ProcedureRunAdmission:
+    """Derive a run's complete identity from its bound fields: the one place it is done.
+
+    Every preparation path (a pure direct run, a direct Provider run, a Line
+    occurrence, a nested child, and any later investigation, trigger or runtime
+    policy binding) supplies the admission's semantic fields here; the replay
+    key, binding digest, run id and partition are always derived, never
+    supplied. A direct run's id is its replay identity; a Line run's id names
+    its occurrence, attempt and binding. A root Line run journals in its Line's
+    partition, every other run in its replay identity's direct partition (a
+    root direct run may name another partition explicitly).
+    """
+
+    provisional = ProcedureRunAdmission.model_construct(
+        **{
+            **cast(dict[str, Any], fields),
+            # Exactly the normalized values validation hashes again.
+            "invocation_input": normalize_canonical(fields.get("invocation_input")),
+            "parameters": normalize_canonical(fields.get("parameters")),
+            "admitted_at": ensure_utc(cast(datetime, fields["admitted_at"])),
+            "occurrence_evaluation_time": ensure_utc(
+                cast(datetime, fields["occurrence_evaluation_time"])
+            ),
+            "run_id": _ZERO_RUN_ID,
+            "semantic_replay_key_digest": _ZERO_DIGEST,
+            "admission_binding_digest": _ZERO_DIGEST,
+        }
+    )
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    digest = procedure_admission_digest(provisional)
+    if provisional.invocation_origin == "line":
+        if provisional.occurrence_id is None or provisional.line_identity is None:
+            raise ExecutionError("Line admission lacks its occurrence or Line identity")
+        run_id = procedure_line_run_id(
+            occurrence_id=provisional.occurrence_id,
+            attempt=provisional.attempt,
+            admission_binding_digest=digest,
+            occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+        )
+        partition = (
+            procedure_direct_partition(replay_key)
+            if provisional.parent_binding is not None
+            else procedure_line_partition(provisional.line_identity)
+        )
+    else:
+        run_id = procedure_semantic_run_id(replay_key)
+        partition = (
+            journal_partition_id
+            if journal_partition_id is not None and provisional.parent_binding is None
+            else procedure_direct_partition(replay_key)
+        )
+    return ProcedureRunAdmission.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "run_id": run_id,
+            "journal_partition_id": partition,
+            "admission_binding_digest": digest,
+        }
+    )
+
+
+def admission_fields(admission: ProcedureRunAdmission) -> dict[str, object]:
+    """An admission's semantic fields, to rebind and reseal."""
+
+    return {
+        name: getattr(admission, name)
+        for name in ProcedureRunAdmission.model_fields
+        if name not in {"tag", "run_id", "semantic_replay_key_digest", "admission_binding_digest"}
+    }
+
+
+def bind_prepared_investigation(
+    prepared: PreparedProcedureRun,
+    *,
+    investigation: InvestigationBinding | None,
+    trigger: LineTriggerBinding | None = None,
+) -> PreparedProcedureRun:
+    """Bind an investigation (and a Line trigger) into a prepared run's admission."""
+
+    if trigger is not None and not prepared.admission.plans_providers:
+        raise ExecutionError("Line trigger requires a Line acquisition admission")
+    admission = prepared.admission
+    # A direct run's partition is re-derived from its new replay identity.
+    sealed = seal_procedure_run_admission(
+        {**admission_fields(admission), "investigation": investigation, "trigger_binding": trigger}
+    )
+    return PreparedProcedureRun.model_validate(
+        {**prepared.model_dump(mode="python", exclude={"tag", "admission"}), "admission": sealed}
+    )
+
+
+def bind_line_admission_runtime_policy(
+    admission: ProcedureRunAdmission,
+    policy: ProcedureRuntimePolicy,
+) -> ProcedureRunAdmission:
+    """Derive the complete Line admission identity from its governed runtime cap."""
+
+    if admission.invocation_origin != "line":
+        raise ExecutionError("runtime policy rebinding is a Line admission step")
+    return seal_procedure_run_admission(
+        {
+            **admission_fields(admission),
+            "provider_output_bytes_cap": policy.provider_output_bytes_cap,
+            "resource_budget": resolve_procedure_resource_budget(
+                admission.budget, admission.hard_caps, policy
+            ),
+        }
+    )
+
+
+def _node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, ...]:
+    plan = execution_plan(accepted)
+    result: list[ProcedureNodePinSetV1] = []
+    for node in plan.definition.nodes:
+        # One artifact pinned by two fields (two capture fields of one
+        # CaptureContract) is one pin of the node.
+        pins = tuple(
+            dict.fromkeys(
+                plan.pin(reference, role=role) for role, reference in iter_role_references(node)
+            )
+        )
+        result.append(
+            ProcedureNodePinSetV1(
+                node_id=node.node_id,
+                pins=tuple(
+                    sorted(
+                        pins,
+                        key=lambda pin: (
+                            pin.role.encode("utf-8"),
+                            pin.target.qualified.encode("utf-8"),
+                            pin.artifact_digest.encode("ascii"),
+                        ),
+                    )
+                ),
+            )
+        )
+    return tuple(sorted(result, key=lambda item: item.node_id.encode("utf-8")))
+
+
+def procedure_node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, ...]:
+    """Public seam for the exact per-node pin commitment one run must reproduce."""
+
+    return _node_pin_sets(accepted)
+
+
+def accepted_procedure_pin_set_digest(accepted: AcceptedProcedure) -> str:
+    """Reproduce the direct-runtime pin commitment for one accepted Procedure."""
+
+    return procedure_pin_set_digest(accepted.procedure.pins, _node_pin_sets(accepted))
+
+
+def state_tap_parameters(
+    node: ReadNode,
+    *,
+    invocation_input: object,
+    parameters: object,
+    values: dict[str, CanonicalValue],
+) -> CanonicalValue:
+    if node.reads_claims:
+        return _resolve_template(
+            {
+                "subject_kind": node.subject_kind,
+                "subject_id": node.subject_id,
+                "cardinality": node.cardinality,
+            },
+            input_payload=normalize_canonical(invocation_input),
+            parameters=normalize_canonical(parameters),
+            outputs=values,
+        )
+    return _resolve_template(
+        node.parameters,
+        input_payload=normalize_canonical(invocation_input),
+        parameters=normalize_canonical(parameters),
+        outputs=values,
+    )
+
+
+def state_tap_view(node: ReadNode, value: object) -> CanonicalValue:
+    if not node.reads_claims:
+        from cruxible_client.contracts.query.results import ClaimQueryResult
+        from cruxible_core.query.engine import query_execution_receipt
+
+        result = ClaimQueryResult.model_validate(value)
+        return normalize_canonical(
+            {
+                # Each row as a plain record of its present projected fields: the
+                # shape the Query's row Contract types (absent and conflicted
+                # fields are left out; the whole result keeps their states).
+                "rows": [
+                    {item.name: item.value for item in row.fields if item.state == "present"}
+                    for row in result.rows
+                ],
+                "result": value,
+                "coordinate": result.coordinate.model_dump(mode="json"),
+                "definition_path": result.definition_path,
+                "definition_digest": result.definition_digest,
+                "receipt": query_execution_receipt(result).model_dump(mode="json"),
+                "completed": result.verdict == "completed",
+                "truncated": result.truncation.truncated,
+                "has_conflicts": bool(
+                    result.conflicts or any(row.conflicts for row in result.rows)
+                ),
+            }
+        )
+    return normalize_canonical(value)
+
+
+def read_state_tap(
+    accepted: AcceptedProcedure,
+    node: ReadNode,
+    *,
+    read_parameters: CanonicalValue,
+    accepted_coordinate: AcceptedCoordinate,
+    state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
+    remaining: int,
+) -> tuple[AcceptedStateRunMaterial, int]:
+    """Run one accepted-state read under ``remaining`` rows; its material and rows.
+
+    The one place a read becomes material, for an admission read and a late
+    read alike (D-R38): both read the accepted-state plane at the run's pinned
+    coordinate, under what is left of the run's one read ceiling, and refuse
+    ``read_ceiling_exceeded`` rather than return part of their result.
+    """
+
+    binding = node.claim_type if node.claim_type is not None else node.query
+    assert binding is not None  # a read names exactly one selection
+    query = resolved_pin(accepted, binding)
+    try:
+        if remaining < 1:
+            raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
+        if node.reads_claims:
+            assert isinstance(read_parameters, dict)
+            assert node.subject_kind is not None
+            identity = read_parameters["subject_id"]
+            if not isinstance(identity, str):
+                raise ExecutionError("Subject id must resolve to a string")
+            read = state_reader.read_accepted_claim(
+                claim_type=query,
+                subject_kind=node.subject_kind,
+                subject_id=identity,
+                cardinality=node.cardinality,
+                limit=node.limit,
+                coordinate=accepted_coordinate,
+                ceiling=remaining,
+            )
+        else:
+            read = state_reader.read_accepted_state(
+                query=query,
+                parameters=read_parameters,
+                coordinate=accepted_coordinate,
+                ceiling=remaining,
+            )
+    except QueryContractViolated as exc:
+        raise ProcedureBoundaryRefused(
+            "query_contract_violated",
+            exc.reason,
+            details={"node": node.node_id, "direction": exc.direction, **exc.details},
+        ) from exc
+    except ReadCeilingExceeded as exc:
+        raise ProcedureBoundaryRefused(
+            "read_ceiling_exceeded",
+            "A Procedure read would be clipped by the run's read ceiling; it refuses "
+            "rather than return part of its result.",
+            details={
+                "node": node.node_id,
+                "clipped": list(exc.clipped),
+                "candidates": exc.candidates,
+                "ceiling": exc.ceiling,
+            },
+        ) from exc
+    except Exception as exc:
+        raise ProcedureBoundaryRefused(
+            "state_tap_refused",
+            "The accepted-state reader refused this selection.",
+            details={"node_id": node.node_id, "reason": str(exc)},
+        ) from exc
+    value = state_tap_view(node, read.value)
+    retained = bodies.store(canonical_bytes(value))
+    common = dict(
+        input_name=node.as_,
+        read_coordinate=accepted_coordinate,
+        parameters_digest=run_value_digest("state-parameters", read_parameters),
+        result_digest=run_value_digest("state-result", value),
+        effective_query_budgets=read.effective_budgets,
+        material_body_digest=retained.digest,
+    )
+    run_input = (
+        AcceptedClaimRunInputV1.model_validate(
+            dict(common, claim_type_digest=query.artifact_digest)
+        )
+        if node.reads_claims
+        else AcceptedStateRunInputV2.model_validate(
+            dict(common, query_definition_digest=query.artifact_digest)
+        )
+    )
+    return AcceptedStateRunMaterial(input=run_input, value=value), read.rows
+
+
+def bind_accepted_state_materials(
+    accepted: AcceptedProcedure,
+    *,
+    accepted_coordinate: AcceptedCoordinate,
+    state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
+    read_ceiling: int,
+    invocation_input: object,
+    parameters: object,
+) -> tuple[AcceptedStateRunMaterial, ...]:
+    """Read and retain every admission read this run will observe.
+
+    Every run lane reads the accepted-state plane the SAME way, so this is the
+    one place an admission read becomes admitted material. ``read_ceiling`` is
+    the rows the run's reads may return in all, as its admission budget states
+    it (its Line's, or what an invoking parent has left): Query reads and Claim
+    reads alike draw it down, and the read that would pass it refuses
+    ``read_ceiling_exceeded``. A late read (D-R38, ``late_state_taps``) is not
+    bound here: it runs mid-run and draws on what admission left.
+    """
+
+    late = late_state_taps(accepted.procedure.definition)
+    materials: list[AcceptedStateRunMaterial] = []
+    values: dict[str, CanonicalValue] = {}
+    # One ceiling across the run's reads: each read gets what is left of it.
+    remaining = read_ceiling
+    for node in accepted.procedure.definition.nodes:
+        if isinstance(node, ProjectNode) and node.literal is not None:
+            values[node.as_] = normalize_canonical(node.literal)
+        if not isinstance(node, ReadNode) or node.as_ in late:
+            continue
+        read_parameters = state_tap_parameters(
+            node, invocation_input=invocation_input, parameters=parameters, values=values
+        )
+        material, rows = read_state_tap(
+            accepted,
+            node,
+            read_parameters=read_parameters,
+            accepted_coordinate=accepted_coordinate,
+            state_reader=state_reader,
+            bodies=bodies,
+            remaining=remaining,
+        )
+        remaining -= rows
+        values[node.as_] = normalize_canonical(material.value)
+        materials.append(material)
+    materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
+    return tuple(materials)
+
+
+def prepare_direct_procedure_run(
+    accepted: AcceptedProcedure,
+    *,
+    instance_id: str,
+    accepted_coordinate: AcceptedCoordinate,
+    invocation_input: object,
+    actor_context: GovernedActorContext,
+    state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
+    journal_stream: JournalStreamIdentityV1,
+    journal_partition_id: str | None,
+    head_at_admission: AcceptedCoordinate | None = None,
+    lane: Literal["current", "replay"] = "current",
+    admitted_at: datetime,
+    attempt: int = 1,
+    runtime_policy: ProcedureRuntimePolicy | None = None,
+    budget: ProcedureBudget | None = None,
+    parameters: Mapping[str, object] | None = None,
+) -> PreparedProcedureRun:
+    """Bind exact accepted state and all pins for an actor's pure direct run.
+
+    A pure run plans no Provider occurrence, so it binds no acquisition plan,
+    Provider binding or deployment; its admission material manifest is empty.
+    ``budget`` is the run's ephemeral Line budget (default: the hard caps), and
+    ``parameters`` its parameter values over the Procedure's defaults.
+    """
+
+    procedure = accepted.procedure
+    effective_parameters = procedure.definition.effective_parameters(parameters or {})
+    budget = caps_budget(procedure.definition.hard_caps) if budget is None else budget
+    from cruxible_core.procedures.reference_binding import authored_procedure
+
+    if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:
+        raise ExecutionError("accepted Procedure artifact digest does not reproduce")
+
+    materials = bind_accepted_state_materials(
+        accepted,
+        accepted_coordinate=accepted_coordinate,
+        state_reader=state_reader,
+        bodies=bodies,
+        read_ceiling=effective_read_rows(
+            budget.max_read_rows,
+            procedure.definition.hard_caps.max_read_rows,
+        ),
+        invocation_input=invocation_input,
+        parameters=effective_parameters,
+    )
+    node_pin_sets = _node_pin_sets(accepted)
+    admitted_at = ensure_utc(admitted_at)
+    admission = seal_procedure_run_admission(
+        {
+            "instance_id": instance_id,
+            "attempt": attempt,
+            "accepted_coordinate": accepted_coordinate,
+            "bound_coordinate": accepted_coordinate,
+            "head_at_admission": head_at_admission or accepted_coordinate,
+            "lane": lane,
+            "procedure_identity": procedure.identity,
+            "procedure_path": accepted.path,
+            "procedure_artifact_digest": accepted.artifact_digest,
+            "definition_digest": procedure.definition_digest,
+            "activation_policy": procedure.activation_policy,
+            "full_pins": procedure.pins,
+            "node_pin_sets": node_pin_sets,
+            "pin_set_digest": procedure_pin_set_digest(procedure.pins, node_pin_sets),
+            "invocation_input": invocation_input,
+            "parameters": effective_parameters,
+            "accepted_state_inputs": tuple(item.input for item in materials),
+            "resource_budget": (
+                resolve_procedure_resource_budget(
+                    budget, procedure.definition.hard_caps, runtime_policy
+                )
+                if runtime_policy is not None
+                else None
+            ),
+            "budget": budget,
+            "hard_caps": procedure.definition.hard_caps,
+            "actor_context": actor_context,
+            "invocation_origin": "actor",
+            "journal_stream": journal_stream,
+            "journal_partition_id": journal_partition_id,
+            "occurrence_evaluation_time": admitted_at,
+            "admitted_at": admitted_at,
+        },
+        journal_partition_id=journal_partition_id,
+    )
+    manifest, manifest_digest = empty_admission_material_manifest()
+    return PreparedProcedureRun(
+        admission=admission,
+        accepted_state_materials=materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=manifest_digest,
+    )
+
+
+def empty_admission_material_manifest() -> tuple[ProcedureAdmissionMaterialManifest, str]:
+    """The manifest of a run with no landed-Capture or exhaust input, and its digest."""
+
+    manifest = ProcedureAdmissionMaterialManifest(members=())
+    return manifest, procedure_admission_material_digest(manifest)
+
+
+class _RunRefusal(Exception):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        node_id: str | None = None,
+        detail_code: str | None = None,
+        details: object | None = None,
+        budget: ProcedureBudgetRefusalDetail | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.refusal = ProcedureRunRefusalV1(
+            code=code,
+            message=message,
+            node_id=node_id,
+            detail_code=detail_code,
+            details={} if details is None else details,
+            budget=budget,
+        )
+
+
+@dataclass(frozen=True)
+class WorkspaceInputContext:
+    """What a refused workspace read was for: its path, parameter and the author's description."""
+
+    relative_path: str | None
+    parameter: str | None
+    description: str | None
+
+    def details(self) -> dict[str, object]:
+        return {
+            key: value
+            for key, value in (
+                ("relative_path", self.relative_path),
+                ("parameter", self.parameter),
+                ("description", self.description),
+            )
+            if value is not None
+        }
+
+
+def workspace_input_repair(path_class: str, context: WorkspaceInputContext) -> str | None:
+    """Where to put the file a ``missing`` or ``binding`` refusal could not read; else None."""
+
+    if context.relative_path is None or path_class not in ("missing", "binding"):
+        return None
+    about = ""
+    if context.parameter is not None:
+        about = f" (parameter {context.parameter}" + (
+            f": {context.description})" if context.description else ")"
+        )
+    where = (
+        "in the attached workspace"
+        if path_class == "missing"
+        else "in a workspace attached to this instance (or an operationally allowed root)"
+    )
+    return (
+        f"Place the file this Line reads at {context.relative_path} {where}{about}, "
+        "then run it again."
+    )
+
+
+def _workspace_refusal(
+    exc: ValidationError | WorkspaceFileReadRefused,
+    *,
+    node_id: str,
+    context: WorkspaceInputContext | None = None,
+) -> _RunRefusal:
+    """A workspace Source refusal, typed to its path class and naming its repair.
+
+    With ``context``, the refusal names the path the Line reads, the parameter
+    it comes from and that parameter's description; a ``missing`` or
+    ``binding`` refusal's first repair says where to place the file.
+    """
+
+    if isinstance(exc, WorkspaceFileReadRefused):
+        context = context or WorkspaceInputContext(None, None, None)
+        placement = workspace_input_repair(exc.path_class, context)
+        details: dict[str, object] = {
+            "path_class": exc.path_class,
+            "repair_commands": [
+                *([] if placement is None else [placement]),
+                *exc.repair_commands,
+            ],
+            **context.details(),
+        }
+        if exc.workspace_names:
+            details["workspace_names"] = list(exc.workspace_names)
+        message = str(exc)
+        if context.relative_path is not None and exc.path_class in ("missing", "binding"):
+            message = f"{message}: {context.relative_path}"
+        return _RunRefusal(
+            "workspace_file_read_refused",
+            message,
+            node_id=node_id,
+            detail_code=exc.path_class,
+            details=details,
+        )
+    return _RunRefusal(
+        "workspace_file_read_refused",
+        str(exc),
+        node_id=node_id,
+        detail_code="path_grammar",
+        details={
+            "path_class": "path_grammar",
+            "repair_commands": ["use a normalized workspace-relative POSIX path"],
+        },
+    )
+
+
+class ProcedureBoundaryRefused(ExecutionError):
+    """A typed pre-execution or integrity refusal at a real public boundary."""
+
+    def __init__(self, code: str, message: str, *, details: object | None = None) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.details = normalize_canonical({} if details is None else details)
+
+
+class _ProviderNodeRefusal(_RunRefusal):
+    """A node refusal from a Provider call.
+
+    A refusal the bound operation declares is served as ``operation_refused``
+    with the operation's own code as its ``detail_code``; a runtime refusal
+    (a budget, say) keeps its runtime code.
+    """
+
+    def __init__(self, outcome: ProviderInvocationOutcome, *, node_id: str, declared: bool) -> None:
+        code = outcome.code or "operation_refused"
+        super().__init__(
+            "operation_refused" if declared else code,
+            outcome.message or "Provider invocation refused.",
+            node_id=node_id,
+            detail_code=code if declared else None,
+            details=outcome.detail,
+        )
+        self.outcome = outcome
+
+
+class _BudgetExceeded(Exception):
+    def __init__(
+        self,
+        budget_kind: Literal["wall_clock", "max_provider_calls", "max_capture_bytes"],
+        *,
+        limit: int,
+        observed: int,
+        node_id: str,
+    ) -> None:
+        super().__init__(f"Procedure {budget_kind} budget exhausted")
+        self.budget_kind = budget_kind
+        self.limit = limit
+        self.observed = observed
+        self.node_id = node_id
+
+
+class _OperationalFailure(Exception):
+    def __init__(
+        self,
+        code: str,
+        *,
+        details: object | None = None,
+        cause: ProcedureFailureCause | None = None,
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+        self.details = normalize_canonical({} if details is None else details)
+        self.cause = cause
+
+
+def _provider_failure_cause(
+    outcome: ProviderInvocationOutcome, *, node_id: str
+) -> ProcedureFailureCause:
+    """The Provider's own account of an operational failure, for the run's final record."""
+
+    detail = outcome.detail
+    kind = detail.get("kind") if isinstance(detail, dict) else None
+    return ProcedureFailureCause(
+        node_id=node_id,
+        provider_code=outcome.code or "provider_execution_error",
+        kind=kind if isinstance(kind, str) and kind else None,
+        message=outcome.message or "",
+    )
+
+
+class _InternalFailure(Exception):
+    def __init__(self, code: str, *, details: object | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.details = normalize_canonical({} if details is None else details)
+
+
+class _Halted(Exception):
+    def __init__(self, *, node_id: str, reason: str | None, message: str | None = None) -> None:
+        super().__init__("Procedure halted")
+        self.node_id = node_id
+        self.reason = reason
+        self.message = message
+
+
+class _TransformInputInvalid(ExecutionError):
+    def __init__(self, message: str, *, slot: str) -> None:
+        super().__init__(message)
+        self.slot = slot
+
+
+#: The journaled consumption record's version. A node or final record without
+#: it was written before C14 provenance and is read as unknown (fail closed).
+CONSUMPTION_VERSION = 1
+
+
+def _fetched_captures(state: _RunState) -> list[str]:
+    """The fetched, non-derived Captures this run built, sorted (D-R37 f1).
+
+    Independent of ``consumed_captures``: a Capture counts here once its builder
+    returns, even when the out-Contract check, its own disposition or any later
+    refusal means it is never bound.
+    """
+
+    return sorted(digest for digest in state.fetched_captures)
+
+
+def _consumed(state: _RunState) -> dict[str, object]:
+    """The run's consumed Captures so far, versioned: an empty set is proven empty."""
+
+    return {"consumption": {"v": CONSUMPTION_VERSION, "captures": sorted(state.consumed_captures)}}
+
+
+@dataclass
+class _RunState:
+    outputs: dict[str, CanonicalValue]
+    input_payload: CanonicalValue
+    parameters: CanonicalValue
+    provenance: dict[str, AliasProvenanceV1] = dataclass_field(default_factory=dict)
+    facts: dict[str, DependencyEvidenceFactsV1] = dataclass_field(default_factory=dict)
+    outcomes: dict[str, AcquisitionInputOutcomeV1] = dataclass_field(default_factory=dict)
+    control: frozenset[DependencyToken] = frozenset()
+    return_tokens: frozenset[DependencyToken] = frozenset()
+    terminal_capture: str | None = None
+    provider_calls: int = 0
+    capture_bytes: int = 0
+    max_items_high_water: int = 0
+    max_items_boundary: str | None = None
+    max_items_field_path: str | None = None
+    result_bytes_high_water: int = 0
+    result_bytes_boundary: str | None = None
+    result_bytes_field_path: str | None = None
+    wall_clock_microseconds: int = 0
+    acquisition_plan: ProcedureAcquisitionPlan | None = None
+    invocation_receipt_digests: list[str] = dataclass_field(default_factory=list)
+    source_capture_associations: list[ProcedureSourceCaptureAssociation] = dataclass_field(
+        default_factory=list
+    )
+    provider_invocations_started: int = 0
+    provider_invocations_completed: int = 0
+    run_started_monotonic_ns: int = 0
+    #: Items this run's post_inbox terminals posted, against the run's inbox cap,
+    #: and their canonical bytes, against the run's inbox byte bound.
+    inbox_items: int = 0
+    inbox_bytes: int = 0
+    #: Exact bytes of each Capture this run committed or was admitted, by
+    #: Capture digest, for the extract nodes that decode them.
+    capture_bodies: dict[str, bytes] = dataclass_field(default_factory=dict)
+    #: The CaptureContract digest each such Capture was committed under.
+    capture_contracts: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each derived Capture this run committed, to the input Captures its
+    #: manifest records: what ``capture_root`` reads to find a value's one root.
+    derivations: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    #: Shared memo for every ``capture_root`` call this run makes (Claims,
+    #: delivery, journaling): a chain many items share is walked once (D-R37 cost).
+    capture_root_cache: CaptureRootCache = dataclass_field(default_factory=CaptureRootCache)
+    #: Every Capture whose bytes this run, or a child it invoked, consumed: a
+    #: provider's output, a trigger-bound or parameter Capture an extract read,
+    #: a child's. Journaled on every node_fired and on finalization, so a
+    #: reader of a running or finished run knows what its values derive from (C14).
+    consumed_captures: set[str] = dataclass_field(default_factory=set)
+    #: Every Capture an acquiring call built this run, added when its builder
+    #: returns, whether or not it went on to bind (D-R37 f1). Distinct from
+    #: ``consumed_captures``: a Capture behind an out-Contract refusal, or a
+    #: refused or omitted sibling, is still fetched evidence, and a refusal or
+    #: halt must not erase it from the result digest just because it was never
+    #: selected or consumed.
+    fetched_captures: set[str] = dataclass_field(default_factory=set)
+    #: Which aliases hold incomplete values, and the control lineage's state.
+    completeness: Completeness = dataclass_field(default_factory=Completeness)
+    #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
+    dropped_members: set[str] = dataclass_field(default_factory=set)
+    #: Acquiring calls that read a workspace glob (D-R41): their lists name the
+    #: files that exist now, so an extract straight over one never judges absence.
+    glob_lists: set[str] = dataclass_field(default_factory=set)
+    #: Whether the value this run returns is complete, data and control lineage
+    #: both; a parent's invoke reads it from the child's completion record.
+    return_complete: bool = True
+    #: Rows this run's reads, and its children's, returned against its budget.
+    read_rows: int = 0
+    #: Sinks whose posted values met an invalid field: incomplete at the sink.
+    sinks_incomplete: set[str] = dataclass_field(default_factory=set)
+    claims_items: dict[str, tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]] = (
+        dataclass_field(default_factory=dict)
+    )
+    claims_diagnostics: dict[str, ClaimsDiagnostics] = dataclass_field(default_factory=dict)
+    absence_findings: set[str] = dataclass_field(default_factory=set)
+    extraction_checks: dict[str, CompleteWhenResult] = dataclass_field(default_factory=dict)
+    claims_changes: dict[str, tuple[CoreClaimsChange, ...]] = dataclass_field(default_factory=dict)
+    #: Each claims change's stable item identity (D-R37 g1), aligned with claims_changes.
+    claims_identities: dict[str, tuple[str, ...]] = dataclass_field(default_factory=dict)
+    #: The claims items whose Subject the run creates, finalized from lowering.
+    claims_creations: dict[str, tuple[CreationIdentity, ...]] = dataclass_field(
+        default_factory=dict
+    )
+    claims_evidence: dict[str, tuple[ClaimEvidenceReceipt | None, ...]] = dataclass_field(
+        default_factory=dict
+    )
+    #: Each node's run summary, set as it runs and journaled on its node_fired.
+    node_summaries: dict[str, NodeRunSummary] = dataclass_field(default_factory=dict)
+    #: Rows each admitted accepted-state read returned, by input name.
+    read_rows_by_input: dict[str, int] = dataclass_field(default_factory=dict)
+    #: Each late read this run made (D-R38), by its alias: its run-input record.
+    late_reads: dict[str, AcceptedStateRunInput] = dataclass_field(default_factory=dict)
+    #: How each claims terminal's change landed, from its delivery.
+    claims_deliveries: dict[str, ClaimsDelivery] = dataclass_field(default_factory=dict)
+    #: Each claims terminal's unchanged items whose re-observation delivery
+    #: could not record, counted by reason, from its receipt.
+    claims_reobservations_refused: dict[str, dict[ReobservationRefusalReason, int]] = (
+        dataclass_field(default_factory=dict)
+    )
+
+    def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
+        candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
+        current = (
+            b"" if self.max_items_boundary is None else self.max_items_boundary.encode("utf-8"),
+            b"" if self.max_items_field_path is None else self.max_items_field_path.encode("utf-8"),
+        )
+        if observed > self.max_items_high_water or (
+            observed == self.max_items_high_water
+            and observed > 0
+            and (self.max_items_boundary is None or candidate < current)
+        ):
+            self.max_items_high_water = observed
+            self.max_items_boundary = boundary
+            self.max_items_field_path = field_path
+
+    def observe_result_bytes(self, observed: int, boundary: str, field_path: str) -> None:
+        if observed > self.result_bytes_high_water:
+            self.result_bytes_high_water = observed
+            self.result_bytes_boundary = boundary
+            self.result_bytes_field_path = field_path
+
+    def alias_tokens(self, aliases: frozenset[str]) -> frozenset[DependencyToken]:
+        tokens: frozenset[DependencyToken] = frozenset()
+        for alias in sorted(aliases):
+            found = self.provenance.get(alias)
+            if found is not None:
+                tokens |= found.whole
+        return tokens
+
+    def item_tokens(self, alias: str, index: int) -> frozenset[DependencyToken]:
+        found = self.provenance.get(alias)
+        return frozenset() if found is None else found.item(index)
+
+
+@dataclass
+class _GlobMembers:
+    """What a glob read (D-R41) fills, per member key, for the call's shared commit."""
+
+    wires: dict[str, ProviderResultToExternalCapture]
+    members: dict[str, str]
+    member_keys: dict[str, tuple[str, ...]]
+    member_requests: dict[str, str]
+    dropped: dict[str, str]
+    results: dict[str, ProcedureSourceAcquisitionResultV1]
+    receipts: dict[str, tuple[ProviderInvocationReceipt, str]]
+    source_reads: dict[str, SourceReadReceipt | None]
+    outputs: dict[str, object]
+
+
+def _effective_max_items(admission: ProcedureRunAdmission) -> int:
+    return (
+        admission.hard_caps.max_items
+        if admission.budget.max_items is None
+        else admission.budget.max_items
+    )
+
+
+class ProcedureExecutor:
+    """Execute one admitted graph while making the journal the operational authority."""
+
+    def __init__(
+        self,
+        *,
+        journal: LocalJournalBackend,
+        bodies: ContentAddressedBodyStore,
+        run_index: ProcedureRunIndex,
+        fencing_token: str,
+        activation_authority: ProcedureActivationAuthorityProtocol,
+        contract_validator: ContractValidatorProtocol,
+        provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
+        provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol]
+        | None = None,
+        capture_contracts: Mapping[str, CaptureContract] | None = None,
+        acquisition_rules: AcquisitionRules | None = None,
+        default_authorizations: tuple[str, ...] = (),
+        effective_rung: EffectiveRungV1 | None = None,
+        egress_sink: TerminalEgressSinkProtocol | None = None,
+        declared_effect_grants: tuple[str, ...] = (),
+        workspace_file_reader: WorkspaceFileReader | None = None,
+        clock: ProcedureClockProtocol | None = None,
+        nested_runner: NestedProcedureRunner | None = None,
+        parent_context: ParentInvocationContext | None = None,
+        ephemeral_spec_digest: str | None = None,
+        enum_resolver: EnumResolver | None = None,
+        contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
+        completeness_probe: CompletenessProbe | None = None,
+        key_rules: KeyCanonicalizer | None = None,
+        claims_context: ClaimsContext | None = None,
+        state_reader: StateTapReaderProtocol | None = None,
+    ) -> None:
+        self.journal = journal
+        self.bodies = bodies
+        self.material_reservations = ProcedureMaterialReservationStore(bodies.reservation_root)
+        self.run_index = run_index
+        self.fencing_token = fencing_token
+        self.activation_authority = activation_authority
+        self.contract_validator = contract_validator
+        self.provider_runtime_invoker = provider_runtime_invoker
+        self.provider_runtime_invoker_factory = provider_runtime_invoker_factory
+        self.capture_contracts = dict(capture_contracts or {})
+        # Each extract node's resolved spec, resolved through one resolver per plan.
+        self._extract_specs_plan: object = None
+        self._extract_spec_of: Callable[[LayoutExtractNode], ExtractNode] | None = None
+        # Execution reads acquisition only through the port.
+        self.acquisition_rules = acquisition_rules
+        # Each slot's exact build and operation, from the execution plan.
+        self.slot_bindings: dict[str, Any] = {}
+        # The execution plan this executor runs, and each named dependency's
+        # exact digest from it.
+        self.plan: ProcedureExecutionPlan | None = None
+        self.references: dict[str, str] = {}
+        self.default_authorizations = default_authorizations
+        self.effective_rung = effective_rung
+        self.egress_sink = egress_sink
+        self.declared_effect_grants = declared_effect_grants
+        self.workspace_file_reader = workspace_file_reader
+        self.clock = clock or SystemProcedureClock()
+        self.nested_runner = nested_runner
+        self.parent_context = parent_context
+        # F12: a direct run's ephemeral Line spec digest (ruling C4), recorded
+        # on its attempt_started event -- the Admission itself never carries
+        # it (PC-E1 reserves line/mandate/calibration coordinates for Line
+        # runs), so this is its only retained, verifiable record.
+        self.ephemeral_spec_digest = ephemeral_spec_digest
+        # F07: resolves enum_of<ClaimType> members at the admitted (immutable)
+        # coordinate; replay re-reads the same pinned coordinate and so sees
+        # the same members deterministically -- nothing extra needs retaining.
+        self.enum_resolver = enum_resolver
+        # Resolves an extract's row Contract (and the Contracts it nests) at the
+        # admitted coordinate, by name, version and pinned digest.
+        self.contract_resolver = contract_resolver
+        # R12/D4: the SubjectKind identity rules at the admitted (immutable)
+        # coordinate; every key<K> / key_part<K:p> value reads through them.
+        self.key_rules = key_rules
+        self.claims_context = claims_context
+        # Late reads (D-R38) read accepted state mid-run, at the admitted
+        # coordinate, through the same reader admission reads use.
+        self.state_reader = state_reader
+        # A sink harness told whether each sink's value is complete (the law's
+        # real sinks belong to the Claims terminal).
+        self.completeness_probe = completeness_probe
+        self.parameter_contract: ArtifactNameRef | None = None
+
+    def _use_plan(self, accepted: AcceptedProcedure) -> ProcedureExecutionPlan:
+        """Run against ``accepted``'s execution plan: its references resolve through it."""
+
+        plan = execution_plan(accepted)
+        self.plan = plan
+        self.references = dict(plan.resolved)
+        return plan
+
+    def _pin(self, binding: ArtifactNameRef, *, label: str) -> ArtifactPin:
+        """The exact pin one node reference resolved to at admission."""
+
+        if self.plan is None or binding.target.qualified not in self.plan.resolved:
+            raise ExecutionError(f"{label} was not resolved at admission")
+        return self.plan.pin(binding)
+
+    def execute(
+        self,
+        prepared: PreparedProcedureRun,
+        accepted: AcceptedProcedure,
+    ) -> ProcedureRunResultV1:
+        admission = prepared.admission
+        plan = self._use_plan(accepted)
+        self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
+        self._verify_extract_rows(plan)
+        self.slot_bindings = {item.slot: item for item in plan.slot_bindings}
+        # A workspace refusal names the parameter's description from it.
+        self.parameter_contract = accepted.procedure.definition.parameter_contract
+        try:
+            existing_records = self.journal.select_records(
+                admission.journal_stream,
+                partition_id=admission.journal_partition_id,
+                run_id=admission.run_id,
+            )
+            self.run_index.rebuild_run(
+                admission.run_id,
+                existing_records,
+                bodies=self.bodies,
+            )
+        except (JournalError, ValueError) as exc:
+            raise ProcedureBoundaryRefused(
+                "journal_integrity_error",
+                "Procedure journal history failed integrity verification.",
+            ) from exc
+        indexed = self.run_index.get(admission.run_id)
+        if indexed is not None:
+            if indexed.admission_binding_digest != admission.admission_binding_digest:
+                raise ExecutionError("run_id collides across distinct admission bindings")
+            if indexed.status == "failed" and indexed.final_payload_digest is None:
+                return ProcedureRunResultV1(
+                    run_id=admission.run_id,
+                    status="failed",
+                    receipt=self._receipt(admission, list(existing_records)),
+                )
+            if indexed.status != "running":
+                return self._replay_completed(admission, existing_records)
+            effect_state = (
+                " with an unresolved durable effect intent"
+                if indexed.effect_intent_count != indexed.effect_result_count
+                else ""
+            )
+            provider_state = (
+                " with an incomplete Provider invocation"
+                if indexed.provider_invocation_started_count
+                != indexed.provider_invocation_completed_count
+                else ""
+            )
+            terminal_state = (
+                " with an unresolved prepared terminal egress"
+                if indexed.terminal_egress_prepared_count != indexed.terminal_egress_resolved_count
+                else ""
+            )
+            raise ExecutionError(
+                "run_recovery_required: admitted run has incomplete exhaust"
+                + effect_state
+                + provider_state
+                + terminal_state
+            )
+        self._require_current(admission)
+        if any(isinstance(node, InvokeNode) for node in accepted.procedure.definition.nodes):
+            if self.nested_runner is None:
+                raise ExecutionError("nested Procedure runner is unavailable")
+            self.nested_runner.preflight(accepted, admission)
+        if prepared.acquisition_plan is not None:
+            self._preflight_source_runtime(prepared, accepted)
+            active_reservations = {
+                item.reservation_id for item in self.material_reservations.active()
+            }
+            missing_reservations = sorted(
+                set(prepared.required_reservation_ids) - active_reservations
+            )
+            if missing_reservations:
+                raise ExecutionError(
+                    "admission_material_reservation_missing: complete acquisition plan "
+                    "reservations must exist before attempt_started"
+                )
+        records: list[StoredProcedureJournalRecordV1] = []
+        started_ns = self.clock.monotonic_ns()
+        if self.parent_context is not None and self.parent_context.deadline_ns is not None:
+            # Child planning also consumes the ancestor's remaining time. Its
+            # execution clock cannot restart that deadline after planning ends.
+            started_ns = min(
+                started_ns,
+                self.parent_context.deadline_ns - admission.budget.wall_clock.microseconds * 1000,
+            )
+
+        # An automatic Line dispatch orders this admission against a disarm; a
+        # child run inherits its parent's admission and is never gated again.
+        gate = LINE_ARM_ADMISSION_GATE.get() if self.parent_context is None else None
+        with gate() if gate is not None else nullcontext():
+            attempt_started_payload: dict[str, object] = {
+                "attempt": admission.attempt,
+                "admitted_at": admission.admitted_at.isoformat(),
+            }
+            if self.ephemeral_spec_digest is not None:
+                attempt_started_payload["ephemeral_spec_digest"] = self.ephemeral_spec_digest
+            self._append_event(
+                admission,
+                records,
+                "attempt_started",
+                attempt_started_payload,
+            )
+            self._append_event(
+                admission,
+                records,
+                "admission_bound",
+                prepared.bound_payload().model_dump(mode="json"),
+            )
+
+        state = _RunState(
+            outputs={},
+            input_payload=normalize_canonical(admission.invocation_input),
+            parameters=normalize_canonical(admission.parameters),
+        )
+        status: ProcedureRunStatusV1
+        output: CanonicalValue | None = None
+        refusal: ProcedureRunRefusalV1 | None = None
+        failure_message: str | None = None
+        failure_code: str | None = None
+        failure_details: object = {}
+        failure_cause: ProcedureFailureCause | None = None
+        halt: CanonicalValue | None = None
+        try:
+            state = self._seed_state(prepared)
+            state.run_started_monotonic_ns = started_ns
+            input_contract = self._pin(
+                accepted.procedure.definition.contract_in,
+                label="Procedure contract_in",
+            )
+            state.input_payload = _validate_node_contract(
+                self.contract_validator,
+                contract=input_contract,
+                payload=state.input_payload,
+                direction="input",
+                node_id="procedure",
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
+            )
+            # The effective parameters (Line values over the defaults) are
+            # checked against the params Contract after the defaults apply.
+            parameter_contract = accepted.procedure.definition.parameter_contract
+            if parameter_contract is not None:
+                state.parameters = _validate_node_contract(
+                    self.contract_validator,
+                    contract=self._pin(parameter_contract, label="Procedure parameter_contract"),
+                    payload=state.parameters,
+                    direction="input",
+                    node_id="procedure",
+                    max_items=_effective_max_items(admission),
+                    observe_items=state.observe_items,
+                )
+            elif state.parameters != {}:
+                raise _RunRefusal(
+                    "contract_input_refused",
+                    "The Procedure declares no parameters; the run supplied some.",
+                    node_id="procedure",
+                )
+            output = self._walk(
+                accepted,
+                admission=admission,
+                state=state,
+                records=records,
+                started_ns=started_ns,
+            )
+            status = "succeeded"
+        except ProcedureBoundaryRefused as exc:
+            if exc.code in {
+                "not_current",
+                "pin_binding_mismatch",
+                "input_material_mismatch",
+                "state_tap_refused",
+                "provider_replay_receipt_required",
+                # An invoked child's read past what its parent left refuses.
+                "read_ceiling_exceeded",
+                "query_contract_violated",
+            }:
+                status = "refused"
+                refusal = ProcedureRunRefusalV1(
+                    code=exc.code,
+                    message=str(exc),
+                    details=exc.details,
+                )
+            elif exc.code in {"journal_append_failed", "journal_conflict"}:
+                status = "failed"
+                failure_code = exc.code
+                failure_details = exc.details
+                failure_message = "Procedure journal operation failed."
+            else:
+                status = "failed"
+                failure_code = exc.code
+                failure_details = exc.details
+                failure_message = "Procedure integrity verification failed."
+        except _RunRefusal as exc:
+            status = "refused"
+            refusal = exc.refusal
+        except _Halted as exc:
+            status = "halted"
+            halt = normalize_canonical(
+                {
+                    "node_id": exc.node_id,
+                    "reason": exc.reason,
+                    **({"message": exc.message} if exc.message is not None else {}),
+                }
+            )
+        except _BudgetExceeded as exc:
+            if exc.budget_kind == "wall_clock":
+                status = "failed"
+                failure_code = "wall_clock_exhausted"
+                failure_message = "Procedure execution exceeded its operational budget."
+            else:
+                status = "refused"
+                failure_message = "Procedure execution exhausted its declared budget."
+                refusal = ProcedureRunRefusalV1(
+                    code="budget_exhausted",
+                    message=failure_message,
+                    node_id=exc.node_id,
+                    budget=ProcedureBudgetRefusalDetail(
+                        budget_kind=exc.budget_kind,
+                        limit=exc.limit,
+                        observed=exc.observed,
+                    ),
+                )
+        except _OperationalFailure as exc:
+            status = "failed"
+            failure_code = exc.code
+            failure_details = exc.details
+            failure_cause = exc.cause
+            failure_message = "Procedure execution failed."
+        except _InternalFailure as exc:
+            status = "failed"
+            failure_code = exc.code
+            failure_details = exc.details
+            failure_message = "Procedure execution failed."
+        except ExecutionError:
+            status = "failed"
+            failure_code = "unexpected_exception"
+            failure_message = "Procedure execution failed."
+        except Exception as exc:
+            status = "failed"
+            failure_message = f"{type(exc).__name__}: {exc}"
+            failure_code = "unexpected_exception"
+
+        if state.provider_invocations_started != state.provider_invocations_completed:
+            raise ExecutionError(
+                "provider_completion_not_durable: Provider result was not committed"
+            )
+        semantic_result_digest = None
+        if status in {
+            "succeeded",
+            "refused",
+            "halted",
+        }:
+            semantic_result_digest = procedure_semantic_result_digest(
+                semantic_replay_key_digest=admission.semantic_replay_key_digest,
+                status=cast(Literal["succeeded", "refused", "halted"], status),
+                output=output,
+                refusal=refusal,
+                halt=halt,
+                fetched_captures=_fetched_captures(state),
+                late_reads=[run_input_digest(item) for item in state.late_reads.values()],
+            )
+        summary = state.completeness.summary()
+        final_payload = {
+            "status": status,
+            **({"completeness": summary.model_dump(mode="json")} if summary is not None else {}),
+            **(
+                {
+                    "return_manifest": build_terminal_item_manifest(
+                        state.return_tokens,
+                        run_id=admission.run_id,
+                        terminal_node_id="return",
+                        item_key="result",
+                    ).model_dump(mode="json"),
+                    "dependency_facts": {
+                        token.digest: state.facts[token.digest].model_dump(mode="json")
+                        for token in state.return_tokens
+                        if token.digest in state.facts
+                    },
+                    "terminal_capture": state.terminal_capture,
+                    # Recorded only when incomplete, so complete runs keep their bytes.
+                    **(
+                        {"return_complete": False}
+                        if status == "succeeded" and not state.return_complete
+                        else {}
+                    ),
+                }
+                if isinstance(accepted.procedure.definition, ProcedureDefinition)
+                or admission.parent_binding is not None
+                else {}
+            ),
+            "output": output,
+            "refusal": None if refusal is None else refusal.model_dump(mode="json"),
+            "failure": failure_message,
+            "failure_code": failure_code,
+            "failure_details": failure_details,
+            # Only a Provider's operational failure carries a cause; every other
+            # final record keeps its bytes.
+            **(
+                {}
+                if failure_cause is None
+                else {"failure_cause": failure_cause.model_dump(mode="json")}
+            ),
+            "halt": halt,
+            "semantic_result_digest": semantic_result_digest,
+            # What the run consumed, versioned, so a reader tells proven-empty from
+            # a record written before C14 provenance (fail closed; D-R25 R4).
+            **_consumed(state),
+            # The reads the run made mid-run (D-R38), apart from its admitted
+            # inputs; recorded only when it made one, so other runs keep their bytes.
+            **(
+                {
+                    "late_reads": [
+                        state.late_reads[name].model_dump(mode="json")
+                        for name in sorted(state.late_reads, key=lambda item: item.encode("utf-8"))
+                    ]
+                }
+                if state.late_reads
+                else {}
+            ),
+            "provider_calls": state.provider_calls,
+            "capture_bytes": state.capture_bytes,
+            "invocation_receipt_digests": state.invocation_receipt_digests,
+            "source_capture_associations": [
+                item.model_dump(mode="json")
+                for item in sorted(
+                    state.source_capture_associations,
+                    key=lambda item: (
+                        item.occurrence_path.encode("utf-8"),
+                        item.field.encode("utf-8"),
+                    ),
+                )
+            ],
+            "budget": ProcedureRunBudget(
+                declared=procedure_run_declared_budget(admission),
+                observed=ProcedureRunBudgetObserved(
+                    max_items=ProcedureBudgetBoundaryObservation(
+                        high_water=state.max_items_high_water,
+                        boundary=state.max_items_boundary,
+                        field_path=state.max_items_field_path,
+                    ),
+                    result_bytes=ProcedureBudgetBoundaryObservation(
+                        high_water=state.result_bytes_high_water,
+                        boundary=state.result_bytes_boundary,
+                        field_path=state.result_bytes_field_path,
+                    ),
+                    provider_calls=state.provider_calls,
+                    capture_bytes=state.capture_bytes,
+                    wall_clock_microseconds=state.wall_clock_microseconds,
+                    read_rows=state.read_rows,
+                ),
+            ).model_dump(mode="json"),
+        }
+        self._append_event(
+            admission,
+            records,
+            "attempt_finalized",
+            final_payload,
+        )
+        receipt = self._receipt(admission, records)
+        return ProcedureRunResultV1(
+            run_id=admission.run_id,
+            status=status,
+            output=output if status == "succeeded" else None,
+            completeness=summary,
+            refusal=refusal,
+            receipt=receipt,
+        )
+
+    def _preflight_source_runtime(
+        self,
+        prepared: PreparedProcedureRun,
+        accepted: AcceptedProcedure,
+    ) -> None:
+        """Refuse an incomplete Source closure before the first attempt record."""
+
+        sources = tuple(
+            node
+            for node in accepted.procedure.definition.nodes
+            if isinstance(node, CallNode) and node.acquires
+        )
+        if not sources:
+            return
+        admission = prepared.admission
+        plan = prepared.acquisition_plan
+        selection = admission.selection_decision
+        if plan is None or selection is None:
+            raise ExecutionError("source_acquisition_plan_mismatch: no admitted acquisition plan")
+        if (
+            self.acquisition_rules is None
+            or self.acquisition_rules.digest != admission.acquisition_policy_digest
+        ):
+            raise ExecutionError(
+                "source_acquisition_plan_mismatch: accepted Source policy is unavailable"
+            )
+        for node in sources:
+            matches = tuple(
+                occurrence
+                for occurrence in plan.external_occurrences
+                if occurrence.occurrence_kind == "source"
+                and occurrence.node_id == node.node_id
+                and occurrence.repeat_node_id is None
+            )
+            # Each capture field is pinned, ruled and decided on its own.
+            pins = {
+                field: self._pin(reference, label=f"call {node.node_id!r} captures")
+                for field, reference in node.captures.items()
+            }
+            contracts = {
+                field: self.capture_contracts.get(pin.artifact_digest)
+                for field, pin in pins.items()
+            }
+            if any(
+                contract is None
+                or capture_contract_digest(contract).tagged != pins[field].artifact_digest
+                or self._acquisition_rule(node, field) is None
+                for field, contract in contracts.items()
+            ):
+                raise ExecutionError(
+                    "source_acquisition_plan_mismatch: Source closure does not reproduce"
+                )
+            supplied = tuple(
+                item
+                for item in admission.landed_capture_inputs
+                if item.input_name.partition(".")[0] == node.as_
+            )
+            if supplied:
+                # Only a one-field call is substituted: its one capture output.
+                field, contract_pin = next(iter(pins.items()))
+                key = f"{node.as_}.{field}"
+                selected = next(
+                    (item for item in selection.decisions if item.input_name == key),
+                    None,
+                )
+                captured = (
+                    self.capture_contracts.get(supplied[0].capture_contract_digest)
+                    if len(supplied) == 1
+                    else None
+                )
+                if (
+                    matches
+                    or len(pins) != 1
+                    or len(supplied) != 1
+                    or supplied[0].input_name != key
+                    or captured is None
+                    or captured.identity != contract_pin.target
+                    or capture_contract_digest(captured).tagged
+                    != supplied[0].capture_contract_digest
+                    or selected is None
+                    or selected.disposition != "selected"
+                    or selected.selected_capture_digests != (supplied[0].capture_digest,)
+                ):
+                    raise ExecutionError(
+                        "source_acquisition_plan_mismatch: supplied Source closure differs"
+                    )
+                continue
+            if len(matches) != 1:
+                raise ExecutionError(
+                    "source_acquisition_plan_mismatch: Source occurrence is not exact"
+                )
+            occurrence = matches[0]
+            if (
+                occurrence.input_name != node.as_
+                or occurrence.capture_contracts
+                != {field: pin.artifact_digest for field, pin in pins.items()}
+                or not self._occurrence_matches_slot(occurrence, node.slot)
+                or occurrence.effect_class == "external_mutation"
+            ):
+                raise ExecutionError(
+                    "source_acquisition_plan_mismatch: Source closure does not reproduce"
+                )
+
+    def _seed_state(self, prepared: PreparedProcedureRun) -> _RunState:
+        """Bind every admitted plane's material and its provenance before node one."""
+
+        admission = prepared.admission
+        state = _RunState(
+            outputs={},
+            input_payload=normalize_canonical(admission.invocation_input),
+            parameters=normalize_canonical(admission.parameters),
+            outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
+            acquisition_plan=prepared.acquisition_plan,
+            read_rows=sum(item.rows for item in prepared.accepted_state_materials),
+            read_rows_by_input={
+                item.input.input_name: item.rows for item in prepared.accepted_state_materials
+            },
+        )
+        for accepted_state in prepared.accepted_state_materials:
+            access = BodyAccessContext(
+                principal_id="procedure-runtime",
+                can_read_body=True,
+            )
+            try:
+                retained = self.bodies.read(
+                    accepted_state.input.material_body_digest,
+                    access=access,
+                )
+            except Exception as exc:
+                raise _OperationalFailure("cas_unavailable_at_replay") from exc
+            try:
+                retained_value = normalize_canonical(json.loads(retained))
+            except Exception as exc:
+                raise _OperationalFailure("replay_material_mismatch") from exc
+            if (
+                canonical_bytes(retained_value) != retained
+                or run_value_digest("state-result", retained_value)
+                != accepted_state.input.result_digest
+            ):
+                raise _OperationalFailure("replay_material_mismatch")
+            value = retained_value
+            digest = run_input_digest(accepted_state.input)
+            name = accepted_state.input.input_name
+            state.outputs[name] = normalize_canonical(value)
+            state.provenance[name] = AliasProvenanceV1(
+                whole=frozenset(
+                    {
+                        accepted_state_token(digest),
+                        policy_token(accepted_read_definition_digest(accepted_state.input)),
+                    }
+                )
+            )
+            state.facts[digest] = DependencyEvidenceFactsV1(
+                epistemic_grade="observed",
+                provenance_grade="self-asserted",
+                taint_labels=(TAINT_ACCEPTED_STATE,),
+            )
+        for landed in prepared.landed_capture_materials:
+            # A landed Capture is one capture output, <alias>.<field>; the
+            # substituted call's alias holds its value.
+            name = landed.input.input_name.partition(".")[0]
+            state.outputs[name] = normalize_canonical(landed.material.value)
+            state.capture_bytes += len(canonical_bytes(landed.material.value))
+            tokens = {
+                admitted_capture_token(landed.input.capture_digest),
+                policy_token(landed.input.capture_contract_digest),
+            }
+            if admission.acquisition_policy_digest is not None:
+                tokens.add(policy_token(admission.acquisition_policy_digest))
+            if admission.selection_receipt_digest is not None:
+                tokens.add(receipt_token(admission.selection_receipt_digest))
+            envelope = landed.material.envelope
+            tokens.add(
+                receipt_token(
+                    envelope.run_receipt_digest
+                    if isinstance(envelope, CaptureEnvelopeV1)
+                    else envelope.producer_receipt_digest
+                )
+            )
+            state.provenance[name] = AliasProvenanceV1(whole=frozenset(tokens))
+            contract = self.capture_contracts.get(landed.input.capture_contract_digest)
+            state.facts[landed.input.capture_digest] = DependencyEvidenceFactsV1(
+                selector_privacy=(
+                    capture_retention_policy(contract).selector_privacy
+                    if contract is not None
+                    else "direct_allowed"
+                ),
+                epistemic_grade=landed.material.epistemic_grade,
+                provenance_grade=landed.material.provenance_grade,
+                acquisition_input_name=landed.input.input_name,
+            )
+        for exhaust in prepared.exhaust_materials:
+            digest = run_input_digest(exhaust.input)
+            name = exhaust.input.input_name
+            state.outputs[name] = normalize_canonical(exhaust.value)
+            state.provenance[name] = AliasProvenanceV1(
+                whole=frozenset(
+                    {
+                        exhaust_token(digest),
+                        policy_token(exhaust.input.reducer_or_query_digest),
+                    }
+                )
+            )
+            state.facts[digest] = DependencyEvidenceFactsV1(
+                epistemic_grade="derived",
+                provenance_grade="self-asserted",
+                taint_labels=(TAINT_UNPROMOTED_EXHAUST,),
+            )
+        return state
+
+    def _run_late_read(
+        self,
+        node: ReadNode,
+        *,
+        accepted: AcceptedProcedure,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+    ) -> None:
+        """Run one late read now, at the admitted coordinate (D-R38).
+
+        Its selection names runtime output, so it could not bind at admission:
+        it reads the same accepted state an admission read would, through the
+        same reader, under what is left of the run's one read ceiling (its
+        children's reads included), and its refusal is the run's refusal.
+        """
+
+        if self.state_reader is None:
+            raise ExecutionError("a late read needs the run's accepted-state reader")
+        try:
+            read_parameters = state_tap_parameters(
+                node,
+                invocation_input=state.input_payload,
+                parameters=state.parameters,
+                values=state.outputs,
+            )
+        except ExecutionError as exc:
+            raise _RunRefusal(
+                "runtime_reference_unresolved",
+                "A late read's selection did not resolve.",
+                node_id=node.node_id,
+            ) from exc
+        remaining = (
+            effective_read_rows(admission.budget.max_read_rows, admission.hard_caps.max_read_rows)
+            - state.read_rows
+        )
+        try:
+            material, rows = read_state_tap(
+                accepted,
+                node,
+                read_parameters=read_parameters,
+                accepted_coordinate=admission.accepted_coordinate,
+                state_reader=self.state_reader,
+                bodies=self.bodies,
+                remaining=remaining,
+            )
+        except ProcedureBoundaryRefused as exc:
+            raise _RunRefusal(
+                exc.code, str(exc), node_id=node.node_id, details=exc.details
+            ) from exc
+        state.read_rows += rows
+        state.read_rows_by_input[node.as_] = rows
+        state.late_reads[node.as_] = material.input
+        digest = run_input_digest(material.input)
+        state.outputs[node.as_] = normalize_canonical(material.value)
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=frozenset(
+                {
+                    accepted_state_token(digest),
+                    policy_token(accepted_read_definition_digest(material.input)),
+                }
+            )
+        )
+        state.facts[digest] = DependencyEvidenceFactsV1(
+            epistemic_grade="observed",
+            provenance_grade="self-asserted",
+            taint_labels=(TAINT_ACCEPTED_STATE,),
+        )
+
+    def _verify_correspondence(
+        self,
+        admission: ProcedureRunAdmission,
+        accepted: AcceptedProcedure,
+        state_materials: tuple[AcceptedStateRunMaterial, ...],
+    ) -> None:
+        procedure = accepted.procedure
+        if (
+            accepted.path != admission.procedure_path
+            or accepted.artifact_digest != admission.procedure_artifact_digest
+            or procedure.definition_digest != admission.definition_digest
+            or procedure.identity != admission.procedure_identity
+            or procedure.activation_policy != admission.activation_policy
+            or (
+                admission.parent_binding is None
+                and procedure.definition.hard_caps != admission.hard_caps
+            )
+        ):
+            raise ProcedureBoundaryRefused(
+                "pin_binding_mismatch",
+                "Procedure admission and accepted artifact differ.",
+            )
+        if admission.parent_binding is not None:
+            if self.parent_context is None:
+                raise ExecutionError("nested admission requires its executing parent")
+            self.parent_context.verify(admission, accepted)
+            if self.effective_rung != self.parent_context.child_rung(accepted):
+                raise ExecutionError("nested invocation changed the parent effective rung")
+        elif self.parent_context is not None:
+            raise ExecutionError("a child cannot execute under a standalone admission")
+        if admission.invocation_origin == "actor":
+            if procedure.pins != admission.full_pins:
+                raise ProcedureBoundaryRefused(
+                    "pin_binding_mismatch",
+                    "Procedure admission pins differ from the accepted artifact.",
+                )
+        elif not set(procedure.pins).issubset(set(admission.full_pins)):
+            raise ProcedureBoundaryRefused(
+                "pin_binding_mismatch",
+                "Line run pins must close the accepted Procedure pins exactly.",
+            )
+        # Every run's operating budget is its Line's (a direct run's ephemeral
+        # Line spec's): it never exceeds the Procedure's hard caps.
+        if not budget_within_caps(admission.budget, procedure.definition.hard_caps):
+            raise ExecutionError("the run budget exceeds the Procedure hard caps")
+        if _node_pin_sets(accepted) != admission.node_pin_sets:
+            raise ProcedureBoundaryRefused(
+                "pin_binding_mismatch",
+                "Procedure node pins changed after admission.",
+            )
+        if admission.resource_budget is not None:
+            for node in procedure.definition.nodes:
+                if (
+                    isinstance(node, RepeatNode)
+                    and node.max_attempts > admission.resource_budget.repeat_attempts_cap
+                ):
+                    raise ProcedureBoundaryRefused(
+                        "budget_max_repeat_attempts_exceeded",
+                        "Repeat exceeds admitted instance ceiling.",
+                    )
+        self._verify_effective_rung(admission)
+        self._verify_input_planes(admission, accepted)
+        retained_values = {
+            item.input.input_name: normalize_canonical(item.value) for item in state_materials
+        }
+        retained_values.update(
+            {
+                node.as_: normalize_canonical(node.literal)
+                for node in procedure.definition.nodes
+                if isinstance(node, ProjectNode) and node.literal is not None
+            }
+        )
+        late = late_state_taps(procedure.definition)
+        expected_state_inputs = {
+            node.as_: (
+                self._pin(
+                    cast(ArtifactNameRef, node.claim_type or node.query),
+                    label=f"state read {node.node_id!r}",
+                ),
+                run_value_digest(
+                    "state-parameters",
+                    state_tap_parameters(
+                        node,
+                        invocation_input=admission.invocation_input,
+                        parameters=admission.parameters,
+                        values=retained_values,
+                    ),
+                ),
+            )
+            for node in procedure.definition.nodes
+            if isinstance(node, ReadNode) and node.as_ not in late
+        }
+        actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
+        if set(actual_state_inputs) != set(expected_state_inputs):
+            raise ProcedureBoundaryRefused(
+                "input_material_mismatch",
+                "Procedure admission state_tap input set differs.",
+            )
+        for name, (query, parameters_digest) in expected_state_inputs.items():
+            actual = actual_state_inputs[name]
+            if (
+                accepted_read_definition_digest(actual) != query.artifact_digest
+                or actual.parameters_digest != parameters_digest
+                or actual.read_coordinate != admission.accepted_coordinate
+            ):
+                raise ProcedureBoundaryRefused(
+                    "input_material_mismatch",
+                    f"Procedure admission state_tap input {name!r} differs.",
+                )
+
+    def _verify_effective_rung(self, admission: ProcedureRunAdmission) -> None:
+        """Refuse a five-term cap computed against any other admission binding.
+
+        The rung is authority, so it is checked against the frozen tuple rather
+        than recomputed here: every term already resolved through the mandate,
+        calibration, and sensitivity coordinates this admission bound. A direct
+        (``actor``) admission may also bind one: ruling C4's ephemeral Line
+        spec, capped at propose. The digest correspondence below is what
+        actually ties the rung to this exact admission in either case.
+        """
+
+        rung = self.effective_rung
+        if rung is None:
+            return
+        if admission.invocation_origin == "actor":
+            # PC-E1 reserves line_spec_digest/sensitivity_policy_digest/
+            # mandate_coordinate_digest/calibration_coordinate_digest for Line
+            # runs: a direct admission binds none of them. Its ephemeral rung
+            # corresponds to this admission by the Procedure version alone.
+            if rung.procedure_definition_digest != admission.definition_digest:
+                raise ExecutionError(
+                    "effective rung was computed against another admission binding"
+                )
+            return
+        if admission.invocation_origin != "line":
+            raise ExecutionError(
+                "an effective rung binds a Line run or a direct run's ephemeral spec"
+            )
+        if (
+            rung.procedure_definition_digest != admission.definition_digest
+            or rung.line_spec_digest != admission.line_spec_digest
+            or rung.sensitivity_policy_digest != admission.sensitivity_policy_digest
+            or rung.mandate_coordinate_digest != admission.mandate_coordinate_digest
+            or rung.calibration_coordinate_digest != admission.calibration_coordinate_digest
+        ):
+            raise ExecutionError("effective rung was computed against another admission binding")
+
+    def _verify_input_planes(
+        self,
+        admission: ProcedureRunAdmission,
+        accepted: AcceptedProcedure,
+    ) -> None:
+        """Refuse every cross-plane relabel before the first node can observe a value."""
+        self._use_plan(accepted)
+
+        # A read is named by its alias; an acquiring call's admitted input by the
+        # capture output it binds, <alias>.<field>.
+        nodes: dict[str, tuple[ReadNode | CallNode, str | None]] = {}
+        for node in accepted.procedure.definition.nodes:
+            if isinstance(node, ReadNode):
+                nodes[node.as_] = (node, None)
+            elif isinstance(node, CallNode):
+                for name in node.captures:
+                    nodes[f"{node.as_}.{name}"] = (node, name)
+        for run_input in admission.run_inputs:
+            found = nodes.get(run_input.input_name)
+            if found is None:
+                raise ProcedureBoundaryRefused(
+                    "input_material_mismatch",
+                    f"Admitted input {run_input.input_name!r} names no Procedure input node.",
+                )
+            node, field = found
+            try:
+                validate_node_input_plane(node, run_input)
+                if (
+                    isinstance(run_input, LandedCaptureRunInputV1)
+                    and isinstance(node, CallNode)
+                    and field is not None
+                    and run_input.capture_contract_digest
+                    != self._pin(
+                        node.captures[field], label=f"call {node.node_id!r} captures"
+                    ).artifact_digest
+                ):
+                    raise ValueError(
+                        "landed Capture does not match its capture field's CaptureContract"
+                    )
+            except ValueError as exc:
+                raise ProcedureBoundaryRefused(
+                    "input_material_mismatch",
+                    f"Admitted input plane was relabelled: {exc}",
+                ) from exc
+
+    def _require_current(self, admission: ProcedureRunAdmission) -> None:
+        if admission.lane == "replay":
+            return
+        current = self.activation_authority.current_procedure_digest(
+            admission.procedure_identity,
+            coordinate=admission.accepted_coordinate,
+        )
+        if current != admission.procedure_artifact_digest:
+            raise ProcedureBoundaryRefused(
+                "not_current",
+                "Procedure is not current at the admitted coordinate.",
+            )
+
+    def _checkpoint_current(self, admission: ProcedureRunAdmission, *, effect: bool) -> None:
+        parent_binding = admission.parent_binding
+        if parent_binding is not None and admission.lane != "replay":
+            for pin, policy in zip(
+                parent_binding.ancestors,
+                parent_binding.activation_policies,
+                strict=True,
+            ):
+                if policy == "abort" or (policy == "epoch-check" and effect):
+                    if (
+                        self.activation_authority.current_procedure_digest(
+                            pin.target, coordinate=admission.accepted_coordinate
+                        )
+                        != pin.artifact_digest
+                    ):
+                        raise ProcedureBoundaryRefused(
+                            "not_current", "An ancestor Procedure is no longer current."
+                        )
+        if admission.activation_policy == "abort" or (
+            admission.activation_policy == "epoch-check" and effect
+        ):
+            self._require_current(admission)
+
+    def _check_budget(
+        self,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        *,
+        started_ns: int,
+        node_id: str,
+        wall_clock: bool = True,
+    ) -> None:
+        """Refuse a run past any declared budget.
+
+        ``wall_clock=False`` after a terminal node: its deadline was checked
+        inside the terminal, before anything was delivered, and a run whose
+        effect was delivered must not then report that it ran out of time.
+        """
+
+        elapsed_us = (self.clock.monotonic_ns() - started_ns) // 1000
+        state.wall_clock_microseconds = max(state.wall_clock_microseconds, elapsed_us)
+        if wall_clock and elapsed_us > admission.budget.wall_clock.microseconds:
+            raise _BudgetExceeded(
+                "wall_clock",
+                limit=admission.budget.wall_clock.microseconds,
+                observed=elapsed_us,
+                node_id=node_id,
+            )
+        if state.provider_calls > admission.budget.max_provider_calls:
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls,
+                node_id=node_id,
+            )
+        if state.capture_bytes > admission.budget.max_capture_bytes:
+            raise _BudgetExceeded(
+                "max_capture_bytes",
+                limit=admission.budget.max_capture_bytes,
+                observed=state.capture_bytes,
+                node_id=node_id,
+            )
+
+    def _walk(
+        self,
+        accepted: AcceptedProcedure,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        started_ns: int,
+    ) -> CanonicalValue:
+        definition = accepted.procedure.definition
+        graph = analyze_procedure(definition)
+        nodes = {node.node_id: node for node in definition.nodes}
+        current = definition.nodes[0].node_id
+        while True:
+            try:
+                node = nodes[current]
+            except KeyError as exc:
+                raise ProcedureBoundaryRefused(
+                    "compiler_invariant_broken",
+                    "Compiled control flow names no Procedure node.",
+                    details={"node_id": current},
+                ) from exc
+            self._checkpoint_current(admission, effect=False)
+            self._check_budget(
+                admission,
+                state,
+                started_ns=started_ns,
+                node_id=node.node_id,
+            )
+            try:
+                branch = self._execute_node(
+                    node,
+                    accepted=accepted,
+                    admission=admission,
+                    state=state,
+                    records=records,
+                    started_ns=started_ns,
+                )
+                self._check_budget(
+                    admission,
+                    state,
+                    started_ns=started_ns,
+                    node_id=node.node_id,
+                    wall_clock=not isinstance(
+                        node,
+                        ClaimsNode | CaptureEgressNode | InboxEgressNode,
+                    ),
+                )
+                self._track_completeness(node, state)
+                if isinstance(node, LayoutExtractNode):
+                    self._route_findings(node.node_id, admission, state)
+                summary = state.node_summaries.get(node.node_id)
+                self._append_event(
+                    admission,
+                    records,
+                    "node_fired",
+                    {
+                        "node_id": node.node_id,
+                        "kind": node.kind,
+                        "verdict": "succeeded",
+                        **self._diagnostic_report(node.node_id, state),
+                        **_consumed(state),
+                        **({} if summary is None else {"summary": summary.model_dump(mode="json")}),
+                    },
+                )
+                if isinstance(node, HaltNode):
+                    raise _Halted(node_id=node.node_id, reason=node.reason, message=node.message)
+            except _RunRefusal:
+                self._append_event(
+                    admission,
+                    records,
+                    "node_fired",
+                    {
+                        "node_id": node.node_id,
+                        "kind": node.kind,
+                        "verdict": "refused",
+                        **self._diagnostic_report(node.node_id, state),
+                        **_consumed(state),
+                    },
+                )
+                raise
+            except _Halted:
+                raise
+            except Exception:
+                self._append_event(
+                    admission,
+                    records,
+                    "node_fired",
+                    {
+                        "node_id": node.node_id,
+                        "kind": node.kind,
+                        "verdict": "failed",
+                        **self._diagnostic_report(node.node_id, state),
+                        **_consumed(state),
+                    },
+                )
+                raise
+
+            edges = graph.edges[node.node_id]
+            target: str | None
+            if isinstance(node, GuardNode):
+                target = edges[branch or "on_false"]
+            else:
+                target = edges.get("next")
+            if target == "$abort":
+                if isinstance(node, GuardNode):
+                    raise _RunRefusal(
+                        "guard_refused",
+                        node.message or "Procedure guard refused.",
+                        node_id=node.node_id,
+                        detail_code=node.refusal_code or "guard_refused",
+                    )
+                raise _RunRefusal(
+                    "guard_refused",
+                    "Procedure reached an explicit abort edge.",
+                    node_id=node.node_id,
+                    detail_code="procedure.abort",
+                )
+            if target is None:
+                try:
+                    if isinstance(node, ProjectNode) and node.leaf:
+                        result = state.outputs[node.as_]
+                        state.return_tokens = (
+                            state.alias_tokens(frozenset({node.as_})) | state.control
+                        )
+                        state.return_complete = state.completeness.at_sink(_node_reads(node))
+                    elif isinstance(node, ClaimsNode) and definition.returns is None:
+                        result = {}
+                        state.return_tokens = state.control
+                    elif isinstance(node, CaptureEgressNode):
+                        result = _resolve_node_template(
+                            node.result,
+                            node_id=node.node_id,
+                            input_payload=state.input_payload,
+                            parameters=state.parameters,
+                            outputs=state.outputs,
+                        )
+                        state.return_tokens = _base_tokens(
+                            node, state, node.result, self.references
+                        )
+                        state.return_complete = state.completeness.at_sink(
+                            _referenced_reads(node.result)
+                        )
+                        if state.terminal_capture is not None:
+                            state.return_tokens |= frozenset(
+                                {produced_capture_token(state.terminal_capture)}
+                            )
+                    else:
+                        if definition.returns is None:
+                            raise ExecutionError("Procedure must finish at an explicit return path")
+                        result = state.outputs[definition.returns]
+                        state.return_tokens = (
+                            state.alias_tokens(frozenset({definition.returns})) | state.control
+                        )
+                        state.return_complete = state.completeness.at_sink(
+                            ((definition.returns, ()),)
+                        )
+                except KeyError as exc:  # pragma: no cover - static law should prevent
+                    raise ExecutionError("Procedure return alias was not produced") from exc
+                if self.completeness_probe is not None and not is_terminal_node(node):
+                    self.completeness_probe(node.node_id, state.return_complete)
+                return_contract = self._pin(
+                    definition.contract_out,
+                    label="Procedure contract_out",
+                )
+                result = _validate_node_contract(
+                    self.contract_validator,
+                    contract=return_contract,
+                    payload=result,
+                    direction="output",
+                    node_id=node.node_id,
+                    max_items=_effective_max_items(admission),
+                    observe_items=state.observe_items,
+                )
+                _check_return_budget(
+                    result,
+                    max_items=None,
+                    node_id=node.node_id,
+                    result_bytes_cap=(
+                        admission.resource_budget.result_bytes_cap
+                        if admission.resource_budget is not None
+                        else 1_048_576
+                    ),
+                    observe_result_bytes=state.observe_result_bytes,
+                    boundary="procedure-return",
+                    field_path=definition.returns or node.node_id,
+                )
+                try:
+                    return normalize_canonical(result)
+                except Exception as exc:
+                    raise _RunRefusal(
+                        "result_not_canonical",
+                        "The Procedure result is not canonical.",
+                        node_id=node.node_id,
+                    ) from exc
+            current = target
+
+    def _execute_node(
+        self,
+        node: object,
+        *,
+        accepted: AcceptedProcedure,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        started_ns: int,
+    ) -> Literal["on_true", "on_false"] | None:
+        if isinstance(node, InvokeNode):
+            self._run_child(
+                node,
+                accepted=accepted,
+                admission=admission,
+                state=state,
+                records=records,
+                started_ns=started_ns,
+            )
+            return None
+        if isinstance(node, ReadNode):
+            if node.as_ in late_state_taps(accepted.procedure.definition):
+                self._run_late_read(node, accepted=accepted, admission=admission, state=state)
+            if node.as_ not in state.outputs:
+                raise ExecutionError("admitted read material is absent")
+            rows = state.read_rows_by_input.get(
+                node.as_, state.read_rows_by_input.get(node.node_id)
+            )
+            if rows is None:
+                rows = row_count(state.outputs[node.as_])
+            if rows is not None:
+                found = rows
+                record_summary(
+                    state.node_summaries, node.node_id, lambda: ReadRunSummary(rows=found)
+                )
+            self._extend_alias(
+                state, node.as_, _node_policy_tokens(node, self.references) | state.control
+            )
+            return None
+        if isinstance(node, ClaimsNode):
+            self._run_claims(node, admission=admission, state=state, records=records)
+            return None
+        if isinstance(node, HaltNode):
+            record_summary(state.node_summaries, node.node_id, lambda: halt_summary(node.reason))
+            return None
+        if isinstance(node, CallNode) and node.acquires:
+            self._run_acquiring_call(node, admission=admission, state=state, records=records)
+            record_summary(
+                state.node_summaries,
+                node.node_id,
+                lambda: call_summary(node.captures, state.outputs.get(node.as_)),
+            )
+            return None
+        if isinstance(node, LayoutExtractNode):
+            self._run_extract(self._extract_spec(node), state=state)
+            return None
+        if isinstance(node, CallNode):
+            self._run_provider_v4(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+            )
+            record_summary(
+                state.node_summaries,
+                node.node_id,
+                lambda: call_summary(node.captures, state.outputs.get(node.as_)),
+            )
+            return None
+        if isinstance(node, TransformNode):
+            self._run_closed_transform(node, state=state)
+            return None
+        if isinstance(node, ProjectNode | SelectNode):
+            if isinstance(node, SelectNode):
+                present = [alias for alias in node.sources if alias in state.outputs]
+                if len(present) != 1:
+                    raise ProcedureBoundaryRefused(
+                        "compiler_invariant_broken",
+                        "A branch join must select exactly one available producer.",
+                        details={"node_id": node.node_id},
+                    )
+                fields: object = "$steps." + present[0]
+            else:
+                fields = node.template
+            value = (
+                normalize_canonical(node.literal)
+                if isinstance(node, ProjectNode) and node.literal is not None
+                else _resolve_node_template(
+                    fields,
+                    node_id=node.node_id,
+                    input_payload=state.input_payload,
+                    parameters=state.parameters,
+                    outputs=state.outputs,
+                )
+            )
+            # An intermediate value is typed as it flows: a project or select pins
+            # no Contract, and the run's item budget is enforced at boundaries.
+            state.outputs[node.as_] = normalize_canonical(value)
+            provenance_fields = fields
+            state.provenance[node.as_] = _projected_provenance(
+                provenance_fields,
+                state=state,
+                base=_base_tokens(node, state, provenance_fields, self.references),
+                value=state.outputs[node.as_],
+            )
+            return None
+        if isinstance(node, GuardNode):
+            try:
+                verdict, trace = _evaluate_predicate(
+                    node.predicate,
+                    input_payload=state.input_payload,
+                    outputs=state.outputs,
+                    parameters=state.parameters,
+                )
+            except ExecutionError as exc:
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    "A guard runtime reference did not resolve.",
+                    node_id=node.node_id,
+                ) from exc
+            state.control = (
+                state.control
+                | _node_policy_tokens(node, self.references)
+                | state.alias_tokens(frozenset(predicate_step_aliases(node.predicate)))
+            )
+            self._append_event(
+                admission,
+                records,
+                "branch_evaluated",
+                {
+                    "node_id": node.node_id,
+                    "verdict": verdict,
+                    "selected_arm": "on_true" if verdict else "on_false",
+                    "operands": trace,
+                },
+            )
+            record_summary(
+                state.node_summaries, node.node_id, lambda: guard_summary(verdict, trace)
+            )
+            return "on_true" if verdict else "on_false"
+        if isinstance(node, RepeatNode):
+            self._run_repeat(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+                started_ns=started_ns,
+            )
+            return None
+        if isinstance(
+            node,
+            CaptureEgressNode | InboxEgressNode,
+        ):
+            self._run_terminal(node, admission=admission, state=state, records=records)
+            return None
+        raise ExecutionError(f"unsupported Procedure node {type(node).__name__}")
+
+    @staticmethod
+    def _extend_alias(
+        state: _RunState,
+        alias: str,
+        extra: frozenset[DependencyToken],
+    ) -> None:
+        current = state.provenance.get(alias)
+        state.provenance[alias] = (
+            AliasProvenanceV1(whole=extra) if current is None else current.merged(extra)
+        )
+
+    def _workspace_input_context(
+        self, node: CallNode, resolved_request: object
+    ) -> WorkspaceInputContext:
+        """The path a workspace call reads, its Line parameter and that parameter's description.
+
+        Read only when a read refuses: one params Contract resolution at the
+        admitted coordinate, never on the run's ordinary path.
+        """
+
+        from cruxible_client.contracts.shapes import contract_ref_for_identity
+        from cruxible_core.procedures.declared_inputs import (
+            parameter_description,
+            parameter_reference,
+            workspace_location_key,
+        )
+
+        authored = node.input if isinstance(node.input, dict) else {}
+        key = workspace_location_key(authored)
+        resolved = resolved_request.get(key) if isinstance(resolved_request, dict) else None
+        parameter = parameter_reference(authored.get(key))
+        description = None
+        if (
+            parameter is not None
+            and self.parameter_contract is not None
+            and self.contract_resolver is not None
+        ):
+            try:
+                contract = self.contract_resolver(
+                    contract_ref_for_identity(self.parameter_contract.target)
+                )
+            except ValueError:
+                contract = None
+            description = parameter_description(contract, parameter)
+        return WorkspaceInputContext(
+            relative_path=resolved if isinstance(resolved, str) else None,
+            parameter=parameter,
+            description=description,
+        )
+
+    def _executed_workspace_request(
+        self, node: CallNode, resolved_request: object
+    ) -> ExecutedWorkspaceFileSourceRequestV2:
+        """The authored workspace request as the daemon executes it, or a typed refusal."""
+
+        if self.workspace_file_reader is None:
+            context = self._workspace_input_context(node, resolved_request)
+            placement = workspace_input_repair("binding", context)
+            raise _RunRefusal(
+                "workspace_file_read_refused",
+                "No daemon-local workspace reader is available."
+                + (
+                    ""
+                    if context.relative_path is None
+                    else f" The Line reads {context.relative_path}."
+                ),
+                node_id=node.node_id,
+                detail_code="binding",
+                details={
+                    "path_class": "binding",
+                    "repair_commands": [
+                        *([] if placement is None else [placement]),
+                        "attach a workspace or configure an allowed root",
+                    ],
+                    **context.details(),
+                },
+            )
+        try:
+            authored = parse_authored_workspace_request(resolved_request)
+        except WorkspaceBindingDigestAuthored as exc:
+            raise _RunRefusal(
+                "workspace_file_read_refused",
+                str(exc),
+                node_id=node.node_id,
+                detail_code="binding",
+                details={
+                    "path_class": "binding",
+                    "repair_commands": [
+                        "remove workspace_binding_digest from the call input; the daemon "
+                        "resolves the workspace"
+                    ],
+                },
+            ) from exc
+        except ValidationError as exc:
+            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+        try:
+            return self.workspace_file_reader.resolve(authored)
+        except WorkspaceFileReadRefused as exc:
+            raise _workspace_refusal(
+                exc,
+                node_id=node.node_id,
+                context=self._workspace_input_context(node, resolved_request),
+            ) from exc
+
+    def _authored_workspace_glob(
+        self, node: CallNode, resolved_request: object
+    ) -> WorkspaceFileGlobRequestV1:
+        """The authored glob read, or a typed refusal (D-R41)."""
+
+        if self.workspace_file_reader is None:
+            self._executed_workspace_request(node, resolved_request)  # refuses, typed
+        try:
+            return parse_authored_workspace_glob(resolved_request)
+        except WorkspaceBindingDigestAuthored as exc:
+            raise _RunRefusal(
+                "workspace_file_read_refused",
+                str(exc),
+                node_id=node.node_id,
+                detail_code="binding",
+                details={"path_class": "binding", "repair_commands": []},
+            ) from exc
+        except ValidationError as exc:
+            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+
+    def _acquire_workspace_glob(
+        self,
+        node: CallNode,
+        request: WorkspaceFileGlobRequestV1,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        occurrence: ProviderExternalOccurrencePlan,
+        fields: tuple[str, ...],
+        rules: dict[str, AcquisitionRule],
+        pins: dict[str, ArtifactPin],
+        contracts: dict[str, CaptureContract],
+        into: _GlobMembers,
+    ) -> tuple[
+        tuple[str, ...],
+        dict[str, AcquisitionRule],
+        dict[str, ArtifactPin],
+        dict[str, CaptureContract],
+    ]:
+        """Read every file a glob matches as one list member each (D-R41).
+
+        Each match is an ordinary ``workspace.file`` read: its own derived
+        request, read receipt and built-in invocation, and one Capture of the
+        call's one capture field, ``<field>/<i>`` in sorted match order. A
+        member that fails to read (gone, refused, declined) is dropped, so the
+        list is incomplete: it is never read as absent. Past the glob's
+        ``max_files`` the read refuses before any file is read.
+        """
+
+        reader = self.workspace_file_reader
+        assert reader is not None  # _authored_workspace_glob refused otherwise
+        (field,) = fields  # the core-served read has exactly one capture field
+        rule, pin, contract = rules[field], pins[field], contracts[field]
+        try:
+            matches = reader.expand(request)
+        except WorkspaceFileReadRefused as exc:
+            raise _workspace_refusal(exc, node_id=node.node_id) from exc
+        _check_capture_list_bound(
+            node,
+            field,
+            len(matches),
+            cap=request.max_files,
+            limit=_effective_max_items(admission),
+            boundary="workspace-glob",
+            state=state,
+        )
+        keys = tuple(f"{field}/{index}" for index in range(len(matches)))
+        # Shared across every member below (D-R41): sibling files in the same
+        # directory reuse one real-name listing instead of relisting it each.
+        directory_cache: DirectoryEntryCache = {}
+        for key, relative_path in zip(keys, matches, strict=True):
+            into.members[key] = field
+
+            def drop(detail: str, key: str = key) -> None:
+                into.dropped[key] = ACQUISITION_UNAVAILABLE
+                into.results[key] = ProcedureSourceAcquisitionResultV1(
+                    node_id=node.node_id,
+                    input_name=rule.input_name,
+                    outcome="unavailable",
+                    reason_code=ACQUISITION_UNAVAILABLE,
+                    detail=detail,
+                )
+
+            try:
+                executed = reader.resolve(request.member(relative_path))
+            except (ValidationError, WorkspaceFileReadRefused) as exc:
+                drop(f"{relative_path!r} cannot be read: {exc}")
+                continue
+            derived = build_procedure_derived_source_request(
+                run_id=admission.run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                occurrence_path=occurrence.occurrence_path,
+                node_id=node.node_id,
+                input_name=node.as_,
+                request=executed.model_dump(mode="json"),
+            )
+            into.member_requests[key] = derived.request_digest
+            self._append_event(
+                admission, records, "source_request_derived", derived.model_dump(mode="json")
+            )
+            try:
+                read = reader.read(
+                    executed,
+                    run_id=admission.run_id,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    occurrence_path=occurrence.occurrence_path,
+                    policy_coordinate=admission.accepted_coordinate,
+                    resolved_max_bytes=contract.selection_budget.max_bytes,
+                    derived_request_digest=derived.request_digest,
+                    read_at=self.clock.now(),
+                    directory_cache=directory_cache,
+                )
+            except (ValidationError, WorkspaceFileReadRefused) as exc:
+                drop(f"{relative_path!r} cannot be read: {exc}")
+                continue
+            self._append_event(
+                admission,
+                records,
+                "source_read",
+                {
+                    "receipt": read.receipt.model_dump(mode="json"),
+                    "receipt_digest": source_read_receipt_digest(read.receipt),
+                },
+            )
+            try:
+                output, receipt, receipt_digest = self._invoke_provider_v4(
+                    node_id=node.node_id,
+                    slot=node.slot,
+                    repeat_node_id=None,
+                    effect_policy=None,
+                    payload=read.provider_input,
+                    contract_out=None,
+                    admission=admission,
+                    state=state,
+                    records=records,
+                    occurrence=occurrence,
+                )
+            except _ProviderNodeRefusal as exc:
+                drop(f"{relative_path!r} was declined: {exc.refusal.message}")
+                continue
+            payload = read.provider_input
+            assert isinstance(payload, dict)
+            into.receipts[key] = (receipt, receipt_digest)
+            into.source_reads[key] = read.receipt
+            into.outputs[key] = output
+            into.wires[key] = ProviderResultToExternalCapture(
+                source_identity=executed.logical_source,
+                coordinate_type=executed.coordinate_type,
+                coordinate=executed.coordinate,
+                selector_type=executed.selector_type,
+                selector=executed.selector,
+                replayability=executed.replayability,
+                content_base64=str(payload["bytes"]),
+                byte_length=int(cast(int, payload["byte_length"])),
+                bytes_digest=str(payload["bytes_digest"]),
+                observed_at=read.receipt.read_at,
+            )
+        into.member_keys[field] = keys
+        return (
+            keys,
+            {key: rule for key in keys},
+            {key: pin for key in keys},
+            {key: contract for key in keys},
+        )
+
+    def _run_acquiring_call(
+        self,
+        node: CallNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        """Run a call with captures through its admitted Provider occurrence.
+
+        One Provider invocation serves the call. Each ``capture<K>`` field of
+        the slot's out Contract is its own capture output, ``<alias>.<field>``:
+        committed byte-exact under its own pinned CaptureContract, decided by
+        its own acquisition rule (availability, freshness, replayability,
+        size), journaled with its own acquisition and produced-Capture records,
+        associated with the occurrence under its field path, and charged to the
+        run's Capture budget on its own. Every other field is normalized and
+        checked by the out Contract. The call's value names each selected
+        Capture by digest; an omitted field is absent from it, and its omission
+        taints the control lineage.
+        """
+
+        if node.as_ in state.outputs:
+            self._extend_alias(
+                state, node.as_, _node_policy_tokens(node, self.references) | state.control
+            )
+            return
+        if not admission.plans_providers:
+            raise _RunRefusal(
+                "provider_acquisition_plan_required",
+                "An acquiring call requires the admitted acquisition carrier.",
+                node_id=node.node_id,
+            )
+        fields = tuple(node.captures)
+        rules: dict[str, AcquisitionRule] = {}
+        for field in fields:
+            rule = self._acquisition_rule(node, field)
+            if rule is None:
+                raise _RunRefusal(
+                    "source_acquisition_unavailable",
+                    f"No declared acquisition rule serves capture output {node.as_}.{field}.",
+                    node_id=node.node_id,
+                )
+            rules[field] = rule
+        occurrence = self._planned_external_occurrence(
+            state=state,
+            node_id=node.node_id,
+            repeat_node_id=None,
+            occurrence_kind="source",
+        )
+        pins = {
+            field: self._pin(node.captures[field], label=f"call {node.node_id!r} captures")
+            for field in fields
+        }
+        if (
+            occurrence.input_name != node.as_
+            or occurrence.capture_contracts
+            != {field: pin.artifact_digest for field, pin in pins.items()}
+            or not self._occurrence_matches_slot(occurrence, node.slot)
+            or occurrence.effect_class == "external_mutation"
+        ):
+            raise _RunRefusal(
+                "provider_acquisition_plan_mismatch",
+                "The admitted acquiring occurrence differs from the graph binding.",
+                node_id=node.node_id,
+            )
+        contracts: dict[str, CaptureContract] = {}
+        for field, pin in pins.items():
+            found = self.capture_contracts.get(pin.artifact_digest)
+            if found is None or capture_contract_digest(found).tagged != pin.artifact_digest:
+                raise _InternalFailure(
+                    "provider_protocol_violation",
+                    details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
+                )
+            contracts[field] = found
+        # A derive call (a derived out-kind) carries its inputs' Capture lineage
+        # and records them; a fetch keeps only their non-Capture lineage, since
+        # its observation is independent evidence (D-R37 c3).
+        input_lineage = state.alias_tokens(_referenced_aliases(node.input))
+        derived_fields = frozenset(
+            field for field, contract in contracts.items() if contract.epistemic_grade == "derived"
+        )
+        if derived_fields and occurrence.operation.effect != "pure":
+            # A derive is pure computation: the provider's declared word (D-R37 b5).
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                f"call {node.node_id!r} produces a derived Capture, so its operation must "
+                "declare effect: pure.",
+                node_id=node.node_id,
+            )
+        derivation = _capture_derivation(node, input_lineage) if derived_fields else None
+        if not derived_fields:
+            input_lineage = frozenset(
+                token for token in input_lineage if token.slot not in _CAPTURE_SLOTS
+            )
+        resolved_request = normalize_canonical(
+            _resolve_template(
+                node.input,
+                input_payload=state.input_payload,
+                parameters=state.parameters,
+                outputs=state.outputs,
+            )
+        )
+        for field, rule in rules.items():
+            offending_origin = disallowed_origin(rule, resolved_request)
+            if offending_origin is not None:
+                # F05/§4.1,§4.4: a hard eligibility gate, never an omit choice,
+                # exactly like permitted_replayability -- checked before any
+                # provider is invoked.
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
+                    f"Capture output {node.as_}.{field} requests {offending_origin!r}, whose "
+                    "origin is not in the Line's permitted acquisition.origins for this field.",
+                    node_id=node.node_id,
+                )
+        # A glob read (D-R41) is one ordinary workspace read per matched file;
+        # each member carries its own read and invocation receipts.
+        glob_request: WorkspaceFileGlobRequestV1 | None = None
+        if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN and is_workspace_glob(
+            resolved_request
+        ):
+            glob_request = self._authored_workspace_glob(node, resolved_request)
+        receipts: dict[str, tuple[ProviderInvocationReceipt, str]] = {}
+        source_reads: dict[str, SourceReadReceipt | None] = {}
+        outputs: dict[str, object] = {}
+        results: dict[str, ProcedureSourceAcquisitionResultV1] = {}
+        workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
+        member_keys: dict[str, tuple[str, ...]] = {}
+        members: dict[str, str] = {}
+        member_requests: dict[str, str] = {}
+        dropped: dict[str, str] = {}
+        wires: dict[str, ProviderResultToExternalCapture] = {}
+        whole_wire = False
+        output: object = {}
+        if glob_request is not None:
+            fields, rules, pins, contracts = self._acquire_workspace_glob(
+                node,
+                glob_request,
+                admission=admission,
+                state=state,
+                records=records,
+                occurrence=occurrence,
+                fields=fields,
+                rules=rules,
+                pins=pins,
+                contracts=contracts,
+                into=_GlobMembers(
+                    wires=wires,
+                    members=members,
+                    member_keys=member_keys,
+                    member_requests=member_requests,
+                    dropped=dropped,
+                    results=results,
+                    receipts=receipts,
+                    source_reads=source_reads,
+                    outputs=outputs,
+                ),
+            )
+        else:
+            if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN:
+                # The author names the workspace logically, or not at all; the daemon
+                # resolves its root and executes -- and journals -- the request with
+                # that root's binding digest, before anything is read.
+                workspace_request = self._executed_workspace_request(node, resolved_request)
+            derived_request = build_procedure_derived_source_request(
+                run_id=admission.run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                occurrence_path=occurrence.occurrence_path,
+                node_id=node.node_id,
+                input_name=node.as_,
+                request=(
+                    resolved_request
+                    if workspace_request is None
+                    else workspace_request.model_dump(mode="json")
+                ),
+            )
+            self._append_event(
+                admission,
+                records,
+                "source_request_derived",
+                derived_request.model_dump(mode="json"),
+            )
+            source_read_receipt: SourceReadReceipt | None = None
+            provider_payload = resolved_request
+            if workspace_request is not None:
+                assert self.workspace_file_reader is not None  # resolved by it above
+                # The core-served read has exactly one capture field (an acceptance law).
+                (workspace_contract,) = contracts.values()
+                try:
+                    workspace_read = self.workspace_file_reader.read(
+                        workspace_request,
+                        run_id=admission.run_id,
+                        admission_binding_digest=admission.admission_binding_digest,
+                        occurrence_path=occurrence.occurrence_path,
+                        policy_coordinate=admission.accepted_coordinate,
+                        resolved_max_bytes=workspace_contract.selection_budget.max_bytes,
+                        derived_request_digest=derived_request.request_digest,
+                        read_at=self.clock.now(),
+                    )
+                except (ValidationError, WorkspaceFileReadRefused) as exc:
+                    raise _workspace_refusal(
+                        exc,
+                        node_id=node.node_id,
+                        context=self._workspace_input_context(node, resolved_request),
+                    ) from exc
+                provider_payload = workspace_read.provider_input
+                source_read_receipt = workspace_read.receipt
+                self._append_event(
+                    admission,
+                    records,
+                    "source_read",
+                    {
+                        "receipt": source_read_receipt.model_dump(mode="json"),
+                        "receipt_digest": source_read_receipt_digest(source_read_receipt),
+                    },
+                )
+            try:
+                output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
+                    node_id=node.node_id,
+                    slot=node.slot,
+                    repeat_node_id=None,
+                    effect_policy=None,
+                    payload=provider_payload,
+                    contract_out=None,
+                    admission=admission,
+                    state=state,
+                    records=records,
+                    occurrence=occurrence,
+                )
+            except _ProviderNodeRefusal as exc:
+                # Only a typed refusal the operation declares absorbable is absorbed,
+                # and only for a capture output whose rule omits an unavailable input.
+                absorbable = provider_refusal_is_absorbable(occurrence.operation, exc.outcome)
+                if not absorbable or any(rule.on_unavailable != "omit" for rule in rules.values()):
+                    raise
+                unavailable: dict[str, ProcedureSourceAcquisitionResultV1] = {}
+                unavailable_decisions: dict[str, AcquisitionInputDecision] = {}
+                for field, rule in rules.items():
+                    unavailable[field] = ProcedureSourceAcquisitionResultV1(
+                        node_id=node.node_id,
+                        input_name=rule.input_name,
+                        outcome="unavailable",
+                        reason_code="cruxible.acquisition.unavailable",
+                        detail=exc.refusal.message,
+                    )
+                    unavailable_decisions[field] = apply_acquisition_result(
+                        rule,
+                        unavailable[field],
+                        default_authorized=rule.input_name in self.default_authorizations,
+                        evaluation_time=admission.occurrence_evaluation_time,
+                    )
+                    self._journal_acquisition(
+                        admission,
+                        records,
+                        node=node,
+                        field=field,
+                        result=unavailable[field],
+                        decision=unavailable_decisions[field],
+                        provider_refusal=exc.outcome.model_dump(mode="json"),
+                    )
+                for field, rule in rules.items():
+                    self._bind_omission(
+                        admission=admission,
+                        state=state,
+                        rule=rule,
+                        decision=unavailable_decisions[field],
+                    )
+                return
+            out_contract = closure_lookup(occurrence.contracts)(occurrence.operation.out)
+            # An operation whose out Contract carries no capture<K> field returns
+            # its whole output as Capture wire; the call's value then names only
+            # that Capture.
+            list_caps = (
+                {}
+                if out_contract is None
+                else {name: cap for name, _kind, cap in capture_list_fields(out_contract)}
+            )
+            whole_wire = workspace_request is None and (
+                out_contract is None or not (capture_fields(out_contract) or list_caps)
+            )
+            if whole_wire:
+                output = self._validate_operation_value(
+                    occurrence,
+                    normalize_canonical(output),
+                    direction="out",
+                    admission=admission,
+                    state=state,
+                    node_id=node.node_id,
+                )
+            # A list<capture<K>> field is one capture output whose members are each a
+            # Capture (D-R37 a1): its member keys ``<field>/<i>`` (index for order
+            # only, a2) alias the field's rule, pin and CaptureContract, so every
+            # loop below runs over members exactly as over fields.
+            requests_seen: set[str] = set()
+            if not whole_wire and workspace_request is None and isinstance(output, dict):
+                for field in fields:
+                    if field not in list_caps:
+                        continue
+                    listed = output.get(field)
+                    if not isinstance(listed, list):
+                        raise _InternalFailure(
+                            "provider_protocol_violation",
+                            details={
+                                "node_id": node.node_id,
+                                "reason": f"capture list field {field!r} is not a list",
+                            },
+                        )
+                    _check_capture_list_bound(
+                        node,
+                        field,
+                        len(listed),
+                        cap=list_caps[field],
+                        limit=_effective_max_items(admission),
+                        boundary=f"operation-out:{occurrence.operation.name}",
+                        state=state,
+                    )
+                    keys = tuple(f"{field}/{index}" for index in range(len(listed)))
+                    member_keys[field] = keys
+                    for key, member in zip(keys, listed, strict=True):
+                        members[key] = field
+                        try:
+                            wires[key] = ProviderResultToExternalCapture.model_validate(member)
+                        except ValidationError as exc:
+                            raise _InternalFailure(
+                                "provider_protocol_violation",
+                                details={
+                                    "node_id": node.node_id,
+                                    "reason": f"capture list member {key!r} is not Capture wire",
+                                },
+                            ) from exc
+                        member_requests[key] = _member_request_digest(
+                            wires[key], key=key, node_id=node.node_id, seen=requests_seen
+                        )
+                        requests_seen.add(member_requests[key])
+                fields = tuple(key for field in fields for key in member_keys.get(field, (field,)))
+                rules = {key: rules[members.get(key, key)] for key in fields}
+                pins = {key: pins[members.get(key, key)] for key in fields}
+                contracts = {key: contracts[members.get(key, key)] for key in fields}
+                derived_fields = frozenset(
+                    key for key in fields if members.get(key, key) in derived_fields
+                )
+            #: Members dropped for a typed failure: oversized or origin-ineligible (a4).
+            for field in fields:
+                if field in members:
+                    continue
+                try:
+                    if whole_wire:
+                        wires[field] = ProviderResultToExternalCapture.model_validate(output)
+                    elif workspace_request is None or source_read_receipt is None:
+                        if not isinstance(output, dict):
+                            raise ValueError("an acquiring call's output is a record")
+                        wires[field] = ProviderResultToExternalCapture.model_validate(
+                            output.get(field)
+                        )
+                    else:
+                        # The core-served read commits the file's exact bytes, the
+                        # ones core read and handed the operation; its output
+                        # structures them.
+                        assert isinstance(provider_payload, dict)
+                        wires[field] = ProviderResultToExternalCapture(
+                            source_identity=workspace_request.logical_source,
+                            coordinate_type=workspace_request.coordinate_type,
+                            coordinate=workspace_request.coordinate,
+                            selector_type=workspace_request.selector_type,
+                            selector=workspace_request.selector,
+                            replayability=workspace_request.replayability,
+                            content_base64=str(provider_payload["bytes"]),
+                            byte_length=int(cast(int, provider_payload["byte_length"])),
+                            bytes_digest=str(provider_payload["bytes_digest"]),
+                            observed_at=source_read_receipt.read_at,
+                        )
+                except (ValidationError, ValueError) as exc:
+                    raise _InternalFailure(
+                        "provider_protocol_violation",
+                        details={
+                            "node_id": node.node_id,
+                            "reason": f"capture field {field!r} is not Capture wire",
+                        },
+                    ) from exc
+            for field in fields:
+                receipts[field] = (invocation_receipt, invocation_receipt_digest)
+                source_reads[field] = source_read_receipt
+                outputs[field] = output
+        for field, rule in rules.items():
+            if field in dropped:
+                continue  # a glob member that failed to read has no Capture wire
+            # F05/§4.1,§4.4: each capture field's own coordinate names where its
+            # bytes came from (``url``, and ``final_url`` after a redirect), and
+            # is checked too, before any Capture conversion.
+            offending_result_origin = disallowed_origin(rule, wires[field].coordinate)
+            if offending_result_origin is not None and field in members:
+                # A list member off the permitted origins is dropped; its list is
+                # then incomplete, and absence over it never retires (D-R37 a4).
+                dropped[field] = ACQUISITION_ORIGIN_INELIGIBLE
+                results[field] = ProcedureSourceAcquisitionResultV1(
+                    node_id=node.node_id,
+                    input_name=rule.input_name,
+                    outcome="refused",
+                    reason_code=ACQUISITION_REFUSED,
+                    detail=f"The coordinate names {offending_result_origin!r}, whose origin is "
+                    "not in the Line's permitted acquisition.origins for this field.",
+                )
+                continue
+            if offending_result_origin is not None:
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
+                    f"Capture output {node.as_}.{field} coordinate names "
+                    f"{offending_result_origin!r}, whose origin is not in the Line's permitted "
+                    "acquisition.origins for this field.",
+                    node_id=node.node_id,
+                )
+        producer = self.slot_bindings[node.slot].build.target
+        bound_generation = admission.accepted_coordinate.generation_root
+        for field in fields:
+            if field in dropped:
+                continue
+            try:
+                # F05b: every check independent of the result's byte length runs
+                # before classifying it as oversized, so a schema, replayability
+                # or receipt-binding violation is never hidden behind
+                # on_oversized just because the same result is also over budget.
+                validate_provider_external_capture_result(
+                    contract=contracts[field],
+                    result=wires[field],
+                    receipt=receipts[field][0],
+                    occurrence=occurrence,
+                    producer=producer,
+                    bound_generation=bound_generation,
+                    field=members.get(field, field),
+                    source_read_receipt=source_reads[field],
+                )
+            except (CaptureFormatError, ValidationError, ValueError) as exc:
+                raise _InternalFailure(
+                    "provider_protocol_violation",
+                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
+                ) from exc
+        reserved_store = ReservedCaptureStore(
+            bodies=self.bodies,
+            reservations=self.material_reservations,
+            admission=admission,
+        )
+        built: dict[str, Any] = {}
+        bodies: dict[str, bytes] = {}
+        for field in fields:
+            if field in dropped:
+                continue
+            wire, contract = wires[field], contracts[field]
+            if wire.byte_length > contract.selection_budget.max_bytes:
+                # F05: a real oversized read is the typed acquisition outcome
+                # (on_oversized) of this capture output alone, classified before
+                # its Capture is committed.
+                results[field] = ProcedureSourceAcquisitionResultV1(
+                    node_id=node.node_id,
+                    input_name=rules[field].input_name,
+                    outcome="oversized",
+                    reason_code=ACQUISITION_OVERSIZED,
+                    detail=(
+                        f"Read {wire.byte_length} bytes against a "
+                        f"{contract.selection_budget.max_bytes}-byte Capture budget."
+                    ),
+                )
+                if field in members:
+                    dropped[field] = ACQUISITION_OVERSIZED
+                continue
+            try:
+                built[field] = build_provider_external_capture_v2(
+                    store=reserved_store,
+                    contract=contract,
+                    result=wire,
+                    receipt=receipts[field][0],
+                    occurrence=occurrence,
+                    producer=producer,
+                    bound_generation=bound_generation,
+                    field=members.get(field, field),
+                    source_read_receipt=source_reads[field],
+                    provider_output=None if whole_wire else outputs[field],
+                    derivation=derivation if field in derived_fields else None,
+                )
+                # D-R37 f1: fetched the moment its builder returns, before
+                # the out-Contract check or any acquisition rule below can
+                # refuse; independent of selection and consumption. A derived
+                # field is a function of fetched evidence, never fetched itself.
+                if field not in derived_fields:
+                    state.fetched_captures.add(built[field].capture_digest)
+                bodies[field] = base64.b64decode(wire.content_base64, validate=True)
+            except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
+                raise _InternalFailure(
+                    "provider_protocol_violation",
+                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
+                ) from exc
+        digests = {field: item.capture_digest for field, item in built.items()}
+        if whole_wire:
+            material: CanonicalValue = normalize_canonical(digests)
+        elif glob_request is not None:
+            # A glob's value names only its Captures, in match order.
+            material = normalize_canonical(
+                {
+                    field: [digests[key] for key in keys if key in digests]
+                    for field, keys in member_keys.items()
+                }
+            )
+        else:
+            assert isinstance(output, dict)
+            # The call's value: its out record, each committed capture field
+            # naming its Capture. An oversized field is checked as absent.
+            record = (
+                {
+                    **output,
+                    **{field: digest for field, digest in digests.items() if field not in members},
+                    **{
+                        field: [digests[key] for key in keys if key in digests]
+                        for field, keys in member_keys.items()
+                    },
+                }
+                if workspace_request is None
+                else {
+                    **self._validate_operation_value(
+                        occurrence,
+                        normalize_canonical(output),
+                        direction="out",
+                        admission=admission,
+                        state=state,
+                        node_id=node.node_id,
+                    ),  # type: ignore[dict-item]
+                    **digests,
+                }
+            )
+            for field in fields:
+                if field not in digests and workspace_request is None:
+                    record.pop(field, None)
+            material = (
+                normalize_canonical(record)
+                if workspace_request is not None
+                else self._validate_operation_value(
+                    occurrence,
+                    normalize_canonical(record),
+                    direction="out",
+                    admission=admission,
+                    state=state,
+                    node_id=node.node_id,
+                    absent_captures=frozenset(field for field in fields if field not in digests),
+                )
+            )
+        for field, item in built.items():
+            envelope = item.envelope
+            source = envelope.source
+            assert isinstance(source, ExternalSourceReference)
+            results[field] = ProcedureSourceAcquisitionResultV1(
+                node_id=node.node_id,
+                input_name=rules[field].input_name,
+                outcome="acquired",
+                acquisition=ExternalCaptureAcquisitionV1(
+                    receipt=CaptureAcquisitionReceiptV1(
+                        capture_contract_digest=envelope.capture_contract_digest,
+                        producer=envelope.producer,
+                        producer_binding_digest=envelope.producer_binding_digest,
+                        source_identity=source.source_identity,
+                        coordinate_type=source.coordinate_type,
+                        coordinate=source.coordinate,
+                        selector_type=source.selector_type,
+                        selector=source.selector,
+                        commitment=envelope.commitment,
+                        observed_at=envelope.observed_at,
+                        replayability=source.replayability,
+                        source_effective_time=envelope.source_effective_time,
+                    ),
+                    envelope=envelope,
+                    capture_digest=item.capture_digest,
+                    epistemic_grade=contracts[field].epistemic_grade,
+                    provenance_grade="daemon-fetched",
+                    canonical_material=material,
+                ),
+            )
+        # Each capture output is decided by its own rule, on its own Capture:
+        # one field can be stale or ineligible while another is selected.
+        decisions = {
+            field: apply_acquisition_result(
+                rules[field],
+                results[field],
+                default_authorized=rules[field].input_name in self.default_authorizations,
+                evaluation_time=admission.occurrence_evaluation_time,
+            )
+            for field in fields
+            if field not in dropped
+        }
+        for field, reason in dropped.items():
+            # A failed list member is dropped, whatever its rule says (D-R37 a4).
+            decisions[field] = AcquisitionInputDecision(
+                input_name=rules[field].input_name,
+                disposition="omitted",
+                reason_codes=(reason,),
+            )
+        for field in fields:
+            self._journal_acquisition(
+                admission,
+                records,
+                node=node,
+                field=field,
+                result=results[field],
+                decision=decisions[field],
+                member_request_digest=member_requests.get(field),
+            )
+        for field in fields:
+            if decisions[field].disposition == "refused":
+                # The attempted reads remain journaled, but an ineligible
+                # Capture is never published as an output of this run.
+                reserved_store.release()
+                self._refuse_acquisition(
+                    node,
+                    admission=admission,
+                    rule=rules[field],
+                    result=results[field],
+                    decision=decisions[field],
+                )
+        selected = tuple(field for field in fields if decisions[field].disposition == "selected")
+        # An omitted list member is dropped from its list, which is then
+        # incomplete; its call's other outputs are unaffected (D-R37 a4).
+        # A list the provider itself says is missing members (its result's
+        # generic ``incomplete_captures``) is incomplete exactly as one core
+        # dropped a member from.
+        list_incomplete = any(
+            receipt.incomplete_captures for receipt, _digest in receipts.values()
+        ) or any(decisions[field].disposition == "omitted" for field in fields if field in members)
+        if member_keys:
+            # Caps: max_items above, and every member counts toward the run's
+            # Capture bytes; past either, the call refuses before any member is
+            # bound, so nothing of the list is committed (D-R37 a3).
+            listed_bytes = sum(len(bodies[field]) for field in selected)
+            if state.capture_bytes + listed_bytes > admission.budget.max_capture_bytes:
+                reserved_store.release()
+                raise _BudgetExceeded(
+                    "max_capture_bytes",
+                    limit=admission.budget.max_capture_bytes,
+                    observed=state.capture_bytes + listed_bytes,
+                    node_id=node.node_id,
+                )
+        for field in fields:
+            if decisions[field].disposition == "omitted" and field not in members:
+                self._bind_omission(
+                    admission=admission, state=state, rule=rules[field], decision=decisions[field]
+                )
+        base = _node_policy_tokens(node, self.references) | state.control | input_lineage
+        if admission.acquisition_policy_digest is not None:
+            base = base | {policy_token(admission.acquisition_policy_digest)}
+        tokens: set[DependencyToken] = set()
+        #: Each list's bound members, accumulated here and recorded once per list.
+        bound_members: dict[str, list[str]] = {}
+        for field in selected:
+            acquisition = results[field].acquisition
+            assert acquisition is not None  # a selected result carries its Capture
+            if field in derived_fields:
+                assert derivation is not None
+                state.derivations[acquisition.capture_digest] = (
+                    derivation.manifest.input_capture_digests
+                )
+            tokens |= self._bind_capture_output(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+                field=field,
+                rule=rules[field],
+                acquisition=acquisition,
+                body=bodies[field],
+                contract_digest=pins[field].artifact_digest,
+                occurrence_path=occurrence.occurrence_path,
+                invocation_receipt_digest=receipts[field][1],
+                member_request_digest=member_requests.get(field),
+            )
+            if field in members:
+                bound_members.setdefault(rules[field].input_name, []).append(
+                    acquisition.capture_digest
+                )
+        for input_name, captures in bound_members.items():
+            # One outcome per list naming every bound member: built once, not
+            # rebuilt and re-sorted per member.
+            state.outcomes[input_name] = AcquisitionInputOutcomeV1(
+                input_name=input_name,
+                disposition="acquired",
+                capture_digests=tuple(sorted(set(captures))),
+            )
+        # The call's value: its record without the omitted capture fields. Its
+        # other fields are the operation's own output, valid whatever was
+        # omitted; a call left with no field at all binds nothing.
+        assert isinstance(material, dict)
+        chosen = frozenset(selected)
+        omitted = set(fields) - chosen
+        kept = {name: value for name, value in material.items() if name not in omitted}
+        for field, keys in member_keys.items():
+            # A list names its selected members, in the provider's order.
+            kept[field] = [digests[key] for key in keys if key in chosen]
+            if keys and not kept[field]:
+                # Every member was dropped: the output acquired nothing.
+                input_name = rules[keys[0]].input_name
+                state.outcomes[input_name] = AcquisitionInputOutcomeV1(
+                    input_name=input_name, disposition="omitted"
+                )
+        if kept:
+            state.outputs[node.as_] = normalize_canonical(kept)
+            state.provenance[node.as_] = AliasProvenanceV1(whole=frozenset(base | tokens))
+        if list_incomplete:
+            # The call's value is incomplete (the node's completeness, below);
+            # a derive over it is too, as over any incomplete input.
+            state.dropped_members.add(node.as_)
+        if glob_request is not None:
+            # A glob names the files that exist now: an extract straight over it
+            # never judges absence, so a file it no longer matches retires
+            # nothing (D-R41).
+            state.glob_lists.add(node.as_)
+        reserved_store.release()
+
+    def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
+        """The exact bytes of a Capture this run committed or was admitted."""
+
+        held = state.capture_bodies.get(capture_digest)
+        if held is not None:
+            return held
+        access = BodyAccessContext(principal_id="procedure-extract", can_read_body=True)
+        envelope = parse_capture_envelope(self.bodies.read(capture_digest, access=access))
+        body = self.bodies.read(envelope.commitment.digest, access=access)
+        state.capture_bodies[capture_digest] = body
+        state.capture_contracts[capture_digest] = envelope.capture_contract_digest
+        state.consumed_captures.add(capture_digest)
+        return body
+
+    def _verify_extract_rows(self, plan: Any) -> None:
+        """Every extract still reads the row it pinned, before any node runs (ruling L1).
+
+        Each extract resolves once against the kind the plan pinned; a layout that
+        no longer offers a pinned row's fields refuses the admission, typed, rather
+        than silently changing what the accepted Procedure extracts.
+        """
+
+        for node in plan.definition.nodes:
+            if not isinstance(node, LayoutExtractNode):
+                continue
+            try:
+                self._extract_spec(node, at_admission=True)
+            except LayoutExtractRefused as exc:
+                raise ProcedureBoundaryRefused(
+                    "pin_binding_mismatch",
+                    exc.message,
+                    details={
+                        "refusal": exc.code,
+                        "node_id": node.node_id,
+                        "repair": "Re-accept the Procedure against the kind's current layout.",
+                    },
+                ) from exc
+
+    def _extract_spec(self, node: LayoutExtractNode, *, at_admission: bool = False) -> ExtractNode:
+        """The full spec a stored extract node reads, resolved once per plan.
+
+        The kind is the one the admitted plan pinned for the node's capture
+        field; acceptance already resolved the node against it, so a refusal
+        here means the accepted state is inconsistent.
+        """
+
+        if self._extract_spec_of is None or self._extract_specs_plan is not self.plan:
+            self._extract_specs_plan = self.plan
+            self._extract_spec_of = extract_specs(
+                () if self.plan is None else self.plan.definition.nodes,
+                plan_kind_lookup(self.plan, self.capture_contracts),
+                self.contract_resolver,
+            )
+        if at_admission:
+            return self._extract_spec_of(node)
+        try:
+            return self._extract_spec_of(node)
+        except LayoutExtractRefused as exc:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node.node_id, "reason": exc.message},
+            ) from exc
+
+    def _run_extract(self, node: ExtractNode, *, state: _RunState) -> None:
+        """Read one Capture's records, typed, by its CaptureContract's decoding.
+
+        Over a list of Captures, each member's records are read the same way
+        and merged (D-R37 a5): each record's lineage is its own member.
+        """
+
+        call = state.outputs.get(node.capture_alias)
+        capture_digest = call.get(node.capture_field) if isinstance(call, dict) else None
+        if isinstance(capture_digest, list):
+            self._run_list_extract(node, capture_digest, state=state)
+            return
+        if not isinstance(capture_digest, str):
+            raise _RunRefusal(
+                "runtime_reference_unresolved",
+                f"extract {node.node_id!r}: {node.capture!r} holds no Capture this run made "
+                "or was admitted (an omitted or defaulted acquisition binds none)",
+                node_id=node.node_id,
+            )
+        content, contract, row = self._extract_inputs(node, capture_digest, state=state)
+        only_keys = _extract_only_keys(node, state=state)
+        try:
+            outcome = run_extract(
+                node,
+                capture_digest=capture_digest,
+                content=content,
+                decoding=getattr(contract, "decoding", None),
+                row=row,
+                resolve=self.contract_resolver,
+                enums=self.enum_resolver,
+                only_keys=only_keys,
+                keys=self.key_rules,
+            )
+        except ExtractRefused as exc:
+            raise _RunRefusal(
+                cast(ProcedureNodeRefusalCode, exc.code),
+                str(exc),
+                node_id=node.node_id,
+                details=exc.details or None,
+            ) from exc
+        self._bind_extract(node, outcome, state=state)
+
+    def _extract_inputs(
+        self, node: ExtractNode, capture_digest: str, *, state: _RunState
+    ) -> tuple[bytes, CaptureContract | None, Contract]:
+        """One Capture's exact bytes, its CaptureContract and the extract's row Contract."""
+
+        try:
+            content = self._capture_body(state, capture_digest)
+        except Exception as exc:
+            raise _RunRefusal(
+                "source_material_unavailable",
+                f"extract {node.node_id!r}: the Capture's bytes are unavailable",
+                node_id=node.node_id,
+            ) from exc
+        contract = self.capture_contracts.get(state.capture_contracts.get(capture_digest, ""))
+        row = None if self.contract_resolver is None else self.contract_resolver(node.row)
+        if contract is None or row is None:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={
+                    "node_id": node.node_id,
+                    "reason": "the extract's CaptureContract or row Contract is unavailable",
+                },
+            )
+        return content, contract, row
+
+    def _run_list_extract(
+        self, node: ExtractNode, members: Sequence[object], *, state: _RunState
+    ) -> None:
+        """Extract over a list of Captures: every member's records, merged (D-R37 a5).
+
+        A header or ``complete_when`` speaks for one document, never for the
+        merged whole: both are refused. A key in two members is a duplicate and
+        writes nothing; each record's lineage is the one member it came from.
+        """
+
+        from cruxible_core.procedures.extract import merge_outcomes
+
+        if node.header or node.complete_when is not None:
+            raise _RunRefusal(
+                "extract_format_unsupported",
+                f"extract {node.node_id!r} reads a list of Captures: it declares no header "
+                "or complete_when",
+                node_id=node.node_id,
+            )
+        only_keys = _extract_only_keys(node, state=state)
+        outcomes = []
+        for member in members:
+            if not isinstance(member, str):
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    f"extract {node.node_id!r}: {node.capture!r} holds a non-Capture member",
+                    node_id=node.node_id,
+                )
+            content, contract, row = self._extract_inputs(node, member, state=state)
+            try:
+                outcomes.append(
+                    run_extract(
+                        node,
+                        capture_digest=member,
+                        content=content,
+                        decoding=getattr(contract, "decoding", None),
+                        row=row,
+                        resolve=self.contract_resolver,
+                        enums=self.enum_resolver,
+                        only_keys=only_keys,
+                        keys=self.key_rules,
+                    )
+                )
+            except ExtractRefused as exc:
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, exc.code),
+                    str(exc),
+                    node_id=node.node_id,
+                    details=exc.details or None,
+                ) from exc
+        try:
+            outcome, sources = merge_outcomes(
+                outcomes, duplicates=node.duplicates, keyed=bool(node.key)
+            )
+        except ExtractRefused as exc:
+            raise _RunRefusal(
+                cast(ProcedureNodeRefusalCode, exc.code),
+                str(exc),
+                node_id=node.node_id,
+                details=exc.details or None,
+            ) from exc
+        member_tokens = _member_tokens(
+            state.alias_tokens(frozenset({node.capture_alias})), cast(Sequence[str], members)
+        )
+        self._bind_extract(
+            node,
+            outcome,
+            state=state,
+            items=tuple(member_tokens[source] for source in sources),
+        )
+
+    def _bind_extract(
+        self,
+        node: ExtractNode,
+        outcome: ExtractOutcome,
+        *,
+        state: _RunState,
+        items: tuple[frozenset[DependencyToken], ...] | None = None,
+    ) -> None:
+        """Bind an extract's outcome: its value, diagnostics, completeness and lineage.
+
+        ``items`` is each record's own Capture lineage when its records come
+        from several Captures (a list's members): the alias then carries it
+        for ``records`` (D-R37 a5).
+        """
+
+        refused: dict[tuple[str, str | None], tuple[list[str], int, str | None]] = {}
+        for arm in outcome.held:
+            if isinstance(arm, InvalidRecordArm):
+                # A record refused alone (D-R40), reported on the run by its
+                # typed reason; its siblings read on.
+                problem = arm.problems[0]
+                locators, count, lexeme = refused.get(
+                    (problem.code, problem.field), ([], 0, problem.lexeme)
+                )
+                if len(locators) < 10:
+                    locators.append(arm.record)
+                refused[(problem.code, problem.field)] = (locators, count + 1, lexeme)
+        if refused:
+            diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
+            for (code, field), (locators, count, lexeme) in refused.items():
+                diagnostics.add(
+                    ClaimsDiagnostic(
+                        kind="extract_refused",
+                        target=node.node_id,
+                        field=field,
+                        problem=code,
+                        lexeme=lexeme,
+                        record_locators=tuple(locators),
+                        record_count=count,
+                        source_incomplete=True,
+                    )
+                )
+        if node.duplicates == "refuse_key":
+            from cruxible_client.contracts.canonical import canonical_bytes
+            from cruxible_client.contracts.shapes import DuplicateArm
+            from cruxible_core.procedures.extract import wire_value
+
+            duplicates: dict[bytes, tuple[dict[str, Any], list[str], int]] = {}
+            for arm in outcome.held:
+                if isinstance(arm, DuplicateArm):
+                    key = {name: wire_value(value) for name, value in arm.key.items()}
+                    digest = canonical_bytes(key)
+                    _, locators, count = duplicates.get(digest, (key, [], 0))
+                    if len(locators) < 10:
+                        locators.append(arm.record)
+                    duplicates[digest] = (key, locators, count + 1)
+            diagnostics = state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics())
+            for key, locators, count in duplicates.values():
+                diagnostics.add(
+                    ClaimsDiagnostic(
+                        kind="duplicate_key",
+                        target=node.node_id,
+                        problem="duplicate_key",
+                        key=cast(Any, key),
+                        record_locators=tuple(locators[:10]),
+                        record_count=count,
+                    )
+                )
+        value = normalize_canonical(outcome.value())
+        record_summary(state.node_summaries, node.node_id, lambda: extract_summary(outcome))
+        state.observe_items(len(outcome.held), f"extract:{node.node_id}", "results")
+        state.outputs[node.as_] = value
+        if outcome.complete_when_result is not None:
+            state.extraction_checks[node.as_] = outcome.complete_when_result
+        state.completeness.mark(
+            node.as_,
+            outcome.complete and state.completeness.complete((node.capture_alias,)),
+        )
+        if not outcome.complete:
+            state.completeness.note(
+                node.node_id,
+                "count_mismatch"
+                if not outcome.complete_when_held
+                else "invalid_record"
+                if outcome.invalid_records
+                else "duplicate_key",
+            )
+        state.completeness.drop(node.as_, outcome.dropped_rows())
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=_node_policy_tokens(node, self.references)
+            | state.control
+            | state.alias_tokens(frozenset({node.capture_alias})),
+            items=items,
+            items_path="items" if items is None else "records",
+        )
+
+    def _apply_closed(
+        self,
+        node_id: str,
+        kind: str,
+        spec: object,
+        *,
+        outputs: dict[str, CanonicalValue],
+        state: _RunState,
+        rows_in: list[int | None] | None = None,
+    ) -> tuple[CanonicalValue, bool]:
+        """One closed transform over ``outputs``: its value, and whether it is complete.
+
+        ``rows_in``, when given, receives the row count of each record input as
+        the transform resolved it (a length read, never a second resolution).
+        """
+
+        # Identities, so a union of many inputs checks each in constant time.
+        record_inputs = frozenset() if rows_in is None else frozenset(map(id, _record_inputs(spec)))
+
+        def resolve(reference: object) -> object:
+            resolved = _resolve_node_template(
+                reference,
+                node_id=node_id,
+                input_payload=state.input_payload,
+                parameters=state.parameters,
+                outputs=outputs,
+            )
+            if rows_in is not None and id(reference) in record_inputs:
+                rows_in.append(row_count(resolved))
+            return resolved
+
+        try:
+            return apply_closed_transform(
+                kind,
+                spec,
+                resolve,
+                parameters=state.parameters if isinstance(state.parameters, dict) else None,
+                enums=self.enum_resolver,
+                keys=self.key_rules,
+            )
+        except TransformInputInvalid as exc:
+            raise _RunRefusal(
+                "contract_input_refused",
+                f"The {kind} transform input is invalid: {exc}",
+                node_id=node_id,
+            ) from exc
+
+    def _run_closed_transform(
+        self,
+        node: TransformNode,
+        *,
+        state: _RunState,
+    ) -> None:
+        """One closed transform over records: typed, three-valued, completeness carried."""
+
+        rows_in: list[int | None] = []
+        value, complete = self._apply_closed(
+            node.node_id,
+            node.transform_kind,
+            node.spec,
+            outputs=state.outputs,
+            state=state,
+            rows_in=rows_in,
+        )
+        aliases = _referenced_aliases(node.spec)
+        state.outputs[node.as_] = value
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: transform_summary(node.transform_kind, rows_in, value),
+        )
+        state.completeness.mark(
+            node.as_,
+            complete
+            and state.completeness.reads_complete(_referenced_reads(node.spec), records_kept=True),
+        )
+        if node.as_ in state.completeness.incomplete:
+            state.completeness.note(
+                node.node_id,
+                "unknown_predicate" if not complete else "upstream_incomplete",
+                aliases,
+            )
+        # Like an extract's, a closed transform's rows view drops invalid fields.
+        state.completeness.drop(node.as_, dropped_rows(value))
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=_node_policy_tokens(node, self.references)
+            | state.control
+            | state.alias_tokens(aliases)
+        )
+
+    def _track_completeness(self, node: object, state: _RunState) -> None:
+        """Carry the completeness law past one node.
+
+        ``extract``, the closed transforms, ``invoke`` and ``repeat`` set their
+        own outputs' completeness as they run; every other node's output is the
+        AND of what it reads (a ``call``'s, acquiring or not, included).
+        """
+
+        tracker = state.completeness
+        if isinstance(node, GuardNode):
+            tracker.guard(_predicate_reads(node.predicate))
+            return
+        if isinstance(node, LayoutExtractNode | InvokeNode | RepeatNode) or (
+            isinstance(node, TransformNode) and node.transform_kind in CLOSED_TRANSFORM_KINDS
+        ):
+            return
+        if isinstance(node, SelectNode):
+            reads: tuple[Read, ...] = tuple(
+                (alias, ()) for alias in node.sources if alias in state.outputs
+            )
+        else:
+            reads = _node_reads(node)
+        if is_terminal_node(node):
+            node_id = getattr(node, "node_id", "")
+            if self.completeness_probe is not None:
+                self.completeness_probe(
+                    node_id, tracker.at_sink(reads) and node_id not in state.sinks_incomplete
+                )
+            return
+        alias = getattr(node, "as_", None)
+        if isinstance(alias, str) and alias in state.outputs:
+            if isinstance(node, ReadNode):
+                # A read completed within its ceiling, or the node refused. A
+                # late read selected by an incomplete value is incomplete too.
+                tracker.mark(alias, tracker.reads_complete(reads))
+                if alias in tracker.incomplete:
+                    tracker.note(node.node_id, "upstream_incomplete", (name for name, _ in reads))
+            else:
+                truncates = (
+                    isinstance(node, CallNode)
+                    and self.plan is not None
+                    and self.plan.definition.slots[node.slot].may_truncate
+                )
+                # A Capture list that dropped a member is incomplete (D-R37 a4).
+                dropped = alias in state.dropped_members
+                tracker.mark(alias, tracker.reads_complete(reads) and not truncates and not dropped)
+                if alias in tracker.incomplete:
+                    tracker.note(
+                        getattr(node, "node_id", alias),
+                        "may_truncate"
+                        if truncates
+                        else "incomplete_input"
+                        if dropped
+                        else "upstream_incomplete",
+                        (name for name, _ in reads),
+                    )
+
+    def _occurrence_matches_slot(
+        self, occurrence: ProviderExternalOccurrencePlan, slot: str | None
+    ) -> bool:
+        """Whether an admitted occurrence is its node's slot binding, exactly."""
+
+        binding = self.slot_bindings.get(slot or "")
+        return (
+            slot is not None
+            and binding is not None
+            and occurrence.slot == slot
+            and occurrence.provider_artifact_digest == binding.build_digest
+            and occurrence.operation == binding.operation
+            and occurrence.operation_signature_digest == binding.operation_signature_digest
+        )
+
+    def _acquisition_rule(self, node: CallNode, field: str) -> AcquisitionRule | None:
+        if self.acquisition_rules is None:
+            return None
+        # Each capture output's rule is named <alias>.<field>.
+        return self.acquisition_rules.rule_for(node.node_id, f"{node.as_}.{field}")
+
+    def _journal_acquisition(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        *,
+        node: CallNode,
+        field: str,
+        result: ProcedureSourceAcquisitionResultV1,
+        decision: AcquisitionInputDecision,
+        provider_refusal: object | None = None,
+        member_request_digest: str | None = None,
+    ) -> None:
+        """Journal one capture output's acquisition attempt and its decision.
+
+        A list member (``field`` is ``<field>/<i>``) also names its identity,
+        the request digest its coordinate carries (D-R37 a2).
+        """
+
+        self._append_event(
+            admission,
+            records,
+            "source_acquisition",
+            {
+                "tag": "playbill-procedure-source-acquisition-v1",
+                "node_id": node.node_id,
+                "input_name": result.input_name,
+                "field": field,
+                "result": result.model_dump(mode="json", exclude={"acquisition"}),
+                "decision": decision.model_dump(mode="json"),
+                **({} if provider_refusal is None else {"provider_refusal": provider_refusal}),
+                **(
+                    {}
+                    if member_request_digest is None
+                    else {"member_request_digest": member_request_digest}
+                ),
+                "audit": {
+                    "deployment_digest": admission.deployment_snapshot_digest,
+                    "recorded_at": format_datetime(self.clock.now()),
+                },
+            },
+        )
+
+    def _refuse_acquisition(
+        self,
+        node: CallNode,
+        *,
+        admission: ProcedureRunAdmission,
+        rule: AcquisitionRule,
+        result: ProcedureSourceAcquisitionResultV1,
+        decision: AcquisitionInputDecision,
+    ) -> NoReturn:
+        """Refuse the run for one capture output its rule refuses."""
+
+        details: dict[str, object] = {"input_name": rule.input_name}
+        message = f"Capture output {rule.input_name!r} refuses this result. "
+        if (
+            result.acquisition is not None
+            and rule.max_age is not None
+            and "cruxible.acquisition.stale" in decision.reason_codes
+        ):
+            evaluation_time = admission.occurrence_evaluation_time
+            delta = evaluation_time - result.acquisition.envelope.observed_at
+            details.update(
+                age_microseconds=(delta.days * 86_400 + delta.seconds) * 1_000_000
+                + delta.microseconds,
+                max_age_microseconds=rule.max_age.microseconds,
+            )
+            message += (
+                f"Capture age is {delta.total_seconds()}s; max_age is "
+                f"{rule.max_age.microseconds / 1_000_000}s. "
+            )
+        message += (
+            f"Repair: fetch a fresh available Capture for {rule.input_name!r} "
+            "within its contract and age bounds."
+        )
+        raise _RunRefusal(
+            cast(
+                ProcedureNodeRefusalCode,
+                decision.reason_codes[0]
+                if decision.reason_codes
+                else "cruxible.acquisition.refused",
+            ),
+            message,
+            node_id=node.node_id,
+            details=details,
+        )
+
+    def _bind_omission(
+        self,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        rule: AcquisitionRule,
+        decision: AcquisitionInputDecision,
+    ) -> None:
+        """An omitted capture output binds no Capture and taints the control lineage."""
+
+        marker = _decision_digest(admission.run_id, decision)
+        state.facts[marker] = DependencyEvidenceFactsV1(
+            epistemic_grade="predicted",
+            provenance_grade="self-asserted",
+            taint_labels=(TAINT_OMITTED_OPTIONAL,),
+            acquisition_input_name=rule.input_name,
+        )
+        state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+            input_name=rule.input_name,
+            disposition="omitted",
+        )
+        state.control = state.control | {receipt_token(marker)}
+
+    def _bind_capture_output(
+        self,
+        node: CallNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        field: str,
+        rule: AcquisitionRule,
+        acquisition: ExternalCaptureAcquisitionV1,
+        body: bytes,
+        contract_digest: str,
+        occurrence_path: str,
+        invocation_receipt_digest: str,
+        member_request_digest: str | None = None,
+    ) -> frozenset[DependencyToken]:
+        """Bind one selected capture output: its Capture, budget, evidence and association.
+
+        A list member is one of its field's Captures: its record names its
+        identity (D-R37 a2), and its list's one outcome is recorded by the
+        caller once every member is bound. Returns the tokens the call's
+        value carries for it.
+        """
+
+        digest = acquisition.capture_digest
+        state.capture_bytes += len(body)
+        state.capture_bodies[digest] = body
+        state.capture_contracts[digest] = contract_digest
+        state.consumed_captures.add(digest)
+        state.facts[digest] = DependencyEvidenceFactsV1(
+            epistemic_grade=acquisition.epistemic_grade,
+            provenance_grade=acquisition.provenance_grade,
+            acquisition_input_name=rule.input_name,
+        )
+        if member_request_digest is None:
+            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+                input_name=rule.input_name, disposition="acquired", capture_digests=(digest,)
+            )
+        self._append_event(
+            admission,
+            records,
+            "produced_capture",
+            {
+                "tag": "playbill-procedure-produced-capture-v1",
+                "node_id": node.node_id,
+                "input_name": rule.input_name,
+                "field": field,
+                **(
+                    {}
+                    if member_request_digest is None
+                    else {"member_request_digest": member_request_digest}
+                ),
+                "capture_digest": digest,
+                "capture_contract_digest": acquisition.envelope.capture_contract_digest,
+                "acquisition_receipt_digest": acquisition.receipt.digest,
+                **_source_capture_association_fields(occurrence_path, invocation_receipt_digest),
+                "observed_at": format_datetime(acquisition.envelope.observed_at),
+                "epistemic_grade": acquisition.epistemic_grade,
+                "provenance_grade": acquisition.provenance_grade,
+                "audit": {
+                    "deployment_digest": admission.deployment_snapshot_digest,
+                    "recorded_at": format_datetime(self.clock.now()),
+                },
+            },
+        )
+        state.source_capture_associations.append(
+            ProcedureSourceCaptureAssociation(
+                occurrence_path=occurrence_path,
+                field=field,
+                invocation_receipt_digest=invocation_receipt_digest,
+                capture_digest=digest,
+            )
+        )
+        return frozenset(
+            {
+                produced_capture_token(digest),
+                receipt_token(acquisition.receipt.digest),
+                policy_token(acquisition.envelope.capture_contract_digest),
+            }
+        )
+
+    def _run_child(
+        self,
+        node: InvokeNode,
+        *,
+        accepted: AcceptedProcedure,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        started_ns: int,
+    ) -> None:
+        from cruxible_core.procedures.nested import ParentInvocationContext
+
+        if self.nested_runner is None:
+            raise ExecutionError("nested Procedure invocation requires an admitted runner")
+        remaining_us = (
+            admission.budget.wall_clock.microseconds
+            - (self.clock.monotonic_ns() - started_ns) // 1000
+        )
+        if remaining_us <= 0:
+            raise _BudgetExceeded(
+                "wall_clock",
+                limit=admission.budget.wall_clock.microseconds,
+                observed=admission.budget.wall_clock.microseconds + 1,
+                node_id=node.node_id,
+            )
+        remaining = admission.budget.model_copy(
+            update={
+                "wall_clock": admission.budget.wall_clock.model_copy(
+                    update={"microseconds": remaining_us}
+                ),
+                "max_provider_calls": max(
+                    0, admission.budget.max_provider_calls - state.provider_calls
+                ),
+                "max_capture_bytes": max(
+                    0, admission.budget.max_capture_bytes - state.capture_bytes
+                ),
+                # Reads are cumulative: the child reads what this run has left.
+                "max_read_rows": max(
+                    0,
+                    effective_read_rows(
+                        admission.budget.max_read_rows, admission.hard_caps.max_read_rows
+                    )
+                    - state.read_rows,
+                ),
+            }
+        )
+        context = ParentInvocationContext(
+            admission,
+            accepted,
+            node,
+            remaining,
+            self.effective_rung,
+            deadline_ns=started_ns + admission.budget.wall_clock.microseconds * 1000,
+        )
+        value = _resolve_node_template(
+            node.input,
+            node_id=node.node_id,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
+        )
+        child_parameters = _resolve_node_template(
+            node.parameters,
+            node_id=node.node_id,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
+        )
+        self._append_event(
+            admission,
+            records,
+            "child_invocation",
+            {
+                "node_id": node.node_id,
+                "verdict": "started",
+                "procedure": self._pin(node.procedure, label=f"invoke {node.node_id!r}").model_dump(
+                    mode="json"
+                ),
+                "input_digest": run_value_digest("nested-input", value),
+                "remaining_budget": remaining.model_dump(mode="json"),
+            },
+        )
+        result = self.nested_runner.run(context, value, child_parameters)
+        child_records = [
+            row
+            for row in self.journal.all_records(result.receipt.stream, result.receipt.partition_id)
+            if row.record.run_id == result.run_id
+        ]
+        if (
+            not child_records
+            or tuple(row.record_digest for row in child_records) != result.receipt.record_digests
+        ):
+            raise ExecutionError("nested receipt does not reproduce retained child records")
+        access = BodyAccessContext(principal_id="nested-procedure", can_read_body=True)
+        admission_records = [
+            row for row in child_records if row.record.event_kind == "admission_bound"
+        ]
+        if len(admission_records) != 1:
+            raise ExecutionError("nested receipt requires exactly one child admission")
+        payload = read_payload(
+            self.bodies, admission_records[0].record.payload_digest, access=access
+        )
+        if isinstance(payload, UnavailablePayload):
+            raise _OperationalFailure(
+                "replay_material_unavailable", details={"payload_digest": payload.digest}
+            )
+        admitted = parse_admission_payload(payload).admission
+        if admitted.parent_binding != context.binding:
+            raise ExecutionError("nested receipt is not bound to this parent occurrence")
+        if (
+            admitted.procedure_identity != node.procedure.target
+            or admitted.procedure_artifact_digest
+            != self._pin(node.procedure, label=f"invoke {node.node_id!r}").artifact_digest
+            or admitted.run_id != result.run_id
+            or admitted.admission_binding_digest != result.receipt.admission_binding_digest
+            or admitted.journal_stream != result.receipt.stream
+            or admitted.journal_partition_id != result.receipt.partition_id
+        ):
+            raise ExecutionError("nested receipt names another Procedure")
+        final = read_payload(self.bodies, child_records[-1].record.payload_digest, access=access)
+        if isinstance(final, UnavailablePayload):
+            raise _OperationalFailure(
+                "replay_material_unavailable", details={"payload_digest": final.digest}
+            )
+        if child_records[-1].record.event_kind != "attempt_finalized" or not isinstance(
+            final, dict
+        ):
+            raise ExecutionError("nested execution has no durable completion")
+        if final.get("status") != result.status or final.get("output") != result.output:
+            raise ExecutionError("nested completion differs from returned result")
+        # The child's completion records an incomplete return (data or control
+        # lineage); the invoke's output is that AND the inputs it passed.
+        child_complete = final.get("return_complete", True) is not False
+        consumption = final.get("consumption")
+        consumed = consumption.get("captures") if isinstance(consumption, dict) else None
+        if (
+            not isinstance(consumption, dict)
+            or consumption.get("v") != CONSUMPTION_VERSION
+            or not isinstance(consumed, list)
+        ):
+            raise ExecutionError("nested completion records no Capture consumption")
+        state.consumed_captures.update(str(digest) for digest in consumed)
+        budget = ProcedureRunBudget.model_validate(final["budget"]).observed
+        state.provider_calls += budget.provider_calls
+        state.capture_bytes += budget.capture_bytes
+        state.read_rows += budget.read_rows
+        state.observe_items(
+            budget.max_items.high_water, "child:" + node.node_id, budget.max_items.field_path or ""
+        )
+        state.observe_result_bytes(
+            budget.result_bytes.high_water,
+            "child:" + node.node_id,
+            budget.result_bytes.field_path or "",
+        )
+        digest = procedure_run_receipt_digest(result.receipt)
+        returned_manifest = TerminalItemDependencyManifestV1.model_validate(
+            final["return_manifest"]
+        )
+        if returned_manifest.run_id != result.run_id:
+            raise ExecutionError("nested return lineage names another run")
+        returned_tokens = manifest_dependency_tokens(returned_manifest)
+        retained_facts = final.get("dependency_facts", {})
+        if not isinstance(retained_facts, dict):
+            raise ExecutionError("nested return facts must be an object")
+        for key, facts in retained_facts.items():
+            state.facts[key] = DependencyEvidenceFactsV1.model_validate(facts)
+        tokens = (
+            _base_tokens(node, state, node.input, self.references)
+            | returned_tokens
+            | frozenset({receipt_token(digest)})
+        )
+        state.provenance[node.as_] = AliasProvenanceV1(whole=tokens)
+        outcome: dict[str, object] = {
+            "succeeded": result.status == "succeeded",
+            "status": result.status,
+            "receipt": {
+                "run_id": result.run_id,
+                "procedure_identity": admitted.procedure_identity.qualified,
+                "procedure_artifact_digest": admitted.procedure_artifact_digest,
+                "receipt_digest": digest,
+            },
+        }
+        if result.status == "succeeded":
+            outcome["value"] = result.output
+            if final.get("terminal_capture") is not None:
+                capture = final["terminal_capture"]
+                if not isinstance(capture, str):
+                    raise ExecutionError("nested capture reference must name an exact capture")
+                if produced_capture_token(capture) not in returned_tokens:
+                    raise ExecutionError("nested capture has no retained dependency binding")
+                outcome["terminal"] = {"capture": {"capture_digest": capture}}
+        state.outputs[node.as_] = normalize_canonical(outcome)
+        state.completeness.mark(
+            node.as_,
+            child_complete and state.completeness.reads_complete(_referenced_reads(node.input)),
+        )
+        if node.as_ in state.completeness.incomplete:
+            state.completeness.note(
+                node.node_id, "upstream_incomplete", _referenced_aliases(node.input)
+            )
+        self._append_event(
+            admission,
+            records,
+            "child_invocation",
+            {
+                "node_id": node.node_id,
+                "verdict": "completed",
+                "status": result.status,
+                "procedure": admitted.procedure_identity.model_dump(mode="json"),
+                "receipt": result.receipt.model_dump(mode="json"),
+            },
+        )
+
+    def _run_claims(
+        self,
+        node: ClaimsNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        from cruxible_core.procedures.claims_terminal import expand_claims
+
+        if self.claims_context is None:
+            raise _RunRefusal(
+                "terminal_not_available",
+                "Claims terminal needs accepted slot reads",
+                node_id=node.node_id,
+            )
+        downgraded_before = state.completeness.downgraded
+        expanded = expand_claims(
+            node, executor=self, admission=admission, state=state, context=self.claims_context
+        )
+        policy = _node_policy_tokens(node, self.references)
+        state.claims_items[node.node_id] = (
+            expanded.values,
+            tuple(t | policy for t in expanded.tokens),
+        )
+        state.claims_diagnostics[node.node_id] = expanded.diagnostics
+        state.claims_evidence[node.node_id] = expanded.evidence
+        state.claims_changes[node.node_id] = expanded.changes
+        state.claims_identities[node.node_id] = expanded.identities
+        state.claims_creations[node.node_id] = expanded.creations
+        self._run_terminal(
+            node,
+            admission=admission,
+            state=state,
+            records=records,
+        )
+        downgraded = state.completeness.downgraded - downgraded_before
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: claims_summary(
+                expanded.changes,
+                expanded.diagnostics,
+                downgraded=downgraded,
+                delivery=state.claims_deliveries.get(node.node_id, "empty"),
+                reobservations_refused=state.claims_reobservations_refused.get(node.node_id, {}),
+            ),
+        )
+
+    def _inbox_items(
+        self,
+        node: InboxEgressNode,
+        *,
+        state: _RunState,
+    ) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+        contract = None if self.contract_resolver is None else self.contract_resolver(node.contract)
+        if contract is None:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={
+                    "node_id": node.node_id,
+                    "reason": f"the inbox item Contract {node.contract.spelling} is unavailable",
+                },
+            )
+        return _inbox_items(
+            node,
+            state=state,
+            contract=contract,
+            resolve=self.contract_resolver or (lambda _ref: None),
+            enums=self.enum_resolver,
+            keys=self.key_rules,
+        )
+
+    def _diagnostic_report(self, node_id: str, state: _RunState) -> dict[str, object]:
+        diagnostics = state.claims_diagnostics.get(node_id)
+        if diagnostics is None:
+            return {}
+        report = diagnostics.report()
+        remaining = max(INBOX_RUN_ITEM_CAP_MAX - state.inbox_items, 0)
+        kinds: tuple[FindingKind, ...] = (
+            self.egress_sink.finding_kinds
+            if isinstance(self.egress_sink, FindingsSinkProtocol)
+            else ()
+        )
+        selected = sum(diagnostics.counts.get(kind, 0) for kind in kinds)
+        if selected > remaining:
+            report["claims_diagnostics_inbox_truncation"] = InboxPostTruncation(
+                cap=INBOX_RUN_ITEM_CAP_MAX,
+                cap_source="default",
+                selected=selected,
+                posted=min(selected, remaining),
+            ).model_dump(mode="json")
+        return report
+
+    def _route_findings(
+        self, node_id: str, admission: ProcedureRunAdmission, state: _RunState
+    ) -> None:
+        diagnostics = state.claims_diagnostics.get(node_id)
+        if diagnostics is None or not isinstance(self.egress_sink, FindingsSinkProtocol):
+            return
+        remaining = max(INBOX_RUN_ITEM_CAP_MAX - state.inbox_items, 0)
+        items = tuple(d for d in diagnostics.findings if d.kind in self.egress_sink.finding_kinds)[
+            :remaining
+        ]
+        if items and isinstance(self.egress_sink, FindingsSinkProtocol):
+            # A finding's values come from the Captures this run decoded; the
+            # items record them, so a restricted kind's values stay withheld (C14).
+            self.egress_sink.route_findings(
+                admission=admission,
+                node_id=node_id,
+                diagnostics=items,
+                at=self.clock.now(),
+                captures=tuple(sorted(state.consumed_captures)),
+            )
+            state.inbox_items += len(items)
+
+    def _run_terminal(
+        self,
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        """Bind this terminal's per-item closure, then cap it and deliver it.
+
+        The closure is bound before the cap is applied on purpose: a run that a
+        term refused still owes an auditable account of exactly what it would
+        have emitted and which term stopped it.
+
+        An effectful terminal is journaled twice around its sink: a `prepared`
+        record carrying the exact request before the sink is called, and a
+        resolving record (`delivered`, `refused`, or `failed`) after. The pair
+        is what lets a crash between the two be recovered against the same
+        operation instead of re-run as a second one.
+        """
+
+        inbox_cap = _inbox_cap(node) if isinstance(node, InboxEgressNode) else None
+        children, values, manifests, selected = self._record_terminal_items(
+            node,
+            admission=admission,
+            state=state,
+            records=records,
+            limit=None if inbox_cap is None else max(inbox_cap[0] - state.inbox_items, 0),
+        )
+        truncation = (
+            None
+            if inbox_cap is None or selected <= len(values)
+            else InboxPostTruncation(
+                cap=inbox_cap[0],
+                cap_source=inbox_cap[1],
+                selected=selected,
+                posted=len(values),
+            ).model_dump(mode="json")
+        )
+        if not values and truncation is None:
+            if node.node_id in state.claims_items or node.node_id in state.claims_diagnostics:
+                diagnostic_report = self._diagnostic_report(node.node_id, state)
+                self._route_findings(node.node_id, admission, state)
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {
+                        "node_id": node.node_id,
+                        "kind": "claims" if node.node_id in state.claims_items else node.kind,
+                        "required_rung": TERMINAL_REQUIRED_RUNGS[node.kind],
+                        "verdict": "delivered",
+                        "children": [],
+                        **diagnostic_report,
+                    },
+                )
+            # A fan-out over an empty list has nothing to emit: no egress is
+            # prepared or delivered (a proposal with no member is no proposal),
+            # and the run ends at this terminal with its typed result.
+            self._note_delivery(node, state, delivery="empty", emitted=0, truncation=None)
+            return
+        required = TERMINAL_REQUIRED_RUNGS[node.kind]
+        payload: dict[str, object] = {
+            "node_id": node.node_id,
+            "kind": "claims" if node.node_id in state.claims_items else node.kind,
+            **self._diagnostic_report(node.node_id, state),
+            "required_rung": required,
+            "children": [item.model_dump(mode="json") for item in children],
+        }
+        if truncation is not None:
+            # Every record of this terminal carries what its cap left unposted.
+            payload["inbox_truncation"] = truncation
+        rung = self.effective_rung
+        if rung is None or self.egress_sink is None:
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {**payload, "verdict": "dependencies_bound_egress_pending"},
+            )
+            raise _RunRefusal(
+                "terminal_not_available",
+                "Governed terminal egress requires a bound effective rung and an egress sink; "
+                "this run bound its per-item dependency closure only.",
+                node_id=node.node_id,
+            )
+        payload = {
+            **payload,
+            "effective_rung": rung.effective_rung,
+            "effective_rung_digest": effective_rung_digest(rung),
+            "limiting_term": rung.limiting_term,
+            "terms": [item.model_dump(mode="json") for item in rung.terms],
+        }
+        # A settle terminal capped at propose proposes instead, as its fallback
+        # for that cap; one capped below propose is refused like any other.
+        capped_by: EffectiveRungTermV1 | None = None
+        if not rung.permits(node.kind):
+            if isinstance(node, ClaimsNode) and rung.effective_rung >= 2:
+                capped_by = rung.limiting_term
+            else:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "refused_effective_rung"},
+                )
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, rung.refusal_code),
+                    f"Terminal {node.kind!r} requires {authority_for_rung(required)}; the "
+                    f"{SERVED_AUTHORITY_TERMS[rung.limiting_term]} term capped this run at "
+                    f"{authority_for_rung(rung.effective_rung)}. "
+                    f"{rung.term(rung.limiting_term).reason}",
+                    node_id=node.node_id,
+                )
+        elif (
+            isinstance(node, ClaimsNode)
+            and isinstance(self.egress_sink, SettleGrantHolderProtocol)
+            and not self.egress_sink.grants_settle()
+        ):
+            # A caller's tier lifted the mandate term to settle, but no live
+            # mandate grants settling: the grant caps it at propose.
+            capped_by = "mandate_grant"
+        if not values:
+            # The run's inbox cap was spent by an earlier post_inbox terminal:
+            # nothing is posted, and the record says what the cap left out.
+            self._append_event(
+                admission, records, "terminal_egress", {**payload, "verdict": "delivered"}
+            )
+            self._note_delivery(node, state, delivery="empty", emitted=0, truncation=truncation)
+            return
+        try:
+            request, prepared = self._terminal_egress_request(
+                node,
+                admission=admission,
+                rung=rung,
+                children=children,
+                values=values,
+                manifests=manifests,
+                capped_by=capped_by,
+                claims_evidence=state.claims_evidence.get(node.node_id, ()),
+                claims_changes=state.claims_changes.get(node.node_id, ()),
+                derivations=state.derivations,
+                capture_root_cache=state.capture_root_cache,
+            )
+        except TerminalEgressError as exc:
+            refusal = self._terminal_refusal(exc, node_id=node.node_id)
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {**payload, "verdict": "refused", "refusal_code": refusal.refusal.code},
+            )
+            raise refusal from exc
+        creations = state.claims_creations.get(node.node_id, ())
+        if prepared is not None and creations:
+            # D-R37 g fix 3: an item whose Subject this run creates takes the
+            # address preparation's lowering assigned that Subject -- one source
+            # of truth, the terminal's whole assignment with its own identity
+            # overlay -- before any record names it as prepared or delivered. A
+            # record made before preparation (refused authority, egress pending,
+            # refused preparation) keeps the key reference: no Subject is
+            # created on those paths, so no accepted Subject has that identity.
+            payload = {
+                **payload,
+                "children": _with_creation_identities(
+                    node.node_id,
+                    cast(list[dict[str, object]], payload["children"]),
+                    creations,
+                    dict(prepared.item_paths),
+                ),
+            }
+        # Preparation (lowering every item) is where a large terminal spends its
+        # time. The run's deadline is enforced here, before the prepared record
+        # and before delivery, so a run out of time delivers nothing: its
+        # report and the proposal door never disagree.
+        elapsed_us = (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000
+        state.wall_clock_microseconds = max(state.wall_clock_microseconds, elapsed_us)
+        if elapsed_us > admission.budget.wall_clock.microseconds:
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {**payload, "verdict": "refused", "refusal_code": "wall_clock_exhausted"},
+            )
+            raise _BudgetExceeded(
+                "wall_clock",
+                limit=admission.budget.wall_clock.microseconds,
+                observed=elapsed_us,
+                node_id=node.node_id,
+            )
+        # A proposal or settle terminal is journaled around its sink: a durable
+        # `prepared` record before the sink is called, a resolving record after,
+        # so recovery can finish it. That holds for one whose every item is
+        # unchanged, or that keeps its Line's open proposal, too: its delivery
+        # records re-observations, a durable effect.
+        effectful = (
+            isinstance(request, TerminalEgressRequestV2) and request.kind in {"claims"}
+        ) or (prepared is not None and prepared.proposes_nothing)
+        if isinstance(request, TerminalEgressRequestV2) and effectful:
+            payload = {
+                **payload,
+                "operation_key": request.operation_key,
+                "target_paths": list(request.target_paths),
+                "procedure_mandate_digest": request.procedure_mandate_digest,
+            }
+        if effectful:
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {
+                    **payload,
+                    "verdict": "prepared",
+                    "request": request.model_dump(mode="json"),
+                    "prepared": None if prepared is None else prepared.model_dump(mode="json"),
+                    "evidence": {
+                        item_key: root
+                        for item_key, manifest in manifests.items()
+                        if (
+                            root := capture_root(
+                                citable_captures(manifest),
+                                state.derivations,
+                                cache=state.capture_root_cache,
+                            )
+                            or witnessed_list_capture(
+                                citable_captures(manifest),
+                                getattr(request, "claims_evidence", {}).get(item_key),
+                                cache=state.capture_root_cache,
+                            )
+                        )
+                        is not None
+                    },
+                },
+            )
+        if request.kind == "emit_capture":
+            emitted_bytes = sum(len(canonical_bytes(item.value)) for item in request.items)
+            if state.capture_bytes + emitted_bytes > admission.budget.max_capture_bytes:
+                raise _BudgetExceeded(
+                    "max_capture_bytes",
+                    limit=admission.budget.max_capture_bytes,
+                    observed=state.capture_bytes + emitted_bytes,
+                    node_id=node.node_id,
+                )
+            state.capture_bytes += emitted_bytes
+        try:
+            receipt = self._deliver_terminal_egress(
+                request, admission=admission, manifests=manifests
+            )
+        except TerminalEgressError as exc:
+            refusal = self._terminal_refusal(exc, node_id=node.node_id)
+            if effectful:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "refused", "refusal_code": refusal.refusal.code},
+                )
+            raise refusal from exc
+        except BaseException:
+            if effectful:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "failed", "refusal_code": "unexpected_exception"},
+                )
+            raise
+        try:
+            verify_terminal_egress_receipt(request, receipt)
+        except TerminalEgressError as exc:
+            if effectful:
+                self._append_event(
+                    admission,
+                    records,
+                    "terminal_egress",
+                    {**payload, "verdict": "refused", "refusal_code": "terminal_egress_unverified"},
+                )
+            raise _RunRefusal(
+                "terminal_egress_unverified",
+                str(exc),
+                node_id=node.node_id,
+            ) from exc
+        self._route_findings(node.node_id, admission, state)
+        self._append_event(
+            admission,
+            records,
+            "terminal_egress",
+            {
+                **payload,
+                "verdict": "delivered",
+                "granted_operation": request.granted_operation,
+                "receipt": receipt.model_dump(mode="json"),
+            },
+        )
+        if request.kind == "post_inbox":
+            state.inbox_items += len(request.items)
+        self._note_delivery(
+            node,
+            state,
+            delivery=claims_delivery(receipt) if isinstance(node, ClaimsNode) else "empty",
+            emitted=len(request.items),
+            truncation=truncation,
+            refused_reobservations=Counter(
+                child.reobservation_refused
+                for child in receipt.children
+                if isinstance(child, TerminalEgressChildReceiptV3)
+                and child.reobservation_refused is not None
+            ),
+        )
+        if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
+            assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
+            for child in receipt.children:
+                if isinstance(node, CaptureEgressNode) and len(receipt.children) == 1:
+                    state.terminal_capture = child.egress_digest
+                    derived = derive_terminal_item_facts(
+                        manifest_dependency_tokens(manifests[child.item_key]),
+                        manifest=manifests[child.item_key],
+                        child_index=child.child_index,
+                        facts=state.facts,
+                        outcomes=tuple(state.outcomes.values()),
+                    )
+                    state.facts[child.egress_digest] = DependencyEvidenceFactsV1(
+                        epistemic_grade=derived.epistemic_grade,
+                        provenance_grade=derived.provenance_grade,
+                        taint_labels=derived.taint_labels,
+                        selector_privacy=derived.selector_privacy,
+                    )
+                self._append_event(
+                    admission,
+                    records,
+                    "produced_capture",
+                    {
+                        "tag": "playbill-procedure-produced-capture-v1",
+                        "node_id": node.node_id,
+                        "capture_digest": child.egress_digest,
+                        "capture_contract_digest": receipt.bound_artifact_digest,
+                        "producer_receipt_digest": receipt.producer_receipt_digest,
+                        "observed_at": format_datetime(request.evaluation_time),
+                    },
+                )
+
+    @staticmethod
+    def _note_delivery(
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
+        state: _RunState,
+        *,
+        delivery: ClaimsDelivery,
+        emitted: int,
+        truncation: Mapping[str, object] | None,
+        refused_reobservations: Mapping[ReobservationRefusalReason, int] | None = None,
+    ) -> None:
+        """Keep what a delivered terminal emitted, for its node summary."""
+
+        if isinstance(node, ClaimsNode):
+            state.claims_deliveries[node.node_id] = delivery
+            if refused_reobservations:
+                state.claims_reobservations_refused[node.node_id] = dict(refused_reobservations)
+            return
+        unposted = 0
+        if truncation is not None:
+            unposted = int(cast(int, truncation["selected"])) - int(cast(int, truncation["posted"]))
+        record_summary(
+            state.node_summaries,
+            node.node_id,
+            lambda: EgressRunSummary(kind=node.kind, emitted=emitted, unposted=unposted),
+        )
+
+    def _deliver_terminal_egress(
+        self,
+        request: TerminalEgressRequestV1,
+        *,
+        admission: ProcedureRunAdmission,
+        manifests: Mapping[str, TerminalItemDependencyManifestV1],
+    ) -> TerminalEgressReceiptV1:
+        """Hand the request to the sink; a preparer sink also receives the admission.
+
+        An inbox post goes to the sink's inbox door with each item's manifest,
+        from which it attaches exactly the Captures that item's closure reached.
+        """
+
+        assert self.egress_sink is not None
+        if request.kind == "post_inbox":
+            if not isinstance(self.egress_sink, InboxEgressSinkProtocol):
+                raise TerminalEgressError("this run's egress sink does not deliver post_inbox")
+            return self.egress_sink.deliver_inbox_egress(request=request, manifests=manifests)
+        if isinstance(self.egress_sink, TerminalEgressPreparerProtocol):
+            return self.egress_sink.deliver_terminal_egress(  # type: ignore[call-arg]
+                request=request,
+                admission=admission,
+            )
+        return self.egress_sink.deliver_terminal_egress(request=request)
+
+    @staticmethod
+    def _terminal_refusal(exc: TerminalEgressError, *, node_id: str) -> _RunRefusal:
+        """Project a typed door refusal as the run's own node refusal, code intact."""
+
+        from cruxible_core.procedures.terminal_services import (
+            ProposalDeliveryRefused,
+        )
+
+        if isinstance(exc, ProposalDeliveryRefused):
+            return _RunRefusal(
+                cast(ProcedureNodeRefusalCode, exc.code),
+                str(exc),
+                node_id=node_id,
+                details=exc.details,
+            )
+        if isinstance(exc, TerminalAuthorityRefusal):
+            return _RunRefusal(
+                cast(ProcedureNodeRefusalCode, exc.code),
+                str(exc),
+                node_id=node_id,
+                details={
+                    "codes": list(exc.codes),
+                    "repair_kind": exc.repair_kind,
+                    "repair": exc.repair.model_dump(mode="json"),
+                    "target_namespace": list(exc.target_namespace),
+                },
+            )
+        return _RunRefusal("terminal_egress_unverified", str(exc), node_id=node_id)
+
+    def _terminal_egress_request(
+        self,
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
+        *,
+        admission: ProcedureRunAdmission,
+        rung: EffectiveRungV1,
+        children: tuple[TerminalChildReceiptV1, ...],
+        values: tuple[CanonicalValue, ...],
+        manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
+        capped_by: EffectiveRungTermV1 | None = None,
+        claims_evidence: tuple[ClaimEvidenceReceipt | None, ...] = (),
+        claims_changes: tuple[CoreClaimsChange, ...] = (),
+        derivations: Mapping[str, Collection[str]] | None = None,
+        capture_root_cache: CaptureRootCache | None = None,
+    ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
+        """Hand the sink the exact pins this terminal kind's law traverses.
+
+        A `claims` on a v5 admission is prepared first: the sink
+        lowers the items through shared authoring and reports the paths that
+        lowering actually changed and the exact live mandate it bound, and the
+        v2 request is built from THOSE, so the mandate law sees what will be
+        proposed rather than what the template declared. A settle terminal
+        `capped_by` a term asks for propose authority only. One whose every item
+        restated what is already live keeps its v1 request: nothing is proposed.
+        """
+
+        bound_pin: ArtifactPin | None = None
+        if isinstance(node, CaptureEgressNode):
+            bound_pin = self._pin(
+                node.capture_contract,
+                label=f"emit_capture {node.node_id!r} CaptureContract",
+            )
+        # The authority asked for: a capped settle asks for propose's alone.
+        required_rung = 2 if capped_by is not None else TERMINAL_REQUIRED_RUNGS[node.kind]
+        request = TerminalEgressRequestV1(
+            kind=node.kind,
+            run_id=admission.run_id,
+            node_id=node.node_id,
+            accepted_coordinate=admission.accepted_coordinate,
+            procedure_identity=admission.procedure_identity,
+            procedure_artifact_digest=admission.procedure_artifact_digest,
+            admission_binding_digest=admission.admission_binding_digest,
+            effective_rung=rung.effective_rung,
+            required_rung=required_rung,
+            limiting_term=rung.limiting_term,
+            granted_operation=RUNG_REQUIRED_OPERATIONS[required_rung],
+            capped_by=capped_by,
+            bound_artifact_pin=bound_pin,
+            inbox_dedupe_key=node.dedupe_key if isinstance(node, InboxEgressNode) else (),
+            actor_context=admission.actor_context,
+            items=tuple(
+                TerminalEgressItemV1(
+                    child_index=child.child_index,
+                    item_key=child.item_key,
+                    manifest_digest=child.manifest_digest,
+                    value=value,
+                )
+                for child, value in zip(children, values, strict=True)
+            ),
+            # Only the claims terminal produces receipts (one per child); any
+            # other terminal's items carry none.
+            claims_changes={
+                child.item_key: change
+                for child, change in zip(children, claims_changes, strict=True)
+            }
+            if claims_changes
+            else {},
+            claims_evidence=(
+                {
+                    child.item_key: receipt
+                    for child, receipt in zip(children, claims_evidence, strict=True)
+                    if receipt is not None
+                }
+                if claims_evidence
+                else {}
+            ),
+            prepared_at=self.clock.now(),
+        )
+        # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
+        # has no accepted Line), but it still builds a real v2 request under
+        # its own ephemeral Line spec -- the only authority basis it has.
+        v2_capable = admission.plans_providers or self.ephemeral_spec_digest is not None
+        # An overridden Line run's authority basis is its override (D-R39), as a
+        # direct run's is its ephemeral spec (C4): propose, never settle.
+        ephemeral_authority = self.ephemeral_spec_digest or admission.parameter_override_digest
+        if v2_capable and isinstance(node, CaptureEgressNode):
+            return (
+                build_terminal_egress_request_v2(
+                    request,
+                    admission=admission,
+                    procedure_mandate_digest=None,
+                    calibration_reading_digests=(),
+                    target_paths=(),
+                ),
+                None,
+            )
+        if (
+            v2_capable
+            and isinstance(node, ClaimsNode)
+            and isinstance(self.egress_sink, TerminalEgressPreparerProtocol)
+        ):
+            prepared = self.egress_sink.prepare_terminal_egress(
+                request=request,
+                admission=admission,
+                manifests=manifests or {},
+                derivations=derivations or {},
+                capture_root_cache=capture_root_cache,
+            )
+            if prepared.proposes_nothing:
+                # Every item restated what is already live, or the change is the
+                # Line's open proposal's: there is nothing to propose and no
+                # authority to exercise, so no effectful request.
+                return request, prepared
+            return (
+                build_terminal_egress_request_v2(
+                    request,
+                    admission=admission,
+                    procedure_mandate_digest=prepared.procedure_mandate_digest,
+                    ephemeral_spec_digest=(
+                        ephemeral_authority if prepared.procedure_mandate_digest is None else None
+                    ),
+                    calibration_reading_digests=(),
+                    target_paths=prepared.target_paths,
+                ),
+                prepared,
+            )
+        if isinstance(node, ClaimsNode):
+            # A claims terminal is delivered only prepared: as its v2 request,
+            # or, when it changes nothing, as its prepared no-op. No sink is
+            # handed an unprepared v1 claims request, whose delivery names no
+            # proposal and so could never be read back as run state.
+            from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
+
+            raise ProposalDeliveryRefused(
+                "proposal_item_invalid",
+                "The proposal sink delivers prepared v2 proposal and settle egress only.",
+                details={"kind": node.kind},
+            )
+        return request, None
+
+    def _record_terminal_items(
+        self,
+        node: CaptureEgressNode | InboxEgressNode | ClaimsNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        limit: int | None = None,
+    ) -> tuple[
+        tuple[TerminalChildReceiptV1, ...],
+        tuple[CanonicalValue, ...],
+        dict[str, TerminalItemDependencyManifestV1],
+        int,
+    ]:
+        """Derive one manifest per terminal item from the exact closure it consumed.
+
+        ``limit`` keeps the first items only (an inbox cap); the last element is
+        how many items the terminal selected before it.
+        """
+
+        base = _node_policy_tokens(node, self.references) | state.control
+        if node.node_id in state.claims_items:
+            values, item_tokens = state.claims_items[node.node_id]
+        elif isinstance(node, InboxEgressNode):
+            values, item_tokens = self._inbox_items(node, state=state)
+        elif isinstance(node, CaptureEgressNode):
+            values, item_tokens = _terminal_items(_terminal_item_templates(node), state=state)
+        else:
+            raise ExecutionError("Claims must be expanded by the claims executor")
+        # Check the selected rows before inbox clipping, dependency journaling,
+        # proposal lowering or delivery. A scalar return cannot hide this fan-out.
+        boundary = f"terminal:{node.node_id}"
+        state.observe_items(len(values), boundary, "items")
+        item_limit = _effective_max_items(admission)
+        if len(values) > item_limit:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=item_limit,
+                observed=len(values),
+                node_id=node.node_id,
+                boundary=boundary,
+                field_path="items",
+            )
+        selected = len(values)
+        if limit is not None:
+            values, item_tokens = list(values[:limit]), tuple(item_tokens[:limit])
+        if isinstance(node, InboxEgressNode):
+            # Bytes are bounded before anything is journaled or posted.
+            state.inbox_bytes += _check_inbox_bytes(values, state=state, node_id=node.node_id)
+        outcomes = tuple(
+            sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
+        )
+        receipts: list[TerminalChildReceiptV1] = []
+        manifests: dict[str, TerminalItemDependencyManifestV1] = {}
+        payloads: list[object] = []
+        item_drafts: list[tuple[str, str]] = []
+        recorded_at: list[datetime] = []
+        for index, value in enumerate(values):
+            tokens = base | item_tokens[index]
+            item_key = terminal_item_key(
+                terminal_node_id=node.node_id,
+                child_index=index,
+                item=value,
+            )
+            manifest = build_terminal_item_manifest(
+                tokens,
+                run_id=admission.run_id,
+                terminal_node_id=node.node_id,
+                item_key=item_key,
+            )
+            derived = derive_terminal_item_facts(
+                tokens,
+                manifest=manifest,
+                child_index=index,
+                facts=state.facts,
+                outcomes=outcomes,
+            )
+            payloads.append(
+                {
+                    "tag": "playbill-procedure-item-dependencies-v1",
+                    "manifest": manifest.model_dump(mode="json"),
+                    "derived": derived.model_dump(mode="json"),
+                    "audit": {
+                        "deployment_digest": admission.deployment_snapshot_digest,
+                        "recorded_at": format_datetime(self.clock.now()),
+                    },
+                }
+            )
+            # Preserve the per-item clock reads and their order from single appends.
+            recorded_at.append(self.clock.now())
+            item_drafts.append((item_key, derived.manifest_digest))
+            manifests[item_key] = manifest
+        group = self._append_events(
+            admission,
+            records,
+            "item_dependencies",
+            payloads,
+            recorded_at=recorded_at,
+        )
+        # A claims item also records what it changed (D-R37 g): its stable
+        # identity, its change's kind and the digest of that canonical change,
+        # never the change body. Other terminals' items carry none.
+        changes = state.claims_changes.get(node.node_id, ())
+        identities = state.claims_identities.get(node.node_id, ())
+        for index, (stored, (item_key, manifest_digest)) in enumerate(zip(group, item_drafts)):
+            change = changes[index] if index < len(changes) else None
+            receipts.append(
+                TerminalChildReceiptV1(
+                    child_index=index,
+                    item_key=item_key,
+                    manifest_digest=manifest_digest,
+                    record_digest=stored.record_digest,
+                    sequence=stored.record.sequence,
+                    item_identity_digest=None if change is None else identities[index],
+                    change_kind=None if change is None else change.kind,
+                    change_digest=None if change is None else claims_item_change_digest(change),
+                )
+            )
+        return tuple(receipts), tuple(values), manifests, selected
+
+    def _planned_external_occurrence(
+        self,
+        *,
+        state: _RunState,
+        node_id: str,
+        repeat_node_id: str | None,
+        occurrence_kind: Literal["provider", "source"],
+    ) -> ProviderExternalOccurrencePlan:
+        plan = state.acquisition_plan
+        if plan is None:
+            raise _RunRefusal(
+                "provider_acquisition_plan_required",
+                "Graph-v4 external execution requires a complete admitted acquisition plan.",
+                node_id=node_id,
+            )
+        matches = tuple(
+            item
+            for item in plan.external_occurrences
+            if (
+                item.occurrence_kind == occurrence_kind
+                or occurrence_kind == "provider"
+                and item.occurrence_kind == "call"
+            )
+            and item.node_id == node_id
+            and item.repeat_node_id == repeat_node_id
+        )
+        if len(matches) != 1:
+            raise _RunRefusal(
+                "provider_acquisition_plan_mismatch",
+                "The admitted acquisition plan does not name this external occurrence exactly.",
+                node_id=node_id,
+            )
+        return matches[0]
+
+    def _validate_operation_value(
+        self,
+        occurrence: ProviderExternalOccurrencePlan,
+        value: CanonicalValue,
+        *,
+        direction: Literal["in", "out"],
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        node_id: str,
+        absent_captures: frozenset[str] = frozenset(),
+    ) -> CanonicalValue:
+        """Check one value against the bound operation's exact in or out Contract.
+
+        ``absent_captures`` names capture fields the run did not commit (an
+        oversized capture output): the value is checked as if they were
+        optional, since the call's value never names them.
+        """
+
+        ref = occurrence.operation.in_ if direction == "in" else occurrence.operation.out
+        resolve = closure_lookup(occurrence.contracts)
+        contract = resolve(ref)
+        boundary = f"operation-{direction}:{occurrence.operation.name}"
+        if contract is None:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node_id, "reason": f"{ref.spelling} is not in the plan"},
+            )
+        if absent_captures:
+            contract = contract.model_copy(
+                update={
+                    "fields": {
+                        name: declared.model_copy(update={"optional": True})
+                        if name in absent_captures
+                        else declared
+                        for name, declared in contract.fields.items()
+                    }
+                }
+            )
+        try:
+            validate_operation_value(
+                value,
+                contract,
+                resolve=resolve,
+                enum_members=self.enum_resolver,
+                max_items=_effective_max_items(admission),
+                observe_items=lambda count, path: state.observe_items(count, boundary, path),
+                keys=self.key_rules,
+            )
+        except OperationItemBudgetExceeded as exc:
+            state.observe_items(exc.observed, boundary, exc.field_path)
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=exc.limit,
+                observed=exc.observed,
+                node_id=node_id,
+                boundary=boundary,
+                field_path=exc.field_path,
+            ) from exc
+        except OperationValueRefused as exc:
+            raise _RunRefusal(
+                "contract_input_refused" if direction == "in" else "contract_output_refused",
+                f"{ref.spelling}: {exc}",
+                node_id=node_id,
+            ) from exc
+        return normalize_canonical(value)
+
+    def _refusal_detail_check(
+        self, occurrence: ProviderExternalOccurrencePlan
+    ) -> RefusalDetailCheck:
+        """Check a declared refusal's detail against the Contract the operation pins."""
+
+        resolve = closure_lookup(occurrence.contracts)
+
+        def check(code: str, detail: object) -> tuple[str, ...] | None:
+            declared = occurrence.operation.refusals[code]
+            contract = resolve(declared.contract)
+            if contract is None:
+                return (f"{declared.contract.spelling} is not in the plan",)
+            try:
+                validate_operation_value(
+                    provider_canonical_value(detail) if isinstance(detail, dict) else detail,
+                    contract,
+                    resolve=resolve,
+                    enum_members=self.enum_resolver,
+                    keys=self.key_rules,
+                )
+            except OperationValueRefused as exc:
+                return exc.problems or (str(exc),)
+            return None
+
+        return check
+
+    def _dereference_capture_inputs(
+        self,
+        occurrence: ProviderExternalOccurrencePlan,
+        payload: dict[str, CanonicalValue],
+        *,
+        state: _RunState,
+        node_id: str,
+    ) -> dict[str, CanonicalValue]:
+        """The Provider's input: each ``capture<K>`` field's Capture as its wire (D-R37 b).
+
+        The ONE place Capture bytes enter a provider input (an architecture
+        guard holds it). Top-level fields and list members only. Each Capture
+        must be one this run fetched or was admitted; passing any other stored
+        Capture would be replay. The view is the shape providers already speak,
+        ``ProviderResultToExternalCapture``: the envelope's source and the exact
+        bytes, verbatim. Core transports them; it never parses them.
+        """
+
+        contract = closure_lookup(occurrence.contracts)(occurrence.operation.in_)
+        if contract is None:
+            return payload
+        slots = _capture_input_fields(contract)
+        if not slots:
+            return payload
+        if occurrence.operation.effect != "pure" or not any(
+            _is_derived_contract(self.capture_contracts.get(digest))
+            for digest in occurrence.capture_contracts.values()
+        ):
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                "Only a derive receives Capture inputs: an operation declaring effect: pure "
+                "whose call takes a derived CaptureKind.",
+                node_id=node_id,
+            )
+        resolved = dict(payload)
+        for field, (kind, listed) in slots.items():
+            value = payload.get(field)
+            if value is None:
+                continue
+            if listed:
+                if not isinstance(value, list):
+                    continue
+                resolved[field] = [
+                    self._capture_input_wire(item, kind=kind, state=state, node_id=node_id)
+                    for item in value
+                ]
+            else:
+                resolved[field] = self._capture_input_wire(
+                    value, kind=kind, state=state, node_id=node_id
+                )
+        return resolved
+
+    def _capture_input_wire(
+        self, digest: CanonicalValue, *, kind: str, state: _RunState, node_id: str
+    ) -> CanonicalValue:
+        """One Capture this run fetched or admitted, as Capture wire for a derive."""
+
+        fact = state.facts.get(digest) if isinstance(digest, str) else None
+        if not isinstance(digest, str) or fact is None or fact.acquisition_input_name is None:
+            raise _RunRefusal(
+                "contract_input_refused",
+                "A derive's Capture input must be one this run fetched or was admitted; "
+                "another stored Capture is replay.",
+                node_id=node_id,
+                details={"capture_digest": str(digest)},
+            )
+        body = self._capture_body(state, digest)
+        contract = self.capture_contracts.get(state.capture_contracts.get(digest, ""))
+        if kind != ANY_CAPTURE_KIND and (contract is None or contract.identity.name != kind):
+            raise _RunRefusal(
+                "contract_input_refused",
+                f"A derive's capture<{kind}> input names a Capture of another kind.",
+                node_id=node_id,
+                details={"capture_digest": digest},
+            )
+        access = BodyAccessContext(principal_id="procedure-derive", can_read_body=True)
+        envelope = parse_capture_envelope(self.bodies.read(digest, access=access))
+        source = envelope.source
+        if not isinstance(source, ExternalSourceReference):
+            raise _RunRefusal(
+                "contract_input_refused",
+                "A derive's Capture input must be an external observation.",
+                node_id=node_id,
+                details={"capture_digest": digest},
+            )
+        wire = ProviderResultToExternalCapture(
+            source_identity=source.source_identity,
+            coordinate_type=source.coordinate_type,
+            coordinate=source.coordinate,
+            selector_type=source.selector_type,
+            selector=source.selector,
+            replayability=source.replayability,
+            content_base64=base64.b64encode(body).decode("ascii"),
+            byte_length=len(body),
+            bytes_digest=envelope.commitment.digest,
+            observed_at=envelope.observed_at,
+            source_effective_time=envelope.source_effective_time,
+        )
+        return normalize_canonical(wire.model_dump(mode="json", exclude_none=True))
+
+    def _invoke_provider_v4(
+        self,
+        *,
+        node_id: str,
+        slot: str | None,
+        repeat_node_id: str | None,
+        effect_policy: ArtifactNameRef | None,
+        payload: CanonicalValue,
+        contract_out: ArtifactPin | None,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        occurrence: ProviderExternalOccurrencePlan | None = None,
+    ) -> tuple[CanonicalValue, ProviderInvocationReceipt, str]:
+        occurrence = occurrence or self._planned_external_occurrence(
+            state=state,
+            node_id=node_id,
+            repeat_node_id=repeat_node_id,
+            occurrence_kind="provider",
+        )
+        if not self._occurrence_matches_slot(occurrence, slot):
+            raise _RunRefusal(
+                "provider_acquisition_plan_mismatch",
+                "The admitted occurrence is not its node's slot binding.",
+                node_id=node_id,
+            )
+        payload = self._validate_operation_value(
+            occurrence,
+            payload,
+            direction="in",
+            admission=admission,
+            state=state,
+            node_id=node_id,
+        )
+        if (
+            self.provider_runtime_invoker is None
+            and self.provider_runtime_invoker_factory is not None
+        ):
+            self.provider_runtime_invoker = self.provider_runtime_invoker_factory()
+        if self.provider_runtime_invoker is None:
+            raise _RunRefusal(
+                "provider_unavailable",
+                "No local Provider runtime invoker is installed.",
+                node_id=node_id,
+            )
+        # The run's deadline, in this executor's clock, goes with the Provider
+        # child spawned for this occurrence: the spawner refuses or clips
+        # against it immediately before the child exists. Core classifies no
+        # input: every input that passes the operation's input Contract reaches
+        # the Provider, whose own typed refusals decline what it cannot serve.
+        deadline = ProviderSpawnDeadline(
+            deadline_ns=state.run_started_monotonic_ns
+            + admission.budget.wall_clock.microseconds * 1000,
+            monotonic_ns=self.clock.monotonic_ns,
+        )
+        if not isinstance(payload, dict):
+            raise _RunRefusal(
+                "provider_protocol_violation",
+                "Provider runtime input must be a canonical object.",
+                node_id=node_id,
+            )
+        effectful = occurrence.effect_class == "external_mutation"
+        if effectful != (effect_policy is not None):
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                "The node effect-policy presence differs from its bound operation's effect.",
+                node_id=node_id,
+            )
+        input_digest = run_value_digest("provider-input", payload)
+        # The input digest, and so run identity, commits Capture digests; the
+        # Provider alone receives their bytes (D-R37 b3).
+        provider_input = self._dereference_capture_inputs(
+            occurrence, payload, state=state, node_id=node_id
+        )
+        effect_id = typed_digest(
+            ArtifactDigest,
+            "playbill-procedure-effect-intent-v1",
+            {
+                "run_id": admission.run_id,
+                "node_id": node_id,
+                "provider_digest": occurrence.provider_artifact_digest,
+                "implementation_digest": occurrence.implementation_digest,
+                "input_digest": input_digest,
+            },
+        ).tagged
+        if effectful:
+            assert effect_policy is not None
+            self._checkpoint_current(admission, effect=True)
+            self._append_event(
+                admission,
+                records,
+                "effect_intent",
+                {
+                    "effect_id": effect_id,
+                    "node_id": node_id,
+                    "provider_artifact_digest": occurrence.provider_artifact_digest,
+                    "implementation_digest": occurrence.implementation_digest,
+                    "effect_policy": self._pin(
+                        effect_policy,
+                        label=f"provider {node_id!r} effect policy",
+                    ).model_dump(mode="json"),
+                    "input_digest": input_digest,
+                },
+            )
+            refusal = effect_dispatch_refusal(
+                invocation_origin=admission.invocation_origin,
+                actor_context=admission.actor_context,
+                declared_effect_grants=self.declared_effect_grants,
+            )
+            if refusal is not None:
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, refusal[0]),
+                    refusal[1],
+                    node_id=node_id,
+                )
+        if state.provider_calls >= admission.budget.max_provider_calls:
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls + 1,
+                node_id=node_id,
+            )
+        state.provider_calls += 1
+        invocation_id = typed_digest(
+            Sha256Value,
+            "playbill-provider-invocation-v1",
+            {
+                "run_id": admission.run_id,
+                "occurrence_path": occurrence.occurrence_path,
+                "provider_call_ordinal": state.provider_calls,
+                "admission_binding_digest": admission.admission_binding_digest,
+            },
+        ).tagged
+        try:
+            bound = self.provider_runtime_invoker.bind_provider(occurrence=occurrence)
+        except ProviderLocalRuntimeRefused as exc:
+            outcome = map_provider_refusal(
+                exc.code,
+                message=str(exc),
+                detail=exc.details,
+            )
+            if outcome.outcome_class == "node_refusal":
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, outcome.code),
+                    outcome.message or "Provider binding refused.",
+                    node_id=node_id,
+                    details=outcome.detail,
+                ) from exc
+            if outcome.outcome_class == "operational":
+                raise _OperationalFailure(
+                    outcome.code or "provider_execution_error",
+                    details=outcome.detail,
+                    cause=_provider_failure_cause(outcome, node_id=node_id),
+                ) from exc
+            raise _InternalFailure(
+                outcome.code or "provider_protocol_violation", details=outcome.detail
+            ) from exc
+        budget = occurrence.budget_translation
+        no_budget_message = "No Procedure wall-clock budget remains before Provider spawn."
+
+        def effective_wall_clock_seconds() -> float:
+            """The Provider's window: its own cap, clipped to what the run has left now."""
+            elapsed_microseconds = max(
+                0,
+                (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000,
+            )
+            remaining_run_microseconds = max(
+                0,
+                admission.budget.wall_clock.microseconds - elapsed_microseconds,
+            )
+            return min(
+                float(budget.runtime_wall_clock_seconds),
+                remaining_run_microseconds / 1_000_000,
+            )
+
+        # A run already out of time refuses before anything is journaled, so no
+        # start is recorded for an invocation that never spawns.
+        if effective_wall_clock_seconds() <= 0:
+            raise _RunRefusal("budget_wall_clock", no_budget_message, node_id=node_id)
+        started = ProviderInvocationStarted(
+            invocation_id=invocation_id,
+            occurrence_path=occurrence.occurrence_path,
+            implementation_digest=occurrence.implementation_digest,
+            materialization_digest=occurrence.local_execution.materialization_digest,
+            input_digest=input_digest,
+        )
+        self._append_event(
+            admission,
+            records,
+            "provider_invocation_started",
+            started.model_dump(mode="json"),
+        )
+        state.provider_invocations_started += 1
+        # The durable start write takes time too, so the window is measured
+        # again after it. That is not the last check: the run's deadline goes
+        # with the invocation, and the spawner refuses or clips against it
+        # immediately before the child exists. Whichever check finds the time
+        # spent, the Provider never spawns and the durable start is closed by a
+        # matching completion carrying the budget_wall_clock refusal.
+        wall_clock_seconds = effective_wall_clock_seconds()
+        driver_result: ProviderDriverOutcomeV1 | None = None
+        try:
+            if wall_clock_seconds <= 0:
+                raise ProviderLocalRuntimeRefused("budget_wall_clock", no_budget_message)
+            context = ProviderRuntimeRunContext(
+                protocol_version=occurrence.local_execution.protocol_version,
+                run_id=admission.run_id,
+                # One operation of one build: exactly the admitted binding.
+                operation=occurrence.operation.name,
+                operation_signature_digest=occurrence.operation_signature_digest,
+                build_digest=occurrence.provider_artifact_digest,
+                implementation_digest=occurrence.implementation_digest,
+                entrypoint=occurrence.local_execution.entrypoint,
+                coordinates={
+                    "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
+                    "occurrence_path": occurrence.occurrence_path,
+                    "invocation_id": invocation_id,
+                },
+                input=provider_input,
+                # The runtime protocol names one CaptureContract: the call's,
+                # when it commits exactly one capture field.
+                capture_contract=(
+                    next(iter(occurrence.capture_contracts.values()))
+                    if len(occurrence.capture_contracts) == 1
+                    else None
+                ),
+                budgets=ProviderRuntimeBudgets(
+                    wall_clock_seconds=wall_clock_seconds,
+                    output_bytes=budget.runtime_output_bytes_cap,
+                    cost_units=None,
+                ),
+                declared_endpoints=occurrence.local_execution.declared_endpoints,
+            )
+            driver_result = self.provider_runtime_invoker.invoke_provider(
+                occurrence=occurrence,
+                context=context,
+                invocation_id=invocation_id,
+                bound=bound,
+                deadline=deadline,
+            )
+            # The provider's word: a harness runtime code or one the operation
+            # declares, its detail checked before it is attributed to either.
+            outcome = map_provider_envelope(
+                driver_result.envelope,
+                operation=occurrence.operation,
+                check_detail=self._refusal_detail_check(occurrence),
+            )
+        except ProviderLocalRuntimeRefused as exc:
+            # Core itself raised this (bind/spawn/deadline/budget failure), never
+            # a parsed Provider envelope, so its runtime code is core's own.
+            outcome = map_provider_refusal(
+                exc.code,
+                message=str(exc),
+                detail=exc.details,
+            )
+        except ProviderRuntimeWireError as exc:
+            outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
+        if driver_result is None:
+            egress = ProviderEgressObservation(
+                declared_endpoints=tuple(
+                    item
+                    for item in occurrence.local_execution.declared_endpoints
+                    if not item.startswith("dynamic:")
+                ),
+                dynamic_endpoint_forms=cast(
+                    tuple[Literal["dynamic:target-from-run-input"], ...],
+                    tuple(
+                        item
+                        for item in occurrence.local_execution.declared_endpoints
+                        if item == "dynamic:target-from-run-input"
+                    ),
+                ),
+                # A core built-in has no child to self-report; core is the observer.
+                observer_backend=(
+                    "core.in-process"
+                    if occurrence.local_execution.fence_scope == "in_process"
+                    else "child-self-report"
+                ),
+                observer_grade="attribution",
+            )
+            output = None
+            trace: CanonicalValue = {}
+            stderr = ""
+            duration_microseconds = 0
+        else:
+            egress = driver_result.egress
+            output = (
+                provider_canonical_value(driver_result.envelope.output)
+                if driver_result.envelope.output is not None
+                else None
+            )
+            trace = provider_canonical_value(driver_result.envelope.trace.model_dump(mode="python"))
+            stderr = driver_result.stderr
+            duration_microseconds = max(0, round(driver_result.duration_seconds * 1_000_000))
+        incomplete_captures: tuple[str, ...] = ()
+        if driver_result is not None and outcome.status == "ok":
+            incomplete_captures, violation = _provider_incomplete_captures(
+                driver_result.envelope.incomplete_captures, occurrence=occurrence
+            )
+            if violation is not None:
+                # The provider named a field that is no list of Captures its
+                # out Contract declares: its word cannot be read, so the call
+                # carries no output (provider_protocol_violation).
+                outcome = map_provider_refusal(
+                    "provider_protocol_violation",
+                    message=violation,
+                    detail={
+                        "incomplete_captures": list(driver_result.envelope.incomplete_captures)
+                    },
+                )
+                output = None
+        verified_binding = (
+            driver_result.verified_binding
+            if driver_result is not None
+            else occurrence.local_execution
+        )
+        journal_output = (
+            ProviderInvocationOutputDigest(
+                output_digest=provider_invocation_output_digest(output)
+            ).model_dump(mode="json")
+            if occurrence.occurrence_kind == "source" and output is not None
+            else output
+        )
+        receipt = ProviderInvocationReceipt(
+            invocation_id=invocation_id,
+            occurrence_path=occurrence.occurrence_path,
+            run_id=admission.run_id,
+            admission_binding_digest=admission.admission_binding_digest,
+            provider_artifact_digest=verified_binding.provider_artifact_digest,
+            implementation_digest=verified_binding.implementation_digest,
+            materialization_digest=verified_binding.materialization_digest,
+            deployment_digest=verified_binding.deployment_digest,
+            operation=verified_binding.operation,
+            operation_signature_digest=verified_binding.operation_signature_digest,
+            protocol_version=verified_binding.protocol_version,
+            capture_contracts=occurrence.capture_contracts,
+            input_digest=input_digest,
+            outcome=outcome,
+            output=journal_output,
+            incomplete_captures=incomplete_captures,
+            egress=egress,
+            # From the binding: a subprocess Provider's process-group fence, or
+            # "in_process" for a core built-in (providers/builtin_runtime.py).
+            fence_scope=verified_binding.fence_scope,
+            secret_references=tuple(
+                sorted(
+                    (
+                        ProviderSecretReceiptReference(
+                            binding_identity_digest=provider_secret_binding_identity_digest(
+                                ProviderSecretBindingIdentity(
+                                    realm=reference.realm,
+                                    name=reference.name,
+                                )
+                            ),
+                            purpose=reference.purpose,
+                        )
+                        for reference in occurrence.secret_plan.references
+                    ),
+                    key=lambda item: item.binding_identity_digest.encode("ascii"),
+                )
+            ),
+            budget_translation=budget,
+            duration_microseconds=duration_microseconds,
+            trace=trace,
+            stderr=stderr,
+        )
+        receipt_digest = provider_invocation_receipt_digest(receipt)
+        completed = ProviderInvocationCompleted(
+            invocation_id=invocation_id,
+            receipt=receipt,
+            receipt_digest=receipt_digest,
+        )
+        self._append_event(
+            admission,
+            records,
+            "provider_invocation_completed",
+            completed.model_dump(mode="json"),
+        )
+        state.provider_invocations_completed += 1
+        state.invocation_receipt_digests.append(receipt_digest)
+        if outcome.status != "ok":
+            if outcome.outcome_class == "node_refusal":
+                raise _ProviderNodeRefusal(
+                    outcome,
+                    node_id=node_id,
+                    declared=operation_refusal_is_declared(occurrence.operation, outcome),
+                )
+            if outcome.outcome_class == "operational":
+                raise _OperationalFailure(
+                    outcome.code or "provider_execution_error",
+                    details=outcome.detail,
+                    cause=_provider_failure_cause(outcome, node_id=node_id),
+                )
+            raise _InternalFailure(
+                outcome.code or "provider_protocol_violation", details=outcome.detail
+            )
+        assert output is not None
+        if occurrence.occurrence_kind == "call":
+            # F02: every operation output is checked against its own pinned
+            # Contract. An acquiring call's output is checked by the same
+            # Contract once core has committed each capture field and put its
+            # Capture digest in that field (``_run_acquiring_call``): what the
+            # operation returns there is Capture wire, not yet a digest.
+            output = self._validate_operation_value(
+                occurrence,
+                output,
+                direction="out",
+                admission=admission,
+                state=state,
+                node_id=node_id,
+            )
+        validated = (
+            _validate_node_contract(
+                self.contract_validator,
+                contract=contract_out,
+                payload=output,
+                direction="output",
+                node_id=node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
+            )
+            if contract_out is not None
+            else normalize_canonical(output)
+        )
+        if effectful:
+            self._append_event(
+                admission,
+                records,
+                "effect_result",
+                {
+                    "effect_id": effect_id,
+                    "node_id": node_id,
+                    "output_digest": run_value_digest("provider-output", validated),
+                    "invocation_receipt_digest": receipt_digest,
+                },
+            )
+        return validated, receipt, receipt_digest
+
+    def _run_provider_v4(
+        self,
+        node: CallNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        resolved = normalize_canonical(
+            _resolve_template(
+                node.input,
+                input_payload=state.input_payload,
+                parameters=state.parameters,
+                outputs=state.outputs,
+            )
+        )
+        output, _receipt, _receipt_digest = self._invoke_provider_v4(
+            node_id=node.node_id,
+            slot=node.slot,
+            repeat_node_id=None,
+            effect_policy=node.effect_policy,
+            payload=resolved,
+            contract_out=None,
+            admission=admission,
+            state=state,
+            records=records,
+        )
+        state.outputs[node.as_] = output
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=_base_tokens(node, state, node.input, self.references)
+        )
+
+    def _run_repeat(
+        self,
+        node: RepeatNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        started_ns: int,
+    ) -> None:
+        attempts: list[CanonicalValue] = []
+        # Repeat is the AND over the attempts used: every body output of every
+        # attempt, each its own completeness AND that of what it read.
+        attempts_complete = True
+        # Each attempt's body outputs carry the completeness law locally: what
+        # each holds incomplete, and the invalid fields its rows view drops.
+        attempt_trackers: list[Completeness] = []
+        for attempt in range(1, node.max_attempts + 1):
+            local_outputs: dict[str, CanonicalValue] = {}
+            local_provenance: dict[str, AliasProvenanceV1] = {}
+            local = Completeness()
+            attempt_trackers.append(local)
+            for body in node.body:
+                own_complete = self._run_repeat_body(
+                    body,
+                    repeat_node_id=node.node_id,
+                    admission=admission,
+                    state=state,
+                    local_outputs=local_outputs,
+                    local_provenance=local_provenance,
+                    records=records,
+                )
+                records_kept = body.operation == "transform"
+                body_complete = own_complete and all(
+                    (
+                        local
+                        if alias in local_outputs and alias != body.as_
+                        else state.completeness
+                    ).reads_complete(((alias, path),), records_kept=records_kept)
+                    for alias, path in _referenced_reads(body.spec)
+                )
+                local.mark(body.as_, body_complete)
+                if records_kept:
+                    local.drop(body.as_, dropped_rows(local_outputs[body.as_]))
+                if not body_complete:
+                    attempts_complete = False
+                self._check_budget(
+                    admission,
+                    state,
+                    started_ns=started_ns,
+                    node_id=body.node_id,
+                )
+            try:
+                verdict, trace = _evaluate_predicate(
+                    node.until,
+                    input_payload=state.input_payload,
+                    outputs=local_outputs,
+                    parameters=state.parameters,
+                )
+            except ExecutionError as exc:
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    "A repeat-until runtime reference did not resolve.",
+                    node_id=node.node_id,
+                ) from exc
+            attempt_value = normalize_canonical(
+                {"attempt": attempt, "outputs": local_outputs, "until": verdict}
+            )
+            attempts.append(attempt_value)
+            self._append_event(
+                admission,
+                records,
+                "branch_evaluated",
+                {
+                    "node_id": node.node_id,
+                    "repeat_attempt": attempt,
+                    "verdict": verdict,
+                    "operands": trace,
+                    "body_lineage": {
+                        alias: _alias_provenance_payload(provenance)
+                        for alias, provenance in sorted(local_provenance.items())
+                    },
+                },
+            )
+            if verdict:
+                used = attempt
+                record_summary(
+                    state.node_summaries, node.node_id, lambda: RepeatRunSummary(attempts=used)
+                )
+                state.outputs[node.as_] = normalize_canonical(
+                    {"attempts": attempts, "final": local_outputs}
+                )
+                state.completeness.mark(node.as_, attempts_complete)
+                if not attempts_complete:
+                    state.completeness.note(
+                        node.node_id, "upstream_incomplete", (body.as_ for body in node.body)
+                    )
+                # The repeat's value keeps each body output's lossy rows view,
+                # under the attempt it came from and, for the last, ``final``.
+                for index, tracker in enumerate(attempt_trackers):
+                    for body_alias, views in tracker.dropped.items():
+                        for at, rows in views.items():
+                            places: list[tuple[str, ...]] = [
+                                ("attempts", str(index), "outputs", body_alias)
+                            ]
+                            if index == len(attempt_trackers) - 1:
+                                places.append(("final", body_alias))
+                            for place in places:
+                                state.completeness.drop(node.as_, rows, at=(*place, *at))
+                repeated_tokens = frozenset(
+                    token for provenance in local_provenance.values() for token in provenance.whole
+                )
+                state.provenance[node.as_] = AliasProvenanceV1(
+                    whole=_base_tokens(
+                        node, state, tuple(body.spec for body in node.body), self.references
+                    )
+                    | repeated_tokens
+                )
+                return
+        raise _RunRefusal(
+            "repeat_exhausted",
+            "Procedure repeat exhausted its declared attempt bound.",
+            node_id=node.node_id,
+        )
+
+    def _run_repeat_body(
+        self,
+        body: RepeatBodyNode,
+        *,
+        repeat_node_id: str,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        local_outputs: dict[str, CanonicalValue],
+        local_provenance: dict[str, AliasProvenanceV1],
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> bool:
+        """Run one repeat body operation; return whether its own output is complete.
+
+        A transform body is a closed transform over the run's and this
+        attempt's outputs (an ``unknown`` predicate makes it incomplete); a call
+        body's completeness is decided by what it reads and its operation.
+        """
+
+        combined = {**state.outputs, **local_outputs}
+        local_state = _RunState(
+            outputs=combined,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            provenance={**state.provenance, **local_provenance},
+            facts=state.facts,
+            outcomes=state.outcomes,
+            control=state.control,
+            provider_calls=state.provider_calls,
+            capture_bytes=state.capture_bytes,
+            # One set: a repeat body's consumption is the run's.
+            consumed_captures=state.consumed_captures,
+            # One set: a repeat body's fetched evidence is the run's (D-R37 f1).
+            fetched_captures=state.fetched_captures,
+        )
+        if body.operation == "transform":
+            if body.transform_kind is None or not isinstance(body.spec, BaseModel):
+                raise ExecutionError("a repeat transform body carries a closed transform spec")
+            value, complete = self._apply_closed(
+                body.node_id,
+                body.transform_kind,
+                body.spec,
+                outputs=combined,
+                state=state,
+            )
+            local_outputs[body.as_] = value
+            local_provenance[body.as_] = AliasProvenanceV1(
+                whole=_base_tokens(body, local_state, body.spec, self.references)
+            )
+            return complete
+        spec = _resolve_node_template(
+            body.spec,
+            node_id=body.node_id,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=combined,
+        )
+        if body.operation == "call":
+            local_outputs[body.as_], _receipt, _receipt_digest = self._invoke_provider_v4(
+                node_id=body.node_id,
+                slot=body.slot,
+                repeat_node_id=repeat_node_id,
+                effect_policy=body.effect_policy,
+                payload=spec,
+                contract_out=None,
+                admission=admission,
+                state=state,
+                records=records,
+            )
+            local_provenance[body.as_] = AliasProvenanceV1(
+                whole=_base_tokens(body, local_state, body.spec, self.references)
+            )
+            return not (
+                self.plan is not None
+                and body.slot is not None
+                and self.plan.definition.slots[body.slot].may_truncate
+            )
+        raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
+
+    def _append_events(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        event_kind: JournalEventKindV1,
+        payloads: list[object],
+        *,
+        recorded_at: list[datetime],
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """Reserve, publish and append one terminal's item records as a group."""
+        if not payloads:
+            return ()
+        payload_bytes = [journal_payload_bytes(payload) for payload in payloads]
+        reservations = [
+            make_run_reservation(
+                instance_id=admission.instance_id,
+                partition_id=admission.journal_partition_id,
+                event_kind=event_kind,
+                run_id=admission.run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                body_digest=self.bodies.digest_bytes(content).tagged,
+            )
+            for content in payload_bytes
+        ]
+        with self.material_reservations.locked():
+            group_id = self.material_reservations.reserve_many_locked(reservations)
+            metadata = self.bodies.store_many(payload_bytes, journal_payload=True)
+            head = self.journal.read_head(admission.journal_stream, admission.journal_partition_id)
+            drafts = [
+                ProcedureJournalRecordDraftV1(
+                    stream=admission.journal_stream,
+                    partition_id=admission.journal_partition_id,
+                    event_kind=event_kind,
+                    accepted_coordinate=admission.accepted_coordinate,
+                    procedure_artifact_digest=admission.procedure_artifact_digest,
+                    definition_digest=admission.definition_digest,
+                    run_id=admission.run_id,
+                    line_spec_digest=admission.line_spec_digest,
+                    occurrence_id=admission.occurrence_id,
+                    attempt=admission.attempt,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    payload_digest=item.digest,
+                    actor_context=admission.actor_context,
+                    recorded_at=when,
+                )
+                for item, when in zip(metadata, recorded_at)
+            ]
+            try:
+                group = self.journal.append_many(
+                    drafts,
+                    expected_head=head,
+                    fencing_token=self.fencing_token,
+                )
+            except JournalError as exc:
+                raise ProcedureBoundaryRefused(
+                    _journal_refusal_code(exc),
+                    "Procedure journal append refused.",
+                ) from exc
+            if len(group) != len(reservations) or any(
+                stored.record.payload_digest != reservation.body_digest
+                or stored.record.event_kind != reservation.intended_event_kind
+                or stored.record.run_id != reservation.run_id
+                or stored.record.admission_binding_digest != reservation.admission_binding_digest
+                or stored.record.stream != admission.journal_stream
+                or stored.record.partition_id != admission.journal_partition_id
+                for stored, reservation in zip(group, reservations)
+            ):
+                raise ExecutionError("journal append did not reproduce its material reservations")
+            self.material_reservations.release_locked(group_id)
+        records.extend(group)
+        self.run_index.apply_records(group)
+        return group
+
+    def _append_event(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        event_kind: JournalEventKindV1,
+        payload: object,
+    ) -> StoredProcedureJournalRecordV1:
+        payload_bytes = journal_payload_bytes(payload)
+        body_digest = self.bodies.digest_bytes(payload_bytes).tagged
+        reservation = make_run_reservation(
+            instance_id=admission.instance_id,
+            partition_id=admission.journal_partition_id,
+            event_kind=event_kind,
+            run_id=admission.run_id,
+            admission_binding_digest=admission.admission_binding_digest,
+            body_digest=body_digest,
+        )
+        with self.material_reservations.locked():
+            self.material_reservations.reserve_locked(reservation)
+            pending_to_release: list[PendingAdmissionMaterialReservationV1] = []
+            if event_kind == "admission_bound":
+                active = self.material_reservations.active_locked()
+                for member in (
+                    payload.get("admission_material_manifest", {}).get("members", [])
+                    if isinstance(payload, dict)
+                    and isinstance(payload.get("admission_material_manifest"), dict)
+                    else []
+                ):
+                    if not isinstance(member, dict) or member.get("body_digest") is None:
+                        continue
+                    matches = tuple(
+                        item
+                        for item in active
+                        if isinstance(item, PendingAdmissionMaterialReservationV1)
+                        and item.instance_id == admission.instance_id
+                        and item.run_id == admission.run_id
+                        and item.admission_binding_digest == admission.admission_binding_digest
+                        and item.input_name == member.get("input_name")
+                        and item.plane == member.get("plane")
+                        and item.body_digest == member.get("body_digest")
+                    )
+                    if len(matches) != 1:
+                        raise ExecutionError(
+                            "run_recovery_required: admission material reservation is absent"
+                        )
+                    if not self.bodies.verify(matches[0].body_digest):
+                        raise ExecutionError(
+                            "run_recovery_required: reserved admission material is unavailable"
+                        )
+                    pending_to_release.append(matches[0])
+            metadata = self.bodies.store(payload_bytes, journal_payload=True)
+            head = self.journal.read_head(
+                admission.journal_stream,
+                admission.journal_partition_id,
+            )
+            draft = ProcedureJournalRecordDraftV1(
+                stream=admission.journal_stream,
+                partition_id=admission.journal_partition_id,
+                event_kind=event_kind,
+                accepted_coordinate=admission.accepted_coordinate,
+                procedure_artifact_digest=admission.procedure_artifact_digest,
+                definition_digest=admission.definition_digest,
+                run_id=admission.run_id,
+                line_spec_digest=admission.line_spec_digest,
+                occurrence_id=admission.occurrence_id,
+                attempt=admission.attempt,
+                admission_binding_digest=admission.admission_binding_digest,
+                payload_digest=metadata.digest,
+                actor_context=admission.actor_context,
+                recorded_at=self.clock.now(),
+            )
+            try:
+                stored = self.journal.append(
+                    draft,
+                    expected_head=head,
+                    fencing_token=self.fencing_token,
+                )
+            except JournalError as exc:
+                # Classification is by exception class, never by grepping English
+                # out of the message: the backend's prose is a diagnostic, and a
+                # served refusal code derived from it misreads any wording the
+                # keyword list does not happen to contain.
+                raise ProcedureBoundaryRefused(
+                    _journal_refusal_code(exc),
+                    "Procedure journal append refused.",
+                ) from exc
+            # The reservation's invocation id is a function of exactly the six
+            # values it was minted from (the admission's instance and partition,
+            # the event kind, run, binding and body digest), so the stored record
+            # reproduces it iff it carries those same six values.
+            if (
+                stored.record.payload_digest != reservation.body_digest
+                or stored.record.event_kind != reservation.intended_event_kind
+                or stored.record.run_id != reservation.run_id
+                or stored.record.admission_binding_digest != reservation.admission_binding_digest
+                or stored.record.stream.instance_id != admission.instance_id
+                or stored.record.partition_id != admission.journal_partition_id
+            ):
+                raise ExecutionError("journal append did not reproduce its material reservation")
+            for pending in pending_to_release:
+                self.material_reservations.release_locked(pending.reservation_id)
+            self.material_reservations.release_locked(reservation.reservation_id)
+        records.append(stored)
+        self.run_index.apply_record(stored, payload=normalize_canonical(payload))
+        if event_kind == "provider_invocation_started":
+            note_invocation_start(self.journal, stored, payload)
+        elif event_kind in PROOF_LOCATOR_KINDS:
+            note_proof_record(self.journal, stored, payload)
+        return stored
+
+    def _replay_completed(
+        self,
+        admission: ProcedureRunAdmission,
+        records: tuple[StoredProcedureJournalRecordV1, ...],
+    ) -> ProcedureRunResultV1:
+        run_records = [
+            item
+            for item in records
+            if item.record.run_id == admission.run_id
+            and item.record.admission_binding_digest == admission.admission_binding_digest
+        ]
+        if not run_records or run_records[-1].record.event_kind != "attempt_finalized":
+            raise ExecutionError("completed run index is not supported by journal exhaust")
+        provider_starts = sum(
+            item.record.event_kind == "provider_invocation_started" for item in run_records
+        )
+        provider_completions = sum(
+            item.record.event_kind == "provider_invocation_completed" for item in run_records
+        )
+        if provider_starts != provider_completions:
+            raise ProcedureBoundaryRefused(
+                "provider_replay_receipt_required",
+                "Replay requires one completed Provider receipt for every durable start.",
+                details={
+                    "provider_starts": provider_starts,
+                    "provider_completions": provider_completions,
+                },
+            )
+        access = BodyAccessContext(principal_id="procedure-run-replay", can_read_body=True)
+        payload = read_payload(self.bodies, run_records[-1].record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            return ProcedureRunResultV1(
+                run_id=admission.run_id,
+                status="failed",
+                receipt=self._receipt(admission, run_records),
+            )
+        if not isinstance(payload, dict):
+            raise ExecutionError("attempt-finalized payload is not an object")
+        receipt = self._receipt(admission, run_records)
+        try:
+            return ProcedureRunResultV1.model_validate(
+                {
+                    "run_id": admission.run_id,
+                    "status": payload.get("status"),
+                    "output": payload.get("output"),
+                    "completeness": payload.get("completeness"),
+                    "refusal": payload.get("refusal"),
+                    "receipt": receipt.model_dump(mode="json"),
+                }
+            )
+        except ValueError as exc:
+            raise ExecutionError(
+                "attempt-finalized payload cannot reproduce its run result"
+            ) from exc
+
+    @staticmethod
+    def _receipt(
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> ProcedureRunReceiptV1:
+        if not records:  # pragma: no cover - attempt start always lands first
+            raise ExecutionError("Procedure run produced no exhaust records")
+        return ProcedureRunReceiptV1(
+            run_id=admission.run_id,
+            admission_binding_digest=admission.admission_binding_digest,
+            stream=admission.journal_stream,
+            partition_id=admission.journal_partition_id,
+            first_sequence=records[0].record.sequence,
+            last_sequence=records[-1].record.sequence,
+            record_digests=tuple(item.record_digest for item in records),
+            chain_head_digest=records[-1].record_digest,
+        )
+
+
+_STEP_PREFIX = "$steps."
+
+
+def _node_policy_tokens(node: object, resolved: Mapping[str, str]) -> frozenset[DependencyToken]:
+    """Return the exact laws and policies one node's resolved pins commit it to."""
+
+    return frozenset(
+        policy_token(resolved[reference.target.qualified]) for reference in iter_references(node)
+    )
+
+
+def _record_inputs(spec: object) -> tuple[object, ...]:
+    """A closed transform's record inputs, as authored references.
+
+    A ``derive`` reads named values, not records: it has none.
+    """
+
+    if getattr(spec, "tag", None) == "cruxible-transform-derive-spec-v1":
+        return ()
+    for name in ("input", "inputs"):
+        found = getattr(spec, name, None)
+        if found is not None:
+            return tuple(found) if name == "inputs" else (found,)
+    return tuple(
+        found for name in ("left", "right") if (found := getattr(spec, name, None)) is not None
+    )
+
+
+def _referenced_aliases(value: object) -> frozenset[str]:
+    """Return every step alias a declared template actually reads."""
+
+    found: set[str] = set()
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if item.startswith(_STEP_PREFIX):
+                found.add(item[len(_STEP_PREFIX) :].split(".")[0])
+            return
+        if isinstance(item, list | tuple):
+            for member in item:
+                visit(member)
+            return
+        if isinstance(item, dict):
+            for member in item.values():
+                visit(member)
+            return
+        if isinstance(item, BaseModel):
+            visit(item.model_dump(mode="python", exclude={"tag"}))
+
+    visit(value)
+    return frozenset(found)
+
+
+def _referenced_reads(value: object) -> tuple[Read, ...]:
+    """Every ``(alias, path)`` a declared template reads, for the completeness law."""
+
+    found: dict[Read, None] = {}
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if item.startswith(_STEP_PREFIX):
+                alias, *path = item[len(_STEP_PREFIX) :].split(".")
+                found[(alias, tuple(path))] = None
+            return
+        if isinstance(item, list | tuple):
+            for member in item:
+                visit(member)
+            return
+        if isinstance(item, dict):
+            for member in item.values():
+                visit(member)
+            return
+        if isinstance(item, BaseModel):
+            visit(item.model_dump(mode="python", exclude={"tag"}))
+
+    visit(value)
+    return tuple(found)
+
+
+def _node_reads(node: object) -> tuple[Read, ...]:
+    """Every read a node's resolved fields make."""
+
+    reads: dict[Read, None] = {}
+    for _field, template in reference_templates(node):  # type: ignore[arg-type]
+        reads.update(dict.fromkeys(_referenced_reads(template)))
+    return tuple(reads)
+
+
+def _predicate_reads(predicate: Predicate) -> tuple[Read, ...]:
+    """The reads a run predicate's step references make; a count reads no field."""
+
+    found: list[Read] = []
+    pending: list[Predicate] = [predicate]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, AllOf | AnyOf):
+            pending.extend(item.of)
+            continue
+        if isinstance(item, Not):
+            pending.append(item.of)
+            continue
+        if isinstance(item, Presence):
+            operands: tuple[object, ...] = (item.of,)
+        else:
+            operands = (item.left, item.right)
+        for operand in operands:
+            if isinstance(operand, CountOperand) and operand.count.step is not None:
+                found.append((operand.count.step, None))
+            elif isinstance(operand, Ref) and operand.step is not None:
+                found.append((operand.step, tuple(operand.path)))
+    return tuple(found)
+
+
+def _template_alias(value: object) -> str | None:
+    if isinstance(value, str) and value.startswith(_STEP_PREFIX):
+        return value[len(_STEP_PREFIX) :].split(".")[0]
+    return None
+
+
+def _lineage_alias(value: object, state: _RunState | None = None) -> str | None:
+    """The alias whose per-element lineage a template may use, or None.
+
+    Per-element lineage is recorded for one exact path, the provenance's
+    ``items_path``: the ``items`` list a transform or projection produced
+    (``$steps.<alias>.items``), or the ``records`` of an extract over a list
+    of Captures. Any other path into the same alias -- a sibling field, a
+    nested list -- has no lineage of its own and must not borrow that one.
+    """
+
+    if not isinstance(value, str) or not value.startswith(_STEP_PREFIX):
+        return None
+    parts = value[len(_STEP_PREFIX) :].split(".")
+    if len(parts) != 2:
+        return None
+    provenance = None if state is None else state.provenance.get(parts[0])
+    path = "items" if provenance is None else provenance.items_path
+    return parts[0] if parts[1] == path else None
+
+
+def _item_closure(state: _RunState, template: object, index: int) -> frozenset[DependencyToken]:
+    """One element's closure through `template`: its own lineage, else the alias's whole."""
+
+    alias = _template_alias(template)
+    if alias is None:
+        return frozenset()
+    if _lineage_alias(template, state) == alias:
+        return state.item_tokens(alias, index)
+    return state.alias_tokens(frozenset({alias}))
+
+
+def _check_capture_list_bound(
+    node: CallNode,
+    field: str,
+    count: int,
+    *,
+    cap: int,
+    limit: int,
+    boundary: str,
+    state: _RunState,
+) -> None:
+    """Refuse a Capture list past its Contract's ``max_items`` or the run's item bound.
+
+    Checked on the provider's list as returned, before any member is validated
+    or committed: nothing of an over-long list is kept (D-R37 a3).
+    """
+
+    state.observe_items(count, boundary, field)
+    if count > cap:
+        raise _RunRefusal(
+            "contract_output_refused",
+            f"call {node.node_id!r}: capture list {field!r} holds {count} Captures; its "
+            f"Contract allows at most {cap} (max_items)",
+            node_id=node.node_id,
+        )
+    if count > limit:
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=limit,
+            observed=count,
+            node_id=node.node_id,
+            boundary=boundary,
+            field_path=field,
+        )
+
+
+def _provider_incomplete_captures(
+    named: Sequence[str], *, occurrence: Any
+) -> tuple[tuple[str, ...], str | None]:
+    """The list fields a provider says it left incomplete, sorted, or why it cannot say so.
+
+    The result's ``incomplete_captures`` may name only the bound operation's
+    out-Contract ``list<capture<...>>`` fields, each once. Core reads this one
+    generic field and no provider- or operation-specific one (D-R37 a4).
+    """
+
+    if not named:
+        return (), None
+    out = closure_lookup(occurrence.contracts)(occurrence.operation.out)
+    listed = set() if out is None else {name for name, _kind, _cap in capture_list_fields(out)}
+    undeclared = sorted({name for name in named if name not in listed})
+    if undeclared:
+        return (), (
+            f"incomplete_captures names {undeclared!r}, which are not list<capture<...>> "
+            f"fields of operation {occurrence.operation.name!r}'s out Contract"
+        )
+    if len(set(named)) != len(named):
+        return (), "incomplete_captures names a field more than once"
+    return tuple(sorted(named, key=lambda item: item.encode("utf-8"))), None
+
+
+def _member_tokens(
+    call_tokens: Iterable[DependencyToken], members: Sequence[str]
+) -> list[frozenset[DependencyToken]]:
+    """Each list member's own Capture tokens, in member order (D-R37 a5).
+
+    One pass over the call's tokens indexes them by Capture digest, then each
+    member reads its own: linear in tokens plus members, never their product.
+    """
+
+    by_capture: dict[str, set[DependencyToken]] = {}
+    for token in call_tokens:
+        if token.slot in _CAPTURE_SLOTS:
+            by_capture.setdefault(token.digest, set()).add(token)
+    return [frozenset(by_capture.get(member, ())) for member in members]
+
+
+def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str, object]] | None:
+    """The key records an extract's ``only_keys`` selects, or ``None`` when it reads all."""
+
+    if node.only_keys is None:
+        return None
+    resolved = _resolve_node_template(
+        node.only_keys,
+        node_id=node.node_id,
+        input_payload=state.input_payload,
+        parameters=state.parameters,
+        outputs=state.outputs,
+    )
+    if not isinstance(resolved, list) or not all(isinstance(item, dict) for item in resolved):
+        raise _RunRefusal(
+            "runtime_reference_unresolved",
+            f"extract {node.node_id!r}: only_keys resolves to a list of key records",
+            node_id=node.node_id,
+        )
+    return cast(list[dict[str, object]], resolved)
+
+
+def _member_request_digest(
+    wire: ProviderResultToExternalCapture, *, key: str, node_id: str, seen: Collection[str]
+) -> str:
+    """A Capture list member's identity: the request digest its coordinate carries (D-R37 a2).
+
+    The member's index orders the list and nothing else; two members naming one
+    request are one request answered twice, a protocol violation.
+    """
+
+    coordinate = wire.coordinate
+    digest = coordinate.get("request_digest") if isinstance(coordinate, Mapping) else None
+    try:
+        well_formed = isinstance(digest, str) and Sha256Value.from_tagged(digest) is not None
+    except ValueError:
+        well_formed = False
+    if not well_formed:
+        raise _InternalFailure(
+            "provider_protocol_violation",
+            details={
+                "node_id": node_id,
+                "reason": f"capture list member {key!r} names no request_digest in its "
+                "coordinate (a member's identity)",
+            },
+        )
+    if digest in seen:
+        raise _InternalFailure(
+            "provider_protocol_violation",
+            details={
+                "node_id": node_id,
+                "reason": f"capture list member {key!r} repeats another member's request",
+            },
+        )
+    assert isinstance(digest, str)
+    return digest
+
+
+def _is_derived_contract(contract: CaptureContract | None) -> bool:
+    return contract is not None and contract.epistemic_grade == "derived"
+
+
+def _capture_input_fields(contract: Contract) -> dict[str, tuple[str, bool]]:
+    """Each top-level ``capture<K>`` field, and ``list<capture<K>>`` field (members)."""
+
+    from cruxible_client.contracts.shapes import CaptureType, ListType
+
+    found: dict[str, tuple[str, bool]] = {}
+    for name, item in contract.fields.items():
+        if isinstance(item.type, CaptureType):
+            found[name] = (item.type.capture_kind, False)
+        elif isinstance(item.type, ListType) and isinstance(item.type.item, CaptureType):
+            found[name] = (item.type.item.capture_kind, True)
+    return found
+
+
+def _capture_derivation(node: CallNode, lineage: frozenset[DependencyToken]) -> CaptureDerivation:
+    """A derive call's recorded inputs: Captures, their receipts, and state reads (D-R37 c1)."""
+
+    def slot(*names: str) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {token.digest for token in lineage if token.slot in names},
+                key=lambda item: item.encode("ascii"),
+            )
+        )
+
+    captures = slot(*_CAPTURE_SLOTS)
+    reads = slot("accepted_state")
+    if not captures and not reads:
+        raise _RunRefusal(
+            "contract_input_refused",
+            f"call {node.node_id!r} produces a derived Capture but reads no Capture or "
+            "accepted state: a derive computes from this run's evidence",
+            node_id=node.node_id,
+        )
+    return CaptureDerivation(
+        manifest=InputReceiptSetManifest(
+            input_capture_digests=captures,
+            input_receipt_digests=slot("receipt"),
+            input_accepted_state_digests=reads,
+        ),
+        input_template_digest=derive_input_template_digest(node.input),
+    )
+
+
+def _base_tokens(
+    node: object,
+    state: _RunState,
+    template: object,
+    resolved: Mapping[str, str],
+) -> frozenset[DependencyToken]:
+    return (
+        _node_policy_tokens(node, resolved)
+        | state.control
+        | state.alias_tokens(_referenced_aliases(template))
+    )
+
+
+def _alias_provenance_payload(provenance: AliasProvenanceV1) -> CanonicalValue:
+    def tokens(values: frozenset[DependencyToken]) -> list[CanonicalValue]:
+        return [
+            {"slot": token.slot, "digest": token.digest}
+            for token in sorted(values, key=lambda item: (item.slot, item.digest))
+        ]
+
+    return {
+        "whole": tokens(provenance.whole),
+        "items": None if provenance.items is None else [tokens(item) for item in provenance.items],
+        # Journaled only when it is not the default ``items``.
+        **({} if provenance.items_path == "items" else {"items_path": provenance.items_path}),
+    }
+
+
+def _projected_provenance(
+    fields: object,
+    *,
+    state: _RunState,
+    base: frozenset[DependencyToken],
+    value: CanonicalValue,
+) -> AliasProvenanceV1:
+    template = fields.get("items") if isinstance(fields, dict) else None
+    if template is None or not isinstance(value, dict):
+        return AliasProvenanceV1(whole=base)
+    projected = value.get("items")
+    if not isinstance(projected, list):
+        return AliasProvenanceV1(whole=base)
+    if _template_alias(template) is None:
+        return AliasProvenanceV1(whole=base)
+    return AliasProvenanceV1(
+        whole=base,
+        items=tuple(_item_closure(state, template, index) for index in range(len(projected))),
+    )
+
+
+def _with_creation_identities(
+    node_id: str,
+    children: list[dict[str, object]],
+    creations: tuple[CreationIdentity, ...],
+    item_paths: Mapping[str, str],
+) -> list[dict[str, object]]:
+    """The journaled children, created Subjects' items identified by their lowered address.
+
+    ``children`` are the terminal's child receipts as its records carry them;
+    ``item_paths`` is the prepared terminal's item -> path map, where a Subject
+    item's entry is the path shared lowering assigned (or reused) for it. Only
+    the identity digest of a finalized child changes: no receipt is rebuilt.
+    """
+
+    finalized = finalize_creation_identities(
+        node_id=node_id,
+        creations=creations,
+        assigned_path=lambda index: item_paths.get(str(children[index]["item_key"])),
+    )
+    if not finalized:
+        return children
+    return [
+        child if index not in finalized else {**child, "item_identity_digest": finalized[index]}
+        for index, child in enumerate(children)
+    ]
+
+
+def _inbox_cap(node: InboxEgressNode) -> tuple[int, Literal["declared", "default"]]:
+    """The most items a run posts to the inbox, and whether the terminal declared it."""
+
+    if node.max_items is not None:
+        return node.max_items, "declared"
+    return INBOX_RUN_ITEM_CAP_DEFAULT, "default"
+
+
+def _terminal_item_templates(node: CaptureEgressNode) -> object:
+    return node.input
+
+
+_CAPTURE_SLOTS = frozenset({"produced_capture", "admitted_capture"})
+
+
+def _fan_out_list(
+    template: object,
+    *,
+    state: _RunState,
+    node_id: str,
+    field: str,
+    noun: str,
+    invalid_code: ProcedureNodeRefusalCode,
+    ambiguous_code: ProcedureNodeRefusalCode,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """The elements of a list the run produced, each with only its own evidence closure."""
+
+    try:
+        resolved = _resolve_template(
+            template,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            outputs=state.outputs,
+        )
+    except ExecutionError as exc:
+        raise _RunRefusal(
+            invalid_code,
+            f"The fan-out's items did not resolve: {exc}",
+            node_id=node_id,
+            details={"field": field, "reason": "items_unresolved"},
+        ) from exc
+    if not isinstance(resolved, list):
+        raise _RunRefusal(
+            invalid_code,
+            f"The fan-out's items resolved to a {type(resolved).__name__}, not a list of {noun}.",
+            node_id=node_id,
+            details={"field": field, "reason": "items_not_a_list"},
+        )
+    values = [normalize_canonical(item) for item in resolved]
+    alias = _template_alias(template)
+    provenance = None if alias is None else state.provenance.get(alias)
+    if provenance is None:
+        whole = state.alias_tokens(_referenced_aliases(template))
+        return values, tuple(whole for _ in values)
+    # Lineage belongs to the exact path it was recorded for; a sibling or
+    # nested path has none of its own.
+    lineage = provenance.items if _lineage_alias(template, state) == alias else None
+    if lineage is None or len(lineage) < len(values):
+        whole_captures = {
+            token.digest for token in provenance.whole if token.slot in _CAPTURE_SLOTS
+        }
+        # One Capture, or one derived root recording the rest (D-R37 d1).
+        if (
+            len(whole_captures) > 1
+            and capture_root(whole_captures, state.derivations, cache=state.capture_root_cache)
+            is None
+        ):
+            raise _RunRefusal(
+                ambiguous_code,
+                "The fan-out's list was built from more than one Capture and keeps no "
+                "per-element lineage, so no element's own evidence can be told apart.",
+                node_id=node_id,
+                details={"field": field, "reason": "lineage_unavailable"},
+            )
+        return values, tuple(provenance.whole for _ in values)
+    shared = frozenset(token for token in provenance.whole if token.slot not in _CAPTURE_SLOTS)
+    return values, tuple(shared | lineage[index] for index in range(len(values)))
+
+
+def _inbox_items(
+    node: InboxEgressNode,
+    *,
+    state: _RunState,
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+    enums: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """The typed items a post_inbox terminal posts, each with its own evidence.
+
+    Without ``for_each`` the terminal's ``fields`` make one item; with it,
+    each element of the list posts one item read as ``$item``. A record's
+    field (``$item.fields.<f>``) gives its value when present; an absent
+    one leaves the item field out, and an invalid one too, marking what
+    this terminal posts incomplete (the completeness law: an unreadable
+    value never passes as ordinary absence). Every item is checked against
+    the terminal's Contract (``inbox_item_invalid``); items sharing a
+    ``dedupe_key`` post once.
+    """
+
+    if node.for_each is None:
+        elements: list[CanonicalValue | None] = [None]
+        element_tokens: tuple[frozenset[DependencyToken], ...] = (frozenset(),)
+    else:
+        listed, element_tokens = _fan_out_list(
+            node.for_each,
+            state=state,
+            node_id=node.node_id,
+            field="for_each",
+            noun="inbox items",
+            invalid_code="inbox_item_invalid",
+            ambiguous_code="inbox_item_evidence_ambiguous",
+        )
+        elements = list(listed)
+    run_fields = {
+        name: template
+        for name, template in node.fields.items()
+        if not _mentions_item_reference(template)
+    }
+    shared = _exact_evidence(run_fields, state=state, node_id=node.node_id, field="fields")
+    values: list[CanonicalValue] = []
+    tokens: list[frozenset[DependencyToken]] = []
+    seen: set[bytes] = set()
+    for element, element_token in zip(elements, element_tokens, strict=True):
+        item: dict[str, object] = {}
+        skip_item = False
+        for name, template in node.fields.items():
+            try:
+                resolved = _resolve_template(
+                    template,
+                    input_payload=state.input_payload,
+                    parameters=state.parameters,
+                    outputs=state.outputs,
+                    item=element,
+                )
+            except ExecutionError as exc:
+                raise _RunRefusal(
+                    "inbox_item_invalid",
+                    f"Inbox item field {name!r} did not resolve: {exc}",
+                    node_id=node.node_id,
+                    details={"field": f"fields.{name}", "reason": "field_unresolved"},
+                ) from exc
+            tag = _field_result_tag(resolved)
+            if tag == "invalid":
+                state.completeness.note(node.node_id, "invalid_field")
+                state.completeness.skipped += 1
+                state.sinks_incomplete.add(node.node_id)
+                continue
+            if tag == "absent":
+                continue
+            value = (
+                resolved["value"] if tag == "present" and isinstance(resolved, dict) else resolved
+            )
+            declared = contract.fields.get(name)
+            complete = state.completeness.at_sink(_referenced_reads([node.for_each, template]))
+            if (
+                declared is not None
+                and requires_complete_input(value, declared.requires_complete_input)
+                and not complete
+            ):
+                state.claims_diagnostics.setdefault(node.node_id, ClaimsDiagnostics()).add(
+                    ClaimsDiagnostic(
+                        kind="incomplete_source",
+                        target=f"{node.contract.spelling}.{name}",
+                        field=name,
+                        input=",".join(
+                            state.completeness.incomplete_inputs(
+                                _referenced_reads([node.for_each, template])
+                            )
+                        )
+                        or "control lineage",
+                    )
+                )
+                if declared.incomplete_fallback is None:
+                    state.completeness.skipped += 1
+                    skip_item = True
+                    continue
+                state.completeness.downgraded += 1
+                value = declared.incomplete_fallback
+            item[name] = value
+        if skip_item:
+            continue
+        try:
+            validate_operation_value(
+                item,
+                contract,
+                resolve=resolve,
+                enum_members=enums,
+                keys=keys,
+            )
+        except OperationValueRefused as exc:
+            raise _RunRefusal(
+                "inbox_item_invalid",
+                f"An inbox item is not a {node.contract.spelling} record: {exc}",
+                node_id=node.node_id,
+                details={"field": "fields", "reason": "contract_refused"},
+            ) from exc
+        canonical = normalize_canonical(item)
+        identity = canonical_bytes(
+            {name: item.get(name) for name in node.dedupe_key} if node.dedupe_key else canonical
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        values.append(canonical)
+        tokens.append(element_token | shared)
+    return values, tuple(tokens)
+
+
+def _mentions_item_reference(value: object) -> bool:
+    if isinstance(value, BaseModel):
+        return _mentions_item_reference(value.model_dump(mode="python", by_alias=True))
+    if isinstance(value, str):
+        return value == "$item" or value.startswith("$item.")
+    if isinstance(value, dict):
+        return value.get("$ref") == "item" or any(
+            _mentions_item_reference(member) for member in value.values()
+        )
+    if isinstance(value, list | tuple):
+        return any(_mentions_item_reference(member) for member in value)
+    return False
+
+
+def _field_result_tag(value: object) -> str | None:
+    """``present``/``absent``/``invalid`` when ``value`` is one field result, else ``None``."""
+
+    if not isinstance(value, dict):
+        return None
+    tag = value.get("tag")
+    shapes = {"present": {"tag", "value", "at"}, "absent": {"tag"}, "invalid": {"tag", "problem"}}
+    return tag if isinstance(tag, str) and set(value) == shapes.get(tag) else None
+
+
+def _step_references(value: object) -> list[str]:
+    """Every ``$steps.`` reference a template holds, wherever it sits."""
+
+    found: list[str] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if item.startswith(_STEP_PREFIX):
+                found.append(item)
+        elif isinstance(item, list | tuple):
+            for member in item:
+                visit(member)
+        elif isinstance(item, dict):
+            for member in item.values():
+                visit(member)
+
+    visit(value)
+    return found
+
+
+def _exact_evidence(
+    template: object, *, state: _RunState, node_id: str, field: str
+) -> frozenset[DependencyToken]:
+    """The closure of exactly what a template's own references select, never their siblings'.
+
+    A reference keeps its alias's non-Capture dependencies. Its Captures are the
+    ones its exact path reaches: the whole alias, all of it; the alias's
+    ``items`` list with recorded per-element lineage, those elements'
+    Captures; one element of that list (``items.<i>`` and below), that
+    element's own. Any other path -- a sibling field, a nested list, an
+    element without lineage -- is exact only when its alias was built from at
+    most one Capture; otherwise the item's evidence cannot be told apart and
+    it refuses ``inbox_item_evidence_ambiguous`` rather than borrowing.
+    """
+
+    tokens: frozenset[DependencyToken] = frozenset()
+    for reference in _step_references(template):
+        alias, *path = reference[len(_STEP_PREFIX) :].split(".")
+        provenance = state.provenance.get(alias)
+        if provenance is None:
+            continue
+        captures = frozenset(token for token in provenance.whole if token.slot in _CAPTURE_SLOTS)
+        shared = provenance.whole - captures
+        lineage = provenance.items
+        listed = provenance.items_path
+        if not path:
+            selected = captures
+        elif path == [listed] and lineage is not None:
+            selected = frozenset().union(*lineage) if lineage else frozenset()
+        elif (
+            len(path) >= 2
+            and path[0] == listed
+            and path[1].isdigit()
+            and lineage is not None
+            and int(path[1]) < len(lineage)
+        ):
+            selected = lineage[int(path[1])]
+        elif len(captures) <= 1 or (
+            capture_root(
+                (token.digest for token in captures),
+                state.derivations,
+                cache=state.capture_root_cache,
+            )
+            is not None
+        ):
+            selected = captures
+        else:
+            raise _RunRefusal(
+                "inbox_item_evidence_ambiguous",
+                f"{reference!r} selects part of a value built from more than one Capture "
+                "with no lineage for that part, so its own evidence cannot be told apart.",
+                node_id=node_id,
+                details={"field": field, "reason": "lineage_unavailable"},
+            )
+        tokens |= shared | selected
+    return tokens
+
+
+def _check_inbox_bytes(values: list[CanonicalValue], *, state: _RunState, node_id: str) -> int:
+    """Refuse a post whose item or run total exceeds the inbox byte bounds; nothing is posted."""
+
+    total = 0
+    for index, value in enumerate(values):
+        size = len(canonical_bytes(value))
+        if size > INBOX_ITEM_MAX_BYTES:
+            raise _RunRefusal(
+                "inbox_item_over_budget",
+                f"Inbox item {index} is {size} canonical bytes; one item may be at most "
+                f"{INBOX_ITEM_MAX_BYTES}.",
+                node_id=node_id,
+                details={
+                    "bound": "item",
+                    "child_index": index,
+                    "limit": INBOX_ITEM_MAX_BYTES,
+                    "observed": size,
+                },
+            )
+        total += size
+    if state.inbox_bytes + total > INBOX_RUN_MAX_BYTES:
+        raise _RunRefusal(
+            "inbox_item_over_budget",
+            f"This run would post {state.inbox_bytes + total} canonical bytes to the inbox; a "
+            f"run may post at most {INBOX_RUN_MAX_BYTES}.",
+            node_id=node_id,
+            details={
+                "bound": "run",
+                "limit": INBOX_RUN_MAX_BYTES,
+                "observed": state.inbox_bytes + total,
+            },
+        )
+    return total
+
+
+def _terminal_items(
+    declared: object,
+    *,
+    state: _RunState,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """Fan one terminal node out into deterministic children with exact provenance."""
+
+    resolved = _resolve_template(
+        declared,
+        input_payload=state.input_payload,
+        parameters=state.parameters,
+        outputs=state.outputs,
+    )
+    if isinstance(declared, list | tuple):
+        values = list(resolved) if isinstance(resolved, list) else [resolved]
+        tokens = tuple(
+            state.alias_tokens(_referenced_aliases(member)) for member in declared[: len(values)]
+        )
+        return values, tokens + tuple(frozenset() for _ in range(len(values) - len(tokens)))
+    if isinstance(declared, dict) and "items" in declared:
+        template = declared["items"]
+        shared = state.alias_tokens(
+            _referenced_aliases({key: item for key, item in declared.items() if key != "items"})
+        )
+    else:
+        template = declared
+        shared = frozenset()
+    source = resolved.get("items") if isinstance(resolved, dict) else resolved
+    nested = source.get("items") if isinstance(source, dict) else None
+    if isinstance(source, list):
+        values = [normalize_canonical(item) for item in source]
+    elif isinstance(nested, list):
+        values = [normalize_canonical(item) for item in nested]
+    else:
+        return [resolved], (state.alias_tokens(_referenced_aliases(declared)),)
+    if _template_alias(template) is None:
+        fallback = shared | state.alias_tokens(_referenced_aliases(template))
+        return values, tuple(fallback for _ in values)
+    return values, tuple(
+        shared | _item_closure(state, template, index) for index in range(len(values))
+    )
+
+
+def _decision_digest(run_id: str, decision: AcquisitionInputDecision) -> str:
+    return typed_digest(
+        Sha256Value,
+        "playbill-procedure-acquisition-decision-v1",
+        {"decision": decision.model_dump(mode="json"), "run_id": run_id},
+    ).tagged
+
+
+def _resolve_path(value: object, path: tuple[str, ...], *, reference: str) -> object:
+    current = value
+    for position, member in enumerate(path):
+        if isinstance(current, dict) and member in current:
+            current = current[member]
+            continue
+        if isinstance(current, list) and member.isdigit() and int(member) < len(current):
+            current = current[int(member)]
+            continue
+        if isinstance(current, list) and member == "[*]":
+            return [
+                _resolve_path(item, path[position + 1 :], reference=reference) for item in current
+            ]
+        raise ExecutionError(f"runtime reference {reference!r} does not resolve")
+    return current
+
+
+def _resolve_reference(
+    value: str,
+    *,
+    input_payload: CanonicalValue,
+    parameters: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+    item: CanonicalValue | None = None,
+) -> object:
+    if value == "$input":
+        return input_payload
+    if value.startswith("$input."):
+        return _resolve_path(input_payload, tuple(value[7:].split(".")), reference=value)
+    if value.startswith("$params."):
+        current = parameters if isinstance(parameters, dict) else {}
+        return _resolve_path(current, tuple(value[8:].split(".")), reference=value)
+    if value.startswith("$steps."):
+        parts = tuple(value[7:].split("."))
+        alias = parts[0]
+        if alias not in outputs:
+            raise ExecutionError(f"runtime reference {value!r} names absent output")
+        return _resolve_path(outputs[alias], parts[1:], reference=value)
+    if value == "$item":
+        if item is None:
+            raise ExecutionError("$item is unavailable outside item transforms")
+        return item
+    if value.startswith("$item."):
+        if item is None:
+            raise ExecutionError("$item is unavailable outside item transforms")
+        return _resolve_path(item, tuple(value[6:].split(".")), reference=value)
+    return value
+
+
+def _resolve_template(
+    value: object,
+    *,
+    input_payload: CanonicalValue,
+    parameters: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+    item: CanonicalValue | None = None,
+    preserve_item_references: bool = False,
+) -> CanonicalValue:
+    if isinstance(value, str):
+        if preserve_item_references and (value == "$item" or value.startswith("$item.")):
+            return value
+        return normalize_canonical(
+            _resolve_reference(
+                value,
+                input_payload=input_payload,
+                parameters=parameters,
+                outputs=outputs,
+                item=item,
+            )
+        )
+    if isinstance(value, list | tuple):
+        return [
+            _resolve_template(
+                member,
+                input_payload=input_payload,
+                parameters=parameters,
+                outputs=outputs,
+                item=item,
+                preserve_item_references=preserve_item_references,
+            )
+            for member in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _resolve_template(
+                member,
+                input_payload=input_payload,
+                parameters=parameters,
+                outputs=outputs,
+                item=item,
+                preserve_item_references=preserve_item_references,
+            )
+            for key, member in value.items()
+        }
+    return normalize_canonical(value)
+
+
+def _resolve_node_template(
+    value: object,
+    *,
+    node_id: str,
+    input_payload: CanonicalValue,
+    parameters: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+) -> CanonicalValue:
+    try:
+        return _resolve_template(
+            value, input_payload=input_payload, parameters=parameters, outputs=outputs
+        )
+    except ExecutionError as exc:
+        raise _RunRefusal(
+            "runtime_reference_unresolved",
+            "A Procedure runtime reference did not resolve.",
+            node_id=node_id,
+        ) from exc
+    except Exception as exc:
+        raise _RunRefusal(
+            "result_not_canonical",
+            "A resolved Procedure value is not canonical for this node.",
+            node_id=node_id,
+        ) from exc
+
+
+def _validate_node_contract(
+    validator: ContractValidatorProtocol,
+    *,
+    contract: ArtifactPin,
+    payload: CanonicalValue,
+    direction: Literal["input", "output"],
+    node_id: str,
+    max_items: int | None = None,
+    observe_items: Callable[[int, str, str], None] | None = None,
+) -> CanonicalValue:
+    boundary = f"contract-{'in' if direction == 'input' else 'out'}:{contract.target.name}"
+    try:
+        if max_items is not None:
+            budget_result = validator.validate_contract_with_budget(
+                contract=contract,
+                payload=payload,
+                direction=direction,
+                max_items=max_items,
+            )
+            if not isinstance(budget_result, ValidatedProcedureContract):
+                raise ExecutionError("Contract budget validator returned an invalid result")
+            if observe_items is not None:
+                for observation in budget_result.list_observations:
+                    observe_items(observation.observed, boundary, observation.field_path)
+            return normalize_canonical(budget_result.value)
+        return normalize_canonical(
+            validator.validate_contract(
+                contract=contract,
+                payload=payload,
+                direction=direction,
+            )
+        )
+    except ProcedureContractItemBudgetExceeded as exc:
+        if observe_items is not None and exc.field_path is not None:
+            observe_items(exc.observed, boundary, exc.field_path)
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=exc.limit,
+            observed=exc.observed,
+            node_id=node_id,
+            boundary=boundary,
+            field_path=exc.field_path or "",
+        ) from exc
+    except Exception as exc:
+        code: ProcedureNodeRefusalCode = (
+            "contract_input_refused" if direction == "input" else "contract_output_refused"
+        )
+        details: dict[str, object] = {
+            "boundary": boundary,
+        }
+        field_path = getattr(exc, "field_path", None)
+        element_index = getattr(exc, "element_index", None)
+        if isinstance(field_path, str):
+            details["field_path"] = field_path
+        if isinstance(element_index, int):
+            details["element_index"] = element_index
+        raise _RunRefusal(
+            code,
+            f"The Procedure node {direction} contract refused its value: {exc}",
+            node_id=node_id,
+            details=details,
+        ) from exc
+
+
+# Retained admissions without resource_budget use the original 1 MiB return semantics.
+
+
+def _item_count(value: CanonicalValue, *, extractable_only: bool = False) -> int | None:
+    """How many items a value holds: a list's, its ``items``, or its ``records``."""
+
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        for name in ("items", "records"):
+            members = value.get(name)
+            if isinstance(members, list):
+                return len(members)
+    return None if extractable_only else 1
+
+
+def _budget_refusal(
+    *,
+    budget_kind: Literal["max_items", "result_bytes"],
+    limit: int,
+    observed: int,
+    node_id: str,
+    boundary: str | None = None,
+    field_path: str | None = None,
+) -> _RunRefusal:
+    if budget_kind == "max_items":
+        return _RunRefusal(
+            "budget_max_items_exceeded",
+            "A Procedure collection exceeded its declared item bound.",
+            node_id=node_id,
+            details={
+                "dimension": "max_items",
+                "limit": limit,
+                "observed": observed,
+                "boundary": boundary,
+                "field_path": field_path,
+            },
+        )
+    return _RunRefusal(
+        "budget_exhausted",
+        f"Procedure {budget_kind} budget exhausted.",
+        node_id=node_id,
+        budget=ProcedureBudgetRefusalDetail(
+            budget_kind=budget_kind,
+            limit=limit,
+            observed=observed,
+        ),
+    )
+
+
+def _check_return_budget(
+    value: CanonicalValue,
+    *,
+    max_items: int | None,
+    node_id: str,
+    result_bytes_cap: int = 1_048_576,
+    observe_result_bytes: Callable[[int, str, str], None] | None = None,
+    boundary: str = "procedure-return",
+    field_path: str = "result",
+) -> None:
+    count = _item_count(value, extractable_only=True)
+    if max_items is not None and count is not None and count > max_items:
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=max_items,
+            observed=count,
+            node_id=node_id,
+        )
+    size = len(canonical_bytes(value))
+    if observe_result_bytes is not None:
+        observe_result_bytes(size, boundary, field_path)
+    if size > result_bytes_cap:
+        raise _budget_refusal(
+            budget_kind="result_bytes",
+            limit=result_bytes_cap,
+            observed=size,
+            node_id=node_id,
+        )
+
+
+_NOT_RESOLVED = object()
+
+
+def _ref_value(
+    ref: Ref,
+    *,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+    parameters: CanonicalValue,
+) -> object:
+    """The run value a reference names, or ``_NOT_RESOLVED`` when it names none."""
+
+    if ref.root == "input":
+        current: object = input_payload
+    elif ref.root == "param":
+        current = parameters if isinstance(parameters, dict) else {}
+    elif ref.root == "step":
+        if ref.step not in outputs:
+            return _NOT_RESOLVED
+        current = outputs[str(ref.step)]
+    else:
+        return _NOT_RESOLVED
+    for member in ref.path:
+        if isinstance(current, dict) and member in current:
+            current = current[member]
+        elif isinstance(current, list) and member.isdigit() and int(member) < len(current):
+            current = current[int(member)]
+        else:
+            return _NOT_RESOLVED
+    return current
+
+
+def _operand_value(
+    operand: object,
+    *,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+    parameters: CanonicalValue,
+) -> CanonicalValue:
+    if isinstance(operand, LiteralOperand):
+        return normalize_canonical(operand.literal)
+    ref = operand.count if isinstance(operand, CountOperand) else operand
+    assert isinstance(ref, Ref)
+    value = _ref_value(ref, input_payload=input_payload, outputs=outputs, parameters=parameters)
+    if value is _NOT_RESOLVED:
+        raise ExecutionError(f"guard operand {ref.render()!r} is absent")
+    if isinstance(operand, CountOperand):
+        return _item_count(normalize_canonical(value))
+    return normalize_canonical(value)
+
+
+def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool:
+    if operator == "eq":
+        return left == right
+    if operator == "ne":
+        return left != right
+    if isinstance(left, bool) or isinstance(right, bool):
+        raise ExecutionError("ordered guard operands cannot be booleans")
+    if isinstance(left, int) and isinstance(right, int):
+        comparable_left: int | str = left
+        comparable_right: int | str = right
+    elif isinstance(left, str) and isinstance(right, str):
+        comparable_left = left
+        comparable_right = right
+    else:
+        raise ExecutionError("ordered guard operands must share an int or string type")
+    if operator == "gt":
+        return comparable_left > comparable_right  # type: ignore[operator]
+    if operator == "ge":
+        return comparable_left >= comparable_right  # type: ignore[operator]
+    if operator == "lt":
+        return comparable_left < comparable_right  # type: ignore[operator]
+    if operator == "le":
+        return comparable_left <= comparable_right  # type: ignore[operator]
+    raise ExecutionError(f"unknown guard operator {operator!r}")
+
+
+def _evaluate_predicate(
+    predicate: Predicate,
+    *,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+    parameters: CanonicalValue,
+) -> tuple[bool, CanonicalValue]:
+    """A run predicate's two-valued verdict and its operand trace.
+
+    A guard reads run values, not field results: a reference that resolves to
+    nothing refuses (``present``/``absent`` test exactly that).
+    """
+
+    values = {"input_payload": input_payload, "outputs": outputs, "parameters": parameters}
+    if isinstance(predicate, Presence):
+        found = _ref_value(predicate.of, **values) is not _NOT_RESOLVED  # type: ignore[arg-type]
+        verdict = found == (predicate.op == "present")
+        return verdict, normalize_canonical(
+            {"operator": predicate.op, "ref": predicate.of.render(), "present": found}
+        )
+    if isinstance(predicate, Not):
+        child, trace = _evaluate_predicate(predicate.of, **values)  # type: ignore[arg-type]
+        return not child, {"not": trace}
+    if isinstance(predicate, AllOf | AnyOf):
+        results = [
+            _evaluate_predicate(child, **values)  # type: ignore[arg-type]
+            for child in predicate.of
+        ]
+        verdicts = [item[0] for item in results]
+        every = isinstance(predicate, AllOf)
+        return (all(verdicts) if every else any(verdicts)), normalize_canonical(
+            {"all" if every else "any": [item[1] for item in results]}
+        )
+    left = _operand_value(predicate.left, **values)  # type: ignore[arg-type]
+    if isinstance(predicate, Membership):
+        if isinstance(predicate.right, Ref):
+            members = _operand_value(predicate.right, **values)  # type: ignore[arg-type]
+            if not isinstance(members, list):
+                raise ExecutionError("a membership guard reads a list")
+        else:
+            members = [normalize_canonical(member) for member in predicate.right]
+        inside = left in members
+        return inside == (predicate.op == "in"), normalize_canonical(
+            {"left": left, "operator": predicate.op, "right": members}
+        )
+    right = _operand_value(predicate.right, **values)  # type: ignore[arg-type]
+    verdict = _compare(left, predicate.op, right)
+    return verdict, normalize_canonical({"left": left, "operator": predicate.op, "right": right})
+
+
+__all__ = [
+    "AcceptedStateRunInput",
+    "AcceptedStateRunMaterial",
+    "ContractValidatorProtocol",
+    "ExhaustRunMaterialV1",
+    "LandedCaptureRunMaterialV1",
+    "PROCEDURE_RUN_ADMISSION_TAG",
+    "PROCEDURE_RUN_RECEIPT_DOMAIN",
+    "PreparedProcedureRun",
+    "ProcedureActivationAuthorityProtocol",
+    "ProcedureAdmissionBoundPayload",
+    "ProcedureBoundaryRefused",
+    "ProcedureClockProtocol",
+    "ProcedureExecutor",
+    "ProcedureNodePinSetV1",
+    "ProcedureParentBindingV1",
+    "ProcedureRunAdmission",
+    "ProcedureRunReceiptV1",
+    "ProcedureRunRefusalV1",
+    "ProcedureRunResultV1",
+    "ProcedureRunStatusV1",
+    "ProviderInvocationResultV1",
+    "StateTapReaderProtocol",
+    "SystemProcedureClock",
+    "accepted_procedure_pin_set_digest",
+    "admission_fields",
+    "bind_accepted_state_materials",
+    "bind_line_admission_runtime_policy",
+    "bind_prepared_investigation",
+    "empty_admission_material_manifest",
+    "parse_admission_payload",
+    "procedure_direct_partition",
+    "procedure_node_pin_sets",
+    "procedure_semantic_run_id",
+    "prepare_direct_procedure_run",
+    "procedure_admission_digest",
+    "procedure_pin_set_digest",
+    "procedure_run_declared_budget",
+    "procedure_run_receipt_digest",
+    "procedure_semantic_replay_key_digest",
+    "run_value_digest",
+    "seal_procedure_run_admission",
+]

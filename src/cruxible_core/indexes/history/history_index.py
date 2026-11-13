@@ -1,0 +1,1975 @@
+"""Rebuildable accepted-history locators, outside frozen generation databases.
+
+Only the instance's replay-verified epoch supplies inputs. A process restart or
+unexpected file change reconciles every retained row against those inputs; a
+persisted cursor alone never authorizes reads. Within a verified epoch, successors
+append changed artifact occurrences and progress in one transaction. Readers hold
+one SQLite snapshot with an explicit accepted-history cutoff.
+"""
+
+from __future__ import annotations
+
+import copy
+import functools
+import hashlib
+import json
+import os
+import secrets
+import shutil
+import sqlite3
+import stat
+import tempfile
+import threading
+import weakref
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
+
+from cruxible_client.contracts.candidates import (
+    CandidateMemberLawEvidence,
+    MemberLawEvaluation,
+)
+from cruxible_client.contracts.content_memo import seal
+from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.compiler.upgrades import compiler_after_record
+from cruxible_core.derived.derived_runtime import BoundedCache
+from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.indexes.acquisition import (
+    SnapshotPool,
+    WorkingDatabaseChangedError,
+    open_working_snapshot,
+)
+from cruxible_core.indexes.sql_batch import insert_rows
+from cruxible_core.ledger.recovery import RecoveredInstanceState
+from cruxible_core.proposals.settlement import (
+    ChangeSetRecord,
+    parse_change_set_record,
+)
+
+_HISTORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS accepted_generations (
+ sequence INTEGER PRIMARY KEY,
+ git_oid TEXT NOT NULL, semantic_root TEXT NOT NULL, generation_root TEXT NOT NULL,
+ compiler_digest TEXT NOT NULL, schema_version INTEGER NOT NULL,
+ parent_sequence INTEGER REFERENCES accepted_generations(sequence),
+ candidate_digest TEXT, actor_id TEXT, source_record_path TEXT, source_record_digest TEXT,
+ CHECK ((sequence=0 AND parent_sequence IS NULL AND candidate_digest IS NULL
+         AND actor_id IS NULL AND source_record_path IS NULL AND source_record_digest IS NULL)
+     OR (sequence>0 AND parent_sequence=sequence-1 AND candidate_digest IS NOT NULL
+         AND actor_id IS NOT NULL AND source_record_path IS NOT NULL
+         AND source_record_digest IS NOT NULL))
+) STRICT;
+CREATE INDEX IF NOT EXISTS generations_by_oid ON accepted_generations(git_oid,sequence);
+CREATE INDEX IF NOT EXISTS generations_by_candidate
+ ON accepted_generations(candidate_digest,sequence) WHERE candidate_digest IS NOT NULL;
+CREATE TABLE IF NOT EXISTS artifact_versions (
+ identity TEXT NOT NULL, artifact_digest TEXT NOT NULL,
+ occurrence_sequence INTEGER NOT NULL REFERENCES accepted_generations(sequence),
+ path TEXT NOT NULL, predecessor_digest TEXT, artifact_revision INTEGER NOT NULL,
+ PRIMARY KEY(identity,artifact_digest,occurrence_sequence)
+) STRICT;
+CREATE INDEX IF NOT EXISTS versions_by_digest
+ ON artifact_versions(artifact_digest,identity,occurrence_sequence);
+CREATE INDEX IF NOT EXISTS versions_by_path
+ ON artifact_versions(path,occurrence_sequence DESC,identity);
+CREATE INDEX IF NOT EXISTS versions_by_sequence ON artifact_versions(occurrence_sequence);
+CREATE TABLE IF NOT EXISTS history_progress (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ instance_id TEXT NOT NULL, genesis_root TEXT NOT NULL,
+ sequence INTEGER NOT NULL REFERENCES accepted_generations(sequence)
+) STRICT;
+"""
+
+_MEMBER_SCHEMA = """
+CREATE TABLE accepted_member_locations (
+ sequence INTEGER NOT NULL REFERENCES accepted_generations(sequence),
+ member_ordinal INTEGER NOT NULL CHECK(member_ordinal>=0),
+ member_path TEXT NOT NULL, artifact_kind TEXT NOT NULL,
+ artifact_identity TEXT, artifact_digest TEXT,
+ has_law_evidence INTEGER NOT NULL CHECK(has_law_evidence IN (0,1)),
+ PRIMARY KEY(sequence,member_ordinal)
+) STRICT;
+CREATE INDEX members_by_identity
+ ON accepted_member_locations(artifact_identity,sequence DESC,member_ordinal);
+CREATE INDEX members_by_path
+ ON accepted_member_locations(member_path,sequence,member_ordinal);
+"""
+_GENERATION_ROOT_INDEX = """
+CREATE INDEX IF NOT EXISTS generations_by_semantic_root
+ ON accepted_generations(semantic_root,sequence);
+"""
+_SCHEMA = _HISTORY_SCHEMA + _MEMBER_SCHEMA + _GENERATION_ROOT_INDEX
+
+
+def _prior_member_sequences(
+    connection: sqlite3.Connection, paths: Sequence[str], *, before: int
+) -> dict[str, tuple[int, ...]]:
+    """Earlier sequences per path, from member rows this sync has already written."""
+
+    found: dict[str, list[int]] = {path: [] for path in paths}
+    ordered = tuple(dict.fromkeys(paths))
+    for start in range(0, len(ordered), 500):
+        chunk = ordered[start : start + 500]
+        for path, sequence in connection.execute(
+            "SELECT member_path,sequence FROM accepted_member_locations "
+            f"WHERE member_path IN ({','.join('?' for _ in chunk)}) AND sequence<? "
+            "ORDER BY sequence",
+            (*chunk, before),
+        ):
+            found[path].append(int(sequence))
+    return {path: tuple(dict.fromkeys(sequences)) for path, sequences in found.items()}
+
+
+def _member_identities(
+    connection: sqlite3.Connection,
+    pairs: Sequence[tuple[str, str | None]],
+    *,
+    through: int,
+) -> dict[tuple[str, str | None], str]:
+    """The sole identity of each (path, digest) version at or before ``through``.
+
+    A pair with no version, or with versions under more than one identity, is
+    absent. One chunked read over the members' digests, never one per member.
+    """
+
+    wanted = {pair for pair in pairs if pair[1] is not None}
+    found: dict[tuple[str, str | None], set[str]] = {}
+    digests = tuple(dict.fromkeys(digest for _, digest in wanted))
+    for start in range(0, len(digests), 500):
+        chunk = digests[start : start + 500]
+        for path, digest, identity in connection.execute(
+            "SELECT DISTINCT path,artifact_digest,identity FROM artifact_versions "
+            f"WHERE artifact_digest IN ({','.join('?' for _ in chunk)}) "
+            "AND occurrence_sequence<=?",
+            (*chunk, through),
+        ):
+            if (path, digest) in wanted:
+                found.setdefault((path, digest), set()).add(identity)
+    return {pair: next(iter(names)) for pair, names in found.items() if len(names) == 1}
+
+
+def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
+    rows = connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    # The shared working database also contains the proposal component. That
+    # component verifies its own tables and indexes before using them. Unknown
+    # objects and triggers still fail this check, including triggers on either
+    # component that could mutate history as a side effect of a proposal write.
+    return [
+        row
+        for row in rows
+        if not (row[0] in {"table", "index"} and row[2] in {"proposals", "proposal_progress"})
+    ]
+
+
+def _expected_schema(schema: str) -> list[tuple[object, ...]]:
+    reference = sqlite3.connect(":memory:")
+    try:
+        reference.executescript(schema)
+        return _schema_rows(reference)
+    finally:
+        reference.close()
+
+
+_EXPECTED_SCHEMA = _expected_schema(_SCHEMA)
+_PRE_MEMBER_SCHEMA = _expected_schema(_HISTORY_SCHEMA)
+_PRE_ROOT_INDEX_SCHEMA = _expected_schema(_HISTORY_SCHEMA + _MEMBER_SCHEMA)
+
+
+@dataclass(frozen=True)
+class AcceptedGenerationLocation:
+    sequence: int
+    git_oid: str
+    semantic_root: str
+    generation_root: str
+    compiler_digest: str
+    schema_version: int
+    parent_sequence: int | None
+    candidate_digest: str | None
+    actor_id: str | None
+    source_record_path: str | None
+    source_record_digest: str | None
+
+
+@dataclass(frozen=True)
+class ArtifactVersionLocation:
+    identity: str
+    artifact_digest: str
+    occurrence_sequence: int
+    path: str
+    predecessor_digest: str | None
+    artifact_revision: int
+
+
+@dataclass(frozen=True)
+class AcceptedMemberLocation:
+    sequence: int
+    member_ordinal: int
+    member_path: str
+    artifact_kind: str
+    artifact_identity: str | None
+    artifact_digest: str | None
+    has_law_evidence: int
+
+
+VERIFIED_RECORD_CAPACITY = 256
+# Facts are a few short strings per generation, so far more of them stay resident.
+RECORD_FACTS_CAPACITY = 65536
+
+
+@dataclass(frozen=True)
+class GenerationRecordFacts:
+    """The small immutable facts of one verified retained change-set record.
+
+    They are derived once from the verified record and shared without copies:
+    every field is a number, a string, a tuple of strings, or None. A read that needs only
+    these never copies or re-parses the whole record, so its cost does not grow
+    with the size of the change set that accepted a revision.
+    """
+
+    sequence: int
+    candidate_digest: str
+    timestamp: str
+    actor_id: str
+    source_compilation_digest: str | None
+    # Approval signers in record order, repeats included.
+    approval_signers: tuple[str, ...]
+    mandate_digest: str | None
+    # How many members the change set carries.
+    member_count: int
+
+
+def _record_facts(record: ChangeSetRecord) -> GenerationRecordFacts:
+    return GenerationRecordFacts(
+        sequence=record.sequence,
+        candidate_digest=record.candidate_digest,
+        timestamp=str(record.candidate.timestamp),
+        actor_id=record.actor_binding.actor_id,
+        source_compilation_digest=record.actor_binding.source_compilation_digest,
+        approval_signers=tuple(item.attestation.signer_id for item in record.approvals),
+        mandate_digest=record.mandate_digest,
+        member_count=len(record.members),
+    )
+
+
+def _utf8(path: str) -> bytes:
+    return path.encode("utf-8")
+
+
+@dataclass(frozen=True)
+class VerifiedRecord:
+    """One verified record and its path index, built once when it is verified.
+
+    ``members`` and ``law`` map each path to the positions of its entries in
+    ``record.members`` and ``record.law_evidence``, so a later read of one path
+    visits only that path's entries, never the rest of the change set. The
+    record is private to its owner and read in place; nothing it holds is
+    handed out without a copy.
+    """
+
+    record: ChangeSetRecord
+    members: Mapping[str, tuple[int, ...]]
+    law: Mapping[str, tuple[int, ...]]
+    scope: frozenset[str]
+
+    @classmethod
+    def of(cls, record: ChangeSetRecord) -> VerifiedRecord:
+        members: dict[str, list[int]] = {}
+        for ordinal, member in enumerate(record.members):
+            members.setdefault(cast(Any, member).path, []).append(ordinal)
+        law: dict[str, list[int]] = {}
+        for position, item in enumerate(_law_evidence(record)):
+            law.setdefault(item.path, []).append(position)
+        return cls(
+            record,
+            {path: tuple(found) for path, found in members.items()},
+            {path: tuple(found) for path, found in law.items()},
+            frozenset(record.candidate.scope),
+        )
+
+
+class RetainedRecordReader:
+    """Request-owned validated records, shared across selections of their members.
+
+    ``verified`` optionally extends the sharing past one request. A location names
+    the commit, record path, record digest, candidate digest and compiler, so
+    the bytes it verifies cannot change under it. Verified records are reused
+    while resident in the bounded instance cache. The cached models are private:
+    each request receives its own detached copy, because frozen models still
+    carry mutable nested containers. ``facts``, ``member``, ``law_evidence`` and
+    ``selection`` read a resident record in place through its path index and
+    hand out only immutable facts or copies of the selected entries: after the
+    record's one verification, their work is the selected paths', not the
+    change set's.
+    """
+
+    def __init__(
+        self,
+        load_record: Callable[[str, str], bytes | None],
+        *,
+        verified: OrderedDict[AcceptedGenerationLocation, VerifiedRecord] | None = None,
+        facts: OrderedDict[AcceptedGenerationLocation, GenerationRecordFacts] | None = None,
+    ) -> None:
+        self._load = load_record
+        self._records: dict[AcceptedGenerationLocation, ChangeSetRecord] = {}
+        self._verified = verified
+        self._facts = facts
+        self._local_facts: dict[AcceptedGenerationLocation, GenerationRecordFacts] = {}
+        # Indexed records this request reads in place (never handed out as such).
+        self._indexed: dict[AcceptedGenerationLocation, VerifiedRecord] = {}
+
+    def _load_verified(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None,
+    ) -> ChangeSetRecord:
+        if generation.source_record_path is None:
+            raise ProjectionIntegrityError("genesis has no member evidence record")
+        raw = self._load(generation.git_oid, generation.source_record_path)
+        if raw is None:
+            raise ProjectionIntegrityError("accepted member source record is unavailable")
+        record = parse_change_set_record(
+            raw, path=generation.source_record_path, canonical_cache=canonical_cache
+        )
+        if (
+            record.sequence != generation.sequence
+            or record.changeset_digest != generation.source_record_digest
+            or record.candidate_digest != generation.candidate_digest
+            or compiler_after_record(record).rule_digest != generation.compiler_digest
+        ):
+            raise ProjectionIntegrityError("accepted member source record binding differs")
+        return record
+
+    def read(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> ChangeSetRecord:
+        if generation in self._records:
+            return self._records[generation]
+        retained = self._indexed.get(generation)
+        if retained is None and self._verified is not None:
+            retained = memo_get(self._verified, generation)
+        if retained is not None:
+            detached = retained.record.model_copy(deep=True)
+            self._records[generation] = detached
+            return detached
+        record = self._load_verified(generation, canonical_cache)
+        self._records[generation] = record
+        if self._verified is not None:
+            memo_put(
+                self._verified,
+                generation,
+                VerifiedRecord.of(record.model_copy(deep=True)),
+                capacity=VERIFIED_RECORD_CAPACITY,
+            )
+        return record
+
+    def _in_place(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None,
+    ) -> VerifiedRecord:
+        """The verified, indexed record, read in place; callers copy what they hand out."""
+
+        found = self._indexed.get(generation)
+        if found is not None:
+            return found
+        if self._verified is not None:
+            found = memo_get(self._verified, generation)
+        if found is None:
+            handed = self._records.get(generation)
+            if handed is not None and self._verified is None:
+                # A request without a shared cache reads the record it already holds.
+                found = VerifiedRecord.of(handed)
+            else:
+                found = VerifiedRecord.of(self._load_verified(generation, canonical_cache))
+                if self._verified is not None:
+                    # Never handed out by this path, so the shared copy is the record itself.
+                    memo_put(self._verified, generation, found, capacity=VERIFIED_RECORD_CAPACITY)
+        self._indexed[generation] = found
+        return found
+
+    def facts(
+        self,
+        generation: AcceptedGenerationLocation,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> GenerationRecordFacts:
+        """The generation record's small facts, verified exactly as ``read`` verifies."""
+
+        found = self._local_facts.get(generation)
+        if found is not None:
+            return found
+        if self._facts is not None:
+            found = memo_get(self._facts, generation)
+        if found is None:
+            found = _record_facts(self._in_place(generation, canonical_cache).record)
+            if self._facts is not None:
+                memo_put(self._facts, generation, found, capacity=RECORD_FACTS_CAPACITY)
+        self._local_facts[generation] = found
+        return found
+
+    def member(
+        self,
+        generation: AcceptedGenerationLocation,
+        ordinal: int,
+        canonical_cache: BoundedCache[bool] | None = None,
+        *,
+        carry_values: bool = False,
+    ) -> CandidateMemberLawEvidence:
+        """A detached copy of one member, without copying its whole record."""
+
+        record = self._in_place(generation, canonical_cache).record
+        if not 0 <= ordinal < len(record.members):
+            raise ProjectionIntegrityError("accepted member source record binding differs")
+        member = record.members[ordinal]
+        if carry_values:
+            if not seal(member):
+                raise ProjectionIntegrityError("carried history member must be immutable")
+            return member
+        return member.model_copy(deep=True)
+
+    def selection(
+        self,
+        generation: AcceptedGenerationLocation,
+        paths: frozenset[str],
+        canonical_cache: BoundedCache[bool] | None = None,
+        *,
+        carry_values: bool = False,
+    ) -> ChangeSetRecord:
+        """The verified record restricted to its entries at ``paths``, for the compiler.
+
+        ``members``, ``law_evidence``, ``candidate.scope`` and
+        ``closure_proof.paths`` keep only entries at ``paths`` (copied through
+        the record's path index); the generation-sized metadata the compiler
+        reads (sequence, digests, instant, approvals, policy, actor binding) is
+        copied whole, and nothing else is. It answers exactly what the whole
+        record answers about those paths, so it is a selection to read, never a
+        record to re-serialize or re-verify.
+        """
+
+        indexed = self._in_place(generation, canonical_cache)
+        record = indexed.record
+        selected = sorted(paths, key=_utf8)
+        member_positions = sorted(
+            position for path in selected for position in indexed.members.get(path, ())
+        )
+        fields: dict[str, object] = {
+            name: getattr(record, name) for name in type(record).model_fields
+        }
+
+        def selected_value(value: Any) -> Any:
+            if carry_values:
+                if not seal(value):
+                    raise ProjectionIntegrityError("carried history value must be immutable")
+                return value
+            return value.model_copy(deep=True)
+
+        fields["members"] = tuple(selected_value(record.members[p]) for p in member_positions)
+        fields["law_evidence"] = tuple(
+            selected_value(record.law_evidence[position])
+            for position in sorted(
+                position for path in selected for position in indexed.law.get(path, ())
+            )
+        )
+        scope = tuple(path for path in selected if path in indexed.scope)
+        fields["candidate"] = record.candidate.model_copy(update={"scope": scope})
+        fields["closure_proof"] = record.closure_proof.model_copy(update={"paths": scope})
+        fields["law_digests"] = dict(record.law_digests)
+        for name in ("approvals", "approval_requirements", "actor_binding", "activation_policy"):
+            fields[name] = copy.deepcopy(fields[name])
+        result = type(record).model_construct(_fields_set=record.model_fields_set, **fields)
+        if carry_values and not seal(result):
+            raise ProjectionIntegrityError("carried history selection must be immutable")
+        return result
+
+    def law_evidence(
+        self,
+        generation: AcceptedGenerationLocation,
+        path: str,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> tuple[MemberLawEvaluation, ...]:
+        """Detached copies of one path's member law evidence."""
+
+        indexed = self._in_place(generation, canonical_cache)
+        record = indexed.record
+        return tuple(
+            record.law_evidence[position].model_copy(deep=True)
+            for position in indexed.law.get(path, ())
+        )
+
+
+class _ReleasedSnapshot:
+    """What a reader holds once its read ends: its pooled connection serves other reads."""
+
+    def execute(self, *_args: object, **_kwargs: object) -> sqlite3.Cursor:
+        raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+
+
+_RELEASED = _ReleasedSnapshot()
+
+
+class HistoryReader:
+    """A transaction-scoped reader. Locations identify retained bytes, not liveness."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        sequence: int,
+        canonical_cache: BoundedCache[bool] | None = None,
+    ) -> None:
+        self._canonical_cache = canonical_cache
+        self._connection = connection
+        self._sequence = sequence
+        self._record_readers: dict[Callable[[str, str], bytes | None], RetainedRecordReader] = {}
+
+    def _release(self) -> None:
+        """End this reader with its read: a reader kept past it refuses, as a closed one did."""
+
+        self._connection = cast(sqlite3.Connection, _RELEASED)
+
+    @property
+    def sequence(self) -> int:
+        return self._sequence
+
+    def generation(self, sequence: int) -> AcceptedGenerationLocation:
+        if sequence < 0 or sequence > self.sequence:
+            raise FormatError("generation is outside requested accepted history")
+        row = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE sequence=?", (sequence,)
+        ).fetchone()
+        if row is None:
+            raise ProjectionIntegrityError("accepted history locator is incomplete")
+        return AcceptedGenerationLocation(*row)
+
+    def resolve(self, at: AcceptedCoordinate) -> AcceptedGenerationLocation:
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE git_oid=? AND sequence<=? "
+            "AND semantic_root=? AND generation_root=? AND compiler_digest=?",
+            (at.git_oid, self.sequence, at.semantic_root, at.generation_root, at.compiler_digest),
+        ).fetchall()
+        if len(rows) != 1:
+            raise FormatError("coordinate is not one generation in requested history")
+        return AcceptedGenerationLocation(*rows[0])
+
+    def accepted_coordinates(self) -> frozenset[AcceptedCoordinate]:
+        """Return the accepted referents within this reader's verified cutoff."""
+        return frozenset(
+            AcceptedCoordinate(
+                git_oid=row[0],
+                semantic_root=row[1],
+                generation_root=row[2],
+                compiler_digest=row[3],
+            )
+            for row in self._connection.execute(
+                "SELECT git_oid,semantic_root,generation_root,compiler_digest "
+                "FROM accepted_generations WHERE sequence<=?",
+                (self.sequence,),
+            )
+        )
+
+    def generation_for_oid(self, oid: str) -> AcceptedGenerationLocation | None:
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE git_oid=? AND sequence<=? LIMIT 2",
+            (oid, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
+
+    def generation_for_semantic_root(self, root: str) -> AcceptedGenerationLocation | None:
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE semantic_root=? AND sequence<=? LIMIT 2",
+            (root, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
+
+    def generation_for_candidate(self, candidate_digest: str) -> AcceptedGenerationLocation | None:
+        """The one accepted generation that published this exact candidate, by index."""
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE candidate_digest=? AND sequence<=? LIMIT 2",
+            (candidate_digest, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
+
+    def member_history(self, path: str) -> tuple[AcceptedMemberLocation, ...]:
+        """All member occurrences, including evaluations with unchanged bytes."""
+        return tuple(
+            AcceptedMemberLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM accepted_member_locations WHERE member_path=? "
+                "AND sequence<=? ORDER BY sequence,member_ordinal",
+                (path, self.sequence),
+            )
+        )
+
+    def member_locations(
+        self, paths: Sequence[str]
+    ) -> dict[str, tuple[AcceptedMemberLocation, ...]]:
+        """Each path's member occurrences to this cutoff, oldest first, in one chunked read.
+
+        ``member_history`` for many paths at once, on the same path index
+        (``members_by_path``): the rows a page of their revisions is located by.
+        """
+
+        found: dict[str, list[AcceptedMemberLocation]] = {path: [] for path in paths}
+        ordered = tuple(dict.fromkeys(paths))
+        for start in range(0, len(ordered), 500):
+            chunk = ordered[start : start + 500]
+            for row in self._connection.execute(
+                "SELECT * FROM accepted_member_locations "
+                f"WHERE member_path IN ({','.join('?' for _ in chunk)}) AND sequence<=? "
+                "ORDER BY member_path,sequence,member_ordinal",
+                (*chunk, self.sequence),
+            ):
+                location = AcceptedMemberLocation(*row)
+                found[location.member_path].append(location)
+        return {path: tuple(items) for path, items in found.items()}
+
+    def member_versions(
+        self, paths: Sequence[str]
+    ) -> dict[str, tuple[tuple[int, str | None], ...]]:
+        """Each path's member occurrences to this cutoff, as (sequence, digest), in one read.
+
+        A path's accepted bytes change only in a generation whose change record
+        names it, so these are the only generations a path's history can differ
+        in. Genesis carries no change record and so no occurrence here.
+        """
+
+        found: dict[str, list[tuple[int, str | None]]] = {path: [] for path in paths}
+        ordered = tuple(dict.fromkeys(paths))
+        for start in range(0, len(ordered), 500):
+            chunk = ordered[start : start + 500]
+            for path, sequence, digest in self._connection.execute(
+                "SELECT member_path,sequence,artifact_digest FROM accepted_member_locations "
+                f"WHERE member_path IN ({','.join('?' for _ in chunk)}) AND sequence<=? "
+                "ORDER BY member_path,sequence,member_ordinal",
+                (*chunk, self.sequence),
+            ):
+                found[path].append((int(sequence), None if digest is None else str(digest)))
+        return {path: tuple(items) for path, items in found.items()}
+
+    def last_changed(self, paths: Sequence[str]) -> dict[str, int]:
+        """The sequence each path's artifact last took new bytes at, to this cutoff.
+
+        One seek per path on ``versions_by_path``, whatever the path's history
+        holds. A path no change record named (genesis bytes) is absent.
+        """
+
+        found: dict[str, int] = {}
+        for path in dict.fromkeys(paths):
+            row = self._connection.execute(
+                "SELECT occurrence_sequence FROM artifact_versions WHERE path=? "
+                "AND occurrence_sequence<=? ORDER BY occurrence_sequence DESC LIMIT 1",
+                (path, self.sequence),
+            ).fetchone()
+            if row is not None:
+                found[path] = int(row[0])
+        return found
+
+    def member_paths_after(self, sequence: int) -> frozenset[str]:
+        """Every member path the change records after ``sequence`` touched, to this cutoff."""
+        if sequence < 0 or sequence > self.sequence:
+            raise FormatError("generation is outside requested accepted history")
+        return frozenset(
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT DISTINCT member_path FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=?",
+                (sequence, self.sequence),
+            )
+        )
+
+    def latest_sequences(
+        self, paths: Iterable[str] | None = None, *, at_most: int | None = None
+    ) -> dict[str, int]:
+        """The latest accepted sequence that touched each path, in bulk.
+
+        ``paths=None`` answers for every path history ever touched. ``at_most``
+        cuts history earlier than this reader's own cutoff. A path never touched
+        by then is absent.
+        """
+
+        cutoff = self.sequence if at_most is None else min(at_most, self.sequence)
+        if paths is None:
+            return {
+                str(path): int(sequence)
+                for path, sequence in self._connection.execute(
+                    "SELECT member_path, MAX(sequence) FROM accepted_member_locations "
+                    "WHERE sequence<=? GROUP BY member_path",
+                    (cutoff,),
+                )
+            }
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, int] = {}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT member_path, MAX(sequence) FROM accepted_member_locations "
+                "WHERE sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") GROUP BY member_path",
+                (cutoff, *chunk),
+            ):
+                found[str(path)] = int(sequence)
+        return found
+
+    def member_sequences(self, paths: Iterable[str]) -> dict[str, tuple[int, ...]]:
+        """Every distinct sequence that touched each path, ascending, to this cutoff."""
+
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, list[int]] = {path: [] for path in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT DISTINCT member_path, sequence FROM accepted_member_locations "
+                "WHERE sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY member_path, sequence",
+                (self.sequence, *chunk),
+            ):
+                found[str(path)].append(int(sequence))
+        return {path: tuple(values) for path, values in found.items()}
+
+    def member_sequences_between(
+        self, paths: Iterable[str], low: int, high: int
+    ) -> dict[str, tuple[int, ...]]:
+        """Each sequence in ``(low, high]`` that touched each path, ascending (by path index)."""
+
+        cutoff = min(high, self.sequence)
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, list[int]] = {path: [] for path in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT DISTINCT member_path, sequence FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY member_path, sequence",
+                (low, cutoff, *chunk),
+            ):
+                found[str(path)].append(int(sequence))
+        return {path: tuple(values) for path, values in found.items()}
+
+    def paths_changed_after(self, paths: Iterable[str], sequence: int) -> frozenset[str]:
+        """Those of ``paths`` a change record in ``(sequence, cutoff]`` touched.
+
+        One seek per path on the path index (``members_by_path``), stopping at
+        that path's first occurrence after ``sequence``: the cost follows the
+        paths asked about, never the history between.
+        """
+
+        found: set[str] = set()
+        for path in dict.fromkeys(paths):
+            row = self._connection.execute(
+                "SELECT 1 FROM accepted_member_locations WHERE member_path=? "
+                "AND sequence>? AND sequence<=? LIMIT 1",
+                (path, sequence, self.sequence),
+            ).fetchone()
+            if row is not None:
+                found.add(path)
+        return frozenset(found)
+
+    def member_paths_by_sequence(self, sequences: Iterable[int]) -> dict[int, tuple[str, ...]]:
+        """The member paths each of ``sequences`` touched, in member order."""
+
+        wanted = tuple(sorted(set(sequences)))
+        found: dict[int, list[str]] = {sequence: [] for sequence in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for sequence, path in self._connection.execute(
+                "SELECT sequence, member_path FROM accepted_member_locations WHERE sequence<=? "
+                "AND sequence IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY sequence, member_ordinal",
+                (self.sequence, *chunk),
+            ):
+                found[int(sequence)].append(str(path))
+        return {sequence: tuple(paths) for sequence, paths in found.items()}
+
+    def member_paths_between(self, low: int, high: int) -> frozenset[str]:
+        """Every member path the change records in ``(low, high]`` touched."""
+
+        if not 0 <= low <= high <= self.sequence:
+            raise FormatError("generation is outside requested accepted history")
+        return frozenset(
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT DISTINCT member_path FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=?",
+                (low, high),
+            )
+        )
+
+    def touched_under(self, prefix: str, low: int, high: int) -> bool:
+        """Whether a change record in ``(low, high]`` touched a member path under ``prefix``.
+
+        Reads only the change records of that range (the primary key orders them
+        by generation), stopping at the first match.
+        """
+
+        if not 0 <= low <= high <= self.sequence:
+            raise FormatError("generation is outside requested accepted history")
+        row = self._connection.execute(
+            "SELECT 1 FROM accepted_member_locations WHERE sequence>? AND sequence<=? "
+            "AND substr(member_path,1,?)=? LIMIT 1",
+            (low, high, len(prefix), prefix),
+        ).fetchone()
+        return row is not None
+
+    def latest_member(self, path: str) -> AcceptedMemberLocation | None:
+        row = self._connection.execute(
+            "SELECT * FROM accepted_member_locations WHERE member_path=? AND sequence<=? "
+            "ORDER BY sequence DESC,member_ordinal DESC LIMIT 1",
+            (path, self.sequence),
+        ).fetchone()
+        return None if row is None else AcceptedMemberLocation(*row)
+
+    def claim_law_locations(
+        self, *, path: str | None = None, latest: bool = False
+    ) -> tuple[AcceptedMemberLocation, ...]:
+        """Locate Claim law records; a single-path read uses the path index."""
+        where = "artifact_kind='claim' AND has_law_evidence=1 AND sequence<=?"
+        args: tuple[object, ...] = (self.sequence,)
+        if path is not None:
+            where += " AND member_path=?"
+            args += (path,)
+        return tuple(
+            AcceptedMemberLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM accepted_member_locations WHERE "
+                + where
+                + " ORDER BY sequence DESC,member_ordinal DESC"
+                + (" LIMIT 1" if latest else ""),
+                args,
+            )
+        )
+
+    def claim_law_locations_of(self, paths: Sequence[str]) -> tuple[AcceptedMemberLocation, ...]:
+        """Every Claim law-record location of ``paths`` to this cutoff, oldest first, in bulk."""
+
+        wanted = tuple(dict.fromkeys(paths))
+        found: list[AcceptedMemberLocation] = []
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            found.extend(
+                AcceptedMemberLocation(*row)
+                for row in self._connection.execute(
+                    "SELECT * FROM accepted_member_locations WHERE artifact_kind='claim' "
+                    "AND has_law_evidence=1 AND sequence<=? AND member_path IN ("
+                    + ",".join("?" for _ in chunk)
+                    + ")",
+                    (self.sequence, *chunk),
+                )
+            )
+        return tuple(sorted(found, key=lambda item: (item.sequence, item.member_ordinal)))
+
+    def claim_law_heads(self, paths: tuple[str, ...]) -> dict[str, tuple[int, int] | None]:
+        """The latest law-record location of each Claim path at this cutoff, in one read."""
+
+        heads: dict[str, tuple[int, int] | None] = {path: None for path in paths}
+        for start in range(0, len(paths), 500):
+            chunk = paths[start : start + 500]
+            for path, sequence, ordinal in self._connection.execute(
+                "SELECT member_path, sequence, member_ordinal "
+                "FROM accepted_member_locations WHERE artifact_kind='claim' "
+                "AND has_law_evidence=1 AND sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY member_path, sequence DESC, member_ordinal DESC",
+                (self.sequence, *chunk),
+            ):
+                if heads[path] is None:
+                    heads[path] = (int(sequence), int(ordinal))
+        return heads
+
+    def claim_type_versions(self) -> tuple[ArtifactVersionLocation, ...]:
+        """Explicit enumeration for callers requesting the historical type catalog."""
+        return tuple(
+            ArtifactVersionLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM artifact_versions WHERE identity >= 'ClaimType:' "
+                "AND identity < 'ClaimType;' AND occurrence_sequence<=? "
+                "ORDER BY identity,artifact_digest,occurrence_sequence",
+                (self.sequence,),
+            )
+        )
+
+    def claim_law_evidence(
+        self, identity: str, *, artifact_digest: str, path: str
+    ) -> AcceptedMemberLocation | None:
+        row = self._connection.execute(
+            "SELECT * FROM accepted_member_locations WHERE artifact_identity=? "
+            "AND sequence<=? ORDER BY sequence DESC,member_ordinal DESC LIMIT 1",
+            (identity, self.sequence),
+        ).fetchone()
+        if row is None:
+            return None
+        location = AcceptedMemberLocation(*row)
+        if (
+            location.artifact_kind != "claim"
+            or location.member_path != path
+            or location.artifact_digest != artifact_digest
+            or not location.has_law_evidence
+        ):
+            raise ProjectionIntegrityError(
+                "latest Claim law evidence differs from requested version"
+            )
+        return location
+
+    def _reader(
+        self, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
+    ) -> RetainedRecordReader:
+        if isinstance(load_record, RetainedRecordReader):
+            return load_record
+        reader = self._record_readers.get(load_record)
+        if reader is None:
+            reader = RetainedRecordReader(load_record)
+            self._record_readers[load_record] = reader
+        return reader
+
+    def read_generation_record(
+        self, sequence: int, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
+    ) -> ChangeSetRecord:
+        """Verify one retained generation record against its accepted locator."""
+        return self._reader(load_record).read(self.generation(sequence), self._canonical_cache)
+
+    def read_generation_facts(
+        self, sequence: int, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
+    ) -> GenerationRecordFacts:
+        """The verified generation record's small facts, without copying the record."""
+        return self._reader(load_record).facts(self.generation(sequence), self._canonical_cache)
+
+    def read_member_record(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+    ) -> ChangeSetRecord:
+        """Verify one exact retained record; a locator never substitutes for it."""
+        record = self.read_generation_record(location.sequence, load_record)
+        if not 0 <= location.member_ordinal < len(record.members):
+            raise ProjectionIntegrityError("accepted member source record binding differs")
+        _verify_member(record.members[location.member_ordinal], location)
+        return record
+
+    def read_member(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+        *,
+        carry_values: bool = False,
+    ) -> CandidateMemberLawEvidence:
+        """One exact retained member, verified as ``read_member_record`` verifies it."""
+        member = self._reader(load_record).member(
+            self.generation(location.sequence),
+            location.member_ordinal,
+            self._canonical_cache,
+            carry_values=carry_values,
+        )
+        _verify_member(member, location)
+        return member
+
+    def read_member_selection(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+        paths: frozenset[str],
+        *,
+        carry_values: bool = False,
+    ) -> ChangeSetRecord:
+        """The located member's record restricted to ``paths``, verified like the whole."""
+        if location.member_path not in paths:
+            raise ProjectionIntegrityError("a member selection must include its located member")
+        self.read_member(location, load_record, carry_values=carry_values)
+        return self._reader(load_record).selection(
+            self.generation(location.sequence),
+            paths,
+            self._canonical_cache,
+            carry_values=carry_values,
+        )
+
+    def read_claim_law_evidence(
+        self,
+        identity: str,
+        *,
+        artifact_digest: str,
+        path: str,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+    ) -> MemberLawEvaluation | None:
+        location = self.claim_law_evidence(identity, artifact_digest=artifact_digest, path=path)
+        if location is None:
+            return None
+        return self.read_member_law_evidence(location, load_record)
+
+    def read_member_law_evidence(
+        self,
+        location: AcceptedMemberLocation,
+        load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
+    ) -> MemberLawEvaluation:
+        """The one law evaluation of a located Claim member, without copying its record."""
+        self.read_member(location, load_record)
+        evidence = self._reader(load_record).law_evidence(
+            self.generation(location.sequence), location.member_path, self._canonical_cache
+        )
+        if len(evidence) != 1:
+            raise ProjectionIntegrityError("accepted Claim law evidence is missing or ambiguous")
+        return evidence[0]
+
+    def identities_for_digest(self, artifact_digest: str) -> tuple[str, ...]:
+        """Locate all identities for an exact version within this reader's prefix."""
+        rows = self._connection.execute(
+            "SELECT DISTINCT identity FROM artifact_versions "
+            "WHERE artifact_digest=? AND occurrence_sequence<=? ORDER BY identity",
+            (artifact_digest, self.sequence),
+        ).fetchall()
+        return tuple(row[0] for row in rows)
+
+    def artifact(
+        self, artifact_digest: str, *, identity: str | None = None
+    ) -> ArtifactVersionLocation | None:
+        """Latest occurrence of an exact version within this prefix, even if now deleted.
+
+        Digest-only lookup refuses multiple identities. A missing version is None;
+        callers must never substitute today's version for a missing historical one.
+        """
+        if identity is None:
+            identities = self._connection.execute(
+                "SELECT DISTINCT identity FROM artifact_versions "
+                "WHERE artifact_digest=? AND occurrence_sequence<=? LIMIT 2",
+                (artifact_digest, self.sequence),
+            ).fetchall()
+            if len(identities) > 1:
+                raise FormatError("one accepted artifact digest names multiple identities")
+            if not identities:
+                return None
+            identity = identities[0][0]
+        row = self._connection.execute(
+            "SELECT * FROM artifact_versions WHERE identity=? AND artifact_digest=? "
+            "AND occurrence_sequence<=? ORDER BY occurrence_sequence DESC LIMIT 1",
+            (identity, artifact_digest, self.sequence),
+        ).fetchone()
+        return None if row is None else ArtifactVersionLocation(*row)
+
+    def versions_at(self, sequence: int) -> tuple[ArtifactVersionLocation, ...]:
+        """The exact artifact versions one generation introduced, by its sequence index."""
+        if sequence < 0 or sequence > self.sequence:
+            raise FormatError("generation is outside requested accepted history")
+        rows = self._connection.execute(
+            "SELECT * FROM artifact_versions WHERE occurrence_sequence=? "
+            "ORDER BY identity,artifact_digest",
+            (sequence,),
+        ).fetchall()
+        return tuple(ArtifactVersionLocation(*row) for row in rows)
+
+    def occurrences(self, identity: str) -> tuple[ArtifactVersionLocation, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM artifact_versions WHERE identity=? AND occurrence_sequence<=? "
+            "ORDER BY occurrence_sequence,artifact_digest",
+            (identity, self.sequence),
+        ).fetchall()
+        return tuple(ArtifactVersionLocation(*row) for row in rows)
+
+    def artifact_occurrences(self) -> tuple[ArtifactVersionLocation, ...]:
+        """Enumerate retained artifact appearances for whole-history curation."""
+        return tuple(
+            ArtifactVersionLocation(*row)
+            for row in self._connection.execute(
+                "SELECT * FROM artifact_versions WHERE occurrence_sequence<=? "
+                "ORDER BY occurrence_sequence,path,identity,artifact_digest",
+                (self.sequence,),
+            )
+        )
+
+
+# For each path, the earlier accepted sequences whose change set touched it.
+PriorMemberSequences = Callable[[Sequence[str]], dict[str, tuple[int, ...]]]
+EnvelopeLoader = Callable[[int, PriorMemberSequences], Sequence[ArtifactEnvelopeRow]]
+
+
+_HISTORY_CHAIN_SEED = "sha256:" + "0" * 64
+_UNANNOUNCED_COMMIT_LIMIT = 256
+
+
+def _generation_rows_digest(connection: sqlite3.Connection, previous: str, sequence: int) -> str:
+    """Extend the history chain by every row one generation contributed."""
+    digest = hashlib.sha256(previous.encode("ascii"))
+    for sql in (
+        "SELECT * FROM accepted_generations WHERE sequence=?",
+        "SELECT * FROM artifact_versions WHERE occurrence_sequence=? "
+        "ORDER BY identity,artifact_digest",
+        "SELECT * FROM accepted_member_locations WHERE sequence=? ORDER BY member_ordinal",
+    ):
+        for row in connection.execute(sql, (sequence,)):
+            digest.update(json.dumps(list(row), separators=(",", ":")).encode() + b"\n")
+        digest.update(b"\x00")
+    return "sha256:" + digest.hexdigest()
+
+
+def _history_chain(connection: sqlite3.Connection, *, through: int) -> str:
+    digest = _HISTORY_CHAIN_SEED
+    for sequence in range(through + 1):
+        digest = _generation_rows_digest(connection, digest, sequence)
+    return digest
+
+
+def commit_working_write(
+    connection: sqlite3.Connection,
+    file_stamp: Callable[[], tuple[int, ...] | None],
+    before: tuple[int, ...] | None,
+    *,
+    snapshots: SnapshotPool | None = None,
+) -> tuple[int, ...]:
+    """Commit and retain writer ownership for publishing a proven physical stamp.
+
+    SQLite releases its writer lock at COMMIT. Reacquiring it and checking this
+    same connection's data_version detects another writer winning that gap.
+    The caller must release the reacquired transaction after publishing its
+    checkpoint and pinning any reader snapshot, before yielding to user code.
+    The owner passes its snapshot pool, which learns the commit's stamps: pooled
+    readers may follow this change, which went through SQLite, and no other.
+    """
+    version = connection.execute("PRAGMA data_version").fetchone()
+    connection.commit()
+    connection.execute("BEGIN IMMEDIATE")
+    after = file_stamp()
+    if (
+        connection.execute("PRAGMA data_version").fetchone() != version
+        or before is None
+        or after is None
+        or before[:2] != after[:2]
+    ):
+        raise sqlite3.DatabaseError("working database changed across commit ownership")
+    if snapshots is not None:
+        snapshots.advance(before, after)
+    return after
+
+
+def working_file_stamp(path: Path) -> tuple[int, ...] | None:
+    if path.is_symlink():
+        raise ProjectionIntegrityError("history index must not be a symlink")
+    try:
+        value = path.stat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(value.st_mode):
+        raise ProjectionIntegrityError("history index must be a regular file")
+    result = (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    wal = path.with_name(path.name + "-wal")
+    if wal.is_symlink():
+        raise ProjectionIntegrityError("history WAL must not be a symlink")
+    try:
+        value = wal.stat()
+    except FileNotFoundError:
+        return result
+    if value.st_size == 0:
+        # Creating/removing an empty WAL does not change the database bytes.
+        return result
+    return (
+        *result,
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _close_working_database(
+    path: Path,
+    lock: threading.RLock,
+    connections: list[sqlite3.Connection],
+    proof: dict[str, Any],
+    snapshots: SnapshotPool,
+) -> None:
+    from cruxible_core.indexes.proposals.proposal_index import close_working_database
+
+    with lock:
+        # Idle snapshot readers close first: the shutdown checkpoint runs on the
+        # writer alone, exactly as before readers were pooled.
+        snapshots.close()
+        close_working_database(path, connections, proof)
+
+
+def _record_members(
+    record: ChangeSetRecord,
+) -> Sequence[CandidateMemberLawEvidence]:
+    return record.members
+
+
+def _law_evidence(record: ChangeSetRecord) -> tuple[MemberLawEvaluation, ...]:
+    return record.law_evidence
+
+
+def _verify_member(member: object, location: AcceptedMemberLocation) -> None:
+    if (
+        getattr(member, "path", None) != location.member_path
+        or getattr(member, "artifact_kind", None) != location.artifact_kind
+        or _member_digest(member) != location.artifact_digest
+    ):
+        raise ProjectionIntegrityError("accepted member locator differs from retained member")
+
+
+def _member_digest(member: object) -> str | None:
+    # Early retained formats carry an input digest, not a candidate artifact
+    # digest. Preserve that distinction rather than reinterpreting old bytes.
+    value = getattr(member, "candidate_artifact_digest", getattr(member, "artifact_digest", None))
+    return value if isinstance(value, str) else None
+
+
+_DETACHED_READS: ContextVar[bool] = ContextVar("detached_history_reads", default=False)
+
+
+@contextmanager
+def detached_history_reads() -> Iterator[None]:
+    """Serve accepted-history reads in this context without writing the derived index.
+
+    A dry run reads history the way a write does, but must leave every file as
+    it found it. A read the working file cannot serve as it stands is caught up
+    in a private in-memory copy instead of in the file.
+    """
+
+    token = _DETACHED_READS.set(True)
+    try:
+        yield
+    finally:
+        _DETACHED_READS.reset(token)
+
+
+def history_reads_detached() -> bool:
+    """Whether reads in this context must leave every derived index file as it is."""
+
+    return _DETACHED_READS.get()
+
+
+class AcceptedHistoryIndex:
+    """Shared derived owner; no source mutation and no frozen compiler schema change."""
+
+    _proposals: ProposalIndex
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._canonical_records: BoundedCache[bool] = BoundedCache(
+            max_entries=4096, max_bytes=256 * 1024
+        )
+        self._lock = threading.RLock()
+        self._connections: list[sqlite3.Connection] = []
+        # Read-only snapshot connections, shared with the proposal component: a
+        # read reuses an idle one instead of connecting (see SnapshotPool).
+        self._snapshots = SnapshotPool()
+        self._proposal_close_state: dict[str, Any] = {}
+        self._finalizer = weakref.finalize(
+            self,
+            _close_working_database,
+            path,
+            self._lock,
+            self._connections,
+            self._proposal_close_state,
+            self._snapshots,
+        )
+        self._ready: tuple[int, str, str, str, int] | None = None
+        self._stamp: tuple[int, ...] | None = None
+        # (sequence, chained digest of every history row through it); see
+        # _verified_through. After invalidate() the persisted record is not
+        # consulted until a full reconciliation has succeeded again.
+        self._chain: tuple[int, str] | None = None
+        self._trust_record = True
+        # The persisted record as it stood when this index opened (for the
+        # daemon, at startup), replaced only by records this process writes. A
+        # record swapped in beside changed rows while the daemon runs is never
+        # read.
+        self._record: bytes | None = self._read_record()
+        self._writer: sqlite3.Connection | None = None
+        self._writer_identity: tuple[int, ...] | None = None
+        self._close_writer: Callable[[], None] | None = None
+        # History-only commits made before the proposal component existed, in
+        # order: it carries its source checkpoint across them once it learns its
+        # evidence root (ProposalIndex.bind_source_root).
+        self._unannounced_commits: list[tuple[tuple[int, ...] | None, tuple[int, ...]]] = []
+        self.generations_checked = 0
+        self.generations_written = 0
+        self.artifact_rows_written = 0
+
+    @property
+    def proposals(self) -> ProposalIndex:
+        """Proposal locators share this working database and acquisition owner."""
+        from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
+
+        if hasattr(self, "_proposals"):
+            return self._proposals
+        with self._lock:
+            if not hasattr(self, "_proposals"):
+                self._proposals = ProposalIndex(
+                    path=self.path,
+                    lock=self._lock,
+                    file_stamp=self._file_stamp,
+                    on_commit=self.proposal_committed,
+                    connections=self._connections,
+                    shutdown_proof=self._proposal_close_state,
+                    history_commits=self._unannounced_commits,
+                    snapshots=self._snapshots,
+                )
+            return self._proposals
+
+    def close(self) -> None:
+        """Close the shared working file and preserve a verified graceful-restart checkpoint."""
+        self._finalizer()
+
+    def _verification_stamp_path(self) -> Path:
+        return self.path.with_name(self.path.name + ".verified.json")
+
+    def _read_record(self) -> bytes | None:
+        path = self._verification_stamp_path()
+        try:
+            if path.is_symlink() or not path.is_file():
+                return None
+            return path.read_bytes()
+        except OSError:
+            return None
+
+    def _verified_through(
+        self, connection: sqlite3.Connection, recovered: RecoveredInstanceState
+    ) -> tuple[int, str, str, str, int] | None:
+        """The readiness a previous process recorded, if these rows still carry it.
+
+        The record binds a readiness to a digest chained over every history row
+        through its sequence. Recomputing that chain from the rows present now
+        is one pass over the history tables; only a match lets synchronization
+        start after the recorded sequence instead of re-deriving every
+        generation from the ledger.
+        """
+        found = self._recorded_readiness(connection, recovered)
+        if found is None:
+            return None
+        ready, chain = found
+        self._chain = (ready[0], chain)
+        return ready
+
+    def _reverified_after_drift(
+        self, connection: sqlite3.Connection
+    ) -> tuple[int, str, str, str, int] | None:
+        """After the file moved under this process, the prefix it last verified, if it holds.
+
+        The rows through the last verified readiness are checked against the
+        chain this process recorded for them (one pass over the history rows,
+        no ledger read); synchronization then re-derives only the generations
+        after it from the ledger, as a successor append does. A mismatch, or no
+        verified readiness, starts from generation zero as before.
+        """
+        ready, chain = self._ready, self._chain
+        if ready is None or chain is None or chain[0] != ready[0]:
+            return None
+        if _history_chain(connection, through=chain[0]) != chain[1]:
+            self._chain = None
+            return None
+        return ready
+
+    def _recorded_readiness(
+        self, connection: sqlite3.Connection, recovered: RecoveredInstanceState
+    ) -> tuple[tuple[int, str, str, str, int], str] | None:
+        """The recorded readiness and its chain, when ``connection`` still carries them."""
+
+        try:
+            if self._record is None:
+                return None
+            recorded = json.loads(self._record)
+            ready = tuple(recorded["ready"])
+            sequence, root, instance_id, compiler, schema = ready
+            claimed = recorded["chain"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if (
+            not isinstance(sequence, int)
+            or not 0 <= sequence < len(recovered.history)
+            or recovered.history[sequence].generation_root.tagged != root
+            or instance_id != recovered.coordinate.instance_id
+            or compiler != recovered.coordinate.compiler.rule_digest
+            or schema != recovered.coordinate.compiler.schema_version
+        ):
+            return None
+        chain = _history_chain(connection, through=sequence)
+        if chain != claimed:
+            return None
+        return (sequence, root, instance_id, compiler, schema), chain
+
+    def _record_verified_through(
+        self, connection: sqlite3.Connection, ready: tuple[int, str, str, str, int]
+    ) -> None:
+        sequence = ready[0]
+        if self._chain is not None and self._chain[0] == sequence:
+            return
+        if self._chain is not None and self._chain[0] < sequence:
+            digest = self._chain[1]
+            for position in range(self._chain[0] + 1, sequence + 1):
+                digest = _generation_rows_digest(connection, digest, position)
+        else:
+            digest = _history_chain(connection, through=sequence)
+        self._chain = (sequence, digest)
+        body = json.dumps({"ready": list(ready), "chain": digest}, sort_keys=True).encode()
+        path = self._verification_stamp_path()
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(descriptor, body)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+        self._record = body
+
+    def invalidate(self) -> None:
+        """Force full source reconciliation on the next read.
+
+        Accepted prefix readiness survives ordinary derived-root eviction and
+        successful refresh: _sync proves the retained prefix still belongs to
+        the new verified epoch. It is not a head-scoped memo.
+        """
+        with self._lock:
+            self._ready = None
+            self._stamp = None
+            self._chain = None
+            self._trust_record = False
+
+    def proposal_committed(
+        self, before_stamp: tuple[int, ...] | None, after_stamp: tuple[int, ...]
+    ) -> None:
+        """Preserve verified history across a known proposal-only transaction.
+
+        The proposal component holds our lock and captures ``before_stamp``
+        after acquiring its SQLite writer transaction, before changing rows.
+        ``after_stamp`` comes from commit_working_write while the reacquired
+        SQLite writer transaction remains held. This callback never samples a
+        later stamp that could include an unrelated writer's changes.
+        """
+        with self._lock:
+            if (
+                self._ready is not None
+                and before_stamp is not None
+                and before_stamp == self._stamp
+                and after_stamp is not None
+                and after_stamp[:2] == before_stamp[:2]
+            ):
+                self._stamp = after_stamp
+            else:
+                self.invalidate()
+
+    def _file_stamp(self) -> tuple[int, ...] | None:
+        return working_file_stamp(self.path)
+
+    def _write_connection(self) -> sqlite3.Connection:
+        """Keep one idle connection so closing readers does not checkpoint the WAL.
+
+        The connection has no transaction between synchronizations. Its finalizer
+        closes it when this instance-owned adapter is released.
+        """
+        stamp = self._file_stamp()
+        identity = None if stamp is None else stamp[:2]
+        if self._writer is not None and identity != self._writer_identity:
+            assert self._close_writer is not None
+            self._close_writer()
+            self._writer = None
+            self.invalidate()
+        if self._writer is None:
+            connection = sqlite3.connect(self.path, check_same_thread=False)
+            self._writer = connection
+            self._close_writer = connection.close
+            self._connections.append(connection)
+            connection.execute("PRAGMA foreign_keys=ON")
+            if connection.execute("PRAGMA journal_mode=WAL").fetchone() != ("wal",):
+                raise ProjectionIntegrityError("history index requires WAL mode")
+            schema = _schema_rows(connection)
+            if not schema:
+                connection.executescript(_SCHEMA)
+            elif schema == _PRE_MEMBER_SCHEMA:
+                connection.executescript(_MEMBER_SCHEMA)
+                connection.executescript(_GENERATION_ROOT_INDEX)
+                self.invalidate()
+            elif schema == _PRE_ROOT_INDEX_SCHEMA:
+                connection.executescript(_GENERATION_ROOT_INDEX)
+                self.invalidate()
+            stamp = self._file_stamp()
+            self._writer_identity = None if stamp is None else stamp[:2]
+        return self._writer
+
+    def _clean_snapshot(
+        self, recovered: RecoveredInstanceState
+    ) -> tuple[sqlite3.Connection, tuple[int, ...]] | None:
+        if len(recovered.history) != recovered.head.sequence + 1:
+            raise ProjectionIntegrityError("verified history sequence is not contiguous")
+        ready = (
+            recovered.head.sequence,
+            recovered.head.generation_root.tagged,
+            recovered.coordinate.instance_id,
+            recovered.coordinate.compiler.rule_digest,
+            recovered.coordinate.compiler.schema_version,
+        )
+        stamp = self._stamp
+        if stamp is None or self._ready != ready or self._file_stamp() != stamp:
+            return None
+        try:
+            connection = open_working_snapshot(
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp, pool=self._snapshots
+            )
+        except WorkingDatabaseChangedError:
+            # A writer moved the file since the checks above; take the locked path.
+            return None
+        try:
+            if _schema_rows(connection) != _EXPECTED_SCHEMA:
+                raise ProjectionIntegrityError("history index schema differs; rebuild required")
+            progress = connection.execute(
+                "SELECT instance_id,genesis_root,sequence FROM history_progress WHERE singleton=1"
+            ).fetchone()
+            if (
+                progress
+                != (
+                    recovered.coordinate.instance_id,
+                    recovered.history[0].generation_root.tagged,
+                    recovered.head.sequence,
+                )
+                or self._file_stamp() != stamp
+            ):
+                self._snapshots.release(connection)
+                return None
+            return connection, stamp
+        except BaseException:
+            self._snapshots.discard(connection)
+            raise
+
+    @contextmanager
+    def read(
+        self,
+        recovered: RecoveredInstanceState,
+        load_envelopes: EnvelopeLoader,
+        *,
+        at: AcceptedCoordinate | None = None,
+    ) -> Iterator[HistoryReader]:
+        try:
+            clean = self._clean_snapshot(recovered)
+        except sqlite3.DatabaseError as exc:
+            self.invalidate()
+            raise ProjectionIntegrityError("accepted history index could not be read") from exc
+        if clean is not None:
+            clean_connection, clean_stamp = clean
+            readers: list[HistoryReader] = []
+            try:
+                reader = HistoryReader(
+                    clean_connection, recovered.head.sequence, self._canonical_records
+                )
+                readers.append(reader)
+                reader.resolve(
+                    AcceptedCoordinate(
+                        git_oid=recovered.head.oid,
+                        semantic_root=recovered.head.semantic_root.tagged,
+                        generation_root=recovered.head.generation_root.tagged,
+                        compiler_digest=recovered.coordinate.compiler.rule_digest,
+                    )
+                )
+                if at is not None:
+                    reader = HistoryReader(
+                        clean_connection, reader.resolve(at).sequence, self._canonical_records
+                    )
+                    readers.append(reader)
+                yield reader
+                current_stamp = self._file_stamp()
+                if current_stamp is None or clean_stamp[:2] != current_stamp[:2]:
+                    self.invalidate()
+                    raise ProjectionIntegrityError("history index file was replaced during read")
+            finally:
+                for held in readers:
+                    held._release()
+                self._snapshots.release(clean_connection)
+            return
+        if _DETACHED_READS.get():
+            try:
+                with self._detached_read(recovered, load_envelopes, at=at) as reader:
+                    yield reader
+            except sqlite3.DatabaseError as exc:
+                raise ProjectionIntegrityError(
+                    "accepted history index could not be read; repair or retry required"
+                ) from exc
+            return
+        connection: sqlite3.Connection | None = None
+        locked_readers: list[HistoryReader] = []
+        try:
+            # Serialize only synchronization and snapshot acquisition. Neither
+            # this lock nor the writer transaction survives into caller code.
+            with self._lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                writer = self._write_connection()
+                try:
+                    writer.execute("BEGIN IMMEDIATE")
+                    if _schema_rows(writer) != _EXPECTED_SCHEMA:
+                        raise ProjectionIntegrityError(
+                            "history index schema differs; rebuild required"
+                        )
+                    source_version = writer.execute("PRAGMA data_version").fetchone()
+                    before_commit = self._file_stamp()
+                    stamp = self._file_stamp()
+                    ready = self._ready if stamp is not None and stamp == self._stamp else None
+                    if ready is None and self._chain is None and self._trust_record:
+                        ready = self._verified_through(writer, recovered)
+                    elif ready is None and self._chain is not None:
+                        ready = self._reverified_after_drift(writer)
+                    self._sync(writer, recovered, load_envelopes, ready)
+                    published_stamp = commit_working_write(
+                        writer, self._file_stamp, before_commit, snapshots=self._snapshots
+                    )
+                    if published_stamp != before_commit and hasattr(self, "_proposals"):
+                        self._proposals.database_committed(before_commit, published_stamp)
+                    elif published_stamp != before_commit:
+                        if len(self._unannounced_commits) < _UNANNOUNCED_COMMIT_LIMIT:
+                            self._unannounced_commits.append((before_commit, published_stamp))
+                        else:
+                            # Too long a run to replay: the checkpoint simply goes stale.
+                            self._unannounced_commits.clear()
+                            self._unannounced_commits.append((None, published_stamp))
+                except BaseException:
+                    writer.rollback()
+                    raise
+                self._stamp = published_stamp
+                self._ready = (
+                    recovered.head.sequence,
+                    recovered.head.generation_root.tagged,
+                    recovered.coordinate.instance_id,
+                    recovered.coordinate.compiler.rule_digest,
+                    recovered.coordinate.compiler.schema_version,
+                )
+                self._record_verified_through(writer, self._ready)
+                self._trust_record = True
+                connection = open_working_snapshot(
+                    self.path,
+                    expected_stamp=published_stamp,
+                    file_stamp=self._file_stamp,
+                    pool=self._snapshots,
+                )
+                reader = HistoryReader(connection, recovered.head.sequence, self._canonical_records)
+                locked_readers.append(reader)
+                # BEGIN alone does not establish a snapshot. Pin it before
+                # releasing the acquisition lock, including for an empty caller.
+                reader.resolve(
+                    AcceptedCoordinate(
+                        git_oid=recovered.head.oid,
+                        semantic_root=recovered.head.semantic_root.tagged,
+                        generation_root=recovered.head.generation_root.tagged,
+                        compiler_digest=recovered.coordinate.compiler.rule_digest,
+                    )
+                )
+                if (
+                    self._file_stamp() != published_stamp
+                    or writer.execute("PRAGMA data_version").fetchone() != source_version
+                ):
+                    self.invalidate()
+                    raise ProjectionIntegrityError(
+                        "history index changed during snapshot acquisition"
+                    )
+                if at is not None:
+                    reader = HistoryReader(
+                        connection, reader.resolve(at).sequence, self._canonical_records
+                    )
+                    locked_readers.append(reader)
+                writer.rollback()
+            yield reader
+            current_stamp = self._file_stamp()
+            if (
+                published_stamp is None
+                or current_stamp is None
+                or published_stamp[:2] != current_stamp[:2]
+            ):
+                self.invalidate()
+                raise ProjectionIntegrityError("history index file was replaced during read")
+        except sqlite3.DatabaseError as exc:
+            self.invalidate()
+            raise ProjectionIntegrityError(
+                "accepted history index could not be read or updated; repair or retry required"
+            ) from exc
+        finally:
+            with self._lock:
+                if self._writer is not None and self._writer.in_transaction:
+                    self._writer.rollback()
+            for held in locked_readers:
+                held._release()
+            if connection is not None:
+                self._snapshots.release(connection)
+
+    @contextmanager
+    def _detached_read(
+        self,
+        recovered: RecoveredInstanceState,
+        load_envelopes: EnvelopeLoader,
+        *,
+        at: AcceptedCoordinate | None,
+    ) -> Iterator[HistoryReader]:
+        """Serve one read from a private in-memory copy, leaving the working file as it is.
+
+        Under ``detached_history_reads`` nothing derived may be written, so a read
+        the clean snapshot cannot serve (a cold or behind-head index) catches up
+        a copy instead: the rows the file holds, synchronized from the ledger
+        exactly as a working read would, then discarded.
+        """
+
+        with self._lock:
+            known_stamp, known_ready = self._stamp, self._ready
+            trust_record = self._chain is None and self._trust_record
+        before = self._file_stamp()
+        connection = sqlite3.connect(":memory:", check_same_thread=False)
+        try:
+            carried = self._copy_working_rows(connection, stamp=before)
+            ready: tuple[int, str, str, str, int] | None = None
+            if carried:
+                if before == known_stamp:
+                    ready = known_ready
+                elif trust_record:
+                    recorded = self._recorded_readiness(connection, recovered)
+                    ready = None if recorded is None else recorded[0]
+                    if recorded is not None and before is not None:
+                        self._adopt_verified_file(recovered, before, *recorded)
+            self._sync(connection, recovered, load_envelopes, ready)
+            reader = HistoryReader(connection, recovered.head.sequence, self._canonical_records)
+            reader.resolve(
+                AcceptedCoordinate(
+                    git_oid=recovered.head.oid,
+                    semantic_root=recovered.head.semantic_root.tagged,
+                    generation_root=recovered.head.generation_root.tagged,
+                    compiler_digest=recovered.coordinate.compiler.rule_digest,
+                )
+            )
+            if at is not None:
+                reader = HistoryReader(
+                    connection, reader.resolve(at).sequence, self._canonical_records
+                )
+            yield reader
+        finally:
+            connection.close()
+
+    def _adopt_verified_file(
+        self,
+        recovered: RecoveredInstanceState,
+        stamp: tuple[int, ...],
+        ready: tuple[int, str, str, str, int],
+        chain: str,
+    ) -> None:
+        """Keep what a detached read just proved about the working file, in memory only.
+
+        The copy taken at ``stamp`` carried the recorded readiness, re-verified
+        row by row against its chain. When that readiness is the current head's,
+        the file itself is what a locked synchronization would leave: later reads
+        then take the clean snapshot (which re-checks schema and progress)
+        instead of copying the file and re-hashing every generation each time.
+        Nothing is written; a file that moved since, or state a locked read
+        already established, is left alone.
+        """
+        head = (
+            recovered.head.sequence,
+            recovered.head.generation_root.tagged,
+            recovered.coordinate.instance_id,
+            recovered.coordinate.compiler.rule_digest,
+            recovered.coordinate.compiler.schema_version,
+        )
+        if ready != head:
+            return
+        with self._lock:
+            if self._stamp is not None or not self._trust_record or self._file_stamp() != stamp:
+                return
+            self._stamp, self._ready, self._chain = stamp, ready, (ready[0], chain)
+
+    def _copy_working_rows(
+        self, memory: sqlite3.Connection, *, stamp: tuple[int, ...] | None
+    ) -> bool:
+        """Copy the working file into ``memory``; whether its rows came with it.
+
+        Opening the file itself, even read-only, can create or rewrite the WAL
+        and its shared memory beside it. The database and its WAL are copied
+        into a scratch directory instead and read from there; a file that moved
+        while it was copied leaves the copy empty, to be rebuilt from the ledger.
+        """
+
+        copied = False
+        if stamp is not None:
+            with tempfile.TemporaryDirectory(prefix="cruxible-history-") as scratch:
+                copy = Path(scratch) / self.path.name
+                shutil.copyfile(self.path, copy)
+                wal = self.path.with_name(self.path.name + "-wal")
+                if wal.is_file():
+                    shutil.copyfile(wal, copy.with_name(copy.name + "-wal"))
+                if self._file_stamp() == stamp:
+                    source = sqlite3.connect(copy)
+                    try:
+                        source.backup(memory)
+                    finally:
+                        source.close()
+                    copied = True
+        schema = _schema_rows(memory)
+        if schema == _EXPECTED_SCHEMA:
+            return copied
+        if not schema:
+            memory.executescript(_SCHEMA)
+        elif schema == _PRE_MEMBER_SCHEMA:
+            memory.executescript(_MEMBER_SCHEMA)
+            memory.executescript(_GENERATION_ROOT_INDEX)
+        elif schema == _PRE_ROOT_INDEX_SCHEMA:
+            memory.executescript(_GENERATION_ROOT_INDEX)
+        else:
+            raise ProjectionIntegrityError("history index schema differs; rebuild required")
+        return False
+
+    def _sync(
+        self,
+        connection: sqlite3.Connection,
+        recovered: RecoveredInstanceState,
+        load_envelopes: EnvelopeLoader,
+        ready: tuple[int, str, str, str, int] | None,
+    ) -> None:
+        history = recovered.history
+        start = 0
+        if ready is not None:
+            sequence, root, instance_id, compiler, schema = ready
+            if (
+                instance_id == recovered.coordinate.instance_id
+                and compiler == recovered.coordinate.compiler.rule_digest
+                and schema == recovered.coordinate.compiler.schema_version
+                and sequence < len(history)
+                and history[sequence].generation_root.tagged == root
+            ):
+                start = sequence + 1
+        # A foreign/replaced/truncated epoch cannot leave future rows visible.
+        connection.execute(
+            "DELETE FROM history_progress WHERE singleton=1 AND sequence>?",
+            (recovered.head.sequence,),
+        )
+        connection.execute(
+            "DELETE FROM accepted_member_locations WHERE sequence>?", (recovered.head.sequence,)
+        )
+        connection.execute(
+            "DELETE FROM artifact_versions WHERE occurrence_sequence>?", (recovered.head.sequence,)
+        )
+        connection.execute(
+            "DELETE FROM accepted_generations WHERE sequence>?", (recovered.head.sequence,)
+        )
+        for position in range(start, len(history)):
+            generation = history[position]
+            if generation.sequence != position:
+                raise ProjectionIntegrityError("verified history sequence is not contiguous")
+            record = generation.record
+            expected = (
+                position,
+                generation.oid,
+                generation.semantic_root.tagged,
+                generation.generation_root.tagged,
+                generation.compiler.rule_digest,
+                generation.compiler.schema_version,
+                position - 1 if position else None,
+                record.candidate_digest if record else None,
+                record.actor_binding.actor_id if record else None,
+                f"changesets/cs-{position:020d}.json" if record else None,
+                record.changeset_digest if record else None,
+            )
+            envelopes = load_envelopes(
+                position, functools.partial(_prior_member_sequences, connection, before=position)
+            )
+            versions = sorted(
+                (
+                    row.identity,
+                    row.artifact_digest,
+                    position,
+                    row.path,
+                    row.predecessor_digest,
+                    row.revision,
+                )
+                for row in envelopes
+            )
+            self.generations_checked += 1
+            actual = connection.execute(
+                "SELECT * FROM accepted_generations WHERE sequence=?", (position,)
+            ).fetchone()
+            actual_versions = connection.execute(
+                "SELECT * FROM artifact_versions WHERE occurrence_sequence=? "
+                "ORDER BY identity,artifact_digest",
+                (position,),
+            ).fetchall()
+            if actual != expected or actual_versions != versions:
+                # Update in place so later retained occurrences keep their FK.
+                connection.execute(
+                    "INSERT INTO accepted_generations VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(sequence) DO UPDATE SET "
+                    "git_oid=excluded.git_oid, semantic_root=excluded.semantic_root, "
+                    "generation_root=excluded.generation_root, "
+                    "compiler_digest=excluded.compiler_digest, "
+                    "schema_version=excluded.schema_version, "
+                    "parent_sequence=excluded.parent_sequence, "
+                    "candidate_digest=excluded.candidate_digest, "
+                    "actor_id=excluded.actor_id, source_record_path=excluded.source_record_path, "
+                    "source_record_digest=excluded.source_record_digest",
+                    expected,
+                )
+                connection.execute(
+                    "DELETE FROM artifact_versions WHERE occurrence_sequence=?", (position,)
+                )
+                insert_rows(connection, "artifact_versions", versions)
+                self.generations_written += 1
+                self.artifact_rows_written += len(versions)
+            members = []
+            if record is not None:
+                law_paths = {e.path for e in _law_evidence(record)}
+                located = [
+                    (
+                        member,
+                        digest := _member_digest(member),
+                        digest or getattr(member, "predecessor_artifact_digest", None),
+                    )
+                    for member in _record_members(record)
+                ]
+                identities = _member_identities(
+                    connection,
+                    [(member.path, identity_digest) for member, _, identity_digest in located],
+                    through=position,
+                )
+                for ordinal, (member, digest, identity_digest) in enumerate(located):
+                    identity = identities.get((member.path, identity_digest))
+                    members.append(
+                        (
+                            position,
+                            ordinal,
+                            member.path,
+                            member.artifact_kind,
+                            identity,
+                            digest,
+                            int(member.path in law_paths),
+                        )
+                    )
+            actual_members = connection.execute(
+                "SELECT * FROM accepted_member_locations WHERE sequence=? ORDER BY member_ordinal",
+                (position,),
+            ).fetchall()
+            if actual_members != members:
+                connection.execute(
+                    "DELETE FROM accepted_member_locations WHERE sequence=?", (position,)
+                )
+                insert_rows(connection, "accepted_member_locations", members)
+        from cruxible_core.indexes.proposals.proposal_index import refresh_acceptance
+
+        # The proposal component's acceptance marker is derived from the
+        # generations just written, so it moves in this same transaction.
+        refresh_acceptance(connection, from_sequence=start)
+        progress = (
+            recovered.coordinate.instance_id,
+            history[0].generation_root.tagged,
+            recovered.head.sequence,
+        )
+        if (
+            connection.execute(
+                "SELECT instance_id,genesis_root,sequence FROM history_progress WHERE singleton=1"
+            ).fetchone()
+            != progress
+        ):
+            connection.execute(
+                "INSERT INTO history_progress VALUES (1,?,?,?) "
+                "ON CONFLICT(singleton) DO UPDATE SET instance_id=excluded.instance_id, "
+                "genesis_root=excluded.genesis_root, sequence=excluded.sequence",
+                progress,
+            )

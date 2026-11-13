@@ -1,0 +1,1805 @@
+{
+  "cells": [
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 86603,
+          "blobs_read": 26,
+          "git_invocations": 2,
+          "journal_appends": 14,
+          "journal_bytes": 24191,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.05937333300244063,
+            "execute": 0.0743792499997653,
+            "item_closure": 0.005721041990909725,
+            "line_total": 0.13375258300220594,
+            "provider": 0.009132042003329843,
+            "receipt_persist": 0.005598749965429306,
+            "source_read": 0.00036087504122406244
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 145063936,
+        "proposal_delivered": false,
+        "run_id": "RUN-aa121ba2abc9bb8133859613f16488c4f1230c157f5d4b25688c5b44ca066626",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 4,
+      "history": 0,
+      "items": 1,
+      "population": 0,
+      "setup_seconds": {
+        "history": 6.249756552278996e-07,
+        "population": 2.919696271419525e-07,
+        "total": 6.9630011660046875,
+        "workload": 1.9182004579924978,
+        "world": 5.044670292001683
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24191,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.02448525105137378,
+              "execute": 0.14373129099840298,
+              "item_closure": 0.0100011249887757,
+              "line_total": 0.16821654204977676,
+              "provider": 0.01794245798373595,
+              "receipt_persist": 0.01123966701561585,
+              "source_read": 0.0002767089754343033
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 145063936,
+          "proposal_delivered": false,
+          "run_id": "RUN-bc59a2e8010920a146183e579358fc03dfd181d039504dc8e03c0ce5906e1cf2",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.0287203750340268,
+              "execute": 0.20115429197903723,
+              "item_closure": 0.013159291993360966,
+              "line_total": 0.22987466701306403,
+              "provider": 0.025489124993328005,
+              "receipt_persist": 0.012805750011466444,
+              "source_read": 0.00029437500052154064
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 145063936,
+          "proposal_delivered": false,
+          "run_id": "RUN-8f277e39d84c889c660eae9489ead70e334ef3d8d148c1bcd1807b002a76ab31",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.037081749993376434,
+              "execute": 0.2544203329598531,
+              "item_closure": 0.016398874984588474,
+              "line_total": 0.29150208295322955,
+              "provider": 0.031094375008251518,
+              "receipt_persist": 0.017190583050251007,
+              "source_read": 0.00032599997939541936
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 145063936,
+          "proposal_delivered": false,
+          "run_id": "RUN-9ef38a78c7e4a7c7e825d3d4c8144ece50682d6877da6614ccdd1e5ddb133684",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04300579195842147,
+              "execute": 0.3638347500236705,
+              "item_closure": 0.020107457996346056,
+              "line_total": 0.40684054198209196,
+              "provider": 0.03832674998557195,
+              "receipt_persist": 0.06727212498662993,
+              "source_read": 0.0003037499845959246
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 146030592,
+          "proposal_delivered": false,
+          "run_id": "RUN-87641dd77e231d5e18b90dcd6ad7a3cdc58dd56489375c819ab84c431c3b2943",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05083175003528595,
+              "execute": 0.44876224995823577,
+              "item_closure": 0.024505125009454787,
+              "line_total": 0.4995939999935217,
+              "provider": 0.047548624977935106,
+              "receipt_persist": 0.025165957980789244,
+              "source_read": 0.0003044159966520965
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 146210816,
+          "proposal_delivered": false,
+          "run_id": "RUN-e3987f129119266a71442f90b624c680afeb4b7d33d19cd92930519c44ee36b2",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 99763,
+          "blobs_read": 26,
+          "git_invocations": 2,
+          "journal_appends": 21,
+          "journal_bytes": 39171,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.06448816700140014,
+            "execute": 0.12788104201899841,
+            "item_closure": 0.05321737501071766,
+            "line_total": 0.19236920902039856,
+            "provider": 0.009437541011720896,
+            "receipt_persist": 0.007424750016070902,
+            "source_read": 0.00037041702307760715
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 137969664,
+        "proposal_delivered": false,
+        "run_id": "RUN-5771c0a769301673cf93ca31f2224ad47c95bb5866809cfe84de751dfdeee356",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 4,
+      "history": 0,
+      "items": 8,
+      "population": 0,
+      "setup_seconds": {
+        "history": 1.0830117389559746e-06,
+        "population": 1.6705598682165146e-07,
+        "total": 6.604102957993746,
+        "workload": 1.9271332079661079,
+        "world": 4.6768318330287
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.029098708007950336,
+              "execute": 0.2595196249894798,
+              "item_closure": 0.10263433400541544,
+              "line_total": 0.2886183329974301,
+              "provider": 0.02035479201003909,
+              "receipt_persist": 0.012894249986857176,
+              "source_read": 0.00029383297078311443
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 138362880,
+          "proposal_delivered": false,
+          "run_id": "RUN-3b4f70308dc14bc24624fb181610e2b95b69937995a2b467011fe34c7dbea133",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03768116602441296,
+              "execute": 0.3879848339711316,
+              "item_closure": 0.14155791699886322,
+              "line_total": 0.42566599999554455,
+              "provider": 0.030811375007033348,
+              "receipt_persist": 0.01883237500442192,
+              "source_read": 0.0003477499703876674
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 138821632,
+          "proposal_delivered": false,
+          "run_id": "RUN-f53502ec573ae514038f58e2ad323a10df31b95c1340ea71ea760ac04fdf902e",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.049232748977374285,
+              "execute": 0.6184905840200372,
+              "item_closure": 0.20908449997659773,
+              "line_total": 0.6677233329974115,
+              "provider": 0.08673904201714322,
+              "receipt_persist": 0.025846624979749322,
+              "source_read": 0.00029016699409112334
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 139165696,
+          "proposal_delivered": false,
+          "run_id": "RUN-2f501037140a28a3ec5e3631feded2272125524a9aafd5d010b389590e859c04",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39175,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05896195798413828,
+              "execute": 0.6928810420213267,
+              "item_closure": 0.24338954198174179,
+              "line_total": 0.751843000005465,
+              "provider": 0.05642937502125278,
+              "receipt_persist": 0.034564167028293014,
+              "source_read": 0.0004232909996062517
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 139165696,
+          "proposal_delivered": false,
+          "run_id": "RUN-da46697ddeb4e8531f91103891539660dbc723e4a1b344549f7a3d5a634290be",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39180,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.06570441700750962,
+              "execute": 0.7762474580085836,
+              "item_closure": 0.276431166974362,
+              "line_total": 0.8419518750160933,
+              "provider": 0.06529337499523535,
+              "receipt_persist": 0.03551170899299905,
+              "source_read": 0.0003126249648630619
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 139165696,
+          "proposal_delivered": false,
+          "run_id": "RUN-b907e29521da0fdbc249d1450af1269288adc4d413e0ed587a8c4416630b4742",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 209387,
+          "blobs_read": 116,
+          "git_invocations": 2,
+          "journal_appends": 14,
+          "journal_bytes": 24191,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.06988158298190683,
+            "execute": 0.07596099999500439,
+            "item_closure": 0.00609541597077623,
+            "line_total": 0.14584258297691122,
+            "provider": 0.009346167033072561,
+            "receipt_persist": 0.005917041038628668,
+            "source_read": 0.0006901670130901039
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 137641984,
+        "proposal_delivered": false,
+        "run_id": "RUN-6ae2ed72377ade02d6308f9bb54f314273b23c9b7b2a77ba5223966b26f935fd",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 34,
+      "history": 30,
+      "items": 1,
+      "population": 0,
+      "setup_seconds": {
+        "history": 75.0880700830021,
+        "population": 2.500019036233425e-07,
+        "total": 81.7334440840059,
+        "workload": 1.9350973750115372,
+        "world": 4.710019083984662
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24191,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.023473082983400673,
+              "execute": 0.1341095000389032,
+              "item_closure": 0.009836249984800816,
+              "line_total": 0.15758258302230388,
+              "provider": 0.016025832970626652,
+              "receipt_persist": 0.009409042017068714,
+              "source_read": 0.0002868340234272182
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 137641984,
+          "proposal_delivered": false,
+          "run_id": "RUN-39b8a3c5e6353fa104df0c80952291efe805446ab13ae65ff026ea8a6e7557ba",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.030345959006808698,
+              "execute": 0.1895048749865964,
+              "item_closure": 0.012499584001488984,
+              "line_total": 0.2198508339934051,
+              "provider": 0.023717875010333955,
+              "receipt_persist": 0.012750083988066763,
+              "source_read": 0.0002988339983858168
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 137641984,
+          "proposal_delivered": false,
+          "run_id": "RUN-73fd161e6114fa34cb2825a543e4a17501942203f9d3de5e31ceecc67ff5383a",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.036908957990817726,
+              "execute": 0.26047391700558364,
+              "item_closure": 0.017509708006400615,
+              "line_total": 0.29738287499640137,
+              "provider": 0.032784041948616505,
+              "receipt_persist": 0.017384750011842698,
+              "source_read": 0.0003035829868167639
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 137641984,
+          "proposal_delivered": false,
+          "run_id": "RUN-34d1388ffae31006b196fa0fc5f9ed105aa9420cd0aa3be2574c2ae2400992ad",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04362845700234175,
+              "execute": 0.32198533398332074,
+              "item_closure": 0.020549500011838973,
+              "line_total": 0.3656137909856625,
+              "provider": 0.03925712499767542,
+              "receipt_persist": 0.020433624973520637,
+              "source_read": 0.00027112499810755253
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 137641984,
+          "proposal_delivered": false,
+          "run_id": "RUN-d03085f94c9a7dad5ddce5fe74549dd1997d5a41f6c512d1ecdcffd3d43c7f9d",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05140683404169977,
+              "execute": 0.39021958300145343,
+              "item_closure": 0.02556795795680955,
+              "line_total": 0.4416264170431532,
+              "provider": 0.05266108299838379,
+              "receipt_persist": 0.024269792018458247,
+              "source_read": 0.0003025000332854688
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 137641984,
+          "proposal_delivered": false,
+          "run_id": "RUN-a828a2ea0f07633ba8c58d87122c9b0f03cca8aa03b5570eb205c5579c0d8911",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 222547,
+          "blobs_read": 116,
+          "git_invocations": 2,
+          "journal_appends": 21,
+          "journal_bytes": 39171,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.07542437600204721,
+            "execute": 0.13087245798669755,
+            "item_closure": 0.05423679098021239,
+            "line_total": 0.20629683398874477,
+            "provider": 0.009386709018144757,
+            "receipt_persist": 0.007505707966629416,
+            "source_read": 0.0005517920362763107
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 132710400,
+        "proposal_delivered": false,
+        "run_id": "RUN-6931e92302912e61b9b84c012dd667ca0a0a5eb0ad8dce33de2f587a8875d53b",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 34,
+      "history": 30,
+      "items": 8,
+      "population": 0,
+      "setup_seconds": {
+        "history": 77.25152212503599,
+        "population": 4.169996827840805e-07,
+        "total": 84.05119408399332,
+        "workload": 1.9208455000189133,
+        "world": 4.878621874959208
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.029684541979804635,
+              "execute": 0.26935654098633677,
+              "item_closure": 0.10283612500643358,
+              "line_total": 0.2990410829661414,
+              "provider": 0.02035312500083819,
+              "receipt_persist": 0.015404874982777983,
+              "source_read": 0.00032954098423942924
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 132710400,
+          "proposal_delivered": false,
+          "run_id": "RUN-2e9971c28dc73f22c0ca854168771b6fa6c5e03878b164f051d59060f7e05c75",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.038999873970169574,
+              "execute": 0.3893380840308964,
+              "item_closure": 0.1461742920218967,
+              "line_total": 0.428337958001066,
+              "provider": 0.03154374996665865,
+              "receipt_persist": 0.018253042013384402,
+              "source_read": 0.00030683400109410286
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 132710400,
+          "proposal_delivered": false,
+          "run_id": "RUN-c57d2affc198da7f9f24aea21b6c86776e1825e8aa418f1fd0ed40c5cb422a1f",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.050745332962833345,
+              "execute": 0.5556098750093952,
+              "item_closure": 0.20189325005048886,
+              "line_total": 0.6063552079722285,
+              "provider": 0.04621933400630951,
+              "receipt_persist": 0.0245847919723019,
+              "source_read": 0.00028116704197600484
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 132710400,
+          "proposal_delivered": false,
+          "run_id": "RUN-c8a1aac044a51cc20a06d846495facd1ac1bb54639809c6ae5d9d9adb6e987c8",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39175,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.057231333979871124,
+              "execute": 0.657893875031732,
+              "item_closure": 0.22950641601346433,
+              "line_total": 0.7151252090116031,
+              "provider": 0.052598999987822026,
+              "receipt_persist": 0.029017375025432557,
+              "source_read": 0.00032712501706555486
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 132710400,
+          "proposal_delivered": false,
+          "run_id": "RUN-b360c2d1d38db8a8c88bc0377b23f1de09b478dbc935eadcd4b4cdc97d4d5125",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39180,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.06597437598975375,
+              "execute": 0.8480272910092026,
+              "item_closure": 0.3432150830049068,
+              "line_total": 0.9140016669989564,
+              "provider": 0.06417283299379051,
+              "receipt_persist": 0.039762500033248216,
+              "source_read": 0.00028745800955221057
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 134873088,
+          "proposal_delivered": false,
+          "run_id": "RUN-b6e3b926e2c41f7a0fe5fbd9744c0a13ad1b257832e4a7f1230a64b230272ec6",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 776127,
+          "blobs_read": 231,
+          "git_invocations": 2,
+          "journal_appends": 14,
+          "journal_bytes": 24191,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.08112024998990819,
+            "execute": 0.06421874999068677,
+            "item_closure": 0.005058875016402453,
+            "line_total": 0.14533899998059496,
+            "provider": 0.007904083002358675,
+            "receipt_persist": 0.004960917052812874,
+            "source_read": 0.00045425002463161945
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 155172864,
+        "proposal_delivered": false,
+        "run_id": "RUN-2fcea6b1910083d17b601bfcb4d29acee8370bb65e265a92f0e1fdb859197661",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 45,
+      "history": 0,
+      "items": 1,
+      "population": 40,
+      "setup_seconds": {
+        "history": 8.750357665121555e-07,
+        "population": 124.93245329201454,
+        "total": 131.5146240000031,
+        "workload": 1.9148489159997553,
+        "world": 4.667210249986965
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24191,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.027282208960969,
+              "execute": 0.1234087499906309,
+              "item_closure": 0.008646874979604036,
+              "line_total": 0.1506909589515999,
+              "provider": 0.01506425003753975,
+              "receipt_persist": 0.009017249976750463,
+              "source_read": 0.00023700000019744039
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 155189248,
+          "proposal_delivered": false,
+          "run_id": "RUN-48e255643f8eb01319957a21b9e31829d8fd9035c6e32ab2ad43d9291d34b013",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.033020082977600396,
+              "execute": 0.17570295900804922,
+              "item_closure": 0.011823208013083786,
+              "line_total": 0.20872304198564962,
+              "provider": 0.022077125031501055,
+              "receipt_persist": 0.01175483298720792,
+              "source_read": 0.000212125014513731
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 155189248,
+          "proposal_delivered": false,
+          "run_id": "RUN-bed1607421b25717aeaafc2992ddd1e619da35247a4b23d2e0dfbb984a89bcf3",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03881550004007295,
+              "execute": 0.23010345798684284,
+              "item_closure": 0.015452541992999613,
+              "line_total": 0.2689189580269158,
+              "provider": 0.028319459001068026,
+              "receipt_persist": 0.015375165967270732,
+              "source_read": 0.00021724996622651815
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 155205632,
+          "proposal_delivered": false,
+          "run_id": "RUN-40d63862661a9d3f6a04b6f699c8ae37f9c48061555cbdf802d1f19e46e6a487",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04500012507196516,
+              "execute": 0.28389066696399823,
+              "item_closure": 0.018587915983516723,
+              "line_total": 0.3288907920359634,
+              "provider": 0.0345387079869397,
+              "receipt_persist": 0.018447958049364388,
+              "source_read": 0.00020599999697878957
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 155222016,
+          "proposal_delivered": false,
+          "run_id": "RUN-7afd2f48535a077cd594c808bc52c6f003f4b654a200a7ed81bea12facba859a",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05207191704539582,
+              "execute": 0.3570702080032788,
+              "item_closure": 0.02341483300551772,
+              "line_total": 0.40914212504867464,
+              "provider": 0.043888417014386505,
+              "receipt_persist": 0.023293708043638617,
+              "source_read": 0.0002144580357708037
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 155238400,
+          "proposal_delivered": false,
+          "run_id": "RUN-777790b9c8a561bd45b442373bb5bbf3da6feda8066dd02986a2fe0f23a332b7",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 789287,
+          "blobs_read": 231,
+          "git_invocations": 2,
+          "journal_appends": 21,
+          "journal_bytes": 39171,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.08327074896078557,
+            "execute": 0.11022708402015269,
+            "item_closure": 0.04605879198061302,
+            "line_total": 0.19349783298093826,
+            "provider": 0.007697583001572639,
+            "receipt_persist": 0.006600374996196479,
+            "source_read": 0.00043808401096612215
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 156303360,
+        "proposal_delivered": false,
+        "run_id": "RUN-081bf69fd6e92df1a7ee899774785cf532a65b8fa0b3968a5f1a1cccf1de1d07",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 45,
+      "history": 0,
+      "items": 8,
+      "population": 40,
+      "setup_seconds": {
+        "history": 7.910421118140221e-07,
+        "population": 108.38553312502336,
+        "total": 113.84157483302988,
+        "workload": 1.559920375002548,
+        "world": 3.8960116670350544
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39171,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.032384956954047084,
+              "execute": 0.2276032090303488,
+              "item_closure": 0.08614041702821851,
+              "line_total": 0.2599881659843959,
+              "provider": 0.018170750001445413,
+              "receipt_persist": 0.011761416972149163,
+              "source_read": 0.00021049997303634882
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 156319744,
+          "proposal_delivered": false,
+          "run_id": "RUN-b96a6fb308d90403d9f3607977f74cf8fb86b07c9a22b21cc4f3b66b60cb3cef",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04094179201638326,
+              "execute": 0.34906887501711026,
+              "item_closure": 0.12790550000499934,
+              "line_total": 0.3900106670334935,
+              "provider": 0.028307917003985494,
+              "receipt_persist": 0.0180644589709118,
+              "source_read": 0.0002157499548047781
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 156336128,
+          "proposal_delivered": false,
+          "run_id": "RUN-0e311f48a71207de34fa648d09c9646c8671349c584b932a1206ff7e3be480ea",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.049320833990350366,
+              "execute": 0.4673041659989394,
+              "item_closure": 0.16911541600711644,
+              "line_total": 0.5166249999892898,
+              "provider": 0.03825520898681134,
+              "receipt_persist": 0.022311165987048298,
+              "source_read": 0.00022745801834389567
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 156368896,
+          "proposal_delivered": false,
+          "run_id": "RUN-34b1c2dc879a37aa0910a63d4bdcbb02ee305938f409d4fd81b8a3283d2058c5",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39175,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.057279126020148396,
+              "execute": 0.6002822909504175,
+              "item_closure": 0.2132974580163136,
+              "line_total": 0.6575614169705659,
+              "provider": 0.05017150001367554,
+              "receipt_persist": 0.027083040971774608,
+              "source_read": 0.00024625001242384315
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 156401664,
+          "proposal_delivered": false,
+          "run_id": "RUN-0295770c10d91e94838b9359821273bf90323107802c1f09f357127e5923d539",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39180,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.07302108395379037,
+              "execute": 0.7506565829971805,
+              "item_closure": 0.248760083981324,
+              "line_total": 0.8236776669509709,
+              "provider": 0.059299166954588145,
+              "receipt_persist": 0.031909999961499125,
+              "source_read": 0.0003175410092808306
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 156418048,
+          "proposal_delivered": false,
+          "run_id": "RUN-f6025e61aaef7e67f2a90be5c2c8b7297a8f1485489070a10a00f03c3dd02e9a",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 898917,
+          "blobs_read": 321,
+          "git_invocations": 2,
+          "journal_appends": 14,
+          "journal_bytes": 24191,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.09465362498303875,
+            "execute": 0.06594749999931082,
+            "item_closure": 0.005058957962319255,
+            "line_total": 0.16060112498234957,
+            "provider": 0.007996042026206851,
+            "receipt_persist": 0.0051372910384088755,
+            "source_read": 0.0004636659868992865
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 163463168,
+        "proposal_delivered": false,
+        "run_id": "RUN-a4bd69112d57604b5ff26bccdab0bdca94c598e5c763e2a9e7e106a32420f75a",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 75,
+      "history": 30,
+      "items": 1,
+      "population": 40,
+      "setup_seconds": {
+        "history": 123.20438950002426,
+        "population": 108.52979358303128,
+        "total": 237.0264511249843,
+        "workload": 1.5679531659698114,
+        "world": 3.7241687499918044
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24191,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.027911041979677975,
+              "execute": 0.12903549999464303,
+              "item_closure": 0.008960749953985214,
+              "line_total": 0.156946541974321,
+              "provider": 0.015400292002595961,
+              "receipt_persist": 0.008658958948217332,
+              "source_read": 0.0002521249698475003
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 163463168,
+          "proposal_delivered": false,
+          "run_id": "RUN-92d4cae2899e6ba2fc4c08b6b5d8d26fa4a31220c0347f219d042176f9dc0e73",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03410500002792105,
+              "execute": 0.17651470797136426,
+              "item_closure": 0.011995333014056087,
+              "line_total": 0.2106197079992853,
+              "provider": 0.0216744159697555,
+              "receipt_persist": 0.011962624965235591,
+              "source_read": 0.0002364999963901937
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 163463168,
+          "proposal_delivered": false,
+          "run_id": "RUN-d930a117d561bb72afdf7c998909d132e1412ef855da1ad09a15342301417801",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.03994833293836564,
+              "execute": 0.2319727500434965,
+              "item_closure": 0.015644832979887724,
+              "line_total": 0.27192108298186213,
+              "provider": 0.028584583022166044,
+              "receipt_persist": 0.015319041965994984,
+              "source_read": 0.00022520899074152112
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 163479552,
+          "proposal_delivered": false,
+          "run_id": "RUN-1e05020765aa08be029221bec98812501beed458f0e0af4eccc905dde10caadc",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04614258301444352,
+              "execute": 0.2925250420230441,
+              "item_closure": 0.018931875005364418,
+              "line_total": 0.3386676250374876,
+              "provider": 0.03623162495205179,
+              "receipt_persist": 0.01885437499731779,
+              "source_read": 0.0002745419624261558
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 163495936,
+          "proposal_delivered": false,
+          "run_id": "RUN-ef2eb8a18ac8355a9cbf32d2e676b1fe3306b7821b268f2bf1fa946ba48c7bbc",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 14,
+            "journal_bytes": 24192,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05283049994613975,
+              "execute": 0.47144095902331173,
+              "item_closure": 0.02660629100864753,
+              "line_total": 0.5242714589694515,
+              "provider": 0.06460591696668416,
+              "receipt_persist": 0.026566457992885262,
+              "source_read": 0.0007474159938283265
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 164691968,
+          "proposal_delivered": false,
+          "run_id": "RUN-267f16da8b3e0aecaf2df0b24aa90f12862422fcc132a3626662fad97af6d448",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    },
+    {
+      "cold": {
+        "counters": {
+          "blob_bytes_read": 912077,
+          "blobs_read": 321,
+          "git_invocations": 2,
+          "journal_appends": 21,
+          "journal_bytes": 39171,
+          "lowerings": 0,
+          "phase_calls": {
+            "admission": 1,
+            "execute": 1,
+            "item_closure": 1,
+            "line_total": 1,
+            "provider": 1,
+            "receipt_persist": 1,
+            "source_read": 1
+          },
+          "phase_seconds": {
+            "admission": 0.10221145895775408,
+            "execute": 0.12529733299743384,
+            "item_closure": 0.05031999998027459,
+            "line_total": 0.22750879195518792,
+            "provider": 0.00886170903686434,
+            "receipt_persist": 0.007992375001776963,
+            "source_read": 0.0004598749801516533
+          },
+          "proposal_submits": 0,
+          "trees_listed": 1
+        },
+        "peak_rss_bytes": 160006144,
+        "proposal_delivered": false,
+        "run_id": "RUN-254b65f0045aedbb9404b8b6a7e6b32903444c20eb0e3f0bbc9cd45c7554d14b",
+        "status": "node_refused",
+        "terminal_code": "terminal_not_available"
+      },
+      "generations_after_setup": 75,
+      "history": 30,
+      "items": 8,
+      "population": 40,
+      "setup_seconds": {
+        "history": 125.167309499986,
+        "population": 115.18909108400112,
+        "total": 246.02090020803735,
+        "workload": 1.651311292022001,
+        "world": 4.013037875003647
+      },
+      "warm": [
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39171,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.034910833986941725,
+              "execute": 0.24674700002651662,
+              "item_closure": 0.09343308303505182,
+              "line_total": 0.28165783401345834,
+              "provider": 0.018753624986857176,
+              "receipt_persist": 0.012524124991614372,
+              "source_read": 0.00027199997566640377
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 160006144,
+          "proposal_delivered": false,
+          "run_id": "RUN-465b000fa6744beca4ca5f98d9e3964ea449bca5608f991f5e894ea8c3ab16cc",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.04139545903308317,
+              "execute": 0.36306908301776275,
+              "item_closure": 0.13702829100657254,
+              "line_total": 0.4044645420508459,
+              "provider": 0.02855037502013147,
+              "receipt_persist": 0.017730541992932558,
+              "source_read": 0.00025258399546146393
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 160006144,
+          "proposal_delivered": false,
+          "run_id": "RUN-da73d1c0efac9d8bb45d31c2741423bab332dd6845bf029b3aa9a3c3b6fe05a4",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39172,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.05001395900035277,
+              "execute": 0.48779362498316914,
+              "item_closure": 0.17661175003740937,
+              "line_total": 0.5378075839835219,
+              "provider": 0.04134712502127513,
+              "receipt_persist": 0.02329858299344778,
+              "source_read": 0.0002459579845890403
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 160006144,
+          "proposal_delivered": false,
+          "run_id": "RUN-f0b61af2935af32821c5305bd1af75c780f3081e8e1405cce26abe03d233cfc8",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39175,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.0587881239480339,
+              "execute": 0.661756209039595,
+              "item_closure": 0.22507112502353266,
+              "line_total": 0.7205443329876289,
+              "provider": 0.05097445903811604,
+              "receipt_persist": 0.029414082993753254,
+              "source_read": 0.0011493749916553497
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 162283520,
+          "proposal_delivered": false,
+          "run_id": "RUN-d41d78d0a00de5b9a955be58fe3fe85a89265aac35f8861dc7286d9e387115ec",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        },
+        {
+          "counters": {
+            "blob_bytes_read": 0,
+            "blobs_read": 0,
+            "git_invocations": 0,
+            "journal_appends": 21,
+            "journal_bytes": 39180,
+            "lowerings": 0,
+            "phase_calls": {
+              "admission": 1,
+              "execute": 1,
+              "item_closure": 1,
+              "line_total": 1,
+              "provider": 1,
+              "receipt_persist": 1,
+              "source_read": 1
+            },
+            "phase_seconds": {
+              "admission": 0.0677902500028722,
+              "execute": 0.7351984590059146,
+              "item_closure": 0.2635793330264278,
+              "line_total": 0.8029887090087868,
+              "provider": 0.06165849999524653,
+              "receipt_persist": 0.03440320899244398,
+              "source_read": 0.0002716250019147992
+            },
+            "proposal_submits": 0,
+            "trees_listed": 0
+          },
+          "peak_rss_bytes": 162283520,
+          "proposal_delivered": false,
+          "run_id": "RUN-c9a9bf5238ecbc3f3f7b1bd6b47a147d557bee8eb70cb5f9a3d286d74189068f",
+          "status": "node_refused",
+          "terminal_code": "terminal_not_available"
+        }
+      ]
+    }
+  ],
+  "warm": 5
+}

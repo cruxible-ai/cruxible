@@ -1,0 +1,588 @@
+from __future__ import annotations
+
+import base64
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.captures import (
+    CaptureFormatError,
+    capture_contract_digest,
+    verify_capture,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    procedure_artifact_digest,
+)
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.models import CallNode
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAcquisitionPlan,
+    procedure_acquisition_plan_digest,
+    procedure_provider_bindings,
+)
+from cruxible_client.contracts.provider_execution import (
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderSecretResolutionPlan,
+)
+from cruxible_client.contracts.workspace_file import (
+    SourceReadReceipt,
+    WorkspaceFileSourceRequestV2,
+    workspace_file_contracts,
+    workspace_file_signature_digest,
+)
+from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
+from cruxible_core.exhaust import parse_journal_payload
+from cruxible_core.exhaust.producer_receipts import journal_producer_receipt_resolver
+from cruxible_core.governance.seed_artifacts.workspace_file import workspace_file_operation
+from cruxible_core.procedures.execution import (
+    PreparedProcedureRun,
+    ProcedureExecutor,
+    admission_fields,
+    procedure_line_run_id,
+    procedure_node_pin_sets,
+    procedure_pin_set_digest,
+    seal_procedure_run_admission,
+)
+from cruxible_core.providers.provider_local_runtime import (
+    BoundLocalProviderV1,
+    ProviderDriverOutcomeV1,
+)
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelope
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.support.case_folding import volume_folds_case
+from tests.test_procedures.p2b4_unit1.test_source_v4_runtime import (
+    _acquisition_rules,
+    _source_fixture,
+)
+from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
+
+
+class _WorkspaceInvoker:
+    def __init__(self) -> None:
+        self.bind_calls = 0
+        self.spawn_calls = 0
+        self.input: object | None = None
+
+    def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+        self.bind_calls += 1
+        return BoundLocalProviderV1(
+            binding=occurrence.local_execution,
+            interpreter_path=Path("/portable/workspace-provider"),
+        )
+
+    def invoke_provider(  # type: ignore[no-untyped-def]
+        self, *, occurrence, context, invocation_id, bound, deadline
+    ) -> ProviderDriverOutcomeV1:
+        self.spawn_calls += 1
+        self.input = context.input
+        assert isinstance(context.input, dict)
+        assert set(context.input) == {
+            "logical_source",
+            "commitment_digest",
+            "content_encoding",
+            "bytes",
+            "byte_length",
+            "bytes_digest",
+        }
+        assert base64.b64decode(context.input["bytes"], validate=True) == b"hello\n"
+        output = {
+            "input_bucket": "content_kind=text;byte_size=tiny",
+            "source": {
+                "logical_source": context.input["logical_source"],
+                "commitment_digest": context.input["commitment_digest"],
+                "bytes_digest": context.input["bytes_digest"],
+                "byte_length": context.input["byte_length"],
+            },
+            "content": {
+                "kind": "text",
+                "encoding": "utf-8",
+                "text": "hello\n",
+                "lines": ["hello"],
+            },
+        }
+        return ProviderDriverOutcomeV1(
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
+                run_id=context.run_id,
+                status="ok",
+                output=output,
+            ),
+            stderr="",
+            duration_seconds=0.001,
+            egress=ProviderEgressObservation(
+                observer_backend="test-attribution",
+                observer_grade="attribution",
+            ),
+            verified_binding=bound.binding,
+        )
+
+
+def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: ignore[no-untyped-def]
+    accepted, prepared, fixture, policy, contract = _source_fixture(tmp_path)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    # Authored without the binding digest: the daemon resolves the attached root.
+    request = WorkspaceFileSourceRequestV2(
+        logical_source="commerce.production.orders",
+        relative_path=relative_path,
+        coordinate_type="postgres-lsn-v1",
+        coordinate={"lsn": "workspace"},
+        selector_type="relation-primary-key-v1",
+        selector={"id": 7, "relation": "orders"},
+    )
+    from cruxible_core.procedures.reference_binding import (
+        BoundAcceptedProcedure,
+        authored_procedure,
+    )
+
+    authored = authored_procedure(accepted)
+    authored_definition = authored.definition.model_copy(
+        update={
+            "nodes": (
+                authored.definition.nodes[0].model_copy(
+                    update={"input": request.model_dump(mode="json")}
+                ),
+            )
+        }
+    )
+    authored = authored.model_copy(
+        update={
+            "definition": authored_definition,
+            "definition_digest": compute_procedure_definition_digest(authored_definition).tagged,
+        }
+    )
+    old_node = accepted.procedure.definition.nodes[0]
+    assert isinstance(old_node, CallNode)
+    source_node = old_node.model_copy(update={"input": request.model_dump(mode="json")})
+    definition = accepted.procedure.definition.model_copy(update={"nodes": (source_node,)})
+    definition._authored = authored_definition
+    # is_workspace_file_signature() (cruxible_client.contracts.captures) keys
+    # the "this occurrence is a workspace.file read" test off the exact
+    # operation signature digest. The executor's slot-matching never refits
+    # (ruling C2), so the slot's own binding must carry that same operation,
+    # not just the admitted occurrence.
+    workspace_operation = workspace_file_operation()
+    signature_digest = workspace_file_signature_digest()
+    old_binding = accepted.procedure.binding_for(source_node.slot)
+    assert old_binding is not None
+    new_binding = old_binding.model_copy(
+        update={
+            "operation": workspace_operation,
+            "operation_signature_digest": signature_digest,
+            "contracts": tuple(workspace_file_contracts()),
+        }
+    )
+    slot_bindings = tuple(
+        new_binding if item.slot == source_node.slot else item
+        for item in accepted.procedure.slot_bindings
+    )
+    procedure = accepted.procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": authored.definition_digest,
+            "slot_bindings": slot_bindings,
+        }
+    )
+    accepted = BoundAcceptedProcedure(
+        path=accepted.path,
+        procedure=procedure,
+        authored=authored,
+        artifact_digest=procedure_artifact_digest(authored).tagged,
+    )
+
+    old_occurrence = prepared.acquisition_plan.external_occurrences[0]
+    local = old_occurrence.local_execution.model_copy(
+        update={
+            "operation": workspace_operation.name,
+            "operation_signature_digest": signature_digest,
+            "declared_endpoints": (),
+        }
+    )
+    occurrence = ProviderExternalOccurrencePlan.model_validate(
+        {
+            **old_occurrence.model_dump(mode="python"),
+            "operation": workspace_operation,
+            "operation_signature_digest": signature_digest,
+            "effect_class": workspace_operation.effect,
+            "contracts": list(workspace_file_contracts()),
+            "local_execution": local,
+            "secret_plan": ProviderSecretResolutionPlan(references=(), binding_identity_digests=()),
+        }
+    )
+    plan = ProcedureAcquisitionPlan.model_validate(
+        {
+            **prepared.acquisition_plan.model_dump(mode="python"),
+            "external_occurrences": (occurrence,),
+        }
+    )
+    plan_digest = procedure_acquisition_plan_digest(plan)
+    node_pin_sets = procedure_node_pin_sets(accepted)
+    admission = seal_procedure_run_admission(
+        {
+            **admission_fields(prepared.admission),
+            "procedure_artifact_digest": accepted.artifact_digest,
+            "definition_digest": accepted.procedure.definition_digest,
+            "node_pin_sets": node_pin_sets,
+            "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
+            "acquisition_plan_digest": plan_digest,
+            "resolved_provider_bindings": procedure_provider_bindings(plan.external_occurrences),
+        }
+    )
+    prepared = PreparedProcedureRun.model_validate(
+        {
+            **prepared.model_dump(mode="python"),
+            "admission": admission,
+            "acquisition_plan": plan,
+            "acquisition_plan_digest": plan_digest,
+        }
+    )
+    reader = WorkspaceFileReader(
+        instance_id=admission.instance_id,
+        operating_profile="local",
+        attached_roots=(root,),
+        managed_roots=(tmp_path / "managed",),
+    )
+    return accepted, prepared, fixture, policy, contract, root, reader
+
+
+def _execute(tmp_path: Path, relative_path: str):  # type: ignore[no-untyped-def]
+    accepted, prepared, fixture, policy, contract, root, reader = _workspace_source_fixture(
+        tmp_path, relative_path
+    )
+    if relative_path == "docs/note.txt":
+        (root / "docs").mkdir()
+        (root / "docs" / "note.txt").write_bytes(b"hello\n")
+    invoker = _WorkspaceInvoker()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        capture_contracts={capture_contract_digest(contract).tagged: contract},
+        acquisition_rules=_acquisition_rules(policy),
+        workspace_file_reader=reader,
+    ).execute(prepared, accepted)
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
+    payloads = [
+        parse_journal_payload(fixture.bodies.read(item.record.payload_digest, access=access))
+        for item in records
+    ]
+    return result, invoker, records, payloads, root, fixture, contract, prepared, accepted
+
+
+def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path: Path) -> None:
+    result, invoker, records, payloads, _root, fixture, contract, prepared, accepted = _execute(
+        tmp_path, "docs/note.txt"
+    )
+    if result.status != "succeeded":
+        raise AssertionError(result)
+    assert invoker.bind_calls == invoker.spawn_calls == 1
+    kinds = [item.record.event_kind for item in records]
+    assert (
+        kinds.index("source_request_derived")
+        < kinds.index("source_read")
+        < kinds.index("provider_invocation_started")
+    )
+    source_read = SourceReadReceipt.model_validate(payloads[kinds.index("source_read")]["receipt"])
+    completed = payloads[kinds.index("provider_invocation_completed")]["receipt"]
+    produced = payloads[kinds.index("produced_capture")]
+    assert source_read.provider_input_digest == completed["input_digest"]
+    # The authored request named no binding; the executed (derived) request, the
+    # read receipt and so the Capture record the one the daemon resolved.
+    daemon_binding = workspace_binding_digest(
+        instance_id=prepared.admission.instance_id, canonical_root=_root.resolve()
+    )
+    executed = payloads[kinds.index("source_request_derived")]["request"]
+    assert executed["tag"] == "playbill-workspace-file-executed-source-request-v2"
+    assert executed["workspace"] == "workspace"
+    assert executed["workspace_binding_digest"] == daemon_binding
+    assert source_read.workspace_binding_digest == daemon_binding
+    assert (
+        produced["invocation_receipt_digest"]
+        == payloads[kinds.index("provider_invocation_completed")]["receipt_digest"]
+    )
+    source_node = accepted.procedure.definition.nodes[0]
+    assert isinstance(source_node, CallNode)
+    verified = verify_capture(
+        produced["capture_digest"],
+        store=fixture.bodies,
+        contract=contract,
+        producer_artifact_digests={
+            accepted.procedure.binding_for(source_node.slot).build.target.qualified: completed[
+                "provider_artifact_digest"
+            ]
+        },
+        producer_receipt_resolver=journal_producer_receipt_resolver(
+            journal=fixture.journal,
+            instance_id=prepared.admission.instance_id,
+            bodies=fixture.bodies,
+        ),
+    )
+    assert (
+        verified.production_evidence.source_read_receipt_digest
+        == payloads[kinds.index("source_read")]["receipt_digest"]
+    )
+
+    source_read_payload_digest = records[kinds.index("source_read")].record.payload_digest
+
+    class _ForgedReadBodies:
+        def verify(self, digest: str) -> bool:
+            return fixture.bodies.verify(digest)
+
+        def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+            content = fixture.bodies.read(digest, access=access)
+            if digest != source_read_payload_digest:
+                return content
+            payload = parse_journal_payload(content)
+            forged = SourceReadReceipt.model_validate(payload["receipt"]).model_copy(
+                update={"relative_path": "docs/other.txt"}
+            )
+            from cruxible_client.contracts.workspace_file import source_read_receipt_digest
+
+            return canonical_bytes(
+                {
+                    "receipt": forged.model_dump(mode="json"),
+                    "receipt_digest": source_read_receipt_digest(forged),
+                }
+            )
+
+    with pytest.raises(CaptureFormatError, match="journal is invalid"):
+        verify_capture(
+            produced["capture_digest"],
+            store=fixture.bodies,
+            contract=contract,
+            producer_artifact_digests={
+                accepted.procedure.binding_for(source_node.slot).build.target.qualified: completed[
+                    "provider_artifact_digest"
+                ]
+            },
+            producer_receipt_resolver=journal_producer_receipt_resolver(
+                journal=fixture.journal,
+                instance_id=prepared.admission.instance_id,
+                bodies=_ForgedReadBodies(),  # type: ignore[arg-type]
+            ),
+        )
+
+
+def test_v1_derived_request_in_history_still_verifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run journaled by a daemon before v2 carried the authored v1 request, digest and all."""
+
+    import cruxible_core.procedures.execution as execution_module
+
+    built = execution_module.build_procedure_derived_source_request
+
+    def as_v1(**kwargs):  # type: ignore[no-untyped-def]
+        request = dict(kwargs.pop("request"))
+        if request.get("tag") == "playbill-workspace-file-executed-source-request-v2":
+            request.pop("workspace")
+            request["tag"] = "playbill-workspace-file-source-request-v1"
+        return built(request=request, **kwargs)
+
+    monkeypatch.setattr(execution_module, "build_procedure_derived_source_request", as_v1)
+    result, _invoker, records, payloads, _root, fixture, contract, prepared, accepted = _execute(
+        tmp_path, "docs/note.txt"
+    )
+    assert result.status == "succeeded", result
+    kinds = [item.record.event_kind for item in records]
+    derived = payloads[kinds.index("source_request_derived")]["request"]
+    assert derived["tag"] == "playbill-workspace-file-source-request-v1"
+    completed = payloads[kinds.index("provider_invocation_completed")]["receipt"]
+    source_node = accepted.procedure.definition.nodes[0]
+    assert isinstance(source_node, CallNode)
+    verified = verify_capture(
+        payloads[kinds.index("produced_capture")]["capture_digest"],
+        store=fixture.bodies,
+        contract=contract,
+        producer_artifact_digests={
+            accepted.procedure.binding_for(source_node.slot).build.target.qualified: completed[
+                "provider_artifact_digest"
+            ]
+        },
+        producer_receipt_resolver=journal_producer_receipt_resolver(
+            journal=fixture.journal,
+            instance_id=prepared.admission.instance_id,
+            bodies=fixture.bodies,
+        ),
+    )
+    assert (
+        verified.production_evidence.source_read_receipt_digest
+        == (payloads[kinds.index("source_read")]["receipt_digest"])
+    )
+
+
+def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path) -> None:
+    accepted, prepared, fixture, policy, contract, root, reader = _workspace_source_fixture(
+        tmp_path, "docs/note.txt"
+    )
+    (root / "docs").mkdir()
+    (root / "docs" / "note.txt").write_bytes(b"hello\n")
+
+    def execute(item: PreparedProcedureRun) -> None:
+        result = ProcedureExecutor(
+            journal=fixture.journal,
+            bodies=fixture.bodies,
+            run_index=fixture.run_index,
+            fencing_token="writer",
+            activation_authority=_Authority(accepted.artifact_digest),
+            contract_validator=_Contracts(),
+            provider_runtime_invoker=_WorkspaceInvoker(),
+            capture_contracts={capture_contract_digest(contract).tagged: contract},
+            acquisition_rules=_acquisition_rules(policy),
+            workspace_file_reader=reader,
+        ).execute(item, accepted)
+        assert result.status == "succeeded"
+
+    execute(prepared)
+    first = prepared.admission
+    second_run_id = procedure_line_run_id(
+        occurrence_id=first.occurrence_id or "",
+        attempt=2,
+        admission_binding_digest=first.admission_binding_digest,
+        occurrence_evaluation_time=first.occurrence_evaluation_time,
+    )
+    second_admission = seal_procedure_run_admission({**admission_fields(first), "attempt": 2})
+    assert second_admission.run_id == second_run_id
+    assert second_admission.semantic_replay_key_digest == first.semantic_replay_key_digest
+    assert second_admission.admission_binding_digest == first.admission_binding_digest
+    execute(prepared.model_copy(update={"admission": second_admission}))
+
+    access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
+    produced: dict[str, dict[str, object]] = {}
+    for stored in fixture.journal.all_records(first.journal_stream, first.journal_partition_id):
+        if stored.record.event_kind == "produced_capture":
+            payload = parse_journal_payload(
+                fixture.bodies.read(stored.record.payload_digest, access=access)
+            )
+            assert isinstance(payload, dict)
+            assert stored.record.run_id is not None
+            produced[stored.record.run_id] = payload
+    assert set(produced) == {first.run_id, second_run_id}
+    source_node = accepted.procedure.definition.nodes[0]
+    assert isinstance(source_node, CallNode)
+    resolver = journal_producer_receipt_resolver(
+        journal=fixture.journal,
+        instance_id=first.instance_id,
+        bodies=fixture.bodies,
+    )
+    binding = accepted.procedure.binding_for(source_node.slot)
+    assert binding is not None
+    for payload in produced.values():
+        verify_capture(
+            str(payload["capture_digest"]),
+            store=fixture.bodies,
+            contract=contract,
+            producer_artifact_digests={
+                binding.build.target.qualified: binding.build.artifact_digest
+            },
+            producer_receipt_resolver=resolver,
+        )
+
+
+@pytest.mark.parametrize(
+    ("actual_path", "requested_path", "path_class", "managed"),
+    (
+        (".git/config", ".GIT/config", "git_metadata", False),
+        (".git/config", ".Git/config", "git_metadata", False),
+        (".cruxible/coverage.json", ".CRUXIBLE/coverage.json", "cruxible_control", False),
+        (".cruxible/coverage.json", ".CruxIble/coverage.json", "cruxible_control", False),
+        ("owner.ed25519", "OWNER.ED25519", "client_custody", False),
+        ("daemon_ed25519", "DAEMON_ED25519", "client_custody", False),
+        ("allowed_signers", "Allowed_Signers", "client_custody", False),
+        (
+            ".cruxible-init-resume-owner.json",
+            ".Cruxible-Init-Resume-Owner.JSON",
+            "client_custody",
+            False,
+        ),
+        ("managed/secret.txt", "MANAGED/secret.txt", "managed_root", True),
+        ("managed/secret.txt", "Managed/secret.txt", "managed_root", True),
+    ),
+)
+def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(
+    tmp_path: Path,
+    actual_path: str,
+    requested_path: str,
+    path_class: str,
+    managed: bool,
+) -> None:
+    accepted, prepared, fixture, policy, contract, root, reader = _workspace_source_fixture(
+        tmp_path, requested_path
+    )
+    target = root / actual_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"secret")
+    # On a folding volume the requested spelling really does reach the secret,
+    # so the refusal below is the only thing standing between it and the child.
+    assert (root / requested_path).exists() is volume_folds_case(root)
+    if managed:
+        reader = WorkspaceFileReader(
+            instance_id=prepared.admission.instance_id,
+            operating_profile="local",
+            attached_roots=(root,),
+            managed_roots=(root / "managed",),
+        )
+    invoker = _WorkspaceInvoker()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        capture_contracts={capture_contract_digest(contract).tagged: contract},
+        acquisition_rules=_acquisition_rules(policy),
+        workspace_file_reader=reader,
+    ).execute(prepared, accepted)
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "workspace_file_read_refused"
+    assert result.refusal.detail_code == path_class
+    assert (invoker.bind_calls, invoker.spawn_calls) == (0, 0)
+    assert all(
+        item.record.event_kind != "produced_capture"
+        for item in fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+    )
+
+
+def test_unavailable_workspace_reader_is_a_typed_source_refusal(tmp_path: Path) -> None:
+    accepted, prepared, fixture, policy, contract, root, _reader = _workspace_source_fixture(
+        tmp_path, "docs/note.txt"
+    )
+    (root / "docs").mkdir()
+    (root / "docs" / "note.txt").write_bytes(b"hello\n")
+    invoker = _WorkspaceInvoker()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        capture_contracts={capture_contract_digest(contract).tagged: contract},
+        acquisition_rules=_acquisition_rules(policy),
+        workspace_file_reader=None,
+    ).execute(prepared, accepted)
+
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert (result.refusal.code, result.refusal.detail_code) == (
+        "workspace_file_read_refused",
+        "binding",
+    )
+    assert (invoker.bind_calls, invoker.spawn_calls) == (0, 0)

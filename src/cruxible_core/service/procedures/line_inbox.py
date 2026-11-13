@@ -1,0 +1,315 @@
+"""The Line inbox surface: list, read, and an agent's dispositions.
+
+Reads are keyed and bounded. Dispositions are an agent's judgment, recorded
+as typed transitions in the inbox journal; none of them reads or writes
+accepted state, except that a link to a proposal or a Subject must name one
+that exists.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.errors import ReadRefusalError, SubjectNotFoundError
+from cruxible_client.contracts.line_inbox import (
+    INBOX_ITEM_SELECTOR_PATTERN,
+    INBOX_LIST_MAX_LIMIT,
+    InboxAcknowledged,
+    InboxDismissed,
+    InboxDisposition,
+    InboxDispositionResult,
+    InboxItem,
+    InboxItemEnvelope,
+    InboxItemStatus,
+    InboxLinked,
+    InboxLinkProposal,
+    InboxLinkSubject,
+    InboxLinkTarget,
+    InboxList,
+    InboxListEntry,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_core.exhaust.line_inbox import InboxItemNotFound, LineInboxStore
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.subject_aliases import resolve_subject_ref
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.evidence.body_access import capture_access_resolver
+from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
+
+_INBOX_LIST_REPAIR = RepairOperation(operation="cruxible.inbox.list")
+
+
+class InboxItemNotFoundError(ProcedureSurfaceError):
+    """No inbox item matches the selector, or a prefix matches several."""
+
+    code = "cruxible.inbox.item_not_found"
+    error_code = code
+    http_status = 404
+    repair = _INBOX_LIST_REPAIR
+
+
+class InboxRequestInvalid(ProcedureSurfaceError):
+    """An inbox request names a cursor or filter this surface does not serve."""
+
+    code = "cruxible.inbox.request_invalid"
+    error_code = code
+    http_status = 400
+    repair = _INBOX_LIST_REPAIR
+
+
+def inbox_line_filter(line: str | None) -> str | None:
+    """A Line named as ``name`` or ``Line:name``, as the envelope records it."""
+
+    if line is None:
+        return None
+    name = line.removeprefix("Line:")
+    if not name:
+        raise InboxRequestInvalid(f"{InboxRequestInvalid.code}: an empty Line name filters nothing")
+    return f"Line:{name}"
+
+
+def _resolve(store: LineInboxStore, selector: str) -> str:
+    try:
+        return store.resolve(selector)
+    except InboxItemNotFound as exc:
+        detail = "names more than one item" if exc.ambiguous else "names no item"
+        raise InboxItemNotFoundError(
+            f"{InboxItemNotFoundError.code}: inbox selector {selector!r} {detail}; name an "
+            f"item id or a unique prefix ({INBOX_ITEM_SELECTOR_PATTERN}); run "
+            "`cruxible inbox list`"
+        ) from exc
+
+
+def _withheld(
+    instance: PlaybillInstance,
+    envelopes: tuple[InboxItemEnvelope, ...],
+    access: BodyAccessContext | None,
+) -> dict[str, BodyRestricted]:
+    """Each item standing on a restricted kind's Captures, and its notice (C14).
+
+    An item's payload carries values its runs derived from the Captures they
+    consumed; it inherits their restriction. The Captures are the sightings'
+    own and each sighting run's journaled consumed set (one provenance read per
+    distinct run on the page); an unreadable record withholds the item.
+    """
+
+    from cruxible_core.service.discovery.runs import run_consumed_captures
+
+    reader = access or BodyAccessContext(principal_id="playbill-inbox")
+    if reader.can_read_restricted or not envelopes:
+        return {}
+    runs: dict[str, tuple[tuple[str, ...], bool]] = {}
+    digests: dict[str, set[str]] = {}
+    unknown: set[str] = set()
+    for envelope in envelopes:
+        found: set[str] = set()
+        for sighting in (envelope.first_sighting, *envelope.recent_sightings):
+            found.update(sighting.source_capture_digests)
+            if sighting.run_id not in runs:
+                runs[sighting.run_id] = run_consumed_captures(instance, sighting.run_id)
+            consumed, known = runs[sighting.run_id]
+            found.update(consumed)
+            if not known:
+                unknown.add(envelope.item_id)
+        digests[envelope.item_id] = found
+    resolver = capture_access_resolver(instance)
+    result: dict[str, BodyRestricted] = {}
+    for item_id, item_digests in digests.items():
+        _items, notice = resolver.withheld(sorted(item_digests), reader)
+        if notice is None and item_id in unknown:
+            notice = BodyRestricted(provenance_unavailable=True)
+        if notice is not None:
+            result[item_id] = notice
+    return result
+
+
+def service_list_inbox(
+    instance: PlaybillInstance,
+    *,
+    line: str | None = None,
+    status: InboxItemStatus | None = None,
+    limit: int,
+    cursor: str | None = None,
+    access: BodyAccessContext | None = None,
+) -> InboxList:
+    """One page; ``access`` decides whether restricted-derived previews show (C14)."""
+
+    if not 1 <= limit <= INBOX_LIST_MAX_LIMIT:
+        raise InboxRequestInvalid(
+            f"{InboxRequestInvalid.code}: limit must be between 1 and {INBOX_LIST_MAX_LIMIT}"
+        )
+    line_filter = inbox_line_filter(line)
+    try:
+        items, next_cursor = LineInboxStore(instance).page(
+            line=line_filter, status=status, limit=limit, cursor=cursor
+        )
+    except ValueError as exc:
+        raise InboxRequestInvalid(f"{InboxRequestInvalid.code}: {exc}") from exc
+    withheld = _withheld(instance, tuple(item.envelope for item in items), access)
+    return InboxList(
+        line_filter=line_filter,
+        status_filter=status,
+        entries=tuple(
+            InboxListEntry(
+                item=item.envelope,
+                payload_preview=None if item.envelope.item_id in withheld else item.preview,
+                withheld=withheld.get(item.envelope.item_id),
+            )
+            for item in items
+        ),
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+    )
+
+
+def service_get_inbox_item(
+    instance: PlaybillInstance, *, item: str, access: BodyAccessContext | None = None
+) -> InboxItem:
+    """One item whole; its payload is withheld when it stood on restricted Captures (C14)."""
+
+    store = LineInboxStore(instance)
+    stored = store.get(_resolve(store, item))
+    notice = _withheld(instance, (stored.envelope,), access).get(stored.envelope.item_id)
+    return InboxItem(
+        item=stored.envelope,
+        payload=None if notice is not None else stored.payload,
+        withheld=notice,
+        recent_dispositions=stored.recent_dispositions,
+    )
+
+
+def _record(
+    instance: PlaybillInstance,
+    *,
+    item: str,
+    disposition: InboxDisposition,
+    actor_context: GovernedActorContext,
+    decided_at: datetime,
+) -> InboxDispositionResult:
+    instance.require_writable()
+    store = LineInboxStore(instance)
+    envelope, recorded = store.record_disposition(
+        _resolve(store, item),
+        disposition,
+        actor=actor_context,
+        now=decided_at,
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+    return InboxDispositionResult(item=envelope, recorded=recorded)
+
+
+def service_acknowledge_inbox_item(
+    instance: PlaybillInstance,
+    *,
+    item: str,
+    actor_context: GovernedActorContext,
+    decided_at: datetime,
+) -> InboxDispositionResult:
+    return _record(
+        instance,
+        item=item,
+        disposition=InboxAcknowledged(actor_id=actor_context.actor_id, decided_at=decided_at),
+        actor_context=actor_context,
+        decided_at=decided_at,
+    )
+
+
+def service_dismiss_inbox_item(
+    instance: PlaybillInstance,
+    *,
+    item: str,
+    reason: str,
+    actor_context: GovernedActorContext,
+    decided_at: datetime,
+) -> InboxDispositionResult:
+    return _record(
+        instance,
+        item=item,
+        disposition=InboxDismissed(
+            actor_id=actor_context.actor_id, decided_at=decided_at, reason=reason
+        ),
+        actor_context=actor_context,
+        decided_at=decided_at,
+    )
+
+
+def _existing_target(instance: PlaybillInstance, target: InboxLinkTarget) -> InboxLinkTarget:
+    """The link target, canonicalized; a proposal or Subject that does not exist refuses."""
+
+    if isinstance(target, InboxLinkProposal):
+        from cruxible_core.service.proposals.proposals import (
+            service_resolve_playbill_proposal_selector,
+        )
+
+        resolved = service_resolve_playbill_proposal_selector(instance, selector=target.proposal_id)
+        return InboxLinkProposal(proposal_id=resolved.proposal_id)
+    from cruxible_core.indexes.subject_identity import tree_key_reader
+
+    head = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(head) as projection:
+        # The exact live Subject, else an alias of its kind, else its single key,
+        # else a retired one.
+        kind, _, subject_id = target.subject.partition("/")
+        resolution = resolve_subject_ref(
+            projection.typed.connection,
+            kind,
+            subject_id,
+            key_reader=tree_key_reader(instance.immutable_tree_at(head.git_oid)),
+        )
+    if resolution.ambiguous:
+        raise ReadRefusalError(
+            "cruxible.subject.key_ambiguous"
+            if resolution.via == "key"
+            else "cruxible.subject.alias_ambiguous",
+            f"{target.subject} names no Subject, and "
+            + ("a key" if resolution.via == "key" else "an alias")
+            + f" of {kind} names {len(resolution.candidates)} of them",
+            http_status=409,
+            candidates=resolution.candidates,
+            repair_line="Link the item to one of the listed Subjects",
+            field_path="target.subject",
+        )
+    if resolution.via == "identity":
+        return target
+    if resolution.via in {"alias", "key"} and resolution.ref is not None:
+        return InboxLinkSubject(subject=resolution.ref)
+    raise SubjectNotFoundError(
+        f"cruxible.subject_not_found: Subject {target.subject!r} is not accepted; "
+        "link the item to an accepted Subject or to the proposal that adds it"
+    )
+
+
+def service_link_inbox_item(
+    instance: PlaybillInstance,
+    *,
+    item: str,
+    target: InboxLinkTarget,
+    actor_context: GovernedActorContext,
+    decided_at: datetime,
+) -> InboxDispositionResult:
+    return _record(
+        instance,
+        item=item,
+        disposition=InboxLinked(
+            actor_id=actor_context.actor_id,
+            decided_at=decided_at,
+            target=_existing_target(instance, target),
+        ),
+        actor_context=actor_context,
+        decided_at=decided_at,
+    )
+
+
+__all__ = [
+    "InboxItemNotFoundError",
+    "InboxRequestInvalid",
+    "inbox_line_filter",
+    "service_acknowledge_inbox_item",
+    "service_dismiss_inbox_item",
+    "service_get_inbox_item",
+    "service_link_inbox_item",
+    "service_list_inbox",
+]

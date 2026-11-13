@@ -18,7 +18,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DOCKERFILE = REPO_ROOT / "deploy" / "runtime" / "Dockerfile"
-RUNTIME_STATE_DIR = "/var/lib/cruxible/server"
+RUNTIME_STATE_DIR = "/var/lib/cruxible"
 BOOTSTRAP_ENV = "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=bootstrap-secret"
 # Set to an already-pulled image reference (normally digest-pinned) to run this
 # suite against a published image instead of a locally built one. The publish

@@ -1,0 +1,197 @@
+"""Client-only Claim -> reviewed approval -> acceptance -> drift -> repair demo.
+
+Run only in a disposable, initialized instance with an empty demo namespace and
+an operator-provisioned reviewer signer. The CLI prompts before each approval
+and before each acceptance. Server initialization and key provisioning are
+operator responsibilities; this program never creates or discovers keys.
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections.abc import Callable
+from pathlib import Path
+
+from cruxible_client import (
+    Cardinality,
+    ClaimRole,
+    Cruxible,
+    Disposition,
+    Duration,
+    LocalEd25519ApprovalSigner,
+    ReferentSensitivity,
+    ReviewedProposal,
+)
+from cruxible_client.authoring.signing import ApprovalSigner
+from cruxible_client.contracts.policies import ClaimAdmissionPolicy, ClaimResolutionPolicy
+
+SUBJECT = "sdk.demo/patch-sla"
+SLUG = "sdk.demo.slug"
+PREDICATE = "sdk.demo.patch_sla"
+SOURCE = "corpus.sdk-demo"
+
+
+def run(
+    cx: Cruxible,
+    workspace: Path,
+    signer: ApprovalSigner,
+    *,
+    review_decision: Callable[[ReviewedProposal], bool],
+    accept_decision: Callable[[str], bool],
+) -> dict[str, object]:
+    """Callbacks make review and activation decisions explicit to the consumer."""
+    source = workspace / "sdk-demo.md"
+    catalog = workspace / ".cruxible" / "files.yaml"
+    if source.exists() or catalog.exists():
+        raise ValueError("Use a fresh disposable workspace; demo source/catalog already exists")
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
+        f"  - name: {SOURCE}\n    locator: sdk-demo.md\n"
+        "    document_id: sdk-demo\n    document_kind: runbook\n"
+        "    title: SDK demo\n    media_type: text/markdown\n"
+        "    governance_scope: [Document:sdk-demo]\n",
+        encoding="utf-8",
+    )
+    source.write_text("Patch within forty-eight hours.\n", encoding="utf-8")
+    # Core names every new Subject: demo items are named by their slug (one
+    # key, unique), so creating sdk.demo/patch-sla means creating it by that key.
+    slug = cx.claim_type(
+        predicate=SLUG,
+        subject_kinds=("sdk.demo",),
+        value_type="string{min_len: 1, max_len: 256}",
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=(),
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
+        ),
+        pins=(),
+        evidence_freshness=None,
+        canonical_form=("nfkc", "trim", "collapse_whitespace", "casefold"),
+    )
+    claim_type = cx.claim_type(
+        predicate=PREDICATE,
+        subject_kinds=("sdk.demo",),
+        value_type="int",
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=(SOURCE,),
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
+        ),
+        pins=(),
+        evidence_freshness=None,
+    )
+
+    def settle(intent):
+        if intent.refused:
+            raise ValueError(f"Preflight refused: {intent.diagnostics}")
+        intent.submit(accept="never")
+        proposal = intent.proposal
+        if proposal is None:
+            raise ValueError("Submission did not produce a proposal")
+        proposal_id = proposal.proposal_id
+        reviewed = proposal.review()
+        if not review_decision(reviewed):
+            raise RuntimeError(f"Left proposal {proposal_id} pending after review")
+        # Hold: acceptance is its own decision below, so the approval signs only.
+        proposal.approve(signer=signer, reviewed=reviewed, hold=True)
+        if not accept_decision(proposal_id):
+            raise RuntimeError(f"Left approved proposal {proposal_id} pending acceptance")
+        receipt = cx.activate(proposal_id)
+        if receipt.status != "accepted":
+            raise RuntimeError(f"Acceptance did not win: {receipt.status}")
+        world = cx.world()
+        assert receipt.accepted_coordinate is not None
+        assert world.coordinate.model_dump(mode="json") == receipt.accepted_coordinate.model_dump(
+            mode="json"
+        )
+        rows = world.prefetch(subjects=(SUBJECT,), predicates=(PREDICATE,))
+        if len(rows) != 1 or rows[0].verdict != "supported":
+            raise ValueError("Expected one supported demo contender after acceptance")
+        return rows[0]
+
+    opening = cx.changes(rationale="Name demo items, then state the first deadline.")
+    opening.claim_type(slug)
+    opening.subject_kind(name="sdk.demo", keys=(SLUG,), uniqueness="unique")
+    subject = opening.subject(cx.new_subject("sdk.demo", key="patch-sla"))
+    # A pending reference to the creation; core assigns SUBJECT when it lowers.
+    assert subject is not None and subject.creation is not None
+    opening.claim_type(claim_type)
+    opening.claim(
+        subject=subject,
+        predicate=claim_type.predicate,
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="Runbook gives the initial deadline.",
+        supported_by=cx.file("sdk-demo.md").anchor("forty-eight hours"),
+    )
+    first = settle(opening.prepare())
+    cx.audit()  # Free deterministic audit worklist.
+    source.write_text("Patch within forty-nine hours.\n", encoding="utf-8")
+    drift = cx.next(expiring_within=Duration.days(count=7))
+    assert any(row.reason == "citation_drifted" for row in drift.items)
+    repaired = settle(
+        cx.claim(
+            subject=SUBJECT,
+            predicate=PREDICATE,
+            value=49,
+            role=ClaimRole.NORMATIVE,
+            rationale="The source deadline changed; revise the same Claim with new evidence.",
+            supported_by=cx.file("sdk-demo.md").anchor("forty-nine hours"),
+            revises=first.claim_id,
+            dispositions={first.claim_id: Disposition.CONTRADICT},
+        ).prepare()
+    )
+    assert repaired.claim_id == first.claim_id and repaired.value == 49
+    after = cx.next(expiring_within=Duration.days(count=7))
+    assert not any(row.reason == "citation_drifted" for row in after.items)
+    return {
+        "claim_id": repaired.claim_id,
+        "value": repaired.value,
+        "verdict": repaired.verdict,
+        "revision": repaired.revision,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", required=True)
+    parser.add_argument("--instance", required=True)
+    parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--signer-id", required=True)
+    parser.add_argument("--private-key", type=Path, required=True)
+    parser.add_argument("--public-key", required=True)
+    parser.add_argument("--forbidden-root", type=Path, action="append", required=True)
+    args = parser.parse_args()
+    workspace = args.workspace.resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id=args.signer_id,
+        private_key_path=args.private_key,
+        expected_public_key=args.public_key,
+        forbidden_roots=(workspace, *args.forbidden_root),
+    )
+    cx = Cruxible.connect(target=args.target, instance=args.instance, workspace=workspace)
+
+    def decide(reviewed: ReviewedProposal) -> bool:
+        print(reviewed.details.model_dump_json(indent=2))
+        return input("Approve this exact reviewed candidate? [yes/no] ") == "yes"
+
+    result = run(
+        cx,
+        workspace,
+        signer,
+        review_decision=decide,
+        accept_decision=lambda proposal: input(f"Accept {proposal}? [yes/no] ") == "yes",
+    )
+    print(result)
+
+
+if __name__ == "__main__":
+    main()

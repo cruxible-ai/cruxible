@@ -1,0 +1,20 @@
+{
+  "name": "cruxible-plugins",
+  "interface": {
+    "displayName": "Cruxible"
+  },
+  "plugins": [
+    {
+      "name": "cruxible",
+      "source": {
+        "source": "local",
+        "path": "./plugins/cruxible"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

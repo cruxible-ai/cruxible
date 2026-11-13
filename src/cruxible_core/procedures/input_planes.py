@@ -1,0 +1,222 @@
+"""Frozen v1 Procedure run-input records and plane correspondence checks."""
+
+from __future__ import annotations
+
+import re
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
+from cruxible_client.contracts.procedures.models import CallNode, ReadNode
+from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.source_references import (
+    SemanticReadCoordinate,
+    validate_local_read_coordinate,
+)
+from cruxible_core.indexes.projection import AcceptedCoordinate
+
+_INPUT_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_CURSOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
+
+
+class _StrictInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _artifact_digest(value: str) -> str:
+    ArtifactDigest.from_tagged(value)
+    return value
+
+
+def _sha256(value: str) -> str:
+    Sha256Value.from_tagged(value)
+    return value
+
+
+def _cas_digest(value: str) -> str:
+    CasDigest.from_tagged(value)
+    return value
+
+
+# Every plane model shares these as plain functions. Reusing one model's
+# classmethod validator on another model (``field_validator(...)(Model._v)``)
+# binds per interpreter: on Python 3.11 and 3.12 pydantic resolves the bound
+# method to its bare ``(cls, value)`` function and calls it as an info-taking
+# validator, passing the value as ``cls`` and ``ValidationInfo`` as ``value``.
+def _input_name(value: str) -> str:
+    if not _INPUT_NAME_RE.fullmatch(value):
+        raise ValueError("Procedure input_name is not canonical")
+    return value
+
+
+class AcceptedStateRunInputV2(_StrictInputModel):
+    tag: Literal["playbill-accepted-state-run-input-v2"] = "playbill-accepted-state-run-input-v2"
+    kind: Literal["accepted_state_v2"] = "accepted_state_v2"
+    input_name: str
+    read_coordinate: SemanticReadCoordinate
+    query_definition_digest: str
+    parameters_digest: str
+    result_digest: str
+    effective_query_budgets: QueryBudgets
+    material_body_digest: str
+
+    _query = field_validator("query_definition_digest")(_artifact_digest)
+    _payloads = field_validator("parameters_digest", "result_digest")(_sha256)
+    _material = field_validator("material_body_digest")(_cas_digest)
+    _name = field_validator("input_name")(_input_name)
+
+
+class AcceptedClaimRunInputV1(_StrictInputModel):
+    tag: Literal["playbill-accepted-claim-run-input-v1"] = "playbill-accepted-claim-run-input-v1"
+    kind: Literal["accepted_claim"] = "accepted_claim"
+    input_name: str
+    read_coordinate: SemanticReadCoordinate
+    claim_type_digest: str
+    parameters_digest: str
+    result_digest: str
+    effective_query_budgets: QueryBudgets
+    material_body_digest: str
+
+    _claim_type = field_validator("claim_type_digest")(_artifact_digest)
+    _payloads = field_validator("parameters_digest", "result_digest")(_sha256)
+    _material = field_validator("material_body_digest")(_cas_digest)
+    _name = field_validator("input_name")(_input_name)
+
+
+def accepted_read_definition_digest(
+    value: AcceptedStateRunInputV2 | AcceptedClaimRunInputV1,
+) -> str:
+    return (
+        value.claim_type_digest
+        if isinstance(value, AcceptedClaimRunInputV1)
+        else value.query_definition_digest
+    )
+
+
+class LandedCaptureRunInputV1(_StrictInputModel):
+    tag: Literal["playbill-landed-capture-run-input-v1"] = "playbill-landed-capture-run-input-v1"
+    kind: Literal["landed_capture"] = "landed_capture"
+    input_name: str
+    capture_digest: str
+    capture_contract_digest: str
+    landing_cursor: str
+
+    _digests = field_validator("capture_digest", "capture_contract_digest")(_artifact_digest)
+    _name = field_validator("input_name")(_input_name)
+
+
+class ExhaustRunInputV1(_StrictInputModel):
+    tag: Literal["playbill-exhaust-run-input-v1"] = "playbill-exhaust-run-input-v1"
+    kind: Literal["exhaust"] = "exhaust"
+    input_name: str
+    journal_identity: str
+    first_cursor: str
+    last_cursor: str
+    reducer_or_query_digest: str
+    result_digest: str
+
+    _digests = field_validator("reducer_or_query_digest")(_artifact_digest)
+    _result = field_validator("result_digest")(_sha256)
+    _name = field_validator("input_name")(_input_name)
+
+
+ProcedureRunInputV1 = Annotated[
+    AcceptedStateRunInputV2 | AcceptedClaimRunInputV1 | LandedCaptureRunInputV1 | ExhaustRunInputV1,
+    Field(discriminator="kind"),
+]
+
+
+_PLANE_FOR_NODE: dict[str, str] = {
+    "read": "accepted_state",
+    "call": "landed_capture",
+}
+
+_PLANE_DIGEST_DOMAINS: dict[str, str] = {
+    "accepted_state_v2": "playbill-accepted-state-run-input-v2",
+    "accepted_claim": "playbill-accepted-claim-run-input-v1",
+    "landed_capture": "playbill-landed-capture-run-input-v1",
+    "exhaust": "playbill-exhaust-run-input-v1",
+}
+
+
+def run_input_digest(run_input: ProcedureRunInputV1) -> str:
+    """Address one admitted input by its exact plane record, never by its value."""
+
+    payload = run_input.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        _PLANE_DIGEST_DOMAINS[run_input.kind],
+        payload,
+    ).tagged
+
+
+def merge_run_input_vector(
+    *vectors: tuple[ProcedureRunInputV1, ...],
+) -> tuple[ProcedureRunInputV1, ...]:
+    """Return one sorted, name-unique discriminated union across the three planes."""
+
+    merged = [item for vector in vectors for item in vector]
+    ordered = tuple(sorted(merged, key=lambda item: item.input_name.encode("utf-8")))
+    names = tuple(item.input_name for item in ordered)
+    if len(set(names)) != len(names):
+        raise ValueError("Procedure run inputs must not reuse one input_name across planes")
+    return ordered
+
+
+def validate_run_input_vector(
+    inputs: tuple[ProcedureRunInputV1, ...],
+    *,
+    expected_accepted: AcceptedCoordinate,
+) -> None:
+    names = tuple(item.input_name for item in inputs)
+    if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+        raise ValueError("Procedure run inputs must be sorted and unique by input_name")
+    for item in inputs:
+        if isinstance(item, AcceptedStateRunInputV2 | AcceptedClaimRunInputV1):
+            validate_local_read_coordinate(
+                item.read_coordinate,
+                expected_accepted=expected_accepted,
+            )
+        if isinstance(item, LandedCaptureRunInputV1) and not _CURSOR_RE.fullmatch(
+            item.landing_cursor
+        ):
+            raise ValueError("capture landing cursor is not canonical")
+        if isinstance(item, ExhaustRunInputV1):
+            if not _CURSOR_RE.fullmatch(item.first_cursor) or not _CURSOR_RE.fullmatch(
+                item.last_cursor
+            ):
+                raise ValueError("exhaust cursor range is not canonical")
+            if item.first_cursor > item.last_cursor:
+                raise ValueError("exhaust cursor range must be increasing")
+
+
+def validate_node_input_plane(
+    node: ReadNode | CallNode,
+    run_input: ProcedureRunInputV1,
+) -> None:
+    """Refuse any attempt to relabel evidence between the three input planes."""
+
+    expected = _PLANE_FOR_NODE[node.kind]
+    actual = (
+        "accepted_state"
+        if run_input.kind in {"accepted_state_v2", "accepted_claim"}
+        else run_input.kind
+    )
+    if actual != expected:
+        raise ValueError(
+            f"Procedure node {node.node_id!r} requires {expected!r}, got {run_input.kind!r}"
+        )
+
+
+__all__ = [
+    "AcceptedStateRunInputV2",
+    "ExhaustRunInputV1",
+    "LandedCaptureRunInputV1",
+    "ProcedureRunInputV1",
+    "merge_run_input_vector",
+    "run_input_digest",
+    "validate_node_input_plane",
+    "validate_run_input_vector",
+]

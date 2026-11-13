@@ -1,0 +1,765 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from cruxible_client import Cruxible, contracts
+from cruxible_client.authoring.context import (
+    ContextResolutionError,
+    resolve_context,
+)
+from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
+from cruxible_client.contracts.authoring.models import AUTHORING_SDK_VERSION
+from cruxible_core.cli.context import CliContextState, save_cli_context
+from cruxible_core.cli.main import cli
+
+
+def _attach(
+    root: Path,
+    *,
+    instance_id: str,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+) -> None:
+    (root / ".cruxible").mkdir(parents=True)
+    (root / ".cruxible" / "coverage.json").write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "instance_id": instance_id,
+                "server_url": server_url,
+                "server_socket": server_socket,
+                "rules": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _clear_target_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "CRUXIBLE_SERVER_URL",
+        "CRUXIBLE_SERVER_SOCKET",
+        "CRUXIBLE_INSTANCE_ID",
+        "CRUXIBLE_WORKSPACE",
+        "CRUXIBLE_NO_WORKSPACE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _catalog(root: Path) -> None:
+    (root / ".cruxible" / "files.yaml").write_text(
+        """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: corpus.runbook
+    locator: corpus/runbook.md
+    document_id: runbook
+    document_kind: runbook
+    title: Runbook
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:runbook]
+""",
+        encoding="utf-8",
+    )
+
+
+def test_missing_workspace_start_stops_walk_without_probing_parents(tmp_path: Path) -> None:
+    missing = tmp_path / "missing" / "cwd"
+    _attach(tmp_path, instance_id="inst_parent", server_url="https://parent.example.test")
+
+    resolved = resolve_context(environ={}, remembered={}, cwd=missing, home=tmp_path / "home")
+
+    assert resolved.workspace == missing
+    assert resolved.workspace_source == "local"
+    assert resolved.instance_id is None
+
+
+def test_two_cwds_resolve_their_own_workspace_before_one_global_slot(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _attach(first, instance_id="inst_first", server_url="https://first.example.test")
+    _attach(second, instance_id="inst_second", server_url="https://second.example.test")
+    nested = first / "nested"
+    nested.mkdir()
+    remembered = {
+        "server_url": "https://global.example.test",
+        "instance_id": "inst_global",
+    }
+
+    first_result = resolve_context(
+        remembered=remembered,
+        environ={},
+        cwd=nested,
+    )
+    second_result = resolve_context(
+        remembered=remembered,
+        environ={},
+        cwd=second,
+    )
+
+    assert (first_result.server_url, first_result.instance_id) == (
+        "https://first.example.test",
+        "inst_first",
+    )
+    assert (second_result.server_url, second_result.instance_id) == (
+        "https://second.example.test",
+        "inst_second",
+    )
+    assert first_result.transport_source == first_result.instance_source == "workspace"
+    assert second_result.transport_source == second_result.instance_source == "workspace"
+
+
+def test_target_components_use_independent_explicit_env_workspace_global_precedence(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    socket = tmp_path / ".b2-workspace.sock"
+    _attach(workspace, instance_id="inst_workspace", server_socket=str(socket))
+
+    resolved = resolve_context(
+        server_url="https://explicit.example.test",
+        workspace=workspace,
+        remembered={
+            "server_url": "https://global.example.test",
+            "instance_id": "inst_global",
+        },
+        environ={"CRUXIBLE_INSTANCE_ID": "inst_environment"},
+    )
+
+    assert resolved.server_url == "https://explicit.example.test"
+    assert resolved.server_socket is None
+    assert resolved.instance_id == "inst_environment"
+    assert resolved.transport_source == "explicit"
+    assert resolved.instance_source == "environment"
+    assert resolved.workspace_source == "explicit"
+
+
+def test_incomplete_coverage_config_does_not_retarget_global_context(tmp_path: Path) -> None:
+    (tmp_path / ".cruxible").mkdir()
+    (tmp_path / ".cruxible" / "coverage.json").write_text(
+        '{"tag":"playbill-coverage-workspace-config-v2","rules":[]}',
+        encoding="utf-8",
+    )
+
+    resolved = resolve_context(
+        remembered={
+            "server_url": "https://global.example.test",
+            "instance_id": "inst_global",
+        },
+        environ={},
+        cwd=tmp_path,
+    )
+
+    assert not resolved.workspace_attached
+    assert resolved.transport_source == resolved.instance_source == "remembered"
+
+
+@pytest.mark.parametrize(
+    ("server_url", "environ"),
+    (
+        ("https://daemon-b.example.test", {}),
+        (None, {"CRUXIBLE_SERVER_URL": "https://daemon-b.example.test"}),
+    ),
+)
+def test_foreign_transport_cannot_inherit_a_remembered_instance(
+    tmp_path: Path,
+    server_url: str | None,
+    environ: dict[str, str],
+) -> None:
+    resolved = resolve_context(
+        server_url=server_url,
+        remembered={
+            "server_url": "https://daemon-a.example.test",
+            "instance_id": "inst_of_daemon_a",
+        },
+        environ=environ,
+        cwd=tmp_path,
+    )
+
+    assert resolved.server_url == "https://daemon-b.example.test"
+    assert resolved.instance_id is None
+    assert resolved.instance_source == "local"
+    assert resolved.instance_transport_mismatch is not None
+    assert "context_instance_transport_mismatch" in resolved.instance_transport_mismatch
+    assert "https://daemon-a.example.test" in resolved.instance_transport_mismatch
+    assert "https://daemon-b.example.test" in resolved.instance_transport_mismatch
+
+
+def test_remembered_instance_uses_its_explicitly_recorded_transport(tmp_path: Path) -> None:
+    resolved = resolve_context(
+        remembered={
+            "server_url": "https://daemon-a.example.test",
+            "instance_id": "inst_of_daemon_b",
+            "instance_transport": "https://daemon-b.example.test",
+        },
+        environ={},
+        cwd=tmp_path,
+    )
+
+    assert resolved.server_url == "https://daemon-a.example.test"
+    assert resolved.instance_id is None
+    assert resolved.instance_transport_mismatch is not None
+
+
+def test_workspace_walk_stops_at_home(tmp_path: Path) -> None:
+    ancestor = tmp_path / "Users"
+    home = ancestor / "victim"
+    project = home / "code" / "unrelated-project"
+    project.mkdir(parents=True)
+    _attach(
+        ancestor,
+        instance_id="inst_attacker",
+        server_url="https://attacker.example.test",
+    )
+
+    resolved = resolve_context(
+        remembered={
+            "server_url": "https://mine.example.test",
+            "instance_id": "inst_mine",
+        },
+        environ={},
+        cwd=project,
+        home=home,
+    )
+
+    assert resolved.workspace == project
+    assert resolved.server_url == "https://mine.example.test"
+    assert resolved.instance_id == "inst_mine"
+    assert resolved.workspace_source == "local"
+
+
+def test_outside_home_an_inner_repository_never_hides_the_enclosing_workspace(
+    tmp_path: Path,
+) -> None:
+    """F-001: a Git checkout inside a bound plain folder acts on that folder's instance."""
+
+    home = tmp_path / "home"
+    home.mkdir()
+    project = tmp_path / "external" / "project"
+    _attach(project, instance_id="inst_project", server_url="https://project.example.test")
+    repository = project / "vendor" / "repo"
+    nested = repository / "src" / "pkg"
+    nested.mkdir(parents=True)
+    (repository / ".git").mkdir()
+    (repository / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+    (repository / ".git" / "objects").mkdir()
+
+    resolved = resolve_context(
+        remembered={"server_url": "https://other.example.test", "instance_id": "inst_other"},
+        environ={},
+        cwd=nested,
+        home=home,
+    )
+
+    assert resolved.workspace == project.resolve()
+    assert (resolved.instance_id, resolved.instance_source) == ("inst_project", "workspace")
+
+
+def test_the_home_directory_binding_is_never_read(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    project = home / "a" / "b" / "c"
+    project.mkdir(parents=True)
+    (home / ".cruxible").mkdir()
+    (home / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
+
+    resolved = resolve_context(
+        remembered={
+            "server_url": "https://mine.example.test",
+            "instance_id": "inst_mine",
+        },
+        environ={},
+        cwd=project,
+        home=home,
+    )
+
+    # The home directory's .cruxible is the daemon state root: never read.
+    assert resolved.instance_id == "inst_mine"
+    assert resolved.warnings == ()
+
+
+def test_invalid_binding_at_cwd_is_still_a_refusal(tmp_path: Path) -> None:
+    (tmp_path / ".cruxible").mkdir()
+    (tmp_path / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ContextResolutionError, match="not valid JSON"):
+        resolve_context(environ={}, cwd=tmp_path, home=tmp_path / "home")
+
+
+def test_no_workspace_escape_uses_the_remembered_context(tmp_path: Path) -> None:
+    _attach(
+        tmp_path,
+        instance_id="inst_workspace",
+        server_url="https://workspace.example.test",
+    )
+
+    resolved = resolve_context(
+        remembered={
+            "server_url": "https://global.example.test",
+            "instance_id": "inst_global",
+        },
+        environ={"CRUXIBLE_NO_WORKSPACE": "1"},
+        cwd=tmp_path,
+    )
+
+    assert resolved.workspace_attached is False
+    assert resolved.server_url == "https://global.example.test"
+    assert resolved.instance_id == "inst_global"
+
+
+def test_cli_never_reads_the_home_directory_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_target_env(monkeypatch)
+    home = tmp_path / "home"
+    project = home / "project" / "nested"
+    project.mkdir(parents=True)
+    (home / ".cruxible").mkdir()
+    (home / ".cruxible" / "coverage.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(project)
+    save_cli_context(
+        CliContextState(
+            server_url="https://global.example.test",
+            instance_id="inst_global",
+        )
+    )
+
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert "warning" not in result.stderr
+    assert json.loads(result.stdout)["instance_id"] == "inst_global"
+
+
+def test_cli_no_workspace_option_bypasses_an_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_target_env(monkeypatch)
+    _attach(
+        tmp_path,
+        instance_id="inst_workspace",
+        server_url="https://workspace.example.test",
+    )
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(tmp_path)
+    save_cli_context(
+        CliContextState(
+            server_url="https://global.example.test",
+            instance_id="inst_global",
+        )
+    )
+
+    result = CliRunner().invoke(cli, ["--no-workspace", "context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["instance_id"] == "inst_global"
+    assert payload["workspace_attached"] is False
+
+
+def test_no_binding_beyond_a_nearer_workspace_directory_is_followed(tmp_path: Path) -> None:
+    coverage_root = tmp_path / "coverage-root"
+    sources_root = coverage_root / "sources-root"
+    project = sources_root / "project"
+    project.mkdir(parents=True)
+    _attach(
+        coverage_root,
+        instance_id="inst_coverage",
+        server_url="https://coverage.example.test",
+    )
+    (sources_root / ".cruxible").mkdir()
+    (sources_root / ".cruxible" / "files.yaml").write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
+        encoding="utf-8",
+    )
+
+    resolved = resolve_context(environ={}, remembered={}, cwd=project, home=tmp_path)
+
+    assert resolved.workspace == sources_root
+    assert resolved.workspace_binding_path is None
+    assert resolved.instance_id is None
+
+
+def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
+    coverage_root = tmp_path / "coverage-root"
+    project = coverage_root / "sources-root" / "project"
+    project.mkdir(parents=True)
+    _attach(
+        coverage_root,
+        instance_id="inst_coverage",
+        server_url="https://coverage.example.test",
+    )
+    # A root-level catalog nearer than the binding names another workspace root.
+    catalog = coverage_root / "sources-root" / "files.yaml"
+    catalog.write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContextResolutionError) as raised:
+        resolve_context(environ={}, cwd=project, home=tmp_path)
+
+    message = str(raised.value)
+    assert "workspace_binding_conflict" in message
+    assert str(coverage_root / ".cruxible" / "coverage.json") in message
+    assert str(catalog) in message
+    assert "repair:" in message
+
+
+def test_workspace_binding_symlink_escape_names_the_selected_source(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside.json"
+    (workspace / ".cruxible").mkdir(parents=True)
+    outside.write_text(
+        '{"server_url":"https://outside.example.test","instance_id":"inst_outside"}',
+        encoding="utf-8",
+    )
+    os.symlink(outside, workspace / ".cruxible" / "coverage.json")
+
+    with pytest.raises(ContextResolutionError, match="selected from.*escapes workspace"):
+        resolve_context(environ={}, cwd=workspace)
+
+
+def test_cli_context_show_reports_environment_override_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_target_env(monkeypatch)
+    workspace = tmp_path / "workspace"
+    _attach(workspace, instance_id="inst_workspace", server_url="https://workspace.example.test")
+    context_path = tmp_path / "context.json"
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_path))
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", "https://environment.example.test")
+    monkeypatch.chdir(workspace)
+    save_cli_context(CliContextState(instance_id="inst_global"))
+
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["server_url"] == "https://environment.example.test"
+    assert payload["transport_source"] == "environment"
+    assert payload["instance_id"] == "inst_workspace"
+    assert payload["instance_source"] == "workspace"
+    assert payload["workspace"] == str(workspace)
+    assert payload["workspace_attached"] is True
+
+
+def test_context_show_reports_typed_daemon_config_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_target_env(monkeypatch)
+    workspace = tmp_path / "workspace"
+    socket = tmp_path / "daemon.sock"
+    _attach(workspace, instance_id="inst_workspace", server_socket=str(socket))
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+
+    class StubClient:
+        def host_workspace_registration(
+            self, instance_id: str
+        ) -> contracts.HostWorkspaceRegistration:
+            assert instance_id == "inst_workspace"
+            return contracts.HostWorkspaceRegistration(
+                instance_id=instance_id,
+                status="not_registered",
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.context._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["workspace_config_attachment"]["status"] == "attached"
+    assert payload["daemon_host_registration"]["status"] == "not_registered"
+    assert payload["attachment_disagreement"] == {
+        "tag": "playbill-workspace-attachment-disagreement-v1",
+        "code": "daemon_registration_missing",
+        "detail": "workspace config is attached but the daemon host is not registered",
+    }
+
+
+def test_context_show_names_workspace_attach_for_missing_local_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_target_env(monkeypatch)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    socket = tmp_path / "daemon.sock"
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(socket))
+    monkeypatch.setenv("CRUXIBLE_INSTANCE_ID", "inst_workspace")
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+
+    class StubClient:
+        def host_workspace_registration(
+            self, instance_id: str
+        ) -> contracts.HostWorkspaceRegistration:
+            return contracts.HostWorkspaceRegistration(
+                instance_id=instance_id,
+                status="registered",
+                workspace_path=str(workspace.resolve()),
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.context._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["attachment_disagreement"] == {
+        "tag": "playbill-workspace-attachment-disagreement-v1",
+        "code": "workspace_config_missing",
+        "detail": "daemon host is registered here but the workspace config is absent",
+        "repair": "cruxible workspace attach --instance-id inst_workspace",
+    }
+
+
+def test_sdk_connect_consumes_the_shared_workspace_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_target_env(monkeypatch)
+    workspace = tmp_path / "workspace"
+    socket = tmp_path / ".b2-workspace.sock"
+    _attach(workspace, instance_id="inst_workspace", server_socket=str(socket))
+    _catalog(workspace)
+    context_path = tmp_path / "context.json"
+    context_path.write_text(
+        '{"server_url":"https://global.example.test","instance_id":"inst_global"}',
+        encoding="utf-8",
+    )
+    connection: dict[str, object] = {}
+    head = contracts.AcceptedCoordinate(
+        git_oid="a" * 40,
+        semantic_root="sha256:" + "1" * 64,
+        generation_root="sha256:" + "2" * 64,
+        compiler_digest="sha256:" + "3" * 64,
+    )
+    heads_read: list[str] = []
+
+    class StubClient:
+        def __init__(self, **values: object) -> None:
+            connection.update(values)
+
+        def _version_info(self) -> tuple[str, str]:
+            return AUTHORING_SDK_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
+
+        def whoami(self, instance_id: str) -> object:
+            from types import SimpleNamespace
+
+            heads_read.append(instance_id)
+            return SimpleNamespace(coordinate=head)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", StubClient)
+
+    playbill = Cruxible.connect(context=context_path, workspace=workspace)
+
+    assert connection["base_url"] is None
+    assert connection["socket_path"] == str(socket)
+    assert playbill._instance_id == "inst_workspace"
+    assert playbill._workspace == workspace
+    # Connecting reads the head once for the resolved instance; it does not orient.
+    assert heads_read == ["inst_workspace"]
+    assert playbill.coordinate.git_oid == head.git_oid
+
+
+def _connect_capturing(
+    monkeypatch: pytest.MonkeyPatch, context_path: Path, workspace: Path
+) -> dict[str, object]:
+    connection: dict[str, object] = {}
+    head = contracts.AcceptedCoordinate(
+        git_oid="a" * 40,
+        semantic_root="sha256:" + "1" * 64,
+        generation_root="sha256:" + "2" * 64,
+        compiler_digest="sha256:" + "3" * 64,
+    )
+
+    class StubClient:
+        def __init__(self, **values: object) -> None:
+            connection.update(values)
+
+        def _version_info(self) -> tuple[str, str]:
+            return AUTHORING_SDK_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
+
+        def whoami(self, instance_id: str) -> object:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(coordinate=head)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", StubClient)
+    Cruxible.connect(context=context_path, workspace=workspace)
+    return connection
+
+
+def test_sdk_connect_acts_as_the_principal_init_remembered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # `cruxible init` remembers the owner's settings file; the SDK acts as that
+    # principal exactly as the CLI does, unless the process names its own.
+    _clear_target_env(monkeypatch)
+    for name in ("CRUXIBLE_PRINCIPAL_ID", "CRUXIBLE_PRINCIPAL_KEY", "CRUXIBLE_SERVER_BEARER_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    socket = (tmp_path / "d.sock").resolve()
+    settings = tmp_path / "keys" / "cruxible.env"
+    settings.parent.mkdir()
+    settings.write_text(
+        f"export CRUXIBLE_SERVER_SOCKET={socket}\n"
+        "export CRUXIBLE_INSTANCE_ID=inst_a\n"
+        "export CRUXIBLE_PRINCIPAL_ID=ada\n"
+        f"export CRUXIBLE_PRINCIPAL_KEY={tmp_path / 'keys' / 'key.pem'}\n"
+        "export CRUXIBLE_SERVER_BEARER_TOKEN=tok-ada\n",
+        encoding="utf-8",
+    )
+    context_path = tmp_path / "context.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "server_socket": str(socket),
+                "instance_id": "inst_a",
+                "principals": {
+                    f"inst_a@unix://{socket}": {"active": "ada", "settings": {"ada": str(settings)}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] == "ada"
+    assert connection["token"] == "tok-ada"
+
+    # A process that names its own principal keeps it, and is offered no token.
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "grace")
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] == "grace"
+    assert connection["token"] is None
+
+    # A process holding only its own key (an agent's) is never given the remembered
+    # owner's identity or token, and no principal is inferred from the key.
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID")
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", str(tmp_path / "agent" / "agent.pem"))
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] is None
+    assert connection["token"] is None
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_KEY")
+
+    # A settings file written for another endpoint is never offered here.
+    settings.write_text(
+        settings.read_text(encoding="utf-8").replace(str(socket), str(tmp_path / "other.sock")),
+        encoding="utf-8",
+    )
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] is None
+    assert connection["token"] is None
+
+
+def test_context_connect_through_a_symlinked_socket_dir_keeps_the_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # macOS's system temp directory is a symlink into /private; the remembered
+    # instance must survive resolution comparing realpaths.
+    _clear_target_env(monkeypatch)
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(cwd)
+
+    connected = CliRunner().invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-socket",
+            str(alias / "d.sock"),
+            "--instance-id",
+            "inst_alias",
+        ],
+    )
+    assert connected.exit_code == 0, connected.output
+    stored = json.loads((tmp_path / "context.json").read_text())
+    assert stored["server_socket"] == str((real / "d.sock").resolve())
+    assert stored["instance_transport"] == f"unix://{(real / 'd.sock').resolve()}"
+
+    shown = CliRunner().invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0, shown.output
+    payload = json.loads(shown.stdout)
+    assert payload["instance_id"] == "inst_alias"
+    assert payload["remembered_instance_ignored"] is None
+
+
+def test_an_unresolved_remembered_socket_alias_still_binds_its_instance(
+    tmp_path: Path,
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+
+    resolved = resolve_context(
+        remembered={
+            "server_socket": str(alias / "d.sock"),
+            "instance_id": "inst_alias",
+            "instance_transport": f"unix://{alias / 'd.sock'}",
+        },
+        environ={},
+        cwd=tmp_path,
+    )
+
+    assert resolved.instance_id == "inst_alias"
+    assert resolved.instance_transport_mismatch is None
+
+
+def test_context_show_says_why_a_remembered_instance_was_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_target_env(monkeypatch)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(tmp_path)
+    save_cli_context(
+        CliContextState(
+            server_url="https://daemon-a.example.test",
+            instance_id="inst_of_daemon_a",
+        )
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", "https://daemon-b.example.test")
+
+    shown = CliRunner().invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0, shown.output
+    payload = json.loads(shown.stdout)
+    assert payload["instance_id"] is None
+    assert "context_instance_transport_mismatch" in payload["remembered_instance_ignored"]
+
+    text = CliRunner().invoke(cli, ["context", "show"])
+    assert text.exit_code == 0, text.output
+    assert "Remembered instance ignored: context_instance_transport_mismatch" in text.output

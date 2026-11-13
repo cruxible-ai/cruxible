@@ -1,0 +1,777 @@
+"""End-to-end proof that a Cruxible instance is drivable from the CLI alone.
+
+This is the TauBench-runnable surface, written as the harness recipe it has to
+support: allocate a host, bootstrap it, seed a ClaimType, a Subject, two Claims,
+and a named entrypoint through the governed propose/activate loop, then
+read the resulting accepted state back through every read the loop publishes --
+orient, query with its replay receipt, get, and the
+deterministic floor.
+
+Every step goes through ``cruxible ...`` argv. Nothing here reaches into a
+service, and no fixture writes accepted state on the test's behalf.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from click.testing import CliRunner, Result
+from fastapi.testclient import TestClient
+
+from cruxible_client import CruxibleClient, contracts
+from cruxible_client.contracts.authoring.inputs import (
+    ClaimInput,
+    LiteralObjectInput,
+    QueryDefinitionInput,
+    WorkingSelectionInput,
+)
+from cruxible_client.contracts.captures import (
+    foreign_source_capture_contract,
+)
+from cruxible_client.contracts.errors import BootstrapError
+from cruxible_client.contracts.floor import FLOOR_LOCAL_PATHS, FLOOR_MANIFEST_PATH
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
+)
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_core.cli.commands.playbill import _local_workspace_root
+from cruxible_core.cli.main import cli
+from cruxible_core.runtime.permissions import reset_permissions
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.server.app import create_app
+from cruxible_core.server.registry import reset_registry
+from tests.core_support._claim_type_support import claim_type_input_from_artifact
+from tests.core_support._knowledge_loop_support import (
+    PREDICATE,
+    QUERY_NAME,
+    SUBJECT_KIND,
+    work_item_query,
+)
+from tests.core_support._subject_kind_support import create_by_slug_input
+from tests.test_claims.test_claims import _claim_type
+
+CREATOR_ID = "operator"
+RECOVERY_ID = "recovery"
+SIGNER_ID = "reviewer"
+CLAIM_SOURCE_ID = "workspace.claim-status"
+
+
+class _Cli:
+    """Invoke the real CLI against one served daemon, as an operator would."""
+
+    def __init__(self, runner: CliRunner, key_dir: Path) -> None:
+        self._runner = runner
+        self.private_key = key_dir / f"{SIGNER_ID}.ed25519"
+        self.creator_private_key = key_dir / f"{CREATOR_ID}.ed25519"
+        self.recovery_private_key = key_dir / f"{RECOVERY_ID}.ed25519"
+
+    def run(self, *args: str) -> Result:
+        result = self._runner.invoke(cli, list(args))
+        assert result.exit_code == 0, f"cruxible {' '.join(args)}\n{result.output}"
+        return result
+
+    def json(self, *args: str) -> Any:
+        # Authoring commands already emit JSON unconditionally.
+        extra = () if args[:1] == ("authoring",) else ("--json",)
+        return json.loads(self.run(*args, *extra).stdout)
+
+    def accept(self, proposal_id: str) -> dict[str, Any]:
+        """Activate the admitted candidate, exactly as an operator does."""
+
+        activated = self.json("proposal", "activate", proposal_id)
+        assert activated["status"] == "accepted", activated
+        return activated
+
+    def bootstrap(self, tmp_path: Path) -> dict[str, Any]:
+        """Bootstrap an optional two-ordinary mode plus recovery custody."""
+
+        custody = tmp_path / "custody"
+        recovery_custody = tmp_path / "recovery-custody"
+        initialized = self.json(
+            "init",
+            "--key-dir",
+            str(custody),
+            "--principal-id",
+            CREATOR_ID,
+            "--reviewer-key-dir",
+            str(custody),
+            "--recovery-key-dir",
+            str(recovery_custody),
+            "--recovery-principal-id",
+            RECOVERY_ID,
+        )
+        self.recovery_private_key = recovery_custody / f"{RECOVERY_ID}.ed25519"
+        return initialized
+
+
+def _write(path: Path, payload: Any) -> str:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return str(path)
+
+
+def _proposal_id(inspection: dict[str, Any]) -> str:
+    if inspection.get("tag") == "playbill-claim-type-input-proposal-result-v1":
+        inspection = inspection["proposal"]
+    return str(inspection["proposal"]["admission"]["proposal_id"])
+
+
+def _author_and_accept(
+    cruxible: _Cli,
+    path: Path,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    submitted = cruxible.json(
+        "authoring",
+        "submit",
+        _write(path, payload),
+        "--no-accept",
+    )
+    accepted = cruxible.accept(str(submitted["status"]["proposal_id"]))
+    return submitted, accepted
+
+
+def _claim_authoring(subject_id: str, value: str) -> ClaimInput:
+    """One sanctioned self-source input against accepted Claim dependencies."""
+
+    return ClaimInput(
+        kind="claim",
+        subject=f"project.work_item/{subject_id}",
+        predicate=_claim_type().predicate,
+        object=LiteralObjectInput(kind="literal", value=value),
+        role="observation",
+        rationale=f"The reviewed status of {subject_id} is {value}.",
+        source=WorkingSelectionInput(kind="working_selection", source_id=CLAIM_SOURCE_ID),
+        citation_role="evidence",
+    )
+
+
+@pytest.fixture
+def served_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[_Cli]:
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    reset_permissions()
+    reset_registry()
+    get_playbill_manager().clear()
+
+    with TestClient(create_app()) as transport:
+        client = CruxibleClient(base_url="http://cruxible")
+        client._client = transport  # type: ignore[assignment]
+        monkeypatch.setattr(
+            "cruxible_core.cli.commands._common._get_client",
+            lambda: client,
+        )
+        yield _Cli(CliRunner(), tmp_path / "custody")
+
+    get_playbill_manager().clear()
+    reset_registry()
+    reset_permissions()
+
+
+def test_cli_init_key_dir_alone_bootstraps_a_solo_instance(
+    served_cli: _Cli,
+    tmp_path: Path,
+) -> None:
+    cruxible = served_cli
+    host = cruxible.json("--server-url", "http://cruxible", "host", "create")
+    custody = tmp_path / "solo-custody"
+    initialized = cruxible.json(
+        "init",
+        "--key-dir",
+        str(custody),
+        "--principal-id",
+        CREATOR_ID,
+    )
+    assert initialized["instance_id"] == host["instance_id"]
+    assert initialized["approval_policy_mode"] == "self_approval_allowed"
+    assert (custody / f"{CREATOR_ID}.ed25519").is_file()
+    assert not (custody / f"{SIGNER_ID}.ed25519").exists()
+
+
+def test_cli_independent_approval_flag_validates_before_provisioning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached: list[str] = []
+
+    def unexpected_key(*_args: object, **_kwargs: object) -> object:
+        reached.append("key")
+        raise AssertionError("invalid arguments must not provision custody")
+
+    def unexpected_client() -> object:
+        reached.append("server")
+        raise AssertionError("invalid arguments must not contact the server")
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.generate_client_principal_key",
+        unexpected_key,
+    )
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", unexpected_client)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://init.example.test",
+            "init",
+            "--key-dir",
+            str(tmp_path / "solo-custody"),
+            "--require-independent-approval",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "requires --reviewer-key-dir" in result.output
+    assert not (tmp_path / "solo-custody").exists()
+    assert reached == []
+
+
+def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    custody = tmp_path.parent / "retry-custody"
+    calls = 0
+
+    class StubClient:
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
+            return contracts.HostInspection(
+                instance_id=instance_id,
+                managed_root=None,
+                workspace_root=None,
+                compatibility="uninitialized",
+                writable=False,
+            )
+
+        def init(
+            self,
+            instance_id: str,
+            *,
+            principals: list[dict[str, object]],
+            operating_profile: str,
+            require_independent_approval: bool,
+            seed: bool = True,
+            git_object_format: str | None = None,
+            mirror_url: str | None = None,
+        ) -> contracts.InitResult:
+            nonlocal calls
+            calls += 1
+            assert instance_id == "inst_retry"
+            assert operating_profile == "local"
+            assert require_independent_approval is False
+            if calls == 1:
+                raise BootstrapError("simulated response loss")
+            coordinate = contracts.AcceptedCoordinate(
+                git_oid="1" * 64,
+                semantic_root="sha256:" + "2" * 64,
+                generation_root="sha256:" + "3" * 64,
+                compiler_digest="sha256:" + "4" * 64,
+            )
+            return contracts.InitResult(
+                instance_id=instance_id,
+                coordinate=coordinate,
+                trust_root={"principals": principals},
+                recovery_posture="normal",
+                approval_policy_mode="self_approval_allowed",
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
+            )
+
+    stub = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: stub)
+    args = [
+        "--server-url",
+        "https://init.example.test/",
+        "--instance-id",
+        "inst_retry",
+        "init",
+        "--key-dir",
+        str(custody),
+        "--principal-id",
+        CREATOR_ID,
+        "--json",
+    ]
+    first = CliRunner().invoke(cli, args)
+    assert first.exit_code == 1
+    private_key = custody / f"{CREATOR_ID}.ed25519"
+    marker = custody / f".cruxible-init-resume-{CREATOR_ID}.json"
+    original_private = private_key.read_bytes()
+    assert marker.is_file()
+
+    retry = CliRunner().invoke(cli, args)
+    assert retry.exit_code == 0, retry.output
+    payload = json.loads(retry.stdout)
+    assert payload["workspace_advertisement"]["status"] == "not_attached"
+    assert payload["workspace_advertisement"]["workspace_path"] is None
+    assert payload["workspace_advertisement"]["failure_code"] is None
+    assert "git_workspace_note" not in payload
+    assert private_key.read_bytes() == original_private
+    assert not marker.exists()
+    assert calls == 2
+
+    # Init already ran for this custody: refused, with the ways forward, before
+    # anything is written or sent.
+    refused_reuse = CliRunner().invoke(cli, args)
+    assert refused_reuse.exit_code == 2
+    assert "so init already ran for it; nothing was written" in refused_reuse.output
+    # The ways forward never wipe what the CLI remembers (no `context clear`).
+    assert "cruxible context clear" not in refused_reuse.output
+    assert "cruxible host create" in refused_reuse.output
+    assert calls == 2
+
+
+@pytest.mark.parametrize("command", ["host", "init"])
+def test_tcp_in_git_worktree_refuses_before_remote_or_key_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.chdir(workspace)
+    reached: list[str] = []
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: reached.append("client"),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.generate_client_principal_key",
+        lambda *_args, **_kwargs: reached.append("key"),
+    )
+    leaf = ["host", "create"]
+    if command == "init":
+        leaf = [
+            "--instance-id",
+            "inst_tcp",
+            "init",
+            "--key-dir",
+            str(tmp_path / "outside-custody"),
+        ]
+    result = CliRunner().invoke(cli, ["--server-url", "https://remote.test", *leaf])
+
+    assert result.exit_code == 2
+    assert "TCP cannot attach a daemon-local workspace" in result.output
+    assert "Use --server-socket" in result.output
+    assert reached == []
+
+
+def test_cli_custody_uses_the_git_workspace_across_working_directories(
+    served_cli: _Cli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cruxible = served_cli
+    cruxible.json("--server-url", "http://cruxible", "host", "create")
+    workspace = tmp_path / "workspace"
+    init_directory = workspace / "init-directory"
+    approval_directory = tmp_path / "operator" / "approval-directory"
+    custody = approval_directory / "custody"
+    init_directory.mkdir(parents=True)
+    approval_directory.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._refuse_tcp_workspace_operation",
+        lambda _workspace: None,
+    )
+
+    monkeypatch.chdir(init_directory)
+    cruxible.json(
+        "init",
+        "--key-dir",
+        str(custody),
+        "--principal-id",
+        CREATOR_ID,
+        "--reviewer-key-dir",
+        str(custody),
+    )
+    proposed = cruxible.json(
+        "claim-type",
+        "propose",
+        "--input",
+        _write(tmp_path / "claim-type-custody.json", claim_type_input_from_artifact(_claim_type())),
+        "--name",
+        "custody-workspace",
+    )
+
+    monkeypatch.chdir(approval_directory)
+    approved = cruxible.json(
+        "proposal",
+        "approve",
+        _proposal_id(proposed),
+        "--signer-id",
+        SIGNER_ID,
+        "--key",
+        str(custody / f"{SIGNER_ID}.ed25519"),
+        "--yes",
+    )
+
+    assert approved["signer_id"] == SIGNER_ID
+
+
+def test_cli_custody_refusal_names_the_custody_and_workspace_roots(
+    served_cli: _Cli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cruxible = served_cli
+    cruxible.json("--server-url", "http://cruxible", "host", "create")
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
+    nested = workspace / "nested"
+    nested.mkdir()
+    custody = workspace / "custody"
+    monkeypatch.chdir(nested)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._refuse_tcp_workspace_operation",
+        lambda _workspace: None,
+    )
+
+    refused = CliRunner().invoke(
+        cli,
+        [
+            "init",
+            "--key-dir",
+            str(custody),
+            "--principal-id",
+            CREATOR_ID,
+        ],
+    )
+
+    assert refused.exit_code != 0
+    assert f"custody path='{custody}'" in refused.output
+    assert f"forbidden root='{workspace}'" in refused.output
+
+
+def test_local_git_workspace_ignores_inherited_repository_selection(
+    served_cli: _Cli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd_workspace = tmp_path / "cwd-workspace"
+    inherited_workspace = tmp_path / "inherited-workspace"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(cwd_workspace)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(inherited_workspace)], check=True)
+    nested = cwd_workspace / "nested"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+    monkeypatch.setenv("GIT_DIR", str(inherited_workspace / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(inherited_workspace))
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(cwd_workspace))
+
+    resolution = _local_workspace_root()
+
+    assert resolution.workspace_root == cwd_workspace.resolve()
+    assert resolution.note is not None
+    assert resolution.note.code == "inherited_git_workspace_ignored"
+    assert resolution.note.cwd_workspace_root == cwd_workspace.resolve()
+    assert resolution.note.inherited_workspace_root == inherited_workspace.resolve()
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._refuse_tcp_workspace_operation",
+        lambda _workspace: None,
+    )
+    rendered = served_cli.run("--server-url", "http://cruxible", "host", "create", "--json")
+    payload = json.loads(rendered.stdout)
+    assert "inherited_git_workspace_ignored" in rendered.stderr
+    assert payload["git_workspace_note"] == {
+        "code": "inherited_git_workspace_ignored",
+        "cwd_workspace_root": str(cwd_workspace.resolve()),
+        "inherited_workspace_root": str(inherited_workspace.resolve()),
+    }
+
+
+def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
+    served_cli: _Cli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cruxible = served_cli
+
+    # 1. Allocate a host and bootstrap it. The host is remembered, so every
+    #    later command names neither the daemon nor the instance.
+    host = cruxible.json("--server-url", "http://cruxible", "host", "create")
+    assert host["status"] == "created"
+    initialized = cruxible.bootstrap(tmp_path)
+    assert initialized["instance_id"] == host["instance_id"]
+    assert cruxible.creator_private_key.is_file()
+
+    # 2. Seed the predicate vocabulary.
+    source_contract = foreign_source_capture_contract(CLAIM_SOURCE_ID)
+    claim_type = _claim_type().model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="coordinator-self-source",
+                        claim_roles=("normative", "observation"),
+                        capture_contracts=(source_contract.identity.name,),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+    proposed = cruxible.json(
+        "claim-type",
+        "propose",
+        "--input",
+        _write(
+            tmp_path / "claim-type.json",
+            claim_type_input_from_artifact(claim_type, source_ids=(CLAIM_SOURCE_ID,)),
+        ),
+        "--name",
+        "seed-claim-type",
+    )
+    # The propose lands it: policy and this caller allow it (one landing rule).
+    assert proposed["proposal"]["outcome"]["status"] == "landed", proposed
+
+    # 3. Seed one Subject through the durable authoring coordinator.
+    _author_and_accept(
+        cruxible,
+        tmp_path / "subject-input.json",
+        create_by_slug_input(SUBJECT_KIND, "wi-42", declare=True).model_dump(mode="json"),  # type: ignore[attr-defined]
+    )
+
+    # 4. Two Claims through the durable AuthoringIntent coordinator. The second
+    #    Subject is admitted first because tagless Claim input resolves accepted
+    #    dependencies instead of carrying a private direct-writer closure.
+    claim_identities: list[str] = []
+    # The file catalog names the one file both Claims cite (bind checks it).
+    source_file = tmp_path / "claim-status.md"
+    source_file.write_text("status: ready\nstatus: blocked\n", encoding="utf-8")
+    (tmp_path / ".cruxible").mkdir(exist_ok=True)
+    (tmp_path / ".cruxible" / "files.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        f"  - name: {CLAIM_SOURCE_ID}\n"
+        "    locator: claim-status.md\n",
+        encoding="utf-8",
+    )
+    for subject_id, value in (("wi-42", "ready"), ("wi-43", "blocked")):
+        if subject_id == "wi-43":
+            _author_and_accept(
+                cruxible,
+                tmp_path / "subject-wi-43-input.json",
+                create_by_slug_input(SUBJECT_KIND, "wi-43").model_dump(mode="json"),  # type: ignore[attr-defined]
+            )
+        payload_file = _write(
+            tmp_path / f"claim-{subject_id}.json",
+            _claim_authoring(subject_id, value).model_dump(mode="json"),
+        )
+        bound = cruxible.json(
+            "authoring",
+            "bind",
+            "--workspace-root",
+            str(tmp_path),
+            "--file",
+            str(source_file),
+            "--anchor",
+            f"status: {value}",
+            "--payload-file",
+            payload_file,
+        )
+        intent_id = str(bound["certificate"]["intent_id"])
+        if subject_id == "wi-42":
+            brief = cruxible.run(
+                "authoring",
+                "submit",
+                "--intent-id",
+                intent_id,
+                "--brief",
+            ).stdout
+            assert "outcome: accepted" in brief
+            assert "coordinate: " in brief
+            assert "proposal: " in brief
+            intent = cruxible.json("authoring", "get", intent_id)["intent"]
+            claim_identities.append(f"Claim:{intent['semantic_identity']}")
+        else:
+            submitted = cruxible.json(
+                "authoring",
+                "submit",
+                "--intent-id",
+                intent_id,
+                "--no-accept",
+            )
+            claim_identities.append(f"Claim:{submitted['intent']['semantic_identity']}")
+            cruxible.accept(str(submitted["status"]["proposal_id"]))
+
+    # 5. Publish the named entrypoint that reads them.
+    _submitted_query, accepted = _author_and_accept(
+        cruxible,
+        tmp_path / "query-input.json",
+        QueryDefinitionInput(
+            kind="query_definition",
+            # The fixture ClaimType was lowered to the current format. Resolve
+            # its dependency at the accepted base, rather than pinning the old
+            # fixture envelope's digest.
+            query_definition=QueryDefinitionSpec.model_validate(
+                work_item_query(claim_type=claim_type).model_dump(mode="json", exclude={"pins"})
+            ),
+        ).model_dump(mode="json"),
+    )
+    coordinate = accepted["accepted_coordinate"]
+
+    # -- reads: orient, query and get ----------------------------------------
+
+    oriented = cruxible.json("orient", "--kind", SUBJECT_KIND)
+    assert oriented["coordinate"] == coordinate
+    assert set(oriented["kind_detail"]["sample_subject_ids"]) == {"wi-42", "wi-43"}
+    subject_ref = f"{SUBJECT_KIND}/wi-42"
+    assert (
+        cruxible.json("get", subject_ref, "--detail", "proof")["proof"]["envelope"]["identity"]
+        == f"Subject:{SUBJECT_KIND}/wi-42"
+    )
+    assert cruxible.json("get", subject_ref, "--detail", "history")["history"]["revisions"]
+
+    claim_types = cruxible.json("orient", "--section", "claim_types")
+    # The work items' slug key and the builtin descriptors sit beside it.
+    assert [item["predicate"] for item in claim_types["claim_types"]] == [
+        f"{SUBJECT_KIND}.slug",
+        PREDICATE,
+        "semantic.alias",
+        "semantic.distinct_from",
+    ]
+    claim_type_proof = cruxible.json("get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"]
+    assert claim_type_proof["predicate"] == PREDICATE
+
+    claims = cruxible.json("query", SUBJECT_KIND, "--claims")
+    assert {
+        claim["claim"].removeprefix("Claim:")
+        for row in claims["rows"]
+        for field, cell in row["claims"].items()
+        if field != "slug"  # each work item's key Claim, from its creation
+        for claim in cell
+    } == {identity.removeprefix("Claim:") for identity in claim_identities}
+    assert (
+        cruxible.json("get", claim_identities[0], "--detail", "proof")["proof"]["envelope"][
+            "identity"
+        ]
+        == claim_identities[0]
+    )
+    assert cruxible.json("get", claim_identities[0], "--detail", "history")["history"]["revisions"]
+    explained = cruxible.json("get", claim_identities[0], "--detail", "why")["why"]
+    assert explained["verdict"]["verdict"] == "supported", explained
+    assert explained["law_evidence"]
+
+    definitions = cruxible.json("orient", "--section", "queries")
+    assert [item["name"] for item in definitions["queries"]] == [QUERY_NAME]
+    query_proof = cruxible.json("get", f"query:{QUERY_NAME}", "--detail", "proof")["proof"]
+    assert query_proof["name"] == QUERY_NAME
+    from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+    from cruxible_client.contracts.query.definitions import validate_query_definition
+
+    query_owner = validate_query_definition(query_proof["envelope"])
+    assert query_owner.artifact_format == "cruxible-query-definition-v3"
+    assert query_owner.referenced_predicates == (claim_type_proof["envelope"]["predicate"],)
+    assert "pins" not in query_proof["envelope"]
+    assert (
+        claim_type_digest(ClaimType.model_validate(claim_type_proof["envelope"])).tagged
+        == claim_type_proof["artifact_digest"]
+    )
+
+    # 6. Execute the entrypoint. The full receipt is the replay coordinate of
+    #    the read.
+    run = cruxible.json("query", "--name", QUERY_NAME, "--receipt", "full")
+    replay = run["receipt"]["replay"]
+    projected = {
+        next(field["value"] for field in row["fields"] if field["name"] == "item_id"): next(
+            field["value"] for field in row["fields"] if field["name"] == "status"
+        )
+        for row in replay["result"]["rows"]
+    }
+    assert projected == {"wi-42": "ready", "wi-43": "blocked"}
+    receipt = replay["execution"]
+    assert receipt["tag"] == "playbill-query-execution-receipt-v1"
+    assert receipt["verdict"] == "completed"
+    assert receipt["result_digest"].startswith("sha256:")
+
+    # Replaying at the receipt's own evaluation time reproduces it exactly.
+    again = cruxible.json(
+        "query",
+        "--name",
+        QUERY_NAME,
+        "--receipt",
+        "full",
+        "--evaluation-time",
+        receipt["evaluation_time"],
+    )
+    assert again["receipt"]["replay"]["execution"]["result_digest"] == receipt["result_digest"]
+
+    # 8. Materialize the floor and prove it carries the accepted facts bound to
+    #    the coordinate they were projected from.
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subdirectory = tmp_path / "nested"
+    subdirectory.mkdir()
+    monkeypatch.chdir(subdirectory)
+    floor = tmp_path / ".cruxible/floor"
+    exported = cruxible.json("floor", "export")
+    manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest == exported
+    assert manifest["coordinate"] == coordinate
+    assert manifest["floor_digest"].startswith("sha256:")
+
+    # The floor's self-ignore and the client's joins of its own workspace
+    # bindings (projections/INDEX, sources/INDEX) sit outside the
+    # daemon-verified manifest.
+    written = {str(path.relative_to(floor)) for path in floor.rglob("*") if path.is_file()} - {
+        FLOOR_MANIFEST_PATH,
+        *FLOOR_LOCAL_PATHS,
+    }
+    assert written == {item["path"] for item in manifest["files"]}
+    # The grep-first floor: values, their provenance, no discovery cards.
+    assert f"current/{SUBJECT_KIND}/wi-42.yaml" in written
+    assert "status: ready  # CLM-" in (floor / f"current/{SUBJECT_KIND}/wi-42.yaml").read_text()
+    assert not any(path.startswith(("subjects/", "claim-types/")) for path in written)
+
+    # The discovery cards are opt-in, and the refresh profile remembers them.
+    cruxible.json("floor", "export", "--force", "--with-discovery")
+    written = {str(path.relative_to(floor)) for path in floor.rglob("*") if path.is_file()}
+    config = json.loads((tmp_path / ".cruxible/coverage.json").read_text(encoding="utf-8"))
+    assert config["floor_output"]["include"] == ["discovery"]
+    assert f"subjects/{SUBJECT_KIND}/wi-42.profile.json" in written
+    assert f"subjects/{SUBJECT_KIND}/wi-43.profile.json" in written
+    assert "claim-types/project.work_item/status.card.json" in written
+
+    profile = json.loads(
+        (floor / f"subjects/{SUBJECT_KIND}/wi-42.profile.json").read_text(encoding="utf-8")
+    )
+    assert PREDICATE in json.dumps(profile)
+    assert "ready" in json.dumps(profile)
+
+
+def test_cli_floor_export_refuses_to_overwrite_a_non_empty_directory(
+    served_cli: _Cli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cruxible = served_cli
+    cruxible.json("--server-url", "http://cruxible", "host", "create")
+    cruxible.bootstrap(tmp_path)
+
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    monkeypatch.chdir(tmp_path)
+    floor = tmp_path / ".cruxible/floor"
+    floor.mkdir(parents=True)
+    (floor / "occupied.txt").write_text("not the floor\n", encoding="utf-8")
+
+    refused = CliRunner().invoke(cli, ["floor", "export", "--json"])
+
+    assert refused.exit_code != 0
+    assert "refusing to write the floor into a non-empty directory" in refused.output
+    assert (floor / "occupied.txt").read_text(encoding="utf-8") == "not the floor\n"

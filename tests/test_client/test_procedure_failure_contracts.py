@@ -1,0 +1,187 @@
+"""Closed typed terminal contracts for served Procedure runs."""
+
+from __future__ import annotations
+
+from typing import get_args
+
+from pydantic import TypeAdapter, ValidationError
+
+from cruxible_client.contracts.errors import CanonicalEncodingError
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusal,
+    ProcedureInternalFailure,
+    ProcedureJournalCoordinate,
+    ProcedureNodeRefusal,
+    ProcedureNodeRefusalCode,
+    ProcedureOperationalFailure,
+    ProcedureTerminal,
+)
+
+
+def _coordinate() -> ProcedureJournalCoordinate:
+    return ProcedureJournalCoordinate(
+        stream_instance_id="instance-a",
+        journal_family="procedure-exhaust-v1",
+        stream_id="procedures",
+        partition_id="direct-runs",
+        sequence=2,
+        record_digest="sha256:" + "1" * 64,
+    )
+
+
+def test_terminal_union_round_trips_all_four_classes() -> None:
+    terminals = (
+        ProcedureAdmissionRefusal(
+            code="unsupported_node",
+            message="This Procedure runs only as a Line.",
+            details={"runnable": "line", "unsupported_nodes": [{"node_id": "settle"}]},
+        ),
+        ProcedureNodeRefusal(
+            code="guard_refused",
+            message="Guard refused.",
+            node_id="gate",
+            journal_coordinate=_coordinate(),
+            detail_code="query.empty",
+        ),
+        ProcedureOperationalFailure(
+            code="journal_append_failed",
+            message="Journal append failed.",
+            journal_coordinate=_coordinate(),
+        ),
+        ProcedureInternalFailure(
+            code="unexpected_exception",
+            message="Procedure execution failed unexpectedly; inspect daemon logs.",
+            correlation_id="RUN-abc",
+            journal_coordinate=_coordinate(),
+        ),
+    )
+    adapter = TypeAdapter(ProcedureTerminal)
+
+    for terminal in terminals:
+        assert adapter.validate_python(terminal.model_dump(mode="json")) == terminal
+
+
+def test_terminal_contracts_are_closed_and_details_are_canonical() -> None:
+    try:
+        ProcedureAdmissionRefusal.model_validate(
+            {
+                "code": "unknown",
+                "message": "bad",
+                "details": {},
+            }
+        )
+    except ValidationError:
+        pass
+    else:  # pragma: no cover - assertion spelling keeps the failure readable
+        raise AssertionError("unknown admission code was accepted")
+
+    try:
+        ProcedureAdmissionRefusal(
+            code="unsupported_node",
+            message="bad",
+            details={"value": 1.5},
+        )
+    except CanonicalEncodingError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("non-canonical terminal details were accepted")
+
+
+def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
+    expected = {
+        "guard_refused",
+        "decode_invalid",
+        "decoded_limit_exceeded",
+        "extract.header_invalid@1",
+        "extract_decoding_undeclared",
+        "extract_duplicate_key",
+        "extract_format_unsupported",
+        "read_ceiling_exceeded",
+        "query_contract_violated",
+        "state_tap_refused",
+        "repeat_exhausted",
+        "budget_exhausted",
+        "runtime_reference_unresolved",
+        "contract_input_refused",
+        "contract_output_refused",
+        "result_not_canonical",
+        "line_binding_required",
+        "source_acquisition_unavailable",
+        "source_material_unavailable",
+        "terminal_not_available",
+        "terminal_egress_unverified",
+        "proposal_item_invalid",
+        "claims_absence_invalid",
+        "claims_expect_outside_only_keys",
+        "claims_enumeration_invalid",
+        "claims_expect_provider_enumeration_unsupported",
+        "claims_inverse_unit_unresolved",
+        "claims_absence_binding_invalid",
+        "proposal_item_evidence_missing",
+        "proposal_item_evidence_ambiguous",
+        "inbox_item_invalid",
+        "inbox_item_evidence_ambiguous",
+        "inbox_item_over_budget",
+        "proposal_lowering_refused",
+        "proposal_candidate_refused",
+        "settle_mandate_missing",
+        "settle_mandate_ambiguous",
+        "settle_condition_refused",
+        "settle_publication_refused",
+        "proposal_target_paths_mismatch",
+        "proposal_receipt_incomplete",
+        "effectful_operation_payload_mismatch",
+        "procedure_mandate_required",
+        "procedure_mandate_superseded",
+        "procedure_mandate_expired",
+        "procedure_mandate_procedure_mismatch",
+        "procedure_mandate_grant_insufficient",
+        "procedure_mandate_namespace_mismatch",
+        "procedure_mandate_not_applicable",
+        "procedure_authority_admission_invalid",
+        "procedure_authority_admission_mismatch",
+        "provider_unavailable",
+        "cruxible.acquisition.unavailable",
+        "cruxible.acquisition.stale",
+        "cruxible.acquisition.oversized",
+        "cruxible.acquisition.refused",
+        "cruxible.acquisition.replayability_ineligible",
+        "cruxible.acquisition.origin_ineligible",
+        "effect_grant_unrecognized",
+        "effect_dispatch_requires_actor",
+        "effect_dispatch_requires_authenticated_actor",
+        "terminal_authority_capped_by_procedure_terminal_capability",
+        "terminal_authority_capped_by_line_max_authority",
+        "terminal_authority_capped_by_propagated_sensitivity",
+        "terminal_authority_capped_by_mandate_grant",
+        "provider_acquisition_plan_required",
+        "provider_acquisition_plan_mismatch",
+        "workspace_file_read_refused",
+        "provider_effect_declaration_mismatch",
+        "unknown_extra",
+        "budget_wall_clock",
+        "budget_output_size",
+        "budget_cost",
+        "secret_bundle_too_large",
+        "operation_refused",
+        "provider_protocol_violation",
+    }
+    assert set(get_args(ProcedureNodeRefusalCode)) == expected
+
+    for code in sorted(expected):
+        values: dict[str, object] = {
+            "code": code,
+            "message": "Typed executor refusal.",
+            "node_id": "node",
+        }
+        if code == "guard_refused":
+            values["detail_code"] = "procedure.guard"
+        if code == "operation_refused":
+            values["detail_code"] = "too_long"
+        if code == "budget_exhausted":
+            values["budget"] = {
+                "budget_kind": "max_provider_calls",
+                "limit": 0,
+                "observed": 1,
+            }
+        assert ProcedureNodeRefusal.model_validate(values).code == code

@@ -1,0 +1,378 @@
+"""Bounded Claim selection over a single verified accepted coordinate."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from typing import Any
+
+from cruxible_client.contracts import AcceptedCoordinate as ClientAcceptedCoordinate
+from cruxible_client.contracts import ClaimViewRecord
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_reads import (
+    ClaimBackingsRequest,
+    ClaimBackingsResult,
+    ClaimReadBatchRequest,
+    ClaimReadBatchResult,
+    ClaimValueRecord,
+    ClaimValuesRequest,
+    ClaimValuesResult,
+)
+from cruxible_client.contracts.claim_types import claim_type_path
+from cruxible_client.contracts.claims import (
+    ClaimFormatError,
+    claim_path,
+    claim_statement_digest,
+    parse_claim,
+)
+from cruxible_client.contracts.declared_blocks import ProjectionClaimBacking
+from cruxible_client.contracts.errors import (
+    ClaimNotFoundError,
+    FormatError,
+)
+from cruxible_core.authoring.id_prefixes import resolve_id_prefix
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
+from cruxible_core.service.claims.claims import (
+    _accepted_generation_time,
+    _public_claim,
+    materialize_playbill_claim_view,
+)
+from cruxible_core.service.evidence.body_access import (
+    capture_access_resolver,
+    withhold_evidence_payload,
+)
+from cruxible_core.service.evidence.evidence import (
+    _claim_read_history_index,
+    _IndexedClaimLawEvidence,
+)
+
+
+def _cursor_selection(request: ClaimReadBatchRequest) -> str:
+    body = request.model_dump(mode="json", exclude={"cursor", "limit"})
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
+_OID_LENGTHS = {"sha1": 40, "sha256": 64}
+
+
+def _exact_oid_coordinate(instance: PlaybillInstance, oid: str) -> AcceptedProjectionCoordinate:
+    """The accepted generation whose git oid is exactly ``oid``, as a preview pins it.
+
+    Never a prefix: the oid must have this instance's full object-format length
+    and equal one accepted generation's oid, or the read is refused.
+    """
+
+    expected = _OID_LENGTHS[instance.descriptor.git_object_format]
+    if len(oid) != expected:
+        raise FormatError(
+            f"at must be a whole {expected}-character git oid of this instance's "
+            f"{instance.descriptor.git_object_format} history, not a prefix"
+        )
+    return instance.coordinate_for_oid(oid)
+
+
+def service_read_claim_batch(
+    instance: PlaybillInstance,
+    *,
+    request: ClaimReadBatchRequest,
+    access: BodyAccessContext | None = None,
+) -> ClaimReadBatchResult:
+    """Claim views at one coordinate; ``access`` decides restricted evidence (C14).
+
+    Each view keeps its accepted value; spans, evidence locators and absence
+    witnesses of Captures withheld from ``access`` go from every copy, and the
+    result names them in ``withheld``. ``None`` reads without the restricted key.
+    """
+    if request.cursor is not None and request.at is None:
+        raise FormatError("Claim batch cursor requires an explicit accepted coordinate")
+    coordinate = (
+        _exact_oid_coordinate(instance, request.at)
+        if isinstance(request.at, str)
+        else accepted_coordinate_at(
+            instance,
+            AcceptedCoordinate.model_validate(request.at.model_dump())
+            if request.at is not None
+            else None,
+        )
+    )
+    resolved_at = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(coordinate).model_dump()
+    )
+    # A latest-head request becomes one immutable selection before any reads or
+    # cursor binding. Subsequent pages must supply this returned coordinate.
+    request = request.model_copy(update={"at": resolved_at})
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        generation_sequence = history.sequence
+    after = ""
+    if request.cursor:
+        try:
+            binding, after = json.loads(base64.urlsafe_b64decode(request.cursor))
+            if binding != _cursor_selection(request) or not isinstance(after, str):
+                raise ValueError("cursor selection differs")
+        except (ValueError, TypeError, UnicodeError) as exc:
+            raise FormatError("Claim batch cursor does not match this selection") from exc
+    if generation_sequence == 0:
+        if request.claim_ids:
+            raise ClaimNotFoundError("the accepted generation contains no Claims")
+        return ClaimReadBatchResult(coordinate=resolved_at, claims=())
+    truncated = False
+    with instance.bind_accepted_projection(coordinate) as projection:
+        if request.claim_ids:
+            accepted_ids: tuple[str, ...] | None = None
+
+            def resolve(identity: str) -> str:
+                nonlocal accepted_ids
+                bare = identity.removeprefix("Claim:")
+                try:
+                    claim_path(bare)
+                except ClaimFormatError:
+                    if accepted_ids is None:
+                        accepted_ids = tuple(
+                            row.identity.removeprefix("Claim:")
+                            for row in projection.typed.envelopes(kind="claim")
+                        )
+                    bare = resolve_id_prefix(bare, accepted_ids, marker="CLM-", label="Claim")
+                return "Claim:" + bare
+
+            identities = tuple(resolve(identity) for identity in request.claim_ids)
+        else:
+            identities = projection.select_claim_identities(
+                subject_paths=request.subject_paths,
+                predicates=request.predicates,
+                include_retired=request.include_retired,
+                after=after,
+                limit=request.limit + 1,
+            )
+            truncated = len(identities) > request.limit
+            identities = identities[: request.limit]
+        views: list[ClaimViewRecord] = []
+        withheld_digests: set[str] = set()
+        withheld_kinds: set[str] = set()
+        public_views = []
+        projected_views = {view.envelope.identity: view for view in projection.claims(identities)}
+        for identity in identities:
+            projected = projected_views.get(identity)
+            if projected is None:
+                raise ClaimNotFoundError(f"Claim not found: {identity}")
+            public_views.append(_public_claim(projected))
+        # One shared exact accepted blob selection; single-view admission logic
+        # still evaluates each Claim independently against this same material.
+        wanted: set[str] = set()
+        for identity in identities:
+            wanted.update(
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT DISTINCT t.path FROM citation_uses u "
+                    "JOIN captures c ON c.capture_digest=u.capture_digest "
+                    "JOIN capture_contracts t ON t.artifact_digest=c.contract_digest "
+                    "WHERE u.owner_kind='Claim' AND u.owner_key=? ORDER BY t.path",
+                    (identity,),
+                )
+            )
+        for public in public_views:
+            statement = next(
+                fact["value"]
+                for fact in public.facts
+                if fact["schema_id"] == "cruxible.claim.statement"
+            )
+            if isinstance(statement, dict):
+                wanted.add(claim_type_path(str(statement["predicate"])))
+        admission_tree = (
+            instance.blobs_at(coordinate.git_oid, tuple(sorted(wanted))) if public_views else {}
+        )
+        claim_history = _claim_read_history_index(
+            instance, coordinate=coordinate, records=projection.typed.records
+        )
+        if isinstance(claim_history.law_evidence, _IndexedClaimLawEvidence):
+            # Every selected view's law evidence under one history snapshot.
+            claim_history.law_evidence.prefetch(
+                tuple(str(public.envelope["path"]) for public in public_views)
+            )
+        evaluation_time = request.evaluation_time or (
+            _accepted_generation_time(instance, coordinate) if public_views else None
+        )
+        bodies = instance.body_store() if public_views else None
+        # One access memo for every view, reading through this bound projection.
+        resolver = capture_access_resolver(instance, coordinate, projection=projection)
+        for public in public_views:
+            assert evaluation_time is not None
+            view = materialize_playbill_claim_view(
+                instance,
+                public=public,
+                coordinate=coordinate,
+                evaluation_time=evaluation_time,
+                admission_tree=admission_tree,
+                law=claim_history.law_evidence.get(str(public.envelope["path"])),
+                bodies=bodies,
+            )
+            payload, notice = withhold_evidence_payload(
+                instance, coordinate, view.model_dump(mode="json"), access, resolver=resolver
+            )
+            if notice is not None:
+                withheld_digests.update(notice.capture_digests)
+                withheld_kinds.update(notice.capture_kinds)
+            views.append(ClaimViewRecord.model_validate(payload))
+    cursor = None
+    if truncated:
+        cursor = base64.urlsafe_b64encode(
+            json.dumps([_cursor_selection(request), identities[-1]]).encode()
+        ).decode()
+    return ClaimReadBatchResult(
+        coordinate=resolved_at,
+        claims=tuple(views),
+        truncated=truncated,
+        cursor=cursor,
+        withheld=BodyRestricted(
+            capture_digests=tuple(sorted(withheld_digests)),
+            capture_kinds=tuple(sorted(withheld_kinds)),
+        )
+        if withheld_digests
+        else None,
+    )
+
+
+def service_read_claim_backings(
+    instance: PlaybillInstance,
+    *,
+    request: ClaimBackingsRequest,
+) -> ClaimBackingsResult:
+    coordinate = accepted_coordinate_at(
+        instance, AcceptedCoordinate.model_validate(request.at.model_dump())
+    )
+    names = tuple(name.removeprefix("Claim:") for name in request.claim_ids)
+    try:
+        paths = tuple(claim_path(name) for name in names)
+    except ValueError as exc:
+        raise FormatError("Claim backings require exact full Claim identities") from exc
+    bodies = instance.blobs_at(coordinate.git_oid, paths)
+    backings: list[ProjectionClaimBacking] = []
+    for name, path in zip(names, paths, strict=True):
+        if path not in bodies:
+            raise ClaimNotFoundError(f"Claim backing not found: {name}")
+        claim = parse_claim(bodies[path], path=path)
+        if claim.identity != ArtifactIdentity(kind="Claim", name=name):
+            raise FormatError("Claim backing identity differs from its accepted path")
+        if claim.lifecycle.state != "live":
+            raise FormatError(f"Claim backing must identify a live Claim: {name}")
+        backings.append(
+            ProjectionClaimBacking(
+                identity=claim.identity,
+                statement_digest=claim_statement_digest(claim.statement).tagged,
+            )
+        )
+    return ClaimBackingsResult(coordinate=request.at, backings=tuple(backings))
+
+
+def service_read_claim_values(
+    instance: PlaybillInstance,
+    *,
+    request: ClaimValuesRequest,
+) -> ClaimValuesResult:
+    """Live Claim values and verdicts for selected Subjects, without full Claim views.
+
+    Subjects are explicit paths or every Subject of one kind, read through the
+    Subject index. Selecting by Subject (and predicate) returns every live contender of
+    each slot it touches, so each verdict is the slot's full resolution. The
+    verdicts come from the same per-slot derivation orient and block checks use,
+    and are reused across coordinates wherever its reads still hold.
+    """
+
+    from cruxible_client.contracts.claim_reads import MAX_CLAIM_VALUE_ROWS
+    from cruxible_client.contracts.errors import FormatError as ValuesFormatError
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
+    coordinate = accepted_coordinate_at(
+        instance,
+        AcceptedCoordinate.model_validate(request.at.model_dump())
+        if request.at is not None
+        else None,
+    )
+    at = AcceptedCoordinate.from_internal(coordinate)
+    clauses = ["lifecycle='live'"]
+    values: list[object]
+    if request.subject_kind is not None:
+        clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
+        values = [request.subject_kind]
+    else:
+        clauses.append("subject_path IN (" + ",".join("?" * len(request.subject_paths)) + ")")
+        values = list(request.subject_paths)
+    if request.predicates:
+        clauses.append("predicate IN (" + ",".join("?" * len(request.predicates)) + ")")
+        values.extend(request.predicates)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        identities = tuple(
+            str(row[0])
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE " + " AND ".join(clauses) + " ORDER BY identity",
+                values,
+            )
+        )
+    if len(identities) > MAX_CLAIM_VALUE_ROWS:
+        raise ValuesFormatError("Claim value selection exceeds its row bound; narrow it")
+    evaluation_time = request.evaluation_time or _accepted_generation_time(instance, coordinate)
+    context = ClaimVerdictReadContext(instance, coordinate)
+    context.prefetch(tuple(claim_path(identity.removeprefix("Claim:")) for identity in identities))
+    claims = tuple(context.claim(identity) for identity in identities)
+    verdicts: dict[str, object] = {}
+    statuses = claim_resolution_statuses(
+        instance,
+        claims=claims,
+        at=at,
+        evaluation_time=evaluation_time,
+        verdicts_by_identity=verdicts,  # type: ignore[arg-type]
+        read_context=context,
+    )
+    rows = tuple(
+        _claim_value_row(
+            claim,
+            verdict=verdicts.get(claim.identity.qualified),
+            status=statuses[claim.identity.name],
+        )
+        for claim in claims
+    )
+    return ClaimValuesResult(
+        coordinate=ClientAcceptedCoordinate.model_validate(at.model_dump()),
+        evaluation_time=evaluation_time,
+        values=rows,
+    )
+
+
+def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueRecord:
+    """One Claim's value row, for every statement object variant."""
+
+    from cruxible_client.contracts.claims import (
+        NoneClaimObject,
+        SubjectClaimObject,
+    )
+
+    statement = claim.statement
+    claim_object = statement.object
+    if isinstance(claim_object, SubjectClaimObject):
+        value: object = claim_object.address.artifact_path
+    elif isinstance(claim_object, NoneClaimObject):
+        # A none states no value: ``object`` carries the unit it says is empty.
+        value = None
+    else:
+        value = claim_object.value
+    subject_path = statement.subject.artifact_path
+    return ClaimValueRecord(
+        claim_id=claim.identity.name,
+        subject_path=subject_path,
+        # Subject paths are `subjects/<kind>/<id>.json`; kinds hold no slash.
+        subject_id=subject_path.split("/", 2)[2].removesuffix(".json"),
+        predicate=statement.predicate,
+        qualifier=statement.qualifier,
+        role=statement.role,
+        object_kind=claim_object.kind,
+        object=claim_object,
+        value=value,
+        verdict=str(getattr(verdict, "verdict", "unevaluated")),
+        status=status,
+    )

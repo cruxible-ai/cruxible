@@ -1,0 +1,69 @@
+{
+  "about": "Allow-list for tests/test_architecture/test_capture_payload_guards.py (D-R25..D-R27). Sites are <repo path>::<qualified function> (<module> for module level); every entry says why it is not a special case. Adding one is a reviewed design change, not a test fix.",
+  "builtin": {
+    "workspace.file": {
+      "reason": "Core's own builtin operation (R3): the daemon performs the read itself and recognizes the operation by its builtin signature.",
+      "declarations": {
+        "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::<module>": "declares the builtin's Contracts and operation name",
+        "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::workspace_file_signature_digest": "derives the builtin signature it is recognized by",
+        "src/cruxible_core/procedures/ports.py::<module>": "BuiltinOperation / WORKSPACE_FILE_BUILTIN, set by signature in bound_operation",
+        "src/cruxible_core/providers/builtin_workspace_file.py::<module>": "the builtin's in-process implementation",
+        "src/cruxible_core/ledger/bootstrap.py::<module>": "genesis seeds the builtin's Contracts",
+        "src/cruxible_core/governance/seed_artifacts/workspace_file.py::workspace_file_builtin_provider": "seeds the builtin Provider (drift refusal message)",
+        "src/cruxible_core/providers/builtin_workspace_file.py::WorkspaceFile.__call__": "refusal message of the builtin itself",
+        "src/cruxible_core/service/uploads.py::check_upload_procedure": "refusal message: an upload is read by the builtin",
+        "packages/cruxible-client/src/cruxible_client/contracts/captures.py::ProviderInvocationCaptureEvidence._workspace_receipt": "refusal message on builtin evidence",
+        "packages/cruxible-client/src/cruxible_client/contracts/captures.py::validate_provider_external_capture_result": "refusal messages on builtin evidence",
+        "packages/cruxible-client/src/cruxible_client/contracts/captures.py::build_provider_external_capture_v2": "refusal messages on builtin evidence",
+        "packages/cruxible-client/src/cruxible_client/contracts/captures.py::_verify_capture_once": "refusal messages on builtin evidence",
+        "packages/cruxible-client/src/cruxible_client/contracts/procedures/capture_outputs.py::procedure_capture_problem": "refusal message: the builtin's one capture field"
+      },
+      "dispatch": {
+        "src/cruxible_core/procedures/execution.py::ProcedureExecutor._run_acquiring_call": "the daemon serves the builtin read itself (BoundOperation.builtin, set by signature)"
+      }
+    },
+    "cruxible-builtin": {
+      "reason": "Core's own builtin Provider identity, seeded at genesis.",
+      "dispatch": {
+        "src/cruxible_core/proposals/proposals.py::_provider_member": "the seeded builtin Provider is admitted by core, not installed",
+        "src/cruxible_core/service/procedures/provider_builds.py::service_retire_provider": "the builtin Provider cannot be retired"
+      }
+    }
+  },
+  "dispatch_sites": {
+    "src/cruxible_core/ledger/git.py::GitLedger._update_refs": "git update-ref command verbs (update, delete, verify), not a provider operation",
+    "src/cruxible_core/mcp/handlers.py::_write_request": "core's own MCP tool names",
+    "src/cruxible_core/server/errors.py::_message_for_error": "core's own MCP tool names",
+    "src/cruxible_core/proposals/proposals.py::_provider_member": "a build-name shape check ('/' separates provider and build key)"
+  },
+  "material_readers": {
+    "src/cruxible_core/procedures/execution.py::ProcedureExecutor._capture_body": "the extract node's reader: hands the exact bytes to the extract runtime",
+    "packages/cruxible-client/src/cruxible_client/contracts/captures.py::_verify_capture_once": "verification: length and digest of the retained bytes, never their content",
+    "packages/cruxible-client/src/cruxible_client/contracts/claims.py::_resolve_cited_source_window": "a Claim citation's byte window over the retained bytes"
+  },
+  "material_decoders": {
+    "src/cruxible_core/procedures/extract.py::*": "the extract runtime: decodes Capture bytes under the CaptureKind's declared decoding (the one decoding boundary)",
+    "src/cruxible_core/procedures/execution.py::ProcedureExecutor._capture_input_wire": "D-R37 b8: transport, not parsing -- a derive's Capture input as Capture wire (the exact bytes, base64), built only under _dereference_capture_inputs, the one insertion point"
+  },
+  "wrapper_reads": {
+    "src/cruxible_core/service/evidence/file_catalog.py::service_propose_playbill_file_bundle": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: a compiled file bundle's base64 Document body (compilation bundles)"
+    },
+    "packages/cruxible-client/src/cruxible_client/contracts/file_catalog.py::FileCompilationBundle._binding": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: a compiled file bundle's base64 Document body (compilation bundles)"
+    },
+    "packages/cruxible-client/src/cruxible_client/contracts/source_references.py::BodyAccessResult._shape": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: a dereferenced selection's bytes as base64 JSON (dereference selections)"
+    },
+    "packages/cruxible-client/src/cruxible_client/authoring/sdk_types.py::CaptureView.content": {
+      "keys": ["body_base64"],
+      "reason": "L3 transport: the SDK decodes a dereference selection's base64 body (dereference selections)"
+    }
+  },
+  "domain_names": {
+    "packages/cruxible-client/src/cruxible_client/authoring/examples.py": "Examples: authoring templates an agent copies; not core logic."
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One derived JSON document of (component, CVE) matches, in the layout of CaptureKind security.osv-matches: queried (the components OSV answered in full), not_checked (each with why), affected (purl, cve_id, osv_id, and the versions OSV lists as fixed), count, and unkeyed (advisories with no CVE alias).",
+  "fields": {
+    "document": {
+      "type": {
+        "capture_kind": "security.osv-matches",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "security.osv.match.result",
+  "version": 1
+}

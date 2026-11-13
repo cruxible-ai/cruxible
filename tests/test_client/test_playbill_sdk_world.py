@@ -1,0 +1,1882 @@
+"""The typed world facade: what `cx.world()` names, and what it refuses."""
+
+from __future__ import annotations
+
+import ast
+import os
+import subprocess
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import cruxible_client
+from cruxible_client import Cruxible
+from cruxible_client import contracts as api
+from cruxible_client.authoring.sdk_types import (
+    AbsentSubject,
+    Cardinality,
+    ClaimRole,
+    ClaimRoleNotPermittedError,
+    ClaimTypeRef,
+    ClaimValueError,
+    LiteralValue,
+    LiteralValueTypeError,
+    PendingClaimTypeRef,
+    PendingSubjectRef,
+    ReferentSensitivity,
+)
+from cruxible_client.authoring.world import (
+    KindNamespace,
+    World,
+    WorldClaimType,
+    WorldStructureError,
+)
+from cruxible_client.authoring.world_stub import STUB_HEADER_TAG, stub_vocabulary_digest
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from tests.support.claim_types import ClaimValueType, claim_type_changes
+from tests.test_client._read_fakes import ClaimTypeListing, ClaimTypeRead
+
+_DIGEST = "sha256:" + "1" * 64
+_COORDINATE = api.AcceptedCoordinate(
+    git_oid="a" * 40,
+    semantic_root=_DIGEST,
+    generation_root="sha256:" + "2" * 64,
+    compiler_digest="sha256:" + "3" * 64,
+)
+_MOVED_COORDINATE = api.AcceptedCoordinate(
+    git_oid="b" * 40,
+    semantic_root=_DIGEST,
+    generation_root="sha256:" + "2" * 64,
+    compiler_digest="sha256:" + "3" * 64,
+)
+
+SEVERITY = "sec.vuln.severity"
+AFFECTS = "sec.vuln.affects_package"
+LANDED_AT = "dev.batch.landed_at"
+
+
+def _claim_type(
+    predicate: str, *, value_type: ClaimValueType | None = None, **overrides: object
+) -> ClaimTypeRead:
+    envelope: dict[str, Any] = claim_type_changes(
+        value_type={"type": "string", "enum": ["high", "low"]}
+        if value_type is None
+        else value_type,
+        artifact_format="cruxible-claim-type-v11",
+        identity={"kind": "ClaimType", "name": predicate},
+        predicate=predicate,
+        allowed_subject_kinds=("sec.vulnerability",),
+        cardinality="one",
+        permitted_roles=("observation",),
+        referent_sensitivity="identity",
+        lifecycle={"state": "live"},
+    )
+    envelope.update(overrides)
+    return ClaimTypeRead(
+        coordinate=_COORDINATE,
+        path=f"claim-types/{predicate}.json",
+        predicate=predicate,
+        identity=f"ClaimType:{predicate}",
+        artifact_digest=_DIGEST,
+        envelope=envelope,
+    )
+
+
+def _projection(coordinate: Any) -> AcceptedCoordinate:
+    return AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
+
+
+def _proof_result(
+    ref: str, kind: str, proof: Any, coordinate: Any, *, why: str | None = None
+) -> Any:
+    from cruxible_client.contracts.get_reads import GetCoordinate, GetResult
+
+    return GetResult(
+        ref=ref,
+        kind=kind,  # type: ignore[arg-type]
+        detail="why" if why is not None else "proof",
+        proof=proof,
+        why=None if why is None else {"explained": why},
+        coordinate=GetCoordinate(git_oid=coordinate.git_oid[:12], generation=1),
+        accepted_coordinate=api.AcceptedCoordinate.model_validate(
+            coordinate.model_dump(mode="json")
+        ),
+        evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+    )
+
+
+class _WorldClient:
+    """A spy over exactly the read verbs the world facade is allowed to use."""
+
+    def __init__(self) -> None:
+        self.coordinate = _COORDINATE
+        self.subject_list_calls = 0
+        self.subject_get_requests: list[Any] = []
+        self.subjects = {
+            "sec.package/cryptography": "live",
+            "sec.vulnerability/cve-2026-69247": "live",
+            "dev.batch/p2c": "live",
+            "dev.batch/retired_batch": "retired",
+        }
+        self.subject_spellings: dict[str, str] = {}
+        self.claim_type_list_calls = 0
+        self.claim_type_coordinates: list[Any] = []
+        self.claim_reads: list[str] = []
+        self.claim_predicates: dict[str, str] = {}
+        self.retired_severity = False
+        self.severity_overrides: dict[str, Any] = {}
+        self.claim_type_reads: list[str] = []
+        self.subject_queries: list[str] = []
+        # Replaces the Subject listing's answer, to serve pages a real daemon could.
+        self.subject_pages: Any = None
+        self.head_reads: list[Any] = []
+        self.batch_requests: list[Any] = []
+        self.write_requests: list[Any] = []
+        # How each kind names a new Subject, as the subject_kinds section lists them.
+        self.subject_kinds: list[dict[str, Any]] = [
+            {
+                "kind": "dev.batch",
+                "rule": "keys",
+                "keys": ("dev.batch.repo", "dev.batch.number"),
+                "uniqueness": "hint",
+            },
+            {
+                "kind": "sec.package",
+                "rule": "keys",
+                "keys": ("sec.package.name",),
+                "uniqueness": "unique",
+            },
+            {"kind": "sec.vulnerability", "rule": "minted"},
+        ]
+
+    def _claim_type_view(
+        self, _instance_id: str, predicate: str, *, at: Any = None
+    ) -> ClaimTypeRead:
+        self.claim_type_reads.append(predicate)
+        return _claim_type(predicate)
+
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+        self.claim_type_list_calls += 1
+        self.claim_type_coordinates.append(at)
+        return ClaimTypeListing(
+            coordinate=at or self.coordinate,
+            claim_types=[
+                _claim_type(
+                    SEVERITY,
+                    lifecycle={"state": "retired" if self.retired_severity else "live"},
+                    **self.severity_overrides,
+                ),
+                _claim_type(AFFECTS, value_type=("sec.package",)),
+                _claim_type(
+                    LANDED_AT,
+                    value_type={"type": "string", "pattern": "^[0-9a-f]{40}$"},
+                    allowed_subject_kinds=("dev.batch",),
+                ),
+            ],
+        )
+
+    def _subject_index(self) -> list[tuple[str, str, str]]:
+        """Every Subject as (kind, id, lifecycle)."""
+
+        self.subject_list_calls += 1
+        return [(*ref.split("/", 1), lifecycle) for ref, lifecycle in self.subjects.items()]
+
+    def _claim_view(self, _instance_id: str, identity: str, **_values: Any) -> Any:
+        self.claim_reads.append(identity)
+        predicate = self.claim_predicates.get(identity, SEVERITY)
+        return api.ClaimViewRecord(
+            tag="playbill-claim-read-v2",
+            coordinate_kind="canonical",
+            coordinate=_values.get("at") or self.coordinate,
+            envelope={"identity": identity, "revision": 1},
+            admission_evaluation_time="2026-09-07T12:00:00Z",
+            statement=api.ClaimStatementCard(
+                subject={
+                    "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json",
+                    "selector": {"scheme": "artifact-v1", "value": ""},
+                },
+                predicate=predicate,
+                object={"kind": "literal", "value": "high"},
+                role="observation",
+                qualifier=None,
+                lifecycle="live",
+            ),
+            facts=[
+                {
+                    "schema_id": "cruxible.claim.statement",
+                    "value": {
+                        "subject": {
+                            "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json"
+                        },
+                        "predicate": predicate,
+                        "qualifier": None,
+                        "role": "observation",
+                        "object": {"kind": "literal", "value": "high"},
+                    },
+                },
+                {
+                    "schema_id": "cruxible.claim.lifecycle",
+                    "value": {"lifecycle": {"state": "live"}},
+                },
+                {
+                    "schema_id": "cruxible.claim.current_verdict",
+                    "value": {"verdict": "supported"},
+                },
+            ],
+            admission_accounts=[],
+        )
+
+    # -- the read verbs the SDK calls, served from this fake's data ----------
+
+    def head(self, instance_id: str, *, at: Any = None) -> api.Head:
+        self.head_reads.append(at)
+        coordinate = self.coordinate if at is None else at
+        return api.Head(
+            instance=instance_id,
+            coordinate=_projection(coordinate),
+            generation=1,
+        )
+
+    def orient(
+        self, instance_id: str, *, section: Any = None, at: Any = None, **_values: Any
+    ) -> api.OrientResult:
+        from cruxible_client.contracts.orient import OrientPredicate, OrientSubjectKind
+
+        if section == "subject_kinds":
+            return api.OrientResult(
+                instance=instance_id,
+                coordinate=_projection(at or self.coordinate),
+                generation=1,
+                accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+                evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+                section="subject_kinds",
+                subject_kinds=tuple(
+                    OrientSubjectKind.model_validate(row) for row in self.subject_kinds
+                ),
+            )
+        assert section == "claim_types"
+        listing = self._claim_type_list(instance_id, at=at)
+        self._listing = listing
+        return api.OrientResult(
+            instance=instance_id,
+            coordinate=_projection(listing.coordinate),
+            generation=1,
+            accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+            evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+            section="claim_types",
+            claim_types=tuple(
+                OrientPredicate(
+                    name=view.predicate,
+                    predicate=view.predicate,
+                    cardinality="one",
+                    type="string",
+                )
+                for view in listing.claim_types
+                if view.envelope.get("lifecycle", {}).get("state", "live") == "live"
+            ),
+        )
+
+    def get_batch(self, instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.get_reads import GetBatchResult, GetRequest
+
+        if request.detail == "summary":
+            self.subject_get_requests.append(request)
+            return GetBatchResult(
+                coordinate=request.at or self.coordinate,
+                results=tuple(
+                    self.get(
+                        instance_id,
+                        request=GetRequest(ref=ref, detail=request.detail, at=request.at),
+                    )
+                    for ref in request.refs
+                ),
+            )
+
+        by_ref = {f"ClaimType:{view.predicate}": view for view in self._listing.claim_types}
+        coordinate = self._listing.coordinate
+        return GetBatchResult(
+            coordinate=coordinate,
+            results=tuple(
+                _proof_result(ref, "claim_type", by_ref[ref].model_dump(mode="json"), coordinate)
+                for ref in request.refs
+            ),
+        )
+
+    def get(self, instance_id: str, *, request: Any) -> Any:
+        coordinate = request.at or self.coordinate
+        if request.detail == "why":
+            return _proof_result(request.ref, "subject", None, coordinate, why=request.ref)
+        if "/" in request.ref and request.detail == "summary":
+            from cruxible_client.contracts.errors import ReadRefusalError
+            from cruxible_client.contracts.get_reads import GetCoordinate, GetResult, GetSubjectCard
+
+            spelling = request.ref.removeprefix("Subject:")
+            ref = self.subject_spellings.get(spelling, spelling)
+            if ref not in self.subjects:
+                raise ReadRefusalError("cruxible.get.ref_not_found", f"No Subject {ref}")
+            return GetResult(
+                ref=ref,
+                kind="subject",
+                detail="summary",
+                card=GetSubjectCard(
+                    subject=ref,
+                    kind=ref.split("/", 1)[0],
+                    lifecycle=self.subjects[ref],
+                    claims=(),
+                    incoming_count=0,
+                ),
+                coordinate=GetCoordinate(git_oid=coordinate.git_oid[:12], generation=1),
+                accepted_coordinate=coordinate,
+                evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+            )
+        if request.ref.startswith("ClaimType:"):
+            view: Any = self._claim_type_view(
+                instance_id, request.ref.removeprefix("ClaimType:"), at=request.at
+            )
+            return _proof_result(
+                request.ref, "claim_type", view.model_dump(mode="json"), coordinate
+            )
+        view = self._claim_view(instance_id, request.ref, at=request.at)
+        return _proof_result(request.ref, "claim", view.model_dump(mode="json"), coordinate)
+
+    def query(self, instance_id: str, *, request: Any) -> api.QueryResultRecord:
+        assert request.kind is not None
+        self.subject_queries.append(request.kind)
+        if self.subject_pages is not None:
+            return self.subject_pages(request)
+        # As the served query does: the evaluator binds every Subject shell; a
+        # status naming "retired" lists retired ones too, each row stating its
+        # lifecycle, and otherwise only live ones are listed.
+        with_retired = "retired" in request.status
+        return api.QueryResultRecord(
+            kind=request.kind,
+            columns=(),
+            rows=tuple(
+                {
+                    "subject": f"{kind}/{subject_id}",
+                    "subject_id": subject_id,
+                    **({"lifecycle": lifecycle} if with_retired else {}),
+                }
+                for kind, subject_id, lifecycle in sorted(
+                    self._subject_index(), key=lambda row: row[1]
+                )
+                if kind == request.kind and (with_retired or lifecycle == "live")
+            ),
+            receipt=self._receipt(request),
+        )
+
+    def _receipt(self, request: Any) -> api.QueryReceipt:
+        return api.QueryReceipt(
+            mode="inline",
+            spec_digest=_DIGEST,
+            coordinate=request.at or _projection(self.coordinate),
+            evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+        )
+
+    def _claims_of(self, subject_path: str) -> list[str]:
+        """The live Claims this fake holds about one Subject."""
+
+        if subject_path != "subjects/sec.vulnerability/cve-2026-69247.json":
+            return []
+        return ["CLM-" + "9" * 32]
+
+    def read_claim_batch(self, instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.claim_reads import ClaimReadBatchResult
+
+        self.batch_requests.append(request)
+        identities = [
+            identity
+            for path in request.subject_paths
+            for identity in self._claims_of(path)
+            if not request.predicates
+            or self.claim_predicates.get(identity, SEVERITY) in request.predicates
+        ]
+        start = 0 if request.cursor is None else int(request.cursor)
+        page, truncated, cursor = self._page(identities, start)
+        return ClaimReadBatchResult(
+            coordinate=request.at,
+            claims=tuple(
+                self._claim_view(instance_id, identity, at=request.at) for identity in page
+            ),
+            truncated=truncated,
+            cursor=cursor,
+        )
+
+    def _page(self, identities: list[str], start: int) -> tuple[list[str], bool, str | None]:
+        return identities[start:], False, None
+
+    def write(self, instance_id: str, *, request: Any) -> Any:
+        """Accept every write, naming each create's Subject after its label."""
+
+        from cruxible_client.contracts.get_reads import GetCoordinate
+        from cruxible_client.contracts.write import ChangeOutcome, CreateChange, WriteOutcome
+
+        self.write_requests.append(request)
+        return WriteOutcome(
+            status="accepted",
+            changes=tuple(
+                ChangeOutcome(
+                    op="create", subject=f"{change.subject_kind}/{change.label}", resolved="created"
+                )
+                if isinstance(change, CreateChange)
+                else ChangeOutcome(op=change.op)
+                for change in request.changes
+            ),
+            coordinate=GetCoordinate(git_oid="c" * 12, generation=2),
+            base=GetCoordinate(git_oid="a" * 12, generation=1),
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _workspace(path: Path) -> None:
+    (path / ".cruxible").mkdir()
+    (path / ".cruxible" / "files.yaml").write_text(
+        """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: corpus.runbook
+    locator: corpus/runbook.md
+    document_id: runbook
+    document_kind: runbook
+    title: Runbook
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:runbook]
+""",
+        encoding="utf-8",
+    )
+    (path / "corpus").mkdir()
+    (path / "corpus" / "runbook.md").write_text("Patch within 48 hours.\n", encoding="utf-8")
+
+
+@pytest.fixture
+def connection(tmp_path: Path) -> tuple[Cruxible, _WorldClient]:
+    _workspace(tmp_path)
+    client = _WorldClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    return playbill, client
+
+
+def test_world_names_nested_dotted_kinds_and_answers_subjects_both_ways(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """`w.sec.package` nests, and a Subject answers by attribute or by index."""
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    assert world.kinds == ("dev.batch", "sec.package", "sec.vulnerability")
+    assert world.predicates == (LANDED_AT, AFFECTS, SEVERITY)
+    assert world.sec.package.subject_kind == "sec.package"
+    assert world.sec.subject_kind is None
+
+    by_attribute = world.sec.package.cryptography
+    by_index = world.sec.package["cryptography"]
+    assert by_attribute == by_index
+    assert by_attribute.address == "sec.package/cryptography"
+    assert by_attribute.coordinate == world.coordinate
+    assert world.sec.vulnerability["cve-2026-69247"].address == ("sec.vulnerability/cve-2026-69247")
+
+
+def test_an_absent_subject_names_its_kind_id_and_coordinate(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """The typed refusal has to be actionable without a second read."""
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    with pytest.raises(AbsentSubject) as absent:
+        world.sec.vulnerability["cve-2026-00000"]
+
+    assert absent.value.subject_kind == "sec.vulnerability"
+    assert absent.value.subject_id == "cve-2026-00000"
+    assert absent.value.coordinate == world.coordinate
+    assert "w.write(w.sec.vulnerability.define(<key>, ...), because=...)" in str(absent.value)
+    assert "cx.query('sec.vulnerability', ...)" in str(absent.value)
+
+    with pytest.raises(AbsentSubject):
+        world.sec.vulnerability.absent_one
+
+
+def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """One key positionally or by its leaf, a composite key by its parts, a minted kind none."""
+
+    from cruxible_client.contracts.write import CreateKeyPart
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    click = world.sec.package.define("click")
+    assert (click.subject_kind, click.address) == ("sec.package", None)
+    assert click._key == world.sec.package.define(name="click")._key == "click"
+    batch = world.dev.batch.define(repo="core", number=7, create_new=True)
+    assert batch._key == (
+        CreateKeyPart(predicate="dev.batch.repo", value="core"),
+        CreateKeyPart(predicate="dev.batch.number", value=7),
+    )
+    minted = world.sec.vulnerability.define(severity=world.sec.vuln.severity.high)
+    assert minted._key is None and [item.field for item in minted._changes] == [SEVERITY]
+    with pytest.raises(TypeError, match="minted"):
+        world.sec.vulnerability.define("cve-1")
+    with pytest.raises(TypeError, match="each part by keyword"):
+        world.dev.batch.define("core")
+    with pytest.raises(TypeError, match="needs the key of dev.batch: dev.batch.number"):
+        world.dev.batch.define(repo="core")
+    with pytest.raises(TypeError, match="keys are unique"):
+        world.sec.package.define("click", create_new=True)
+    with pytest.raises(AttributeError, match="no accepted predicate 'nonsense'"):
+        world.sec.package.define("click", nonsense=1)
+
+    stub = world.stub()
+    ast.parse(stub)
+    assert (
+        "    def define(\n"
+        "        self,\n"
+        "        name: str | int | bool,\n"
+        "        *,\n"
+        "        expect_new: bool = ...,\n"
+        "    ) -> _N_sec__package: ...\n"
+    ) in stub
+    assert (
+        "        *,\n"
+        "        repo: str | int | bool,\n"
+        "        number: str | int | bool,\n"
+        "        create_new: bool = ...,\n"
+        "        expect_new: bool = ...,\n"
+    ) in stub
+    assert "class _N_sec__vulnerability(WorldNewSubject):" in stub
+    assert "    def edit(self) -> _E_sec__vulnerability: ..." in stub
+    assert "    *items: WorldWritable," in stub
+
+
+def test_a_kind_no_subject_kind_declares_has_no_define(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _WorldClient()
+    client.subject_kinds = [row for row in client.subject_kinds if row["kind"] != "dev.batch"]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    with pytest.raises(WorldStructureError, match="no accepted SubjectKind declares dev.batch"):
+        world.dev.batch.define(repo="core", number=7)
+    stub = world.stub()
+    assert "class _N_dev__batch" not in stub
+    assert "no live SubjectKind declares dev.batch, so it has no define()" in stub
+
+
+def test_drafts_are_frozen_and_one_write_sends_each_create_first_by_its_label(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    from cruxible_client.contracts.write import CreateChange, CreatedSubject
+
+    playbill, client = connection
+    world = playbill.world()
+    click = world.sec.package.define("click")
+    advisory = world.sec.vulnerability.define(severity=world.sec.vuln.severity.high)
+    linked = advisory.set(affects_package=click)
+    # Frozen: deriving a draft leaves the one it came from as it was.
+    assert len(advisory._changes) == 1 and len(linked._changes) == 2
+    edit = world.sec.vulnerability["cve-2026-69247"].edit().set(affects_package=click)
+
+    outcome = world.write(linked, edit, because="The advisory names the package.")
+
+    (request,) = client.write_requests
+    assert [change.op for change in request.changes] == ["create", "create", "set", "set", "set"]
+    first, second = request.changes[:2]
+    assert isinstance(first, CreateChange) and isinstance(second, CreateChange)
+    assert (first.label, first.subject_kind, first.key) == ("new-1", "sec.vulnerability", None)
+    assert (second.label, second.subject_kind, second.key) == ("new-2", "sec.package", "click")
+    affects = request.changes[3]
+    assert affects.subject == CreatedSubject(created="new-1")
+    assert affects.value == CreatedSubject(created="new-2")
+    assert request.changes[4].subject == "sec.vulnerability/cve-2026-69247"
+    assert request.changes[4].value == CreatedSubject(created="new-2")
+    assert outcome.status == "accepted"
+    # Every draft of one Subject names the id the outcome reports.
+    assert click.address == "sec.package/new-2"
+    assert advisory.address == linked.address == "sec.vulnerability/new-1"
+
+    with pytest.raises(WorldStructureError, match="another World"):
+        playbill.world().write(click, because="Elsewhere.")
+    with pytest.raises(TypeError, match="at least one field"):
+        click.set()
+    with pytest.raises(TypeError, match="drafts and edits"):
+        world.write("sec.package/click", because="Not a draft.")  # type: ignore[arg-type]
+
+
+def test_a_predicate_is_a_claim_type_ref_carrying_its_own_structure(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """Structure is a read the caller otherwise makes by hand every time."""
+
+    playbill, _client = connection
+    world = playbill.world()
+    severity = world.sec.vuln.severity
+
+    assert isinstance(severity, ClaimTypeRef)
+    assert isinstance(severity, WorldClaimType)
+    assert severity.address == SEVERITY
+    assert severity.predicate == SEVERITY
+    assert severity.value_type.kind == "enum"
+    assert severity.cardinality is Cardinality.ONE
+    assert severity.permitted_roles == (ClaimRole.OBSERVATION,)
+    assert severity.referent_sensitivity is ReferentSensitivity.IDENTITY
+    assert severity.allowed_subject_kinds == ("sec.vulnerability",)
+    assert world.sec.vuln.affects_package.value_type.subject_kinds == ("sec.package",)
+
+
+def test_enum_members_are_typed_values_and_an_unknown_member_names_the_enum(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    high = world.sec.vuln.severity.high
+    assert isinstance(high, LiteralValue)
+    assert high.predicate == SEVERITY
+    assert high.value == "high"
+    assert high.coordinate == world.coordinate
+    assert world.sec.vuln.severity.members == ("high", "low")
+
+    with pytest.raises(AttributeError, match="admits: high, low"):
+        world.sec.vuln.severity.critical
+
+
+def test_a_native_value_validates_its_constructor_before_the_wire(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """A 39-character digest is a caller mistake, not a proposal to submit."""
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    landed = world.dev.batch.landed_at("f" * 40)
+    assert landed.predicate == LANDED_AT
+    assert landed.value == "f" * 40
+
+    with pytest.raises(ClaimValueError, match="pattern_mismatch"):
+        world.dev.batch.landed_at("f" * 39)
+    with pytest.raises(ClaimValueError, match="type_mismatch"):
+        world.dev.batch.landed_at(7)
+    with pytest.raises(WorldStructureError, match="subject object"):
+        world.sec.vuln.affects_package("sec.package/cryptography")
+
+
+def test_a_subject_lookup_resolves_only_that_subject_and_caches_it(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    world = playbill.world()
+
+    assert client.claim_type_list_calls == 1
+    assert client.subject_queries == []
+    assert client.subject_get_requests == []
+
+    package = world.sec.package.cryptography
+    assert package.address == "sec.package/cryptography"
+    assert [r.refs for r in client.subject_get_requests] == [(f"Subject:{package.address}",)]
+    assert client.subject_get_requests[0].subject_suggestions is False
+    assert world.sec.package["cryptography"] is package
+    assert "cryptography" in world.sec.package
+    assert client.subject_queries == []
+    assert len(client.subject_get_requests) == 1
+
+    assert world.dev.batch["p2c"].address == "dev.batch/p2c"
+    assert len(client.subject_get_requests) == 2
+    assert client.subject_queries == []
+
+    # Enumeration pages only the kind explicitly asked for; it keeps handles.
+    assert world.sec.package.subject_ids == ("cryptography",)
+    assert world.sec.package["cryptography"] is package
+    assert tuple(world.sec.package) == (package,)
+    assert len(world.sec.package) == 1
+    assert client.subject_queries == ["sec.package"]
+    assert world.dev.batch.subject_ids == ("p2c",)
+    assert client.subject_queries == ["sec.package", "dev.batch"]
+    with pytest.raises(AbsentSubject):
+        world.dev.batch["retired_batch"]
+    assert "retired_batch" not in world.dev.batch
+    assert None not in world.dev.batch
+    assert 1 not in world.dev.batch
+
+
+def test_alias_and_key_spellings_share_a_canonical_handle_without_adding_inventory_entries(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    client.subject_spellings = {
+        "sec.package/Crypto Alias": "sec.package/cryptography",
+        "sec.package/crypto-key": "sec.package/cryptography",
+    }
+    world = playbill.world()
+    package = world.sec.package["Crypto Alias"]
+    assert world.sec.package["cryptography"] is package
+    assert world.sec.package["Crypto Alias"] is package
+    assert "Crypto Alias" in world.sec.package
+    assert client.subject_queries == []
+    assert len(client.subject_get_requests) == 1
+
+    # Even a complete canonical inventory cannot prove an alias/key is absent.
+    assert world.sec.package.subject_ids == ("cryptography",)
+    assert world.sec.package["crypto-key"] is package
+    assert "crypto-key" in world.sec.package
+    assert tuple(world.sec.package) == (package,)
+    assert len(world.sec.package) == 1
+    assert len(client.subject_get_requests) == 2
+
+
+def test_missing_and_retired_lookups_are_cached_without_listing_a_kind(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    world = playbill.world()
+    for name in ("missing", "retired_batch"):
+        with pytest.raises(AbsentSubject) as absent:
+            world.dev.batch[name]
+        assert absent.value.subject_id == name
+        assert absent.value.coordinate == world.coordinate
+        assert name not in world.dev.batch
+    assert len(client.subject_get_requests) == 2
+    assert client.subject_queries == []
+
+
+def test_a_lookup_preserves_ambiguous_and_unrelated_server_refusals(
+    connection: tuple[Cruxible, _WorldClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    playbill, client = connection
+    world = playbill.world()
+    refusal = ReadRefusalError(
+        "cruxible.get.ref_ambiguous", "several Subjects", candidates=("one", "two")
+    )
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise refusal
+
+    monkeypatch.setattr(client, "get_batch", refuse)
+    with pytest.raises(ReadRefusalError) as raised:
+        world.dev.batch["ambiguous"]
+    assert raised.value is refusal
+    assert world._subject_lookups == {}
+    assert world._subject_cache == {}
+
+
+@pytest.mark.parametrize("batch_coordinate", [_COORDINATE, _MOVED_COORDINATE])
+def test_subject_lookup_refuses_inconsistent_or_unrequested_batch_coordinates(
+    connection: tuple[Cruxible, _WorldClient],
+    monkeypatch: pytest.MonkeyPatch,
+    batch_coordinate: api.AcceptedCoordinate,
+) -> None:
+    playbill, client = connection
+    world = playbill.world()
+    original = client.get_batch
+
+    def moved(*args: Any, **kwargs: Any) -> Any:
+        batch = original(*args, **kwargs)
+        (result,) = batch.results
+        return batch.model_copy(
+            update={
+                "coordinate": batch_coordinate,
+                "results": (result.model_copy(update={"accepted_coordinate": _MOVED_COORDINATE}),),
+            }
+        )
+
+    monkeypatch.setattr(client, "get_batch", moved)
+    with pytest.raises(ValueError, match="accepted coordinate|requested coordinate"):
+        world.dev.batch["p2c"]
+    assert world._subject_lookups == {}
+    assert world._subject_cache == {}
+
+
+@pytest.mark.parametrize(
+    ("truncated", "capped", "cursor", "refusal"),
+    [
+        (True, (), None, "no cursor to continue it"),
+        (True, ("max_results=1",), None, "without advancing"),
+        (True, (), "same-cursor", "does not advance"),
+    ],
+)
+def test_an_incomplete_subject_listing_refuses_and_caches_nothing(
+    connection: tuple[Cruxible, _WorldClient],
+    truncated: bool,
+    capped: tuple[str, ...],
+    cursor: str | None,
+    refusal: str,
+) -> None:
+    """A partial inventory would call an accepted Subject absent, so none is installed."""
+
+    playbill, client = connection
+
+    def stuck(request: Any) -> api.QueryResultRecord:
+        # The same short page every time: a cap that never advances, a
+        # truncated answer with nothing to continue it, or a cursor handed back.
+        return api.QueryResultRecord(
+            kind=request.kind,
+            columns=(),
+            rows=({"subject": f"{request.kind}/a", "subject_id": "a", "lifecycle": "live"},)
+            if capped or cursor
+            else (),
+            truncated=truncated,
+            capped=capped,
+            next_cursor=cursor,
+            receipt=client._receipt(request),
+        )
+
+    client.subject_pages = stuck
+    world = playbill.world()
+    with pytest.raises(WorldStructureError, match=refusal):
+        tuple(world.sec.package)
+    assert world._subjects_loaded == set()
+    assert world._subject_cache == {}
+
+
+def test_a_subject_listing_row_must_state_its_lifecycle(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    client.subject_pages = lambda request: api.QueryResultRecord(
+        kind=request.kind,
+        columns=(),
+        rows=({"subject": f"{request.kind}/a", "subject_id": "a"},),
+        receipt=client._receipt(request),
+    )
+    with pytest.raises(WorldStructureError, match="lifecycle"):
+        tuple(playbill.world().sec.package)
+
+
+def test_the_facade_remains_pinned_when_the_live_orientation_moves(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """A name that resolved at one coordinate may name something else at the next."""
+
+    playbill, client = connection
+    world = playbill.world()
+    assert world.sec.package.cryptography.address == "sec.package/cryptography"
+
+    client.coordinate = _MOVED_COORDINATE
+    playbill.refresh()
+
+    for read in (
+        lambda: world.sec.package.cryptography,
+        lambda: world.sec.vuln.severity,
+        lambda: world.sec.package.define("click"),
+        lambda: world.kinds,
+        lambda: world.predicates,
+        lambda: world.kind("sec.package"),
+        lambda: world.claim_type(SEVERITY),
+        lambda: world.stub(),
+    ):
+        read()
+
+    # An uncached read after head movement must still use the original snapshot.
+    assert world.sec.vulnerability["cve-2026-69247"].severity
+    assert client.batch_requests[-1].at == _COORDINATE
+    assert repr(world).startswith(f"<World at {'a' * 40} ")
+
+
+def test_a_retired_claim_type_leaves_the_world_it_was_read_from(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    client.retired_severity = True
+
+    world = playbill.world()
+
+    assert SEVERITY not in world.predicates
+    with pytest.raises(AttributeError, match="nests no 'severity'"):
+        world.sec.vuln.severity
+
+
+def test_a_subject_reads_its_live_claims_through_the_existing_verbs(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    world = playbill.world()
+    vulnerability = world.sec.vulnerability["cve-2026-69247"]
+
+    under_predicate = vulnerability.affects_package
+    assert under_predicate == ()
+
+    claims = vulnerability.claims
+    assert len(claims) == 1
+    assert claims[0].predicate == SEVERITY
+    assert claims[0].value == "high"
+    assert claims[0].lifecycle_state == "live"
+    assert vulnerability.severity == claims
+
+    # One coordinate-pinned batch read of the Subject's live Claims (and one
+    # of the predicate), then the Subject answers from cache.
+    assert [request.subject_paths for request in client.batch_requests] == [
+        ("subjects/sec.vulnerability/cve-2026-69247.json",)
+    ] * len(client.batch_requests)
+    assert client.claim_reads[-1] == "CLM-" + "9" * 32
+
+    assert vulnerability.explain() == {"explained": "sec.vulnerability/cve-2026-69247"}
+    with pytest.raises(AttributeError, match="it admits: affects_package, severity"):
+        vulnerability.nonsense
+
+
+def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """Card 85 closes by construction on the typed path: the ref is the return."""
+
+    playbill, _client = connection
+    world = playbill.world()
+    draft = playbill.changes(rationale="Name the package this advisory affects.")
+
+    package = draft.subject(playbill.new_subject("sec.package", key="click"))
+    assert isinstance(package, PendingSubjectRef)
+    # A creation-member reference: core resolves it to the path it assigns; no
+    # address is predicted from the key (E-b review F-002).
+    assert package.creation is not None
+    assert package.creation.startswith("SubjectCreation:sec.package@")
+    assert package.address == package.creation
+    assert package.coordinate == playbill.coordinate
+
+    draft.claim(
+        subject=world.sec.vulnerability["cve-2026-69247"],
+        predicate=world.sec.vuln.affects_package,
+        value=package,
+        role="observation",
+        rationale="The advisory names this package.",
+        supported_by=None,
+        copied_from=None,
+        self_source="affects: click\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    compiled = draft._compiled()
+
+    assert len(compiled.payload.members) == 2
+    claim_index = next(
+        index
+        for index, member in enumerate(compiled.payload.members)
+        if member.model_dump(mode="json")["tag"].startswith("cruxible-claim-authoring-payload-")
+    )
+    # The Subject the set defines asserts no reference expectation: it did not
+    # exist at the coordinate this ref names, and asserting it there would
+    # refuse against the base tree. The Subject and predicate the set only
+    # reads still assert theirs.
+    assert [item.payload_path for item in compiled.reference_expectations] == [
+        f"members[{claim_index}].statement.predicate",
+        f"members[{claim_index}].statement.subject",
+    ]
+    claim = compiled.payload.members[claim_index].model_dump(mode="json")
+    assert claim["statement"]["object"] == {
+        "kind": "subject",
+        "address": {
+            "tag": "playbill-semantic-address-v1",
+            "artifact_path": "subject-kinds/sec.package.json",
+            "selector": {
+                "scheme": "subject-creation-v1",
+                "value": package.creation.rpartition("@")[2],
+            },
+        },
+    }
+
+
+def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    definition = playbill.claim_type(
+        predicate="sec.package.license",
+        subject_kinds=("sec.package",),
+        value_type="string{max_len: 256}",
+        cardinality="one",
+        permitted_roles=("observation",),
+        referent_sensitivity="identity",
+        sources=(),
+        admission_policy=_admission_policy(),
+        resolution_policy=_resolution_policy(),
+        pins=(),
+        evidence_freshness=None,
+    )
+    draft = playbill.changes(rationale="Open the license slot and state one value.")
+    predicate = draft.claim_type(definition)
+
+    assert isinstance(predicate, PendingClaimTypeRef)
+    assert predicate.address == "sec.package.license"
+    assert predicate.value_type.kind == "string"
+
+    draft.claim(
+        subject="sec.package/cryptography",
+        predicate=predicate,
+        value="sec.package/bsd",
+        role="observation",
+        rationale="The package metadata states its license.",
+        supported_by=None,
+        copied_from=None,
+        self_source="license: bsd\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    compiled = draft._compiled()
+
+    claim = next(
+        member.model_dump(mode="json")
+        for member in compiled.payload.members
+        if member.model_dump(mode="json")["tag"].startswith("cruxible-claim-authoring-payload-")
+    )
+    # A literal ClaimType keeps an address-shaped string a literal, and the
+    # pending ref answered that without reading a ClaimType that is not
+    # accepted yet.
+    assert claim["statement"]["object"] == {"kind": "literal", "value": "sec.package/bsd"}
+    # Nothing here asserts a reference: the ClaimType is defined by this set and
+    # the Subject was spelled as a string.
+    assert compiled.reference_expectations == ()
+    assert client.claim_type_list_calls == 0
+
+
+def test_a_value_minted_under_one_claim_type_refuses_under_another(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    with pytest.raises(LiteralValueTypeError) as refused:
+        playbill.claim(
+            subject=world.sec.vulnerability["cve-2026-69247"],
+            predicate=world.dev.batch.landed_at,
+            value=world.sec.vuln.severity.high,
+            role="observation",
+            rationale="Say a severity where a commit belongs.",
+            supported_by=None,
+            copied_from=None,
+            self_source="severity: high\n",
+            qualifier=None,
+            effective_period=None,
+            revises=None,
+            dispositions={},
+            subject_definition=None,
+            claim_type_definition=None,
+        )
+
+    assert refused.value.minted_under == SEVERITY
+    assert refused.value.passed_to == LANDED_AT
+    assert SEVERITY in str(refused.value)
+    assert LANDED_AT in str(refused.value)
+
+
+def _severity_claim(playbill: Cruxible, predicate: Any, *, role: str) -> None:
+    world = playbill.world()
+    playbill.claim(
+        subject=world.sec.vulnerability["cve-2026-69247"],
+        predicate=predicate,
+        value="high",
+        role=role,
+        rationale="State a severity under a role the ClaimType does not permit.",
+        supported_by=None,
+        copied_from=None,
+        self_source="severity: high\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+
+
+def test_a_role_the_claim_type_does_not_permit_refuses_at_its_keyword(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """The permitted roles a World ref carries answer without a read or a round trip."""
+
+    playbill, client = connection
+    world = playbill.world()
+    reads_before = len(client.claim_type_reads)
+    with pytest.raises(ClaimRoleNotPermittedError) as refused:
+        _severity_claim(playbill, world.sec.vuln.severity, role="normative")
+
+    error = refused.value
+    assert (error.predicate, error.role, error.permitted_roles) == (
+        SEVERITY,
+        "normative",
+        ("observation",),
+    )
+    assert error.code == "cruxible.sdk.claim_role_not_permitted"
+    assert error.call_site is not None and error.call_site.expression == "role"
+    assert "permitted roles: observation" in str(error)
+    assert len(client.claim_type_reads) == reads_before
+
+
+def test_a_named_predicate_reads_its_roles_once_per_coordinate(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    for _ in range(2):
+        with pytest.raises(ClaimRoleNotPermittedError):
+            _severity_claim(playbill, SEVERITY, role="normative")
+    assert client.claim_type_reads == [SEVERITY]
+
+
+def _admission_policy() -> Any:
+    from cruxible_client.contracts.policies import ClaimAdmissionPolicy
+
+    return ClaimAdmissionPolicy()
+
+
+def _resolution_policy() -> Any:
+    from cruxible_client.contracts.policies import ClaimResolutionPolicy
+
+    return ClaimResolutionPolicy(
+        cardinality="one",
+        eligible_verdicts=("supported",),
+        selector="only_contender",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stub generation
+# ---------------------------------------------------------------------------
+
+
+def test_the_stub_types_the_vocabulary_alone_and_is_byte_identical_across_coordinates(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+
+    first = playbill.world().stub()
+    second = playbill.world().stub()
+    assert first == second
+
+    assert first.startswith(f"# {STUB_HEADER_TAG}:")
+    assert stub_vocabulary_digest(first) is not None
+    assert "a" * 40 not in first
+    # The emitted classes inherit no runtime class carrying `__getattr__`, which
+    # is what makes an undeclared name a type error rather than `Any`.
+    assert "class _W_sec__vuln__severity(ClaimTypeRef):" in first
+    assert "    high: LiteralValue" in first
+    assert "    low: LiteralValue" in first
+    # Subjects are typed by kind, never one attribute each: the stub reads no
+    # Subject and does not grow with them.
+    assert "cryptography" not in first
+    assert "    def __getitem__(self, subject_id: str) -> _S_sec__package: ..." in first
+    assert "    def __iter__(self) -> Iterator[_S_sec__package]: ..." in first
+    assert "    def __contains__(self, subject_id: object) -> bool: ..." in first
+    assert client.subject_queries == []
+    assert "class _W_sec__vulnerability:" in first
+    assert "class _S_sec__vulnerability(SubjectRef):" in first
+    assert "    severity: tuple[ClaimView, ...]" in first
+    assert "WorldClaimType):" not in first
+    assert "KindNamespace):" not in first
+    # `cve-2026-69247` is not a Python identifier, so it is reachable only by
+    # index and the stub does not pretend otherwise.
+    assert "cve-2026-69247" not in first
+    assert "# object_kind=literal cardinality=one referent_sensitivity=identity" in first
+
+    # The head moved but the vocabulary did not: the stub is the same bytes.
+    client.coordinate = _MOVED_COORDINATE
+    playbill.refresh()
+    assert playbill.world().stub() == first
+
+
+def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    import ast
+
+    from cruxible_client.authoring.sdk_types import ClaimRole
+
+    playbill, client = connection
+    plain = playbill.world()
+    severity = plain.claim_type(SEVERITY)
+    assert (
+        severity.description,
+        severity.member_descriptions,
+        severity.default_role,
+        severity.evidence_requirement,
+        severity.revision_evidence,
+    ) == (None, (), None, "self", "accumulate")
+    assert "\u2014" not in plain.stub()
+
+    client.severity_overrides = {
+        "artifact_format": "cruxible-claim-type-v11",
+        "description": "How bad the vulnerability is.\nRead it before patching.",
+        "member_descriptions": [
+            {"member": "high", "description": "Patch now."},
+            {"member": "low", "description": 'Patch "soon".'},
+        ],
+        "default_role": "observation",
+        "evidence_requirement": "captured",
+        "revision_evidence": "replace",
+    }
+    world = playbill.world()
+    severity = world.claim_type(SEVERITY)
+    assert severity.description == "How bad the vulnerability is.\nRead it before patching."
+    assert [(item.member, item.description) for item in severity.member_descriptions] == [
+        ("high", "Patch now."),
+        ("low", 'Patch "soon".'),
+    ]
+    assert severity.default_role == ClaimRole.OBSERVATION
+    assert (severity.evidence_requirement, severity.revision_evidence) == ("captured", "replace")
+    stub = world.stub()
+    assert stub == world.stub()
+    ast.parse(stub)
+    assert (
+        "    severity: tuple[ClaimView, ...]\n"
+        '    """How bad the vulnerability is.\n'
+        "    Read it before patching.\n"
+        "    \n"
+        "    'high' \u2014 Patch now.\n"
+        "    'low' \u2014 Patch \\\"soon\\\".\n"
+        '    """\n'
+    ) in stub
+    assert '    evidence_requirement: Literal["none", "self", "captured"]' in stub
+
+
+def test_a_type_checker_reads_the_generated_stub_as_exact_types(
+    connection: tuple[Cruxible, _WorldClient],
+    tmp_path: Path,
+) -> None:
+    """A stub that types everything as Any would buy the caller nothing."""
+
+    playbill, _client = connection
+    project = tmp_path / "stub-project"
+    project.mkdir()
+    (project / "world.pyi").write_text(playbill.world().stub(), encoding="utf-8")
+    (project / "uses_world.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from cruxible_client.authoring.sdk_types import LiteralValue\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def declared(world: World) -> LiteralValue:\n"
+        "    return world.sec.vuln.severity.high\n"
+        "\n"
+        "\n"
+        "def mistyped(world: World) -> int:\n"
+        "    return world.sec.vuln.severity.high\n",
+        encoding="utf-8",
+    )
+
+    report = _mypy(project, "uses_world.py")
+    assert "uses_world.py:8" not in report, report
+    assert "uses_world.py:12" in report, report
+    assert "LiteralValue" in report, report
+
+
+def test_the_world_is_built_from_the_current_claim_type_list_only(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+
+    world = playbill.world()
+
+    assert isinstance(world, World)
+    assert client.batch_requests == []
+    assert client.claim_type_list_calls == 1
+    assert client.claim_type_coordinates == [None]
+    assert client.subject_queries == []
+    assert world.coordinate == AcceptedCoordinate.model_validate(
+        _COORDINATE.model_dump(mode="json")
+    )
+    assert world.unstructured_predicates == ()
+
+
+# ---------------------------------------------------------------------------
+# Paging: a read that under-reports without saying so is the one failure mode
+# hard state must not have.
+# ---------------------------------------------------------------------------
+
+
+class _PagedClaimsClient(_WorldClient):
+    """A daemon whose Claim batch read answers in pages, exactly as it does."""
+
+    page_size = 20
+
+    def __init__(
+        self,
+        *,
+        total: int = 55,
+        offer_cursor: bool = True,
+        stuck_cursor: bool = False,
+    ) -> None:
+        super().__init__()
+        self.total = total
+        self.offer_cursor = offer_cursor
+        self.stuck_cursor = stuck_cursor
+        for index in range(total):
+            self.claim_predicates[_paged_identity(index)] = SEVERITY if index % 2 == 0 else AFFECTS
+
+    def _claims_of(self, subject_path: str) -> list[str]:
+        if subject_path != "subjects/sec.vulnerability/cve-2026-69247.json":
+            return []
+        return [_paged_identity(index) for index in range(self.total)]
+
+    def _page(self, identities: list[str], start: int) -> tuple[list[str], bool, str | None]:
+        stop = min(start + self.page_size, len(identities))
+        truncated = stop < len(identities)
+        cursor = (
+            (str(start) if self.stuck_cursor else str(stop))
+            if truncated and self.offer_cursor
+            else None
+        )
+        return identities[start:stop], truncated, cursor
+
+    @property
+    def subject_searches(self) -> int:
+        return len(self.batch_requests)
+
+
+def _paged_identity(index: int) -> str:
+    return "CLM-" + f"{index:032d}"
+
+
+def _paged_connection(tmp_path: Path, client: _PagedClaimsClient) -> Cruxible:
+    _workspace(tmp_path)
+    return Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+
+
+def test_a_subject_reads_every_page_of_its_claims_not_only_the_first(
+    tmp_path: Path,
+) -> None:
+    """Fifty-five live Claims must not answer as fifty, silently."""
+
+    client = _PagedClaimsClient(total=55)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    claims = vulnerability.claims
+
+    assert len(claims) == 55
+    assert client.subject_searches == 3
+    assert [request.cursor for request in client.batch_requests] == [None, "20", "40"]
+    assert len(vulnerability.severity) == 28
+    assert len(vulnerability.affects_package) == 27
+    # The pages were walked once and every Claim was read once; the predicate
+    # views are served from what the Subject already read.
+    assert len(client.claim_reads) == 55
+
+
+def test_a_predicate_view_reads_only_the_claims_that_can_survive_its_filter(
+    tmp_path: Path,
+) -> None:
+    """The served row already names the predicate, so the other reads are waste."""
+
+    client = _PagedClaimsClient(total=55)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    under_severity = vulnerability.severity
+
+    assert len(under_severity) == 28
+    # Only the predicate's Claims are read: 28 of them, in two pages.
+    assert client.subject_searches == 2
+    assert len(client.claim_reads) == 28
+
+
+def test_a_truncated_page_with_no_cursor_refuses_rather_than_under_report(
+    tmp_path: Path,
+) -> None:
+    """A short answer with no signal is worse than a refusal that names the cap."""
+
+    client = _PagedClaimsClient(total=55, offer_cursor=False)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    with pytest.raises(WorldStructureError) as refused:
+        vulnerability.claims
+
+    assert "pagination does not advance" in str(refused.value)
+
+
+def test_a_cursor_that_does_not_advance_refuses_rather_than_looping(
+    tmp_path: Path,
+) -> None:
+    """The other way a truncated list cannot be continued, and the worse one.
+
+    A daemon handing back the cursor it was given is skew, not corruption: the
+    page is right, the walk simply never ends. Without this the client appends
+    the same rows forever, which is the one thing a client whose thesis is
+    refusing wrong answers must not do.
+    """
+
+    client = _PagedClaimsClient(total=55, stuck_cursor=True)
+    playbill = _paged_connection(tmp_path, client)
+    vulnerability = playbill.world().sec.vulnerability["cve-2026-69247"]
+
+    with pytest.raises(WorldStructureError) as refused:
+        vulnerability.claims
+
+    # The repeated page re-serves Claims already read: refused, never re-walked.
+    assert "invalid or duplicate selection" in str(refused.value)
+    # Two calls: the first page, then the one that repeated its cursor.
+    assert client.subject_searches == 2
+
+
+def test_a_failure_inside_a_subject_member_is_not_reported_as_a_naming_mistake(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`claims` is one of this Subject's own names, so reaching __getattr__ for it
+    means the member ran and raised -- a real fault, not an unknown predicate.
+
+    Python routes an AttributeError escaping a property back into __getattr__,
+    which used to answer "no accepted predicate 'claims' is admitted for Subject
+    kind ...". A mis-built contract object deep inside a Claim read and a
+    misspelt predicate then looked identical, and only one of them is the
+    caller's to fix.
+    """
+
+    client = _PagedClaimsClient(total=55)
+    playbill = _paged_connection(tmp_path, client)
+    world = playbill.world()
+    vulnerability = world.sec.vulnerability["cve-2026-69247"]
+
+    def _broken(*_args: object, **_kwargs: object) -> tuple[object, ...]:
+        raise AttributeError("a contract object deep inside the Claim read has no 'envelope'")
+
+    monkeypatch.setattr(World, "_claims_about", _broken)
+
+    with pytest.raises(AttributeError) as refused:
+        vulnerability.claims
+
+    message = str(refused.value)
+    assert "no accepted predicate" not in message
+    assert "failed inside the member itself" in message
+    assert "'claims'" in message
+
+
+# ---------------------------------------------------------------------------
+# Freshness, and the connection a read-only caller is allowed to open
+# ---------------------------------------------------------------------------
+
+
+def test_a_world_is_built_at_the_instances_current_coordinate(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """A world built at a coordinate the instance has left is a stale answer."""
+
+    playbill, client = connection
+    previous_world = playbill.world()
+    assert previous_world.coordinate.git_oid == "a" * 40
+
+    # Another connection accepts a generation. This one is told nothing.
+    client.coordinate = _MOVED_COORDINATE
+
+    world = playbill.world()
+
+    assert world.coordinate.git_oid == "b" * 40
+    assert playbill.coordinate.git_oid == "b" * 40
+    assert client.claim_type_coordinates == [None, None]
+    assert previous_world.kind("sec.package").subject_kind == "sec.package"
+    assert previous_world.coordinate.git_oid == "a" * 40
+
+
+def test_a_read_only_connection_needs_no_workspace_file_catalog(
+    tmp_path: Path,
+) -> None:
+    """Reads touch no working tree, so they must not demand a writer's setup."""
+
+    client = _WorldClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+
+    assert not (tmp_path / ".cruxible").exists()
+    assert playbill.world().kinds == ("dev.batch", "sec.package", "sec.vulnerability")
+
+
+def test_selecting_a_file_still_refuses_at_the_same_typed_point(
+    tmp_path: Path,
+) -> None:
+    """Deferring the refusal must not remove it, and it must land before the wire."""
+
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+
+    client = _WorldClient()
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    before = len(client.batch_requests)
+
+    with pytest.raises(SourceSelectionError) as refused:
+        playbill.file("notes.txt")
+
+    assert "exactly one .cruxible/files.yaml or files.yaml" in str(refused.value)
+    assert len(client.batch_requests) == before
+
+
+# ---------------------------------------------------------------------------
+# Collisions: the fixed surface wins, and index access reaches the rest
+# ---------------------------------------------------------------------------
+
+
+class _CollidingClient(_WorldClient):
+    """A world whose accepted names collide with the facade's own."""
+
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+        self.claim_type_list_calls += 1
+        return ClaimTypeListing(
+            coordinate=self.coordinate,
+            claim_types=[
+                _claim_type(
+                    SEVERITY,
+                    value_type={
+                        "type": "string",
+                        "enum": ["cardinality", "high", "low"],
+                    },
+                ),
+                # The predicate leaf collides with `WorldSubject.claims`.
+                _claim_type("sec.vuln.claims"),
+                # The dotted name is an accepted predicate AND an accepted kind.
+                _claim_type("sec.package", value_type=("sec.package",)),
+            ],
+        )
+
+
+def test_a_predicate_leaf_that_a_member_shadows_is_reachable_by_index(
+    tmp_path: Path,
+) -> None:
+    """`subject.claims` keeps its documented meaning; the predicate has an escape."""
+
+    client = _CollidingClient()
+    client.claim_predicates["CLM-" + "9" * 32] = "sec.vuln.claims"
+    _workspace(tmp_path)
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+    vulnerability = world.sec.vulnerability["cve-2026-69247"]
+
+    # The member answers what it has always answered: every live Claim.
+    assert len(vulnerability.claims) == 1
+    # The shadowed predicate is reachable by index, by leaf or in full.
+    assert vulnerability["sec.vuln.claims"] == vulnerability.claims
+    assert vulnerability["claims"] == vulnerability.claims
+    assert vulnerability[world.claim_type("sec.vuln.claims")] == vulnerability.claims
+    # Nothing advertises it as an attribute, in `dir()` or in the stub.
+    assert "sec.vuln.claims" not in set(world._predicate_leaves("sec.vulnerability").values())
+    assert "reach it with subject['sec.vuln.claims']" in world.stub()
+
+
+def test_an_enum_member_a_structure_field_shadows_is_minted_by_the_call_form(
+    tmp_path: Path,
+) -> None:
+    """A member called `cardinality` must not steal the ClaimType's own structure."""
+
+    client = _CollidingClient()
+    _workspace(tmp_path)
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    severity = playbill.world().sec.vuln.severity
+
+    assert severity.cardinality is Cardinality.ONE
+    assert severity("cardinality").value == "cardinality"
+    assert "cardinality" not in set(dir(severity)) - set(object.__dir__(severity))
+    assert "mint it with severity('cardinality')" in playbill.world().stub()
+
+
+def test_a_kind_a_predicate_shadows_stays_reachable_as_a_kind(
+    tmp_path: Path,
+) -> None:
+    """One dotted name, two accepted things: the predicate wins, the kind escapes."""
+
+    client = _CollidingClient()
+    _workspace(tmp_path)
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    package = world.sec.package
+    assert isinstance(package, WorldClaimType)
+    assert isinstance(package.as_kind, KindNamespace)
+    assert package.as_kind.subject_kind == "sec.package"
+    assert package.as_kind.define("click").subject_kind == "sec.package"
+    assert package["cryptography"].address == "sec.package/cryptography"
+    assert world.kind("sec.package").subject_ids == ("cryptography",)
+
+    with pytest.raises(AttributeError, match="as_kind"):
+        package.define
+
+
+# ---------------------------------------------------------------------------
+# Names attribute access cannot spell
+# ---------------------------------------------------------------------------
+
+
+class _KeywordSegmentClient(_WorldClient):
+    """A world whose accepted grammar admits segments Python reserves."""
+
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+        self.claim_type_list_calls += 1
+        return ClaimTypeListing(
+            coordinate=self.coordinate,
+            claim_types=[
+                _claim_type("sec.vuln.import", allowed_subject_kinds=("dev.class",)),
+                _claim_type(SEVERITY),
+            ],
+        )
+
+
+def test_a_python_keyword_segment_leaves_the_stub_parseable(
+    tmp_path: Path,
+) -> None:
+    """One unspellable segment used to break the whole file, not just its line."""
+
+    client = _KeywordSegmentClient()
+    _workspace(tmp_path)
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    assert "dev.class" in world.kinds
+    assert "sec.vuln.import" in world.predicates
+
+    rendered = world.stub()
+    ast.parse(rendered)
+    assert "    class: " not in rendered
+    assert "    import: " not in rendered
+    assert "'class' is not a Python attribute" in rendered
+    assert "'import' is not a Python attribute" in rendered
+
+    # The escapes the stub names are the escapes that work.
+    assert world.kind("dev.class").subject_kind == "dev.class"
+    assert world.claim_type("sec.vuln.import").address == "sec.vuln.import"
+    with pytest.raises(WorldStructureError, match="not an accepted Subject kind"):
+        world.kind("sec.vuln")
+
+
+def test_a_type_checker_rejects_every_misspelling_the_stub_names(
+    connection: tuple[Cruxible, _WorldClient],
+    tmp_path: Path,
+) -> None:
+    """Completion without rejection is the property the stub exists to buy."""
+
+    playbill, _client = connection
+    project = tmp_path / "typo-project"
+    project.mkdir()
+    (project / "world.pyi").write_text(playbill.world().stub(), encoding="utf-8")
+    (project / "typos.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def misspellings(world: World) -> None:\n"
+        "    world.sec.vuln.sevrity.high\n"
+        "    world.sec.vuln.severity.hgih\n"
+        "    world.sekk.package\n"
+        "    world.sec.package.cryptografy\n"
+        "    world.totally_absent\n",
+        encoding="utf-8",
+    )
+    (project / "correct.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def spelled_right(world: World) -> None:\n"
+        "    world.sec.vuln.severity.high\n"
+        '    world.sec.package["cryptography"]\n'
+        "    world.sec.vulnerability['cve-2026-69247'].severity\n"
+        "    world.sec.package.define('click')\n",
+        encoding="utf-8",
+    )
+
+    report = _mypy(project, "typos.py")
+    for line in range(7, 12):
+        assert f"typos.py:{line}: error:" in report, report
+    assert report.count("attr-defined") == 5, report
+
+    assert _mypy(project, "correct.py") == "", _mypy(project, "correct.py")
+
+
+def _mypy(project: Path, target: str) -> str:
+    """Type-check `target` against the cruxible_client this test imported.
+
+    The checker runs from the stub project, where a relative PYTHONPATH entry no
+    longer resolves; mypy would then read whatever cruxible_client its
+    interpreter has installed rather than the one under test.
+    """
+
+    inherited = [
+        str(Path(entry).resolve())
+        for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        if entry
+    ]
+    client_root = str(Path(cruxible_client.__file__).resolve().parents[1])
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([client_root, *inherited])}
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--no-incremental",
+            "--follow-imports=silent",
+            "--no-error-summary",
+            target,
+        ],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.stdout + completed.stderr
+
+
+class _UnderscoreSegmentClient(_WorldClient):
+    """A world naming both `sec.package` and the single segment `sec__package`."""
+
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
+        self.claim_type_list_calls += 1
+        return ClaimTypeListing(
+            coordinate=self.coordinate,
+            claim_types=[
+                _claim_type(SEVERITY, allowed_subject_kinds=("sec.package", "sec__package")),
+            ],
+        )
+
+
+def test_a_segment_spelling_the_separator_does_not_claim_another_names_class(
+    tmp_path: Path,
+) -> None:
+    """`a.b` and `a__b` are both accepted names; one class cannot serve both."""
+
+    client = _UnderscoreSegmentClient()
+    _workspace(tmp_path)
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    assert world.kinds == ("sec.package", "sec__package")
+
+    rendered = world.stub()
+    module = ast.parse(rendered)
+    declared = [node.name for node in module.body if isinstance(node, ast.ClassDef)]
+    assert len(declared) == len(set(declared)), declared
+    assert "class _W_sec__package:" in rendered
+    assert "class _W_sec__package_" in rendered
+
+
+def test_workspace_less_connection_reads_but_refuses_block_file_operations() -> None:
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        _WorldClient(),
+        instance_id="inst_world",
+        workspace=None,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    assert playbill.world().kinds == ("dev.batch", "sec.package", "sec.vulnerability")
+    with pytest.raises(SourceSelectionError, match="no workspace"):
+        playbill.block.repin(
+            "workspace.notes", "status", evaluation_time=datetime(2026, 9, 7, 12, tzinfo=UTC)
+        )
+    with pytest.raises(SourceSelectionError, match="no workspace"):
+        playbill.block.sync(all=True)
+
+
+def test_kinds_and_predicates_answer_as_attribute_and_as_call(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """``w.kinds`` and ``w.kinds()`` are the same tuple, so neither spelling is wrong."""
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    assert world.kinds == world.kinds() == ("dev.batch", "sec.package", "sec.vulnerability")
+    assert world.predicates == world.predicates() == (LANDED_AT, AFFECTS, SEVERITY)
+    assert isinstance(world.kinds(), tuple) and not callable(world.kinds())
+    assert "Next:" in (type(world.kinds).__doc__ or "")
+
+
+def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    described = world.describe()
+
+    assert described.startswith(f"World at {'a' * 12}: 3 Subject kinds, 3 predicates.")
+    for verb in ("cx.orient()", 'cx.query("<kind>"', 'cx.get("<ref>")', ".cruxible/floor/current/"):
+        assert verb in described
+    # Only the read verbs that survive the surface cut are named.
+    for cut in ("search(", "explain(", "run_query(", "claim_values"):
+        assert cut not in described
+    vocabulary = described.split("Vocabulary:\n", 1)[1].splitlines()
+    assert vocabulary == [
+        "  dev.batch",
+        "    landed_at: literal, one",
+        "  sec.package",
+        "  sec.vulnerability",
+        "    affects_package: -> sec.package, one",
+        "    severity: literal, one [high, low]",
+    ]
+
+
+def test_world_subjects_and_predicates_repr_short(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    assert repr(world.sec.package.cryptography) == (
+        f"WorldSubject('sec.package/cryptography' @ {'a' * 12})"
+    )
+    assert repr(world.sec.vuln.severity) == f"WorldClaimType('sec.vuln.severity' @ {'a' * 12})"

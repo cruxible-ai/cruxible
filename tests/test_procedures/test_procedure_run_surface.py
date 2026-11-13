@@ -1,0 +1,1699 @@
+"""PC-G5 served query-only Procedure readiness and run laws."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import cruxible_core.service.procedures.procedure_runs as procedure_run_service
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandate,
+    procedure_mandate_digest,
+)
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
+    ProcedureArtifact,
+    procedure_artifact_digest,
+    procedure_path,
+)
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpec,
+    LineSpec,
+    line_identity_digest,
+    line_spec_digest,
+    line_spec_path,
+    render_line_spec,
+)
+from cruxible_client.contracts.procedures.models import (
+    GuardNode,
+    HaltNode,
+    ProjectNode,
+    ReadNode,
+    TransformNode,
+    caps_budget,
+)
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusal,
+    ProcedureBudgetExhausted,
+    ProcedureHaltTerminal,
+    ProcedureNodeRefusal,
+    ProcedureOperationalFailure,
+    ProcedureRunReceipt,
+)
+from cruxible_client.contracts.query.definitions import query_definition_digest
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.repairs import HandEditRepair
+from cruxible_client.contracts.shapes import Comparison, LiteralOperand, Presence
+from cruxible_client.contracts.triggers import (
+    AcceptedTrigger,
+    CadenceSchedule,
+    CaptureLandingSchedule,
+    Trigger,
+    WindowCloseSchedule,
+    trigger_digest,
+    trigger_path,
+)
+from cruxible_core.exhaust import ProcedureExhaustWriter, parse_journal_payload
+from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.reference_binding import authored_procedure
+from cruxible_core.providers.provider_process_leases import (
+    PROVIDER_RUNTIME_DIRECTORY_REPAIR,
+    ProviderLocalRuntimeRefused,
+)
+from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from cruxible_core.service.procedures.procedure_runs import (
+    DirectProcedureReceiptReducer,
+    LineRunIdentityMismatch,
+    LineRunRequest,
+    ProcedureReadinessRequestV1,
+    ProcedureRunNotCurrent,
+    ProcedureRunNotFound,
+    ProcedureRunRecoveryRequired,
+    ProcedureRunRequest,
+    ProcedureRunStateV2,
+    service_get_playbill_procedure_run,
+    service_playbill_procedure_readiness,
+    service_run_playbill_procedure,
+)
+from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.material_reservations import (
+    ProcedureMaterialReservationStore,
+    make_pending_reservation,
+    make_run_reservation,
+)
+from tests.core_support._candidate_support import (
+    submit_member_candidate,
+    submit_query_definition_candidate,
+)
+from tests.core_support._knowledge_loop_support import (
+    QUERY_NAME,
+    TIMESTAMP,
+    accept_proposal,
+    seed_claims,
+    work_item_query,
+)
+from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
+from tests.support.lines import line_budgets, line_spec, line_trigger, trigger_members
+from tests.support.mandates import procedure_mandate
+from tests.support.procedures import (
+    boundary_contract,
+    contract_files,
+    contract_pin,
+    named,
+    procedure_definition,
+    procedure_members,
+    revalidated,
+)
+from tests.test_procedures.test_line_specs import _digest as _line_digest
+from tests.test_procedures.test_line_specs import _line
+from tests.test_procedures.test_procedure_boundary_contracts import (
+    WORK_ROW,
+    _accepted_query_procedure,
+    _activate_procedure,
+)
+
+READ_TIME = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
+# The Line route derives its EVALUATION INSTANT from the daemon clock, so a
+# fixture that asserts a fixed instant has to supply the daemon one too.
+_DAEMON_CLOCK = procedure_run_service._DeterministicClock(READ_TIME)  # noqa: SLF001
+
+
+def _accepted_line(line) -> AcceptedLineSpec:  # type: ignore[no-untyped-def]
+    return AcceptedLineSpec(
+        path=line_spec_path(line.identity.name),
+        line=line,
+        artifact_digest=line_spec_digest(line).tagged,
+    )
+
+
+def test_line_run_request_requires_one_route_and_body_identity() -> None:
+    digest = _line_digest("line")
+    with pytest.raises(LineRunIdentityMismatch, match="route and request"):
+        procedure_run_service.service_run_playbill_line(
+            # A live instance: the terminal-state gate precedes every run.
+            SimpleNamespace(require_writable=lambda: None),  # type: ignore[arg-type]
+            path_identity_digest=digest,
+            request=LineRunRequest(
+                line=_line_digest("other"),
+                evaluation_time=READ_TIME,
+            ),
+            actor_context=SimpleNamespace(),  # type: ignore[arg-type]
+            caller_rung=0,
+            daemon_clock=_DAEMON_CLOCK,
+        )
+
+
+def test_line_without_current_exact_mandate_refuses_typed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_reference",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+    monkeypatch.setattr(procedure_run_service, "_assert_line_closure_complete", lambda *_a: None)
+    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: {})
+    monkeypatch.setattr(
+        procedure_run_service,
+        "evaluate_line_spec_law",
+        lambda *_args, **_kwargs: SimpleNamespace(verdict="accepted"),
+    )
+    monkeypatch.setattr(procedure_run_service, "_accepted_line_mandates", lambda *_a, **_k: ())
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequest(
+            line=line_identity_digest(line.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusal)
+    assert result.terminal.code == "line_mandate_required"
+    assert "accept a ProcedureMandate" in str(result.terminal.details)
+
+
+def test_a_read_only_caller_cannot_run_a_line_that_can_propose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The service holds the tier law itself, not only the served boundary."""
+
+    from cruxible_core.errors import PermissionDeniedError
+
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_reference",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+    assert procedure_run_service.line_authority_rung(accepted_line, accepted) == 2
+    with pytest.raises(PermissionDeniedError) as refused:
+        procedure_run_service.service_run_playbill_line(
+            instance,
+            path_identity_digest=line_identity_digest(line.identity),
+            request=LineRunRequest(
+                line=line_identity_digest(line.identity),
+                evaluation_time=READ_TIME,
+            ),
+            actor_context=_actor(instance),
+            caller_rung=0,
+            daemon_clock=_DAEMON_CLOCK,
+        )
+    assert refused.value.required_mode == "GOVERNED_WRITE"
+
+
+def test_line_closure_loss_refuses_before_mandate_or_occurrence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_reference",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequest(
+            line=line_identity_digest(line.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusal)
+    assert result.terminal.code == "line_closure_incomplete"
+    assert "Restore or succeed" in str(result.terminal.details)
+
+
+def _slotless_contracts(name: str) -> tuple[object, object, object]:
+    """The slotless Procedure's governed boundaries (``procedure_members`` accepts them).
+
+    A Line supplies ``status`` as the Procedure's parameter; its input is empty.
+    """
+
+    return (
+        boundary_contract(f"{name}.input"),
+        boundary_contract(f"{name}.output", {"status": "string"}),
+        boundary_contract(f"{name}.params", {"status": "string"}),
+    )
+
+
+def _slotless_procedure(name: str) -> AcceptedProcedure:
+    """One accepted Procedure with governed boundary Contracts and no slots.
+
+    No state tap, no Provider node and no slot, so a Line binding it closes with
+    nothing but its own acquisition policy: the smallest Procedure that can run
+    end to end through the served Line route.
+    """
+
+    input_contract, output_contract, params_contract = _slotless_contracts(name)
+    contract_in = contract_pin("contract-in", input_contract)
+    contract_out = contract_pin("contract-out", output_contract)
+    definition = procedure_definition(
+        name=name,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
+        parameter_contract=named(contract_pin("parameter-contract", params_contract)),
+        nodes=(
+            ProjectNode(
+                node_id="shape",
+                fields={"status": "$params.status"},
+                as_="result",
+            ),
+        ),
+        terminal_capability=2,
+    )
+    procedure = ProcedureArtifact(
+        identity=ArtifactIdentity(kind="Procedure", name=name),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        activation_policy="drain",
+    )
+    return AcceptedProcedure(
+        path=procedure_path(name),
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+
+
+def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=accepted.procedure.identity,
+        artifact_digest=accepted.artifact_digest,
+    )
+    line = line_spec(
+        name,
+        procedure=procedure_pin,
+        parameters={"status": "open"},
+        max_authority="propose",
+        budgets=line_budgets(max_items=100),
+        epsilon={"$decimal": "0.1"},
+    )
+    return line
+
+
+def _accepted_trigger(trigger: Trigger) -> AcceptedTrigger:
+    return AcceptedTrigger(
+        path=trigger_path(trigger.identity.name),
+        trigger=trigger,
+        artifact_digest=trigger_digest(trigger).tagged,
+    )
+
+
+def _accept_line_tree(
+    instance,  # type: ignore[no-untyped-def]
+    owner,  # type: ignore[no-untyped-def]
+    *,
+    line,  # type: ignore[no-untyped-def]
+    accepted,  # type: ignore[no-untyped-def]
+    proposal_name: str,
+    triggers: tuple[Trigger, ...] = (),
+) -> AcceptedLineSpec:
+    """Accept one Line, its bound Procedure and the Triggers aimed at it."""
+
+    inspection = submit_member_candidate(
+        instance,
+        members={
+            **procedure_members(authored_procedure(accepted)),
+            **contract_files(*_slotless_contracts(accepted.procedure.identity.name)),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            **trigger_members(*triggers),
+        },
+        actor_id="owner",
+        proposal_name=proposal_name,
+        proposal_family="line",
+        timestamp="2026-08-24T15:00:00.000000Z",
+    )
+    accept_proposal(instance, owner, inspection)
+    return procedure_run_service._accepted_line_by_reference(  # noqa: SLF001
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        reference=line_identity_digest(line.identity),
+    )
+
+
+def test_daemon_derives_manual_and_capture_occurrences() -> None:
+    manual, _accepted, _interfaces = _line()
+    manual_line = _accepted_line(manual)
+    first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
+        manual_line,
+        evaluation_time=READ_TIME,
+    )
+    assert first.startswith("sha256:")
+    assert next_due is None
+
+    from cruxible_client.contracts.procedures.windows import (
+        CaptureEventNameSelector,
+        LineTriggerBinding,
+        TriggerEventReference,
+    )
+
+    selector = CaptureEventNameSelector(
+        capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
+    )
+    trigger = _accepted_trigger(
+        line_trigger(
+            "anchor-landed",
+            line=manual.identity.name,
+            schedule=CaptureLandingSchedule(event=selector),
+        )
+    )
+    ref = TriggerEventReference(
+        run_id="RUN-anchor",
+        partition_id="run:anchor",
+        sequence=1,
+        record_digest=_line_digest("event"),
+    )
+    binding = LineTriggerBinding(
+        kind="capture_landing", trigger=trigger.trigger.identity, event=ref
+    )
+    first = procedure_run_service._line_occurrence(
+        manual_line, evaluation_time=READ_TIME, trigger=trigger, binding=binding
+    )
+    later = procedure_run_service._line_occurrence(
+        manual_line,
+        evaluation_time=READ_TIME + timedelta(days=1),
+        trigger=trigger,
+        binding=binding,
+    )
+    assert first == later
+    assert first[1:] == (None,)
+    other = binding.model_copy(
+        update={"event": ref.model_copy(update={"record_digest": _line_digest("other-event")})}
+    )
+    assert (
+        procedure_run_service._line_occurrence(
+            manual_line, evaluation_time=READ_TIME, trigger=trigger, binding=other
+        )[0]
+        != first[0]
+    )
+    # A second Trigger firing on the very same event is its own occurrence.
+    twin = _accepted_trigger(
+        line_trigger(
+            "anchor-landed-twin",
+            line=manual.identity.name,
+            schedule=CaptureLandingSchedule(event=selector),
+        )
+    )
+    twin_binding = binding.model_copy(update={"trigger": twin.trigger.identity})
+    assert (
+        procedure_run_service._line_occurrence(
+            manual_line, evaluation_time=READ_TIME, trigger=twin, binding=twin_binding
+        )[0]
+        != first[0]
+    )
+    # A binding names the Trigger it came from; another Trigger's binding refuses.
+    with pytest.raises(ExecutionError, match="exact tick"):
+        procedure_run_service._line_occurrence(
+            manual_line, evaluation_time=READ_TIME, trigger=trigger, binding=twin_binding
+        )
+
+
+def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree(
+    tmp_path: Path,
+) -> None:
+    """The period is read from the accepted Trigger, never a fabricated path."""
+
+    instance, owner = initialize_local(tmp_path)
+    accepted = _slotless_procedure("scheduled-triage")
+    line = _scheduled_line("scheduled-triage-hourly", accepted=accepted)
+    hourly = line_trigger(
+        "scheduled-triage-hourly-tick",
+        line=line.identity.name,
+        schedule=CadenceSchedule(interval_seconds=3600),
+    )
+    accepted_line = _accept_line_tree(
+        instance,
+        owner,
+        line=line,
+        accepted=accepted,
+        proposal_name="cadence-line",
+        triggers=(hourly,),
+    )
+    # The Line and its Trigger really are in the accepted tree, and the invented
+    # `policies/` directory the period used to be read from is not.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert accepted_line.path in tree
+    assert trigger_path(hourly.identity.name) in tree
+    assert [path for path in tree if path.startswith("policies/")] == []
+    (trigger,) = procedure_run_service.line_triggers(
+        instance, accepted_line, coordinate=instance.accepted_coordinate()
+    )
+    binding = procedure_run_service.trigger_binding_for(trigger)
+    accepted_at = procedure_run_service.trigger_accepted_at(instance, trigger)
+
+    # The first tick is one period after the Trigger's acceptance, never on sight.
+    first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        evaluation_time=accepted_at + timedelta(minutes=5),
+        trigger=trigger,
+        binding=binding,
+        accepted_at=accepted_at,
+    )
+    assert next_due == accepted_at + timedelta(hours=1)
+
+    # The chain continues from the last delivered tick's scheduled instant.
+    ticked = accepted_at + timedelta(hours=1)
+    _early, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        evaluation_time=ticked + timedelta(minutes=30),
+        last_tick=ticked,
+        trigger=trigger,
+        binding=binding,
+        accepted_at=accepted_at,
+    )
+    assert next_due == ticked + timedelta(hours=1)
+
+    second, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        evaluation_time=ticked + timedelta(hours=1),
+        last_tick=ticked,
+        trigger=trigger,
+        binding=binding,
+        accepted_at=accepted_at,
+    )
+    assert next_due == ticked + timedelta(hours=1)
+    assert second != first
+
+
+def test_warm_line_admission_uses_selected_sources_without_tree_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    procedure = _slotless_procedure("selected-line-procedure")
+    line = _scheduled_line("selected-line", accepted=procedure)
+    hourly = line_trigger(
+        "selected-line-tick",
+        line=line.identity.name,
+        schedule=CadenceSchedule(interval_seconds=3600),
+    )
+    _accept_line_tree(
+        instance,
+        owner,
+        line=line,
+        accepted=procedure,
+        proposal_name="selected-line",
+        triggers=(hourly,),
+    )
+    with instance.accepted_history_reader():
+        pass
+
+    def no_tree(*_args, **_kwargs):
+        pytest.fail("warm Line admission must select its accepted owners")
+
+    monkeypatch.setattr(instance, "tree_at", no_tree)
+    monkeypatch.setattr(instance, "immutable_tree_at", no_tree)
+    digest = line_identity_digest(line.identity)
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=digest,
+        request=LineRunRequest(line=digest, evaluation_time=READ_TIME),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
+        trigger_fire=procedure_run_service.TriggerFire(trigger=hourly.identity.name),
+    )
+    assert result.status == "admission_refused"
+    assert result.terminal.code == "line_mandate_required"
+
+
+def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's probe: five hourly occurrences in zero wall time."""
+
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    trigger = _accepted_trigger(
+        line_trigger(
+            "hourly", line=line.identity.name, schedule=CadenceSchedule(interval_seconds=3600)
+        )
+    )
+    digest = line_identity_digest(line.identity)
+
+    with pytest.raises(procedure_run_service.LineRunEvaluationInstantSkewed) as caught:
+        procedure_run_service.service_run_playbill_line(
+            instance,
+            path_identity_digest=digest,
+            request=LineRunRequest(line=digest, evaluation_time=READ_TIME + timedelta(hours=5)),
+            actor_context=_actor(instance),
+            caller_rung=3,
+            daemon_clock=_DAEMON_CLOCK,
+            trigger_fire=procedure_run_service.TriggerFire(trigger="hourly"),
+        )
+    assert "daemon clock skew bound" in str(caught.value)
+    assert caught.value.error_code == "evaluation_instant_skewed"
+
+    # An assertion inside the bound is admitted, and the instant the occurrence
+    # is derived from is the daemon's, not the caller's.
+    inside = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        evaluation_time=READ_TIME,
+        trigger=trigger,
+        binding=procedure_run_service.trigger_binding_for(trigger),
+        accepted_at=READ_TIME - timedelta(hours=1),
+    )
+    assert inside[0].startswith("sha256:")
+
+
+def test_a_window_line_has_fixed_boundary_even_when_dispatch_is_late(tmp_path: Path) -> None:
+    from cruxible_client.contracts.procedures.windows import (
+        FixedWindow,
+        bind_observation_window,
+    )
+
+    manual, _accepted, _interfaces = _line()
+    line = _accepted_line(manual)
+    window = FixedWindow(starts_at=READ_TIME, duration_seconds=86400)
+    trigger = _accepted_trigger(
+        line_trigger(
+            "daily-window",
+            line=manual.identity.name,
+            schedule=WindowCloseSchedule(window=window),
+        )
+    )
+    binding = procedure_run_service.trigger_binding_for(
+        trigger, window=bind_observation_window(window)
+    )
+    results = [
+        procedure_run_service._line_occurrence(
+            line,
+            evaluation_time=at,
+            trigger=trigger,
+            binding=binding,
+        )
+        for at in (READ_TIME, READ_TIME + timedelta(days=1), READ_TIME + timedelta(days=3))
+    ]
+    assert results[0] == results[1] == results[2]
+    assert results[0][1] == READ_TIME + timedelta(days=1)
+
+
+def test_genesis_evaluation_time_comes_from_the_signed_commit(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    assert instance.accepted_evaluation_time(instance.accepted_coordinate().git_oid) == (
+        datetime.fromisoformat(FIXED_TIMESTAMP)
+    )
+
+
+def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    instance, owner = seed_claims(tmp_path)
+    query = work_item_query()
+    inspection = submit_query_definition_candidate(
+        instance,
+        query=query,
+        actor_id="owner",
+        proposal_name="served-procedure-query",
+        timestamp=TIMESTAMP,
+    )
+    accept_proposal(instance, owner, inspection)
+    from cruxible_core.procedures.reference_binding import authored_procedure
+
+    procedure = authored_procedure(_accepted_query_procedure(query_definition_digest(query).tagged))
+    _activate_procedure(
+        instance,
+        owner,
+        procedure,
+        sequence=4,
+        timestamp="2026-08-24T15:00:00.000000Z",
+    )
+
+    return instance, owner, procedure
+
+
+def _actor(instance) -> GovernedActorContext:  # type: ignore[no-untyped-def]
+    return GovernedActorContext(
+        actor_type="human_user",
+        actor_id="owner",
+        org_id=instance.descriptor.instance_id,
+        operation_id="served-procedure-test",
+        timestamp=READ_TIME,
+    )
+
+
+#: The bounded successor's output: the same rows, under a list bounded only by the run.
+LIST_OUTPUT = boundary_contract(
+    "test.query-rows-list", {"rows": "list<test.work-row@1>{max_items: 1000}"}, WORK_ROW
+)
+
+
+def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-untyped-def]
+    definition = procedure.definition.model_copy(
+        update={
+            "contract_out": named(contract_pin("contract-out", LIST_OUTPUT)),
+            "hard_caps": procedure.definition.hard_caps.model_copy(update={"max_items": max_items}),
+        }
+    )
+    successor = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            ),
+        }
+    )
+
+    return revalidated(successor)
+
+
+def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Path) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    readiness = service_playbill_procedure_readiness(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureReadinessRequestV1(),
+    )
+
+    assert readiness.runnable == "direct"
+    assert readiness.definition_digest == procedure.definition_digest
+    assert readiness.next_operation.kind == "run"
+    assert readiness.unsupported_nodes == ()
+    request = ProcedureRunRequest(evaluation_time=READ_TIME, input={})
+    first = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=request,
+        actor_context=_actor(instance),
+    )
+    second = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=request,
+        actor_context=_actor(instance).model_copy(
+            update={"operation_id": "random-retry-operation"}
+        ),
+    )
+
+    assert first == second
+    assert first.run_id.startswith("RUN-") and len(first.run_id) == 68
+    assert first.status == "succeeded"
+    assert first.procedure_artifact_digest == procedure_artifact_digest(procedure).tagged
+    assert first.result is not None
+    assert len(first.result["rows"]) == 2  # type: ignore[index]
+    assert first.receipt_digest is not None
+    assert isinstance(first.receipt, ProcedureRunReceipt)
+    assert first.receipt.status == "succeeded"
+    assert first.receipt.terminal is None
+    # A direct run states no budget: its operating budget is the hard caps.
+    assert first.receipt.budget.declared.budget == caps_budget(procedure.definition.hard_caps)
+    assert first.receipt.budget.declared.hard_caps == procedure.definition.hard_caps
+    # max_items is observed at the boundaries: the output Contract's rows list.
+    observed_items = first.receipt.budget.observed.max_items
+    assert (observed_items.high_water, observed_items.boundary, observed_items.field_path) == (
+        2,
+        "contract-out:test.query-rows/v1",
+        "rows",
+    )
+    assert first.receipt.budget.observed.result_bytes.high_water > 0
+    assert first.receipt.budget.observed.result_bytes.boundary == "procedure-return"
+    assert first.attribution is not None
+    assert first.attribution.operation_id == "served-procedure-test"
+    assert first.semantic_replay_key_digest is not None
+    assert first.semantic_result_digest is not None
+    assert service_get_playbill_procedure_run(instance, run_id=first.run_id) == first
+
+
+def test_direct_receipt_reducer_identity_is_stable() -> None:
+    first = DirectProcedureReceiptReducer()
+    second = DirectProcedureReceiptReducer()
+
+    assert first.reducer_digest == second.reducer_digest
+    assert QUERY_NAME
+
+
+def test_explicit_historical_coordinate_obeys_live_activation_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    historical = instance.accepted_coordinate()
+    successor = procedure.model_copy(
+        update={
+            "activation_policy": (
+                "snapshot" if procedure.activation_policy != "snapshot" else "drain"
+            ),
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        successor,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    def no_whole_tree(*_args):
+        pytest.fail("one Procedure read must not fetch the whole tree")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(instance, "tree_at", no_whole_tree)
+        loaded = procedure_run_service._accepted_procedure(
+            instance, name=procedure.identity.name, coordinate=historical
+        )
+        assert loaded.procedure == procedure
+        authority = procedure_run_service._CurrentProcedureAuthority(instance)
+        assert (
+            authority.current_procedure_digest(
+                procedure.identity, coordinate=AcceptedCoordinate.from_internal(historical)
+            )
+            == procedure_artifact_digest(successor).tagged
+        )
+
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    assert not journal_root.exists()
+
+    with pytest.raises(ProcedureRunNotCurrent, match="not current"):
+        service_run_playbill_procedure(
+            instance,
+            name=procedure.identity.name,
+            request=ProcedureRunRequest(
+                at=AcceptedCoordinate.from_internal(historical),
+                input={},
+            ),
+            actor_context=_actor(instance),
+        )
+    assert not journal_root.exists()
+
+
+def test_explicit_at_equal_to_head_selects_live_lane(tmp_path: Path) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    head = instance.accepted_coordinate()
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequest(
+            at=AcceptedCoordinate.from_internal(head),
+            input={},
+        ),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded"
+    assert run.lane == "current"
+    assert run.bound_coordinate.git_oid == head.git_oid
+    assert run.head_at_admission.git_oid == head.git_oid
+
+
+def test_run_id_collision_across_partitions_fails_closed(tmp_path: Path) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    stream = procedure_run_service._stream(instance)  # noqa: SLF001
+    writer = ProcedureExhaustWriter(
+        journal=journal,
+        bodies=instance.body_store(),
+        fencing_token=procedure_run_service.PROCEDURE_RUN_FENCING_TOKEN,
+    )
+    procedure_digest = procedure_artifact_digest(procedure).tagged
+    for partition_id in ("collision-a", "collision-b"):
+        procedure_run_service._activate_writer(journal, stream, partition_id)  # noqa: SLF001
+        writer.append(
+            stream=stream,
+            partition_id=partition_id,
+            event_kind="attempt_started",
+            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            procedure_artifact_digest=procedure_digest,
+            definition_digest=procedure.definition_digest,
+            run_id="RUN-collision",
+            admission_binding_digest=procedure_digest,
+            actor_context=_actor(instance),
+            recorded_at=READ_TIME,
+            payload={"phase": "collision"},
+        )
+
+    with pytest.raises(ProcedureRunRecoveryRequired, match="collides across journal authority"):
+        procedure_run_service._records_for_run(instance, "RUN-collision")  # noqa: SLF001
+
+
+def test_reading_partition_may_reference_a_run_without_joining_run_authority(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    stream = procedure_run_service._stream(instance)  # noqa: SLF001
+    reading_partition = "procedure-readings:test"
+    procedure_run_service._activate_writer(journal, stream, reading_partition)  # noqa: SLF001
+    ProcedureExhaustWriter(
+        journal=journal,
+        bodies=instance.body_store(),
+        fencing_token=procedure_run_service.PROCEDURE_RUN_FENCING_TOKEN,
+    ).append(
+        stream=stream,
+        partition_id=reading_partition,
+        event_kind="procedure_reading",
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        procedure_artifact_digest=procedure_artifact_digest(procedure).tagged,
+        definition_digest=procedure.definition_digest,
+        actor_context=_actor(instance).model_copy(update={"operation_id": "reading"}),
+        recorded_at=READ_TIME,
+        payload={"reading": "separate authority"},
+        run_id=run.run_id,
+    )
+
+    assert service_get_playbill_procedure_run(instance, run_id=run.run_id) == run
+
+
+def test_run_status_refuses_record_metadata_that_disagrees_with_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None and run.receipt is not None
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    records = list(
+        journal.all_records(
+            procedure_run_service._stream(instance),  # noqa: SLF001
+            run.receipt.partition_id,
+        )
+    )
+    original = records[1].record
+    mismatches = {
+        "stream": original.stream.model_copy(update={"stream_id": "other-stream"}),
+        "partition_id": "other-partition",
+        "accepted_coordinate": original.accepted_coordinate.model_copy(
+            update={"git_oid": "b" * len(original.accepted_coordinate.git_oid)}
+        ),
+        "procedure_artifact_digest": "sha256:" + "2" * 64,
+        "definition_digest": "sha256:" + "3" * 64,
+        "run_id": "RUN-other",
+        "line_spec_digest": "sha256:" + "4" * 64,
+        "occurrence_id": "OCC-other",
+        "attempt": 2,
+        "admission_binding_digest": "sha256:" + "5" * 64,
+        "actor_context": original.actor_context.model_copy(update={"operation_id": "other"}),
+    }
+    for field, mismatch in mismatches.items():
+        divergent = list(records)
+        divergent[1] = divergent[1].model_copy(
+            update={"record": original.model_copy(update={field: mismatch})}
+        )
+        monkeypatch.setattr(
+            procedure_run_service,
+            "_records_for_run",
+            lambda _instance, _run_id, divergent=divergent: tuple(divergent),
+        )
+
+        with pytest.raises(ProcedureRunRecoveryRequired, match="metadata disagrees"):
+            procedure_run_service._state_from_records(  # noqa: SLF001
+                instance, run_id=run.run_id
+            )
+
+
+def test_run_status_refuses_a_second_admission_bound_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None and run.receipt is not None
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    records = journal.all_records(
+        procedure_run_service._stream(instance),  # noqa: SLF001
+        run.receipt.partition_id,
+    )
+    admission_record = next(
+        stored for stored in records if stored.record.event_kind == "admission_bound"
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_records_for_run",
+        lambda _instance, _run_id: (admission_record, *records),
+    )
+
+    with pytest.raises(ProcedureRunRecoveryRequired, match="one admission_bound"):
+        procedure_run_service._state_from_records(instance, run_id=run.run_id)  # noqa: SLF001
+
+
+def test_served_get_preserves_leases_until_the_next_write_recovers_them(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    bodies = instance.body_store()
+    metadata = bodies.store(b'{"orphaned":"before-append"}')
+    reservation = make_run_reservation(
+        instance_id=instance.descriptor.instance_id,
+        partition_id="direct-runs",
+        event_kind="node_fired",
+        run_id="RUN-orphaned",
+        admission_binding_digest="sha256:" + "1" * 64,
+        body_digest=metadata.digest,
+    )
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+    with store.locked():
+        store.reserve_locked(reservation)
+    pending = make_pending_reservation(
+        instance_id=instance.descriptor.instance_id,
+        run_id="RUN-pending-admission",
+        admission_binding_digest="sha256:" + "6" * 64,
+        input_name="capture",
+        plane="landed_capture",
+        body_digest="sha256:" + "7" * 64,
+    )
+    with store.locked():
+        store.reserve_locked(pending)
+    assert set(store.active()) == {pending, reservation}
+
+    with pytest.raises(ProcedureRunNotFound):
+        service_get_playbill_procedure_run(instance, run_id="RUN-does-not-exist")
+    assert set(store.active()) == {pending, reservation}
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded"
+    assert run.receipt is not None
+    assert store.active() == (pending,)
+    assert journal.partition_ids(procedure_run_service._stream(instance)) == (  # noqa: SLF001
+        run.receipt.partition_id,
+    )
+    store.release(pending.reservation_id)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    ("cas_unavailable_at_replay", "replay_material_mismatch"),
+)
+def test_retained_material_failures_reach_the_served_typed_terminal(
+    tmp_path: Path,
+    monkeypatch,
+    failure_code: str,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    original_prepare = procedure_run_service.prepare_direct_procedure_run
+
+    def break_retained_material(*args, **kwargs):  # type: ignore[no-untyped-def]
+        prepared = original_prepare(*args, **kwargs)
+        material = prepared.accepted_state_materials[0]
+        bodies = kwargs["bodies"]
+        if failure_code == "cas_unavailable_at_replay":
+            assert bodies.erase(material.input.material_body_digest)
+            return prepared
+        other = bodies.store(canonical_bytes({"different": True}))
+        mismatched_input = material.input.model_copy(update={"material_body_digest": other.digest})
+        return prepared.model_copy(
+            update={
+                "admission": prepared.admission.model_copy(
+                    update={"accepted_state_inputs": (mismatched_input,)}
+                ),
+                "accepted_state_materials": (
+                    material.model_copy(update={"input": mismatched_input}),
+                ),
+            }
+        )
+
+    monkeypatch.setattr(
+        procedure_run_service,
+        "prepare_direct_procedure_run",
+        break_retained_material,
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequest(input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "operational_failed"
+    assert isinstance(run.terminal, ProcedureOperationalFailure)
+    assert run.terminal.code == failure_code
+
+
+def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
+    tmp_path: Path,
+) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    read = procedure.definition.nodes[0]
+    project = procedure.definition.nodes[-1]
+    assert isinstance(read, ReadNode)
+    # Closed transforms type their records as they flow: no owned Contracts.
+    nodes = (
+        read.model_copy(update={"next": "filter"}),
+        TransformNode.model_validate(
+            {
+                "node_id": "filter",
+                "transform_kind": "filter",
+                "spec": {
+                    "tag": "cruxible-transform-filter-spec-v1",
+                    "input": "$steps.query.result.rows",
+                    "where": {
+                        "op": "present",
+                        "of": {"$ref": "item", "path": ["fields", "bindings"]},
+                    },
+                },
+                "as": "filtered",
+                "next": "aggregate",
+            }
+        ),
+        TransformNode.model_validate(
+            {
+                "node_id": "aggregate",
+                "transform_kind": "aggregate",
+                "spec": {
+                    "tag": "cruxible-transform-aggregate-spec-v1",
+                    "input": "$steps.filtered",
+                    "op": "count",
+                },
+                "as": "counted",
+                "next": "gate",
+            }
+        ),
+        GuardNode(
+            node_id="gate",
+            predicate=Comparison(
+                op="gt", left=step_ref("counted", "result"), right=LiteralOperand(literal=0)
+            ),
+            on_true="project",
+            refusal_code="query.empty",
+            message="The query returned no rows.",
+        ),
+        # Raw result rows fit no declared Contract: the typed return is the
+        # plain row view the output Contract's rows hold.
+        project.model_copy(update={"fields": {"rows": "$steps.query.rows"}}),
+    )
+    definition = procedure.definition.model_copy(
+        update={
+            "nodes": nodes,
+            "hard_caps": procedure.definition.hard_caps.model_copy(update={"max_items": 2}),
+        }
+    )
+    pipeline = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            ),
+        }
+    )
+    pipeline = revalidated(pipeline)
+    _activate_procedure(
+        instance,
+        owner,
+        pipeline,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+    pinned = instance.accepted_coordinate()
+    # A replay is the same coordinate AND the same evaluation instant.
+    request = ProcedureRunRequest(
+        at=AcceptedCoordinate.from_internal(pinned),
+        evaluation_time=READ_TIME,
+        input={},
+    )
+
+    first = service_run_playbill_procedure(
+        instance,
+        name=pipeline.identity.name,
+        request=request,
+        actor_context=_actor(instance),
+    )
+    second = service_run_playbill_procedure(
+        instance,
+        name=pipeline.identity.name,
+        request=request,
+        actor_context=_actor(instance).model_copy(update={"operation_id": "pipeline-replay"}),
+    )
+
+    assert first.status == "succeeded", first.terminal
+    assert first.result is not None and len(first.result["rows"]) == 2  # type: ignore[index]
+    assert isinstance(first.receipt, ProcedureRunReceipt)
+    # max_items is observed at boundaries only: the output Contract's rows,
+    # not the intermediate filter/aggregate values.
+    observed_items = first.receipt.budget.observed.max_items
+    assert (observed_items.high_water, observed_items.boundary) == (
+        2,
+        "contract-out:test.query-rows/v1",
+    )
+    assert first.model_dump_json() == second.model_dump_json()
+
+
+def test_served_list_boundary_records_nonzero_v3_receipt_high_water(tmp_path: Path) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    bounded = _list_output_successor(procedure, max_items=3)
+    _activate_procedure(
+        instance,
+        owner,
+        bounded,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+        extra_contracts=(LIST_OUTPUT,),
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=bounded.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded", run
+    assert isinstance(run.receipt, ProcedureRunReceipt)
+    assert run.receipt.budget.observed.max_items.high_water == 2
+    assert run.receipt.budget.observed.max_items.boundary == (
+        "contract-out:test.query-rows-list/v1"
+    )
+    assert run.receipt.budget.observed.max_items.field_path == "rows"
+
+
+def test_served_list_boundary_refusal_remains_typed(tmp_path: Path) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    bounded = _list_output_successor(procedure, max_items=1)
+    _activate_procedure(
+        instance,
+        owner,
+        bounded,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+        extra_contracts=(LIST_OUTPUT,),
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=bounded.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "node_refused"
+    assert isinstance(run.terminal, ProcedureBudgetExhausted)
+    assert run.terminal.details.boundary == "contract-out:test.query-rows-list/v1"
+    assert run.terminal.details.field_path == "rows"
+
+
+def test_a_final_payload_without_its_budget_is_refused_not_reinterpreted(
+    tmp_path: Path,
+) -> None:
+    """The one receipt needs the run's budget; a removed final shape is refused."""
+
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None
+    assert run.receipt is not None
+    journal, _root = procedure_run_service._journal(instance)
+    stream = procedure_run_service._stream(instance)
+    records = journal.all_records(stream, run.receipt.partition_id)
+    final_record = records[-1].record
+    old_payload = parse_journal_payload(
+        instance.body_store().read(
+            final_record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert isinstance(old_payload, dict)
+    assert old_payload.pop("budget")["tag"] == "playbill-procedure-run-budget-v3"
+    ProcedureExhaustWriter(
+        journal=journal,
+        bodies=instance.body_store(),
+        fencing_token=procedure_run_service.PROCEDURE_RUN_FENCING_TOKEN,
+    ).append(
+        stream=final_record.stream,
+        partition_id=final_record.partition_id,
+        event_kind="attempt_finalized",
+        accepted_coordinate=final_record.accepted_coordinate,
+        definition_digest=final_record.definition_digest,
+        actor_context=final_record.actor_context,
+        recorded_at=final_record.recorded_at,
+        payload=old_payload,
+        procedure_artifact_digest=final_record.procedure_artifact_digest,
+        run_id=final_record.run_id,
+        admission_binding_digest=final_record.admission_binding_digest,
+        attempt=final_record.attempt,
+    )
+
+    with pytest.raises(
+        procedure_run_service.ProcedureRunRecoveryRequired, match="lacks its budget"
+    ):
+        service_get_playbill_procedure_run(instance, run_id=run.run_id)
+
+
+def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    nodes = list(procedure.definition.nodes)
+    read = nodes[0]
+    assert isinstance(read, ReadNode)
+    nodes[0] = read.model_copy(update={"next": "gate"})
+    nodes.insert(
+        1,
+        GuardNode(
+            node_id="gate",
+            predicate=Presence(op="present", of=step_ref("query")),
+            on_true="project",
+            refusal_code="query.empty",
+            message="The query returned no result.",
+        ),
+    )
+    definition = procedure.definition.model_copy(update={"nodes": tuple(nodes)})
+    unsupported = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        unsupported,
+        sequence=5,
+        timestamp="2026-08-24T16:00:00.000000Z",
+    )
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    assert not journal_root.exists()
+
+    readiness = service_playbill_procedure_readiness(
+        instance,
+        name=unsupported.identity.name,
+        request=ProcedureReadinessRequestV1(),
+    )
+    run = service_run_playbill_procedure(
+        instance,
+        name=unsupported.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert readiness.runnable == "direct"
+    assert readiness.unsupported_nodes == ()
+    assert run.status == "succeeded"
+    assert run.terminal is None
+    assert run.next_operation.kind == "done"
+    assert journal_root.exists()
+
+    refusing_nodes = list(unsupported.definition.nodes)
+    gate = refusing_nodes[1]
+    assert isinstance(gate, GuardNode)
+    assert isinstance(gate.predicate, Presence)
+    refusing_nodes[1] = gate.model_copy(
+        update={"predicate": gate.predicate.model_copy(update={"op": "absent"})}
+    )
+    refusing_definition = unsupported.definition.model_copy(update={"nodes": tuple(refusing_nodes)})
+    refusing = unsupported.model_copy(
+        update={
+            "definition": refusing_definition,
+            "definition_digest": compute_procedure_definition_digest(refusing_definition).tagged,
+            "lifecycle": unsupported.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(unsupported).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        refusing,
+        sequence=6,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    refused = service_run_playbill_procedure(
+        instance,
+        name=refusing.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance).model_copy(update={"operation_id": "guard-refusal"}),
+    )
+
+    assert refused.status == "node_refused"
+    assert isinstance(refused.terminal, ProcedureNodeRefusal)
+    assert refused.terminal.code == "guard_refused"
+    assert refused.terminal.detail_code == "query.empty"
+    assert refused.terminal.node_id == "gate"
+    assert refused.terminal.journal_coordinate is not None
+    assert isinstance(refused.receipt, ProcedureRunReceipt)
+    assert refused.receipt.status == "node_refused"
+    assert refused.receipt.terminal == refused.terminal
+    assert refused.receipt.budget.observed.result_bytes.high_water == 0
+
+    halting_nodes = list(unsupported.definition.nodes)
+    halting_gate = halting_nodes[1]
+    assert isinstance(halting_gate, GuardNode)
+    assert isinstance(halting_gate.predicate, Presence)
+    halting_nodes[1] = halting_gate.model_copy(
+        update={
+            "predicate": halting_gate.predicate.model_copy(update={"op": "absent"}),
+            "on_false": "stop",
+            "refusal_code": None,
+            "message": None,
+        }
+    )
+    halting_nodes.insert(2, HaltNode(node_id="stop", reason="No matching rows."))
+    halting_definition = unsupported.definition.model_copy(update={"nodes": tuple(halting_nodes)})
+    halting = unsupported.model_copy(
+        update={
+            "definition": halting_definition,
+            "definition_digest": compute_procedure_definition_digest(halting_definition).tagged,
+            "lifecycle": refusing.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(refusing).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        halting,
+        sequence=7,
+        timestamp="2026-08-24T18:00:00.000000Z",
+    )
+
+    halted = service_run_playbill_procedure(
+        instance,
+        name=halting.identity.name,
+        request=ProcedureRunRequest(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance).model_copy(update={"operation_id": "guard-halt"}),
+    )
+
+    assert halted.status == "halted"
+    assert halted.result is None
+    assert halted.next_operation.kind == "terminal"
+    assert isinstance(halted.terminal, ProcedureHaltTerminal)
+    assert halted.terminal.node_id == "stop"
+    assert halted.terminal.reason == "No matching rows."
+    assert isinstance(halted.receipt, ProcedureRunReceipt)
+    assert halted.receipt.status == "halted"
+    assert halted.receipt.terminal == halted.terminal
+
+
+def _line_mandate(
+    accepted,  # type: ignore[no-untyped-def]
+    line=None,  # type: ignore[no-untyped-def]
+    *,
+    rung: int = 3,
+    valid_from: datetime = datetime(2026, 1, 1, tzinfo=UTC),
+    expires_at: datetime = datetime(2027, 1, 1, tzinfo=UTC),
+    state: str = "live",
+) -> ProcedureMandate:
+    """A propose grant pinning ``line`` exactly (a Mandate pins a Line, ruling C3)."""
+
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+
+    del rung
+    assert line is not None, "a Mandate pins one exact Line"
+    return procedure_mandate(
+        "triage",
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+        ),
+        namespace=("claims", "documents"),
+        valid_from=valid_from,
+        expires_at=expires_at,
+        lifecycle=ArtifactLifecycle(state=state),
+    )
+
+
+def _admitted_line_service(
+    monkeypatch: pytest.MonkeyPatch,
+    accepted,  # type: ignore[no-untyped-def]
+    accepted_line,  # type: ignore[no-untyped-def]
+    *,
+    prior: tuple[object, ...] = (),
+) -> None:
+    """Reach the occurrence law with the closure and mandate already satisfied."""
+
+    mandate = _line_mandate(accepted, accepted_line.line)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_reference",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+    monkeypatch.setattr(procedure_run_service, "_assert_line_closure_complete", lambda *_a: None)
+    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: {})
+    monkeypatch.setattr(
+        procedure_run_service,
+        "evaluate_line_spec_law",
+        lambda *_args, **_kwargs: SimpleNamespace(verdict="accepted"),
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_mandates",
+        lambda *_a, **_k: ((procedure_mandate_digest(mandate).tagged, mandate),),
+    )
+    monkeypatch.setattr(procedure_run_service, "_line_admissions", lambda *_a, **_k: prior)
+
+
+def test_a_replayed_occurrence_refuses_instead_of_running_twice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    coordinate = instance.accepted_coordinate()
+    occurrence_id, _next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line,
+        evaluation_time=READ_TIME,
+    )
+    _admitted_line_service(
+        monkeypatch,
+        accepted,
+        accepted_line,
+        prior=(
+            SimpleNamespace(
+                occurrence_id=occurrence_id,
+                occurrence_evaluation_time=READ_TIME,
+                bound_coordinate=coordinate,
+                investigation=None,
+                trigger_binding=None,
+            ),
+        ),
+    )
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequest(
+            line=line_identity_digest(line.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusal)
+    assert result.terminal.code == "occurrence_already_admitted"
+    assert result.terminal.details["occurrence_id"] == occurrence_id  # type: ignore[index]
+
+
+def test_an_asserted_occurrence_the_daemon_did_not_derive_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    _admitted_line_service(monkeypatch, accepted, accepted_line)
+
+    result = procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequest(
+            line=line_identity_digest(line.identity),
+            occurrence_id=_line_digest("occurrence-the-caller-chose"),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusal)
+    assert result.terminal.code == "occurrence_id_mismatch"
+    derived = result.terminal.details["derived_occurrence_id"]  # type: ignore[index]
+    assert derived != _line_digest("occurrence-the-caller-chose")
+    later_id, _ = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line, evaluation_time=READ_TIME + timedelta(seconds=1)
+    )
+    assert derived != later_id
+    repair = result.terminal.details["repair"]
+    assert "cruxible line dispatch" in repair
+    assert "Retry with this id" not in repair
+    assert result.terminal.repair.operation == "cruxible.line.dispatch"
+
+
+def test_an_unaccepted_line_identity_refuses_before_any_authority_read(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    digest = _line_digest("never-accepted")
+
+    with pytest.raises(procedure_run_service.LineRunNotAccepted) as caught:
+        procedure_run_service.service_run_playbill_line(
+            instance,
+            path_identity_digest=digest,
+            request=LineRunRequest(
+                line=digest,
+                evaluation_time=READ_TIME,
+            ),
+            actor_context=_actor(instance),
+            caller_rung=3,
+            daemon_clock=_DAEMON_CLOCK,
+        )
+
+    assert caught.value.code == "cruxible.line.run.line_not_accepted"
+
+
+def _line_run_against_a_degraded_lane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refusal: ProviderLocalRuntimeRefused,
+) -> ProcedureRunStateV2:
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    _admitted_line_service(monkeypatch, accepted, accepted_line)
+
+    def refuse(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise refusal
+
+    monkeypatch.setattr(procedure_run_service, "_line_external_occurrences", refuse)
+
+    return procedure_run_service.service_run_playbill_line(
+        instance,
+        path_identity_digest=line_identity_digest(line.identity),
+        request=LineRunRequest(
+            line=line_identity_digest(line.identity),
+            evaluation_time=READ_TIME,
+        ),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=_DAEMON_CLOCK,
+    )
+
+
+def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The diagnostic detail travels as data; the code stays the authority."""
+
+    result = _line_run_against_a_degraded_lane(
+        tmp_path,
+        monkeypatch,
+        ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "the runtime config is not readable",
+            details={"reason": {"code": "provider_process_lease_invalid", "detail": "unreadable"}},
+        ),
+    )
+
+    assert result.status == "node_refused"
+    assert isinstance(result.terminal, ProcedureNodeRefusal)
+    assert result.terminal.code == "provider_unavailable"
+    assert result.terminal.details["reason"]["code"] == (  # type: ignore[index]
+        "provider_process_lease_invalid"
+    )
+    assert result.run_id is None
+
+
+def test_a_line_run_without_a_runtime_directory_fails_operational_with_the_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lane precondition is the operator's environment: an operational failure
+    carrying the cause and the repair, never a node refusal or an internal one."""
+
+    monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    operator = ProviderRuntimeOperator(tmp_path / ("long-state-root-" + "x" * 110))
+
+    workspace = tmp_path / "instance"
+    workspace.mkdir()
+    result = _line_run_against_a_degraded_lane(workspace, monkeypatch, operator.lane_refusal())
+
+    assert result.status == "operational_failed"
+    assert isinstance(result.terminal, ProcedureOperationalFailure)
+    assert result.terminal.code == "provider_runtime_directory_unavailable"
+    assert "is not set" in result.terminal.message
+    assert result.terminal.message.endswith(PROVIDER_RUNTIME_DIRECTORY_REPAIR)
+    # The templated example directory (`/run/user/$UID` on Linux) is the only slash.
+    assert "/" not in result.terminal.message.replace("/run/user/$UID", "")
+    assert isinstance(result.terminal.repair, HandEditRepair)
+    assert result.terminal.repair.hand_edit.required_change == PROVIDER_RUNTIME_DIRECTORY_REPAIR
+    assert result.terminal.details["reason"]["code"] == (  # type: ignore[index]
+        "provider_runtime_directory_unavailable"
+    )
+    assert result.run_id is None

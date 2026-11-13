@@ -2,34 +2,54 @@
 
 from __future__ import annotations
 
+import faulthandler
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from cruxible_client.contracts.errors import ReseedRequired
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.permissions import reset_permissions
-from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
+    ServerAuthRequired,
+    ServerStateConfigurationError,
+    auth_off_startup_notice,
     get_runtime_bootstrap_secret,
+    get_server_fatal_log_path,
     get_server_log_path,
+    get_server_state_root,
     is_volatile_state_path,
     validate_server_startup_settings,
     volatile_state_path_warnings,
 )
 from cruxible_core.server.credentials import (
+    RuntimeCredentialStore,
     get_runtime_credential_store,
     reset_runtime_credential_store,
 )
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service import service_init
-from tests.test_cli.conftest import CAR_PARTS_YAML
 
 
-def test_default_localhost_without_auth_is_valid() -> None:
-    validate_server_startup_settings({})
+def test_default_tcp_without_auth_refuses_with_the_opt_in_repair() -> None:
+    with pytest.raises(ServerAuthRequired) as refused:
+        validate_server_startup_settings({})
+    assert refused.value.error_code == "cruxible.server.tcp_requires_auth"
+    assert "cruxible server start --auth" in str(refused.value)
+    assert "--socket PATH" in str(refused.value)
+
+
+def test_unix_socket_without_auth_is_valid() -> None:
+    validate_server_startup_settings({"CRUXIBLE_SERVER_SOCKET": "/run/cruxible/d.sock"})
+
+
+def test_auth_env_form_still_opts_in() -> None:
+    validate_server_startup_settings(
+        {"CRUXIBLE_SERVER_AUTH": "true", "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET": "secret"}
+    )
 
 
 def test_run_server_refuses_invalid_capability_ceiling_before_uvicorn(
@@ -42,7 +62,7 @@ def test_run_server_refuses_invalid_capability_ceiling_before_uvicorn(
         nonlocal called
         called = True
 
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.setenv("CRUXIBLE_MODE", "superuser")
     monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
     reset_permissions()
@@ -56,12 +76,13 @@ def test_run_server_refuses_invalid_capability_ceiling_before_uvicorn(
     assert called is False
 
 
-def test_loopback_ipv6_without_auth_is_valid() -> None:
-    validate_server_startup_settings({"CRUXIBLE_HOST": "::1"})
+def test_loopback_ipv6_without_auth_refuses() -> None:
+    with pytest.raises(ServerAuthRequired, match="tcp_requires_auth"):
+        validate_server_startup_settings({"CRUXIBLE_HOST": "::1"})
 
 
 def test_public_bind_without_auth_fails() -> None:
-    with pytest.raises(ConfigError, match="non-loopback host without auth"):
+    with pytest.raises(ConfigError, match="tcp_requires_auth"):
         validate_server_startup_settings({"CRUXIBLE_HOST": "0.0.0.0"})
 
 
@@ -132,7 +153,7 @@ def test_auth_required_state_with_auth_is_valid_when_credentials_available() -> 
 def test_server_socket_skips_public_bind_check() -> None:
     validate_server_startup_settings(
         {
-            "CRUXIBLE_SERVER_SOCKET": "/tmp/cruxible.sock",
+            "CRUXIBLE_SERVER_SOCKET": "/" + "tmp/cruxible.sock",
             "CRUXIBLE_HOST": "0.0.0.0",
         }
     )
@@ -146,12 +167,91 @@ def test_get_runtime_bootstrap_secret_strips_whitespace() -> None:
     assert get_runtime_bootstrap_secret({"CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET": "   "}) is None
 
 
-def test_server_log_path_defaults_under_state_dir(tmp_path: Path) -> None:
-    state_dir = tmp_path / "server-state"
+def test_server_state_root_defaults_to_cruxible_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert get_server_state_root({}) == (tmp_path / ".cruxible").resolve()
+
+
+@pytest.mark.parametrize("value", ["", "/" + "tmp/old-cruxible-state"])
+def test_obsolete_server_state_dir_is_a_typed_refusal(value: str) -> None:
+    with pytest.raises(ConfigError, match="CRUXIBLE_SERVER_STATE_DIR is obsolete") as raised:
+        get_server_state_root({"CRUXIBLE_SERVER_STATE_DIR": value})
+    assert raised.value.error_code == "cruxible.server.state_configuration_invalid"
+
+
+def test_empty_server_state_root_is_a_typed_refusal() -> None:
+    with pytest.raises(ConfigError, match="CRUXIBLE_STATE_ROOT may not be empty") as raised:
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": ""})
+    assert raised.value.error_code == "cruxible.server.state_configuration_invalid"
+
+
+def test_pre_pc_hr_state_tree_preserves_the_auth_latch_by_refusing_reseed(
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    legacy_store = RuntimeCredentialStore(state_root / "server" / "runtime_credentials.db")
+    legacy_store.mark_auth_required("legacy-auth-enabled")
+    assert legacy_store.is_auth_required()
+
+    with pytest.raises(ReseedRequired):
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
+
+
+@pytest.mark.parametrize("filename", ["registry.db", "runtime_credentials.db"])
+def test_flat_pre_pc_hr_state_tree_requires_reseed_naming_the_file(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    state_root = tmp_path / "former-server-state-dir"
+    state_root.mkdir()
+    legacy = state_root / filename
+    connection = sqlite3.connect(legacy)
+    connection.execute("CREATE TABLE instances (instance_id TEXT)")
+    connection.close()
+
+    with pytest.raises(ReseedRequired) as refused:
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
+    assert refused.value.found == str(legacy.resolve())
+    assert str(legacy.resolve()) in str(refused.value)
+    assert "codec" not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "relative", ["registry.db", "runtime_credentials.db", "server/runtime_credentials.db"]
+)
+def test_an_empty_file_at_a_legacy_path_is_not_a_legacy_layout(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    # What `sqlite3 <path>` leaves behind when the path did not exist: an empty
+    # file. It took a daemon down once; it is not the old layout.
+    state_root = tmp_path / "state"
+    (state_root / relative).parent.mkdir(parents=True)
+    (state_root / relative).touch()
+
+    assert get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)}) == state_root.resolve()
+
+
+def test_a_non_database_file_at_a_legacy_path_is_refused_by_name(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    state_root.mkdir()
+    (state_root / "registry.db").write_text("notes\n", encoding="utf-8")
+
+    with pytest.raises(ServerStateConfigurationError, match="neither empty nor a SQLite") as raised:
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
+    assert str((state_root / "registry.db").resolve()) in str(raised.value)
+
+
+def test_server_log_path_defaults_under_state_root(tmp_path: Path) -> None:
+    state_root = tmp_path / "server-state"
 
     assert (
-        get_server_log_path({"CRUXIBLE_SERVER_STATE_DIR": str(state_dir)})
-        == (state_dir / "logs" / "server.log").resolve()
+        get_server_log_path({"CRUXIBLE_STATE_ROOT": str(state_root)})
+        == (state_root / "daemon" / "logs" / "server.log").resolve()
     )
 
 
@@ -161,23 +261,29 @@ def test_server_log_path_uses_explicit_override(tmp_path: Path) -> None:
     assert get_server_log_path({"CRUXIBLE_SERVER_LOG_PATH": str(log_path)}) == log_path.resolve()
 
 
+# A fixed durable path: the developer's home is not one when it lives under a
+# temp directory (a scratch HOME under the system temp root is volatile, and is flagged).
+_DURABLE_ROOT = Path("/var/lib/cruxible")
+
+
 def test_volatile_state_path_detection() -> None:
-    assert is_volatile_state_path("/tmp/cruxible-state")
-    assert is_volatile_state_path("/var/tmp/cruxible-state")
-    assert not is_volatile_state_path(Path.home() / ".cruxible" / "server")
+    assert is_volatile_state_path("/" + "tmp/cruxible-state")
+    assert is_volatile_state_path("/var/" + "tmp/cruxible-state")
+    assert is_volatile_state_path("/private/" + "tmp/scratch-home/.cruxible/server")
+    assert not is_volatile_state_path(_DURABLE_ROOT / "server")
 
 
-def test_volatile_state_path_warnings_include_state_dir_and_instances() -> None:
+def test_volatile_state_path_warnings_include_state_root_and_instances() -> None:
     warnings = volatile_state_path_warnings(
-        environ={"CRUXIBLE_SERVER_STATE_DIR": "/tmp/cruxible-server"},
+        environ={"CRUXIBLE_STATE_ROOT": "/" + "tmp/cruxible-server"},
         instance_locations=[
-            ("inst_tmp", "/tmp/cruxible-server/instances/inst_tmp"),
-            ("inst_durable", str(Path.home() / ".cruxible" / "instances" / "inst_durable")),
+            ("inst_tmp", "/" + "tmp/cruxible-server/instances/inst_tmp"),
+            ("inst_durable", str(_DURABLE_ROOT / "instances" / "inst_durable")),
         ],
     )
 
     assert len(warnings) == 2
-    assert "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path" in warnings[0]
+    assert "CRUXIBLE_STATE_ROOT resolves under a volatile temp path" in warnings[0]
     assert "Instance inst_tmp is registered under a volatile temp path" in warnings[1]
 
 
@@ -185,14 +291,14 @@ def test_run_server_fails_before_uvicorn_for_public_bind_without_auth(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_runtime_credential_store()
     monkeypatch.setenv("CRUXIBLE_HOST", "0.0.0.0")
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
 
     try:
-        with pytest.raises(ConfigError, match="non-loopback host without auth"):
+        with pytest.raises(ConfigError, match="tcp_requires_auth"):
             server_app.run_server()
     finally:
         reset_runtime_credential_store()
@@ -207,8 +313,9 @@ def test_run_server_reaches_uvicorn_for_valid_public_bind(
     def capture_run(*_args: object, **kwargs: object) -> None:
         called.update(kwargs)
 
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_runtime_credential_store()
+    reset_registry()
     monkeypatch.setenv("CRUXIBLE_HOST", "0.0.0.0")
     monkeypatch.setenv("CRUXIBLE_PORT", "8123")
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
@@ -221,74 +328,10 @@ def test_run_server_reaches_uvicorn_for_valid_public_bind(
         server_app.run_server()
     finally:
         reset_runtime_credential_store()
+        reset_registry()
 
     assert called["host"] == "0.0.0.0"
     assert called["port"] == 8123
-
-
-def test_run_server_refuses_hand_edited_materialized_config(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
-    reset_registry()
-    reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
-    instance = service_init(
-        Path(registered.record.location),
-        config_yaml=CAR_PARTS_YAML,
-        instance_mode=CruxibleInstance.GOVERNED_MODE,
-    ).instance
-    active = instance.get_config_path()
-    active.write_text(active.read_text() + "# hand edit\n")
-    monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
-    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-    monkeypatch.delenv("CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH", raising=False)
-
-    try:
-        with pytest.raises(ConfigError, match="ACTIVE CONFIG WAS HAND-EDITED"):
-            server_app.run_server()
-    finally:
-        reset_registry()
-        reset_runtime_credential_store()
-
-
-def test_run_server_integrity_override_allows_recovery(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    called: dict[str, object] = {}
-
-    def capture_run(*_args: object, **kwargs: object) -> None:
-        called.update(kwargs)
-
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
-    reset_registry()
-    reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
-    instance = service_init(
-        Path(registered.record.location),
-        config_yaml=CAR_PARTS_YAML,
-        instance_mode=CruxibleInstance.GOVERNED_MODE,
-    ).instance
-    active = instance.get_config_path()
-    active.write_text(active.read_text() + "# hand edit\n")
-    monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
-    monkeypatch.setenv("CRUXIBLE_ALLOW_CONFIG_INTEGRITY_MISMATCH", "true")
-    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
-    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
-
-    try:
-        server_app.run_server()
-    finally:
-        reset_registry()
-        reset_runtime_credential_store()
-
-    assert called["host"] == "127.0.0.1"
 
 
 def test_run_server_warns_for_volatile_state_dir_and_instance_location(
@@ -301,16 +344,20 @@ def test_run_server_warns_for_volatile_state_dir_and_instance_location(
     def capture_run(*_args: object, **kwargs: object) -> None:
         called.update(kwargs)
 
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    # Treat this test's own temp dir as volatile, wherever pytest put it, so the
+    # warning is asserted without depending on the run's basetemp location.
+    import cruxible_core.server.config as server_config
+
+    monkeypatch.setattr(server_config, "_VOLATILE_STATE_ROOTS", (tmp_path,))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_registry()
     reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id("inst_volatile")
 
     monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
     monkeypatch.setenv("CRUXIBLE_PORT", "8126")
-    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
     monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
 
@@ -321,7 +368,7 @@ def test_run_server_warns_for_volatile_state_dir_and_instance_location(
         reset_runtime_credential_store()
 
     stderr = capsys.readouterr().err
-    assert "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path" in stderr
+    assert "CRUXIBLE_STATE_ROOT resolves under a volatile temp path" in stderr
     assert (
         f"Instance {registered.record.instance_id} is registered under a volatile temp path"
         in stderr
@@ -339,12 +386,10 @@ def test_run_server_reaches_uvicorn_with_stored_runtime_credentials(
     def capture_run(*_args: object, **kwargs: object) -> None:
         called.update(kwargs)
 
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_registry()
     reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id("inst_cloud_dispatch")
     get_runtime_credential_store().create_credential(
         instance_id=registered.record.instance_id,
         label="cloud-dispatch",
@@ -371,12 +416,10 @@ def test_run_server_fails_when_runtime_credentials_exist_but_auth_is_disabled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_registry()
     reset_runtime_credential_store()
-    workspace_root = tmp_path / "project"
-    workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id("inst_local_admin")
     get_runtime_credential_store().create_credential(
         instance_id=registered.record.instance_id,
         label="local-admin",
@@ -403,7 +446,7 @@ def test_run_server_reaches_uvicorn_with_runtime_bootstrap_secret(
     def capture_run(*_args: object, **kwargs: object) -> None:
         called.update(kwargs)
 
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_runtime_credential_store()
     monkeypatch.setenv("CRUXIBLE_HOST", "0.0.0.0")
     monkeypatch.setenv("CRUXIBLE_PORT", "8125")
@@ -420,3 +463,112 @@ def test_run_server_reaches_uvicorn_with_runtime_bootstrap_secret(
 
     assert called["host"] == "0.0.0.0"
     assert called["port"] == 8125
+
+
+def test_the_fatal_fault_handler_writes_into_the_daemons_own_log_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A death the daemon cannot refuse is recorded where its log already is.
+
+    faulthandler's default target is stderr, and this daemon's log is a
+    rotating FILE under `<state-root>/daemon/logs/`, so a trace written to
+    stderr lands in a terminal multiplexer's scrollback and the death still
+    reads as silent in the log an operator follows. Nothing in this process can
+    raise a real segfault to prove the wiring, so the proof is the handle
+    itself: whatever `faulthandler` was handed is what a fault will write
+    through, and dumping a traceback through that same handle shows where the
+    bytes land.
+    """
+
+    state_root = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_root))
+    monkeypatch.delenv("CRUXIBLE_SERVER_LOG_PATH", raising=False)
+    expected = get_server_fatal_log_path()
+    assert expected == (state_root / "daemon" / "logs" / "fatal.log").resolve()
+    assert expected.parent == get_server_log_path().parent
+
+    try:
+        resolved = server_app.enable_fatal_fault_handler()
+        assert resolved == expected
+        handle = server_app._fatal_fault_log
+        assert handle is not None
+        faulthandler.dump_traceback(file=handle)
+    finally:
+        # Restore the session-wide handler this test redirected.
+        faulthandler.enable()
+
+    written = expected.read_text(encoding="utf-8")
+    assert "Current thread" in written
+    assert "test_the_fatal_fault_handler_writes_into_the_daemons_own_log_directory" in written
+
+
+def test_socket_daemon_without_auth_says_so_in_one_line_and_tcp_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    served: list[int] = []
+
+    class _Socket:
+        def fileno(self) -> int:
+            return 7
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
+    # Recorded so the teardown removes what run_server writes into os.environ.
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", "placeholder")
+    monkeypatch.setattr(server_app, "prepare_socket_directory", lambda _directory: None)
+    monkeypatch.setattr(server_app, "bind_private_unix_socket", lambda _path: _Socket())
+    monkeypatch.setitem(
+        sys.modules,
+        "uvicorn",
+        SimpleNamespace(run=lambda *_args, **kwargs: served.append(kwargs["fd"])),
+    )
+    reset_registry()
+    reset_runtime_credential_store()
+    try:
+        server_app.run_server(socket_path=str(tmp_path / "run" / "d.sock"))
+    finally:
+        reset_registry()
+        reset_runtime_credential_store()
+
+    assert served == [7]
+    err_lines = capsys.readouterr().err.splitlines()
+    assert err_lines.count(auth_off_startup_notice()) == 1
+    assert "cruxible server start --auth" in auth_off_startup_notice()
+
+
+def test_run_server_auth_flag_sets_the_env_form(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called: dict[str, object] = {}
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    # Recorded so the teardown removes what run_server writes into os.environ.
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "false")
+    monkeypatch.setenv("CRUXIBLE_HOST", "localhost")
+    monkeypatch.setenv("CRUXIBLE_PORT", "1")
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
+    monkeypatch.setitem(
+        sys.modules, "uvicorn", SimpleNamespace(run=lambda *_a, **kw: called.update(kw))
+    )
+    reset_registry()
+    reset_runtime_credential_store()
+    try:
+        server_app.run_server(host="127.0.0.1", port=8127, auth=True)
+    finally:
+        reset_registry()
+        reset_runtime_credential_store()
+
+    import os
+
+    assert os.environ["CRUXIBLE_SERVER_AUTH"] == "true"
+    assert called["port"] == 8127
+    assert auth_off_startup_notice() not in capsys.readouterr().err

@@ -1,6 +1,6 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
-  "projectTitle": "Cruxible Core",
+  "projectTitle": "Cruxible",
   "description": "Hard state for AI agents: typed, governed, durable state with deterministic queries, governed writes, and receipts.",
   "folders": [
     "docs"
@@ -8,10 +8,12 @@
   "excludeFolders": [],
   "excludeFiles": [],
   "rules": [
-    "Always validate config with cruxible_validate before cruxible_init",
-    "Ingest entities before relationships — edges reference entity IDs",
-    "Use cruxible_add_relationship for inferred relationships, not batch CSV scripts",
-    "Include source, confidence, and evidence in edge properties for provenance",
-    "Use the instance_id from cruxible_init in all subsequent tool calls"
+    "Setup is an operator step on the CLI: cruxible server start, then cruxible init in a Git repository; MCP has no setup tools",
+    "Read with cruxible_orient (the map), cruxible_query (rows of values with flags) and cruxible_get (one thing by reference); grep the floor under .cruxible/floor/current/ to find things by name",
+    "Change values with cruxible_set, cruxible_retire or cruxible_write; author definitions (Subjects, queries, Procedures, Lines, Triggers, policies) with cruxible_authoring_submit; ClaimTypes go through cruxible_claim_type_propose and cruxible_claim_type_migrate",
+    "A proposal is not accepted state and an approval is not activation; read accepted coordinates as state and candidate coordinates as provisional",
+    "Search for an existing Subject or Claim before minting an adjacent concept",
+    "Record contradiction as negative evidence rather than only a new positive inverse",
+    "Never request, transmit, or place a principal private key in a repository"
   ]
 }

@@ -1,0 +1,164 @@
+"""Live activation remembers its receipt; explicit snapshots and floor targets stay pinned."""
+
+from pathlib import Path
+from typing import Any, Literal
+
+import pytest
+
+from cruxible_client import Cruxible, contracts
+from cruxible_client.authoring.workspace import (
+    inspect_workspace_floor,
+    materialize_floor,
+    refresh_workspace_floor,
+)
+from cruxible_client.contracts.floor import FloorDelta
+from cruxible_client.contracts.projection import AcceptedCoordinate
+
+from .test_playbill_workspace import _coordinate, _delta, _export, _workspace
+
+
+class _Client:
+    def __init__(self, status: Literal["accepted", "lost_cas"] = "accepted") -> None:
+        self.events: list[object] = []
+        self.status = status
+
+    def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
+        self.events.append(("accept", instance_id, proposal_id))
+        return contracts.ActivationReceipt(
+            proposal_id=proposal_id,
+            activated_by="owner",
+            status=self.status,
+            accepted_coordinate=_coordinate() if self.status == "accepted" else None,
+            workspace_advertisement={"status": "not_attached", "workspace_path": None},
+        )
+
+    def floor_delta(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.AcceptedCoordinate | None = None,
+        base_generation: int | None = None,
+        base_renderer: str | None = None,
+    ) -> FloorDelta:
+        self.events.append(("floor", instance_id, at))
+        return _delta()
+
+
+def _sdk(client: Any, workspace: Path) -> Cruxible:
+    # Avoid orientation I/O: this test isolates the mutation/maintenance boundary.
+    pb = Cruxible(
+        client=client,
+        instance_id="inst_test",
+        workspace=workspace,
+        access_profile=None,  # type: ignore[arg-type]
+        clock=None,
+    )
+    pb._coordinate = AcceptedCoordinate.model_validate(_coordinate("9").model_dump())
+    return pb
+
+
+@pytest.mark.parametrize("status", ["accepted", "lost_cas"])
+def test_activate_only_calls_daemon_and_remembers_successful_receipt(
+    tmp_path: Path, status: Literal["accepted", "lost_cas"]
+) -> None:
+    client = _Client(status)
+    pb = _sdk(client, tmp_path)
+    before = pb.coordinate
+
+    receipt = pb.activate("proposal-1")
+
+    assert receipt.status == status
+    assert client.events == [("accept", "inst_test", "proposal-1")]
+    expected = (
+        AcceptedCoordinate.model_validate(receipt.accepted_coordinate.model_dump())
+        if receipt.accepted_coordinate
+        else before
+    )
+    assert pb.coordinate == expected
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_activate_through_explicit_snapshot_does_not_move_it(tmp_path: Path) -> None:
+    client = _Client()
+    pb = _sdk(client, tmp_path)
+    snapshot = pb.at(pb.coordinate)
+    receipt = snapshot.activate("proposal-1")
+    assert receipt.accepted_coordinate is not None
+    assert snapshot.coordinate == pb.coordinate
+    assert snapshot.coordinate.git_oid != receipt.accepted_coordinate.git_oid
+
+
+def test_explicit_refresh_pins_target_reports_floor_and_retains_snapshot(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    client = _Client()
+    pb = _sdk(client, workspace)
+    before = pb.coordinate
+
+    result = pb.refresh_workspace(at=_coordinate())
+
+    assert client.events == [("floor", "inst_test", _coordinate())]
+    assert result.status == "refreshed"
+    assert result.coordinate == _coordinate()
+    assert pb.coordinate == before
+    installed = inspect_workspace_floor(workspace, current_coordinate=_coordinate("9"))
+    assert installed.installed_coordinate == _coordinate()
+    assert installed.status == "stale"
+
+
+def test_refresh_refuses_different_coordinate_before_replacing_floor(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    previous = materialize_floor(workspace, export=_export(content=b"previous"))
+    before = (Path(previous.destination) / "cards/fresh.json").read_bytes()
+    client = _Client()
+
+    result = refresh_workspace_floor(client, "inst_test", workspace=workspace, at=_coordinate("9"))
+
+    assert result.status == "failed"
+    assert result.coordinate is None
+    assert "requested coordinate" in (result.message or "")
+    assert (Path(previous.destination) / "cards/fresh.json").read_bytes() == before
+
+
+def test_unconfigured_refresh_makes_no_request(tmp_path: Path) -> None:
+    client = _Client()
+    result = _sdk(client, tmp_path).refresh_workspace(at=_coordinate())
+    assert result.status == "not_configured"
+    assert result.coordinate is None
+    assert client.events == []
+
+
+@pytest.mark.parametrize("field", ["semantic_root", "generation_root", "compiler_digest"])
+def test_refresh_refuses_a_head_differing_only_beyond_its_git_oid(
+    tmp_path: Path, field: str
+) -> None:
+    workspace = _workspace(tmp_path)
+    floor = workspace / ".cruxible/floor"
+    requested = _coordinate().model_copy(update={field: "sha256:" + "9" * 64})
+    assert requested.git_oid == _coordinate().git_oid
+
+    result = refresh_workspace_floor(_Client(), "inst_test", workspace=workspace, at=requested)
+
+    assert result.status == "failed"
+    assert "requested coordinate" in (result.message or "")
+    assert not floor.exists() or not any(floor.rglob("*"))
+
+
+def test_readmit_is_one_daemon_call_by_handle(tmp_path: Path) -> None:
+    calls: list[tuple[str, str, object, object]] = []
+
+    class _ReadmitClient(_Client):
+        def readmit_proposal(
+            self,
+            instance_id: str,
+            proposal_id: str,
+            *,
+            dry_run: bool | None = None,
+            at: str | None = None,
+        ) -> object:
+            calls.append((instance_id, proposal_id, dry_run, at))
+            return "readmitted"
+
+    pb = _sdk(_ReadmitClient(), tmp_path)
+
+    assert pb.proposal("proposal-1").readmit(dry_run=True) == "readmitted"
+    assert calls == [("inst_test", "proposal-1", True, None)]

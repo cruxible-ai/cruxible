@@ -1,0 +1,1250 @@
+"""Decision-only authoring inputs and base-bound lowering onto frozen expert wires."""
+
+from __future__ import annotations
+
+import base64
+import re
+import unicodedata
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias
+
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
+
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
+from cruxible_client.contracts.authoring.models import (
+    ApprovalPolicyAuthoringPayload,
+    AuthoringChangeSetMember,
+    AuthoringClaimStatement,
+    AuthoringExactContentObject,
+    AuthoringExistingClaimDisposition,
+    AuthoringPayload,
+    AuthoringTriggerSchedule,
+    CapabilityAuthoringPayload,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ClaimRetirementMember,
+    ClaimTypeAuthoringPayload,
+    ClaimTypeSuccessionDependent,
+    ClaimTypeSuccessionMember,
+    ContractAuthoringPayload,
+    ExistingCaptureCitationSource,
+    LineAuthoringPayload,
+    MandateConditionAuthoring,
+    MandateScopeAuthoring,
+    ProcedureAuthoringPayload,
+    ProcedureMandateAuthoringPayload,
+    ProcedureRuntimePolicyAuthoringPayload,
+    QueryDefinitionAuthoringPayload,
+    RunbookAuthoringPayload,
+    RunbookStepAuthoring,
+    SelfSourceBody,
+    SubjectAuthoringPayload,
+    SubjectCreationAuthoringPayload,
+    SubjectKindAuthoringPayload,
+    TriggerAuthoringPayload,
+    WorkingSelectionObservation,
+    authoring_member_identity,
+)
+from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claims import (
+    ClaimRetireDependent,
+    ClaimRetirementReason,
+    LiteralClaimObject,
+    SubjectClaimObject,
+)
+from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
+from cruxible_client.contracts.procedures.authored import (
+    ProcedureSpec,
+    ProcedureSpecError,
+    lower_procedure_spec,
+    refuse_closed_steps,
+)
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
+from cruxible_client.contracts.procedures.line_specs import LineBudgetsInput, LineFindings
+from cruxible_client.contracts.proposal_models import (
+    CHANGE_SET_RATIONALE_MAX_LENGTH,
+    validate_change_set_rationale,
+)
+from cruxible_client.contracts.provider_operations import OperationEffect
+from cruxible_client.contracts.query.authored import QuerySpecInput
+from cruxible_client.contracts.query.definitions import (
+    QueryDefinition,
+    QueryDefinitionSpec,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import (
+    ContractField,
+    ContractFormatError,
+    ContractTypeRefused,
+    claim_rationale,
+    contract_type_refusal,
+    parse_contract_ref,
+    parse_field_spelling,
+)
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.contracts.triggers import InternalActionName
+from cruxible_client.contracts.validation_messages import validation_summary
+
+if TYPE_CHECKING:
+    pass
+
+#: ``kind/<text>``: a Subject id, an alias of the kind, or a value of its single
+#: key, resolved at lowering (exact live id, alias, key, exact retired id). The
+#: text is one ledger path segment, so it holds no ``/``.
+_SUBJECT_SHORTHAND_RE = re.compile(
+    r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
+    r"(?P<id>[^/\\\x00-\x1f\x7f]{1,1024})$"
+)
+
+
+def _authored_procedure_input_shape(value: object) -> object:
+    """The declared bare spec is also an authoring input, including in sets."""
+    if isinstance(value, ProcedureSpec):
+        return {"kind": "procedure", "spec": value}
+    if isinstance(value, dict) and "kind" not in value and "procedure" in value:
+        return {"kind": "procedure", **value}
+    return value
+
+
+class _StrictInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class LiteralObjectInput(_StrictInputModel):
+    kind: Literal["literal"]
+    value: object
+
+
+class SubjectObjectInput(_StrictInputModel):
+    kind: Literal["subject"]
+    subject: str | SubjectKeyReference = Field(
+        description=(
+            "kind/<id, alias or single key value>, or {subject_kind, key} naming the "
+            "Subject by its kind's key (any number of key parts)."
+        )
+    )
+
+
+class ExactContentObjectInput(_StrictInputModel):
+    """The exact bytes a Claim's object IS, spelled as text or as base64.
+
+    `text` is the ordinary spelling and stays the ordinary spelling: rulings and
+    method laws are prose, and prose typed into JSON should not have to be
+    encoded first. `content_base64` is for the bytes text cannot carry -- a body
+    that is not valid UTF-8, or one whose exact bytes matter more than its
+    reading -- and is the same spelling the SDK's own `ExactContent` lowers to,
+    so the two doors put identical bytes in the ledger.
+
+    Exactly one of them, because two spellings of one body are two bodies the
+    moment they disagree, and the digest is over the bytes.
+    """
+
+    kind: Literal["exact_content"]
+    text: str | None = None
+    content_base64: str | None = None
+
+    @model_validator(mode="after")
+    def _one_spelling(self) -> "ExactContentObjectInput":
+        if (self.text is None) == (self.content_base64 is None):
+            raise ValueError(
+                "an exact_content object carries exactly one of text or content_base64"
+            )
+        return self
+
+
+AuthoringObjectInput: TypeAlias = Annotated[
+    LiteralObjectInput | SubjectObjectInput | ExactContentObjectInput,
+    Field(discriminator="kind"),
+]
+
+
+class SelfSourceInput(_StrictInputModel):
+    kind: Literal["self_source"]
+    body: str
+
+
+class WorkingSelectionInput(_StrictInputModel):
+    kind: Literal["working_selection"]
+    source_id: str
+
+
+class ExistingCaptureInput(_StrictInputModel):
+    kind: Literal["existing_capture"]
+    capture_digest: str
+
+
+AuthoringSourceInput: TypeAlias = Annotated[
+    SelfSourceInput | WorkingSelectionInput | ExistingCaptureInput,
+    Field(discriminator="kind"),
+]
+
+
+class ClaimDispositionInput(_StrictInputModel):
+    claim_id: str
+    disposition: Literal["not_tested", "support", "contradict", "unsure"]
+
+
+class ClaimInput(_StrictInputModel):
+    kind: Literal["claim"]
+    subject: str | SubjectKeyReference = Field(
+        description=(
+            "kind/<id, alias or single key value>, or {subject_kind, key} naming the "
+            "Subject by its kind's key: the one live holder, else the one a subject "
+            "member of the same change set creates (no id is predicted)."
+        )
+    )
+    predicate: str
+    qualifier: str | None = None
+    object: AuthoringObjectInput
+    role: Literal["normative", "observation", "environment_binding", "derivation"]
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    rationale: str
+    source: AuthoringSourceInput
+    citation_role: Literal["evidence", "copy"] | None = None
+    revises: str | None = Field(
+        default=None,
+        description="Claim ID this Claim revises; omit to state a new Claim.",
+    )
+    dispositions: tuple[ClaimDispositionInput, ...] = ()
+
+    _rationale_line = field_validator("rationale")(claim_rationale)
+
+
+class ProcedureInput(_StrictInputModel):
+    """A Procedure, authored in the one typed form: a :class:`ProcedureSpec`.
+
+    The stored Procedure graph is produced by lowering the spec; a graph is
+    never authored directly, and the retired Python source request is refused
+    (``procedure_authoring_form_retired``).
+    """
+
+    kind: Literal["procedure"]
+    spec: ProcedureSpec
+    retire: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _authored_form(cls, value: object) -> object:
+        if isinstance(value, dict) and "procedure" in value:
+            value = dict(value)
+            kind = value.pop("kind", "procedure")
+            retire = value.pop("retire", False)
+            return {"kind": kind, "retire": retire, "spec": value}
+        if isinstance(value, dict) and ("definition" in value or "contracts" in value):
+            definition = value.get("definition")
+            form = (
+                "a source_request (the retired @procedure Python source)"
+                if isinstance(definition, dict) and "source_request" in definition
+                else "a graph definition"
+            )
+            raise PydanticCustomError(
+                "procedure_authoring_form_retired",
+                "procedure_authoring_form_retired: a Procedure is authored as one typed "
+                "ProcedureSpec ({procedure, input, steps, ...}), not as {form}",
+                {"form": form},
+            )
+        return value
+
+
+def lowered_procedure_payload(
+    *,
+    definition: dict[str, object],
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"],
+    generated: Mapping[str, Mapping[str, ContractField]],
+) -> ProcedureAuthoringPayload:
+    """The lowered spec: its stored graph and the boundary Contracts core co-proposes."""
+
+    return ProcedureAuthoringPayload.model_validate(
+        {
+            "definition": definition,
+            "activation_policy": activation_policy,
+            "generated": {role: dict(fields) for role, fields in generated.items()},
+        }
+    )
+
+
+class SubjectInput(_StrictInputModel):
+    """Create one Subject: name its kind and its key; core assigns the id.
+
+    ``key`` maps each key ClaimType of the kind's SubjectKind (by predicate, or by
+    its last name under the kind) to its value; omit it for a minted kind. A
+    pair kind's end (a Subject-valued key part) is a Subject object: an existing
+    Subject, or ``{subject_kind, key}`` naming one by key -- the live holder, or
+    the one a subject member of the same change set creates. The id is the
+    readable rendering of the canonical key (or a minted id), reported in the
+    result; the key parts become Claims citing ``rationale`` as your own words.
+    """
+
+    kind: Literal["subject"]
+    subject_kind: str = Field(description="The kind to create, e.g. 'dev.decision'.")
+    key: dict[str, str | int | bool | SubjectObjectInput] | str | int | bool = Field(
+        default_factory=dict,
+        description=(
+            "Key ClaimType (predicate or short name) -> value, or just the value when the "
+            "kind has one key; omit for a minted kind. A pair's end is "
+            '{"kind": "subject", "subject": ...}.'
+        ),
+    )
+    rationale: str | None = Field(
+        default=None, description="Why this Subject exists; the key Claims' self evidence."
+    )
+    create_new: bool = Field(
+        default=False,
+        description=(
+            "Hint kinds only: create another Subject even though one holds this key "
+            "(assert semantic.distinct_from between them); otherwise the key resolves to it."
+        ),
+    )
+
+
+class SubjectSuccessionInput(_StrictInputModel):
+    """A successor of an existing Subject's shell, e.g. retiring it (lifecycle retired)."""
+
+    kind: Literal["subject_succession"]
+    subject: SubjectShell
+
+
+class QueryDefinitionInput(_StrictInputModel):
+    kind: Literal["query_definition"]
+    query_definition: QuerySpecInput | QueryDefinitionSpec | QueryDefinition
+
+
+class ApprovalPolicyInput(_StrictInputModel):
+    kind: Literal["approval_policy"]
+    approval_policy: ApprovalPolicy
+
+
+class ProcedureRuntimePolicyInput(_StrictInputModel):
+    kind: Literal["procedure_runtime_policy"]
+    procedure_runtime_policy: ProcedureRuntimePolicy
+
+
+class ClaimTypeInput(_StrictInputModel):
+    kind: Literal["claim_type"]
+    claim_type: ClaimType
+
+
+class ClaimTypeSuccessionInput(_StrictInputModel):
+    """Succeed one accepted ClaimType, and disposition its closure, in this set."""
+
+    kind: Literal["claim_type_succession"]
+    successor: ClaimType
+    dependents: tuple[ClaimTypeSuccessionDependent, ...] = ()
+    carry_all: bool = Field(
+        default=False,
+        description=(
+            "Carry every closure member dependents does not name to the successor, computed "
+            "by the daemon (retired Claims included); dependents then names only exceptions."
+        ),
+    )
+
+
+class ClaimRetirementInput(_StrictInputModel):
+    kind: Literal["claim_retirement"]
+    retires: str = Field(description="Claim ID this member retires, parallel to revises.")
+    reason: ClaimRetirementReason
+    effective_until: datetime | None = None
+    dependents: tuple[ClaimRetireDependent, ...] = ()
+
+
+class ProcedureMandateInput(_StrictInputModel):
+    """A propose grant, or a settle grant with its Claim scope and condition query.
+
+    ``line_name`` names the Line the grant authorizes (accepted, or defined in
+    the same set); lowering pins its exact digest, so changing the Line's
+    Procedure version, parameters or bindings renews the grant. ``grants`` is
+    the verb the mandate delegates. A settle grant names the ClaimTypes (by
+    predicate), per change kind the evidence bases that settle, an optional
+    ``value: {from, to}`` for enum and bool ClaimTypes, and an optional accepted
+    condition query (which may bind ``$target.value`` and ``$target.before``);
+    lowering pins every exact digest. ``subjects: expected`` limits the grant
+    to Subjects the Line's claims templates fence with ``within``.
+    """
+
+    tag: Literal["cruxible-procedure-mandate-input-v3"] = "cruxible-procedure-mandate-input-v3"
+    kind: Literal["procedure_mandate"]
+    name: str
+    line_name: str
+    grants: Literal["propose", "settle"]
+    namespace: tuple[str, ...]
+    valid_from: datetime
+    expires_at: datetime
+    scope: tuple[MandateScopeAuthoring, ...] = ()
+    subject_scope: tuple[SemanticAddress, ...] | None = None
+    subjects: Literal["expected"] | None = None
+    condition: MandateConditionAuthoring | None = None
+    subject_creation: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Settle grants only: Subject kinds a run may create by key; their new Subjects "
+            "and key Claims settle with the change. A propose grant names subjects/<kind> "
+            "in its namespace instead."
+        ),
+    )
+    suspended: bool = False
+    retire: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired_ceiling(cls, value: object) -> object:
+        if isinstance(value, dict) and "resource_ceiling" in value:
+            raise ValueError(
+                "procedure_mandate_ceiling_retired: a Mandate grants authority only; the "
+                "Procedure's hard_caps bound every run and the Line owns the operating "
+                "budget (Line budgets)"
+            )
+        return value
+
+
+class LineInput(_StrictInputModel):
+    """One Line: a stable instantiation of an accepted or same-set Procedure.
+
+    Lowering pins the named Procedure's exact version and binds every slot to
+    one exact ``{build, operation}``: ``bindings`` names
+    ``provider[/build]#operation`` (or ``provider[/build]``) per slot, and a
+    slot left out is fitted (exactly one live operation must serve its
+    signature). A Line runs when run explicitly (`line run`, one manual occurrence),
+    or, once it is enabled (`line enable`), when a Trigger aimed at it fires; a
+    Trigger aimed at a Line that is not enabled does nothing. Enabling needs
+    governed write even for an observe-only Line. A Line that proposes or
+    settles also needs a live ProcedureMandate pinning this exact Line before it
+    can run or be enabled; an observe-only Line needs none.
+    """
+
+    kind: Literal["line"]
+    name: str
+    procedure_name: str
+    bindings: ProcedureBindings = Field(
+        default_factory=dict,
+        description=(
+            "Slot -> 'provider[/build]#operation' (or 'provider[/build]'); an invoked "
+            "child's slot is '<invoke node>.<slot>'. Omitted slots are fitted."
+        ),
+    )
+    findings: LineFindings = Field(default_factory=LineFindings)
+    acquisition: dict[str, LineAcquisitionRule] = Field(
+        default_factory=dict,
+        description=(
+            "Per capture output <alias>.<field> (an invoked child's: <invoke node "
+            "path>.<alias>.<field>): {max_age, on_unavailable, on_stale, "
+            "on_oversized, permitted_replayability, origins}. A capture output left out runs "
+            "under the core default: any age, refuse when unavailable, stale or oversized, "
+            "any replay class, any origin."
+        ),
+    )
+    max_authority: Literal["observe", "propose", "settle"] | None = Field(
+        default=None,
+        description="Caps this Line below its Procedure's own capability; omit to inherit it.",
+    )
+    trigger_input: str | None = None
+    parameters: dict[str, object] = Field(
+        default_factory=dict,
+        description=(
+            "The Procedure's input record, checked against its input contract at authoring."
+        ),
+    )
+    budgets: LineBudgetsInput | None = Field(
+        default=None,
+        description="Per-run budgets; omit to use the Procedure's hard caps.",
+    )
+    occurrence_epoch: int = Field(default=1, ge=1)
+    retire: bool = False
+
+
+class TriggerInput(_StrictInputModel):
+    """One schedule aimed at an accepted or same-set Line, or a registered action.
+
+    Actions admit cadence, cron and generation_accepted. Every target's declared
+    input must be supplied by its schedule. Capture-based schedules name the
+    CaptureContract; prepare pins its digest. Exact event selectors are refused.
+    Retirement retains the predecessor's schedule and target without resolution.
+    """
+
+    kind: Literal["trigger"]
+    name: str
+    schedule: AuthoringTriggerSchedule
+    line_name: str | None = Field(
+        default=None,
+        description=(
+            "The Line this Trigger runs once that Line is enabled; omit when naming an action."
+        ),
+    )
+    action: InternalActionName | None = Field(
+        default=None, description="The internal action this Trigger fires; omit for a Line."
+    )
+    runbook_name: str | None = Field(
+        default=None,
+        description=(
+            "The Runbook this Trigger runs (cadence, cron or generation_accepted); each Line "
+            "step runs under that Line's own enablement."
+        ),
+    )
+    retire: bool = False
+
+
+class RunbookInput(_StrictInputModel):
+    """An ordered list of Lines and internal actions, run in order (D-R36).
+
+    Each step names exactly one accepted Line (``line``) or registered internal
+    action (``action``). No branching, no parameters of its own: a Line step runs
+    as that Line's manual occurrence, on its own parameters, budgets and authority.
+    A run stops at the first step that fails or whose writes go to review.
+    ``retire`` retires the accepted Runbook.
+    """
+
+    kind: Literal["runbook"]
+    name: str = Field(description="The Runbook name, e.g. 'security.catch-up'.")
+    description: str | None = None
+    steps: tuple[RunbookStepAuthoring, ...] = Field(
+        default=(),
+        description="In run order: {line: <Line name>} or {action: <internal action>}.",
+    )
+    retire: bool = False
+
+
+class SubjectKindInput(_StrictInputModel):
+    """How core names Subjects of one kind: by key ClaimTypes, or by minted ids.
+
+    Every new Subject is of a kind with an accepted SubjectKind. ``keys`` names
+    the key ClaimTypes (by predicate, in key order): each a ClaimType about
+    this kind only, literal and one-valued, accepted here or earlier; a Subject's
+    id is then the readable rendering of its canonical key. ``normalizers``
+    gives a key part an identity normalizer from the fixed core set. The default
+    ``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only
+    surfaces it in the duplicates audit. ``minted: true`` has core mint opaque
+    ids instead. Change it, or retire it, through a successor.
+    """
+
+    kind: Literal["subject_kind"]
+    name: str = Field(description="The Subject kind this declares, e.g. 'dev.decision'.")
+    description: str | None = None
+    keys: tuple[str, ...] = Field(
+        default=(), description="Key ClaimTypes by predicate, in key order; omit when minted."
+    )
+    normalizers: dict[str, KeyNormalizer] = Field(
+        default_factory=dict,
+        description=(
+            "Per key part (by predicate or last name), the identity normalizer its value "
+            "takes, pinned by version: {normalizer: none|lowercase|pep503, version: 1}, or "
+            "{normalizer: purl-type, version: 1, identity: package|package_variant}. A part "
+            "not named takes none@1. Two raw values that normalize to one name one Subject."
+        ),
+    )
+    uniqueness: Literal["unique", "hint"] | None = Field(
+        default=None,
+        description="With keys: defaults to unique, which refuses a duplicate key; hint does not.",
+    )
+    minted: bool = Field(default=False, description="Core mints opaque ids; no keys.")
+    retire: bool = False
+
+
+class ContractFieldInput(_StrictInputModel):
+    """One Contract field with its meaning: a type spelling and an optional description."""
+
+    type: str = Field(
+        description=(
+            "The field type, e.g. 'string', 'int{0..9}', 'decimal{0..1}', 'date', "
+            "'enum[open, fixed]', 'list<string>{max_items: 50}', 'key<security.vulnerability>', "
+            "'capture<security.kev>', or another Contract as 'name@N'. A trailing '?' makes "
+            "the key optional (absent, never null)."
+        )
+    )
+    description: str | None = None
+
+
+class ContractInput(_StrictInputModel):
+    """One Contract version: a named, immutable data shape every edge is checked against.
+
+    Each field has a type from the closed grammar: there is no ``json`` type and
+    no untyped map (keep opaque bytes as a Capture), and every list states
+    ``max_items``. Nested Contracts are written ``name@N`` and pinned to the
+    accepted version. Version 1 starts a Contract; version N names version N-1
+    as its predecessor. An accepted version never changes: author the next.
+    """
+
+    kind: Literal["contract"]
+    name: str = Field(description="The Contract name, e.g. 'security.epss-row'.")
+    version: int = Field(ge=1, description="The version this declares, starting at 1.")
+    description: str | None = None
+    fields: dict[str, str | ContractFieldInput] = Field(
+        description=(
+            "Field name to its type spelling, or to {type, description}. Empty ({}) "
+            "declares the closed empty record, which accepts only {}."
+        ),
+    )
+
+
+class CapabilityInput(_StrictInputModel):
+    """One Capability version: a named, immutable kind of call a Procedure slot names.
+
+    ``in`` is the request Contract a slot sends and ``out`` the result Contract
+    it receives back, each an accepted Contract written ``name@N`` (accepted
+    earlier or in the same change set). ``effect`` is the same for every version
+    of one name; a different effect is a different capability. Version 1 starts
+    a capability; version N names version N-1 as its predecessor. An accepted
+    version never changes: author the next.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    kind: Literal["capability"]
+    name: str = Field(description="The capability name, e.g. 'security.osv.match'.")
+    version: int = Field(ge=1, description="The version this declares, starting at 1.")
+    description: str = Field(
+        description="What the capability does, led by its result; covered by its digest."
+    )
+    effect: OperationEffect = Field(
+        description="pure, external_read or external_mutation; fixed across versions."
+    )
+    in_: str = Field(alias="in", description="The request Contract, 'name@N'.")
+    out: str = Field(description="The result Contract, 'name@N'.")
+
+
+AuthoringChangeSetMemberInput: TypeAlias = Annotated[
+    ClaimInput
+    | ClaimTypeInput
+    | ClaimTypeSuccessionInput
+    | ClaimRetirementInput
+    | SubjectInput
+    | SubjectSuccessionInput
+    | QueryDefinitionInput
+    | ApprovalPolicyInput
+    | ProcedureRuntimePolicyInput
+    | ProcedureMandateInput
+    | LineInput
+    | TriggerInput
+    | RunbookInput
+    | SubjectKindInput
+    | ContractInput
+    | CapabilityInput
+    | ProcedureInput,
+    Field(discriminator="kind"),
+    BeforeValidator(_authored_procedure_input_shape),
+]
+
+
+class ChangeSetInput(_StrictInputModel):
+    kind: Literal["change_set"]
+    members: tuple[AuthoringChangeSetMemberInput, ...] = Field(min_length=1)
+    # The same sentence `cx.changes(rationale=...)` carries, on the surface a
+    # CLI file and an MCP dict use. Leaving it to the SDK would have made "say
+    # why you proposed this" an SDK-only capability, which is exactly the kind
+    # of split the three-surface parity law exists to prevent.
+    rationale: str | None = Field(default=None, max_length=CHANGE_SET_RATIONALE_MAX_LENGTH)
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str | None) -> str | None:
+        return validate_change_set_rationale(value)
+
+
+AuthoringInput: TypeAlias = Annotated[
+    ClaimInput
+    | ProcedureInput
+    | SubjectInput
+    | SubjectSuccessionInput
+    | QueryDefinitionInput
+    | ApprovalPolicyInput
+    | ProcedureRuntimePolicyInput
+    | ProcedureMandateInput
+    | LineInput
+    | TriggerInput
+    | RunbookInput
+    | SubjectKindInput
+    | ContractInput
+    | CapabilityInput
+    | ChangeSetInput,
+    Field(discriminator="kind"),
+    BeforeValidator(_authored_procedure_input_shape),
+]
+
+
+@dataclass(eq=False)
+class AuthoringInputError(FormatError, ValueError):
+    code: str
+    field_path: str
+    message: str
+    repair: str
+
+    def __post_init__(self) -> None:
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return f"{self.code} at {self.field_path}: {self.message} Repair: {self.repair}"
+
+    @property
+    def error_code(self) -> str:
+        return self.code
+
+
+def refuse_unserved_procedure_nodes(
+    definition: dict[str, object], *, field_path: str = "definition"
+) -> None:
+    """Check only the graph being authored; retained artifact parsers stay unchanged."""
+
+    nodes = definition.get("nodes")
+    if not isinstance(nodes, list | tuple):
+        return
+    from cruxible_client.contracts.procedures.nodes import RetiredNodeKind, refuse_retired_kinds
+
+    for index, node in enumerate(nodes):
+        try:
+            refuse_retired_kinds([node] if isinstance(node, dict) else [])
+        except RetiredNodeKind as exc:
+            raise AuthoringInputError(
+                "cruxible.procedure.node_kind_retired",
+                f"{field_path}.nodes[{index}]",
+                f"The node kind {exc.kind!r} is retired.",
+                f"Use {exc.replacement}.",
+            ) from exc
+
+        if not isinstance(node, dict):
+            continue
+        occurrences = [(node, f"{field_path}.nodes[{index}]")]
+        if node.get("kind") == "repeat":
+            occurrences.extend(
+                (body, f"{field_path}.nodes[{index}].body[{body_index}]")
+                for body_index, body in enumerate(node.get("body", ()))
+                if isinstance(body, dict)
+            )
+        for occurrence, location in occurrences:
+            if occurrence.get("kind", occurrence.get("operation")) != "call":
+                continue
+            if "contract_in" in occurrence or "contract_out" in occurrence:
+                raise AuthoringInputError(
+                    "cruxible.authoring.call_contract_from_interface",
+                    location,
+                    "Call input and output contracts come from its slot's signature.",
+                    "Remove the Call's contract_in/contract_out and any unused owned Contracts.",
+                )
+
+
+def _subject_address(shorthand: str | SubjectKeyReference, *, field_path: str) -> SemanticAddress:
+    if isinstance(shorthand, SubjectKeyReference):
+        # Resolved when the change set is lowered (key, alias, creation member).
+        return SemanticAddress.subject_key(shorthand.subject_kind, shorthand.key)
+    match = _SUBJECT_SHORTHAND_RE.fullmatch(shorthand)
+    if match is None:
+        raise AuthoringInputError(
+            "cruxible.authoring.input_subject_invalid",
+            field_path,
+            "Subject must be <subject-kind>/<id, alias or single key value> with no '/' "
+            "in the text.",
+            "Replace it with a subject shown by cruxible query KIND.",
+        )
+    # An id is its own path; other text (an alias or key value as written) is
+    # carried in NFC for lowering to resolve, and names nothing until it does.
+    text = unicodedata.normalize("NFC", match["id"])
+    return SemanticAddress.whole_artifact(f"subjects/{match['kind']}/{text}.json")
+
+
+def _claim_object(
+    value: AuthoringObjectInput,
+) -> LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject:
+    if isinstance(value, LiteralObjectInput):
+        return LiteralClaimObject(value=value.value)
+    if isinstance(value, SubjectObjectInput):
+        return SubjectClaimObject(
+            address=_subject_address(value.subject, field_path="input.object.subject")
+        )
+    if value.content_base64 is not None:
+        return AuthoringExactContentObject(content_base64=value.content_base64)
+    assert value.text is not None
+    return AuthoringExactContentObject(
+        content_base64=base64.b64encode(value.text.encode("utf-8")).decode("ascii")
+    )
+
+
+def _dispositions(
+    values: tuple[ClaimDispositionInput, ...],
+) -> tuple[AuthoringExistingClaimDisposition, ...]:
+    return tuple(
+        AuthoringExistingClaimDisposition(
+            claim_id=item.claim_id,
+            disposition=item.disposition,
+        )
+        for item in sorted(values, key=lambda item: item.claim_id.encode("ascii"))
+    )
+
+
+def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayload:
+    if isinstance(value.source, WorkingSelectionInput):
+        raise AuthoringInputError(
+            "cruxible.authoring.working_selection_requires_bind",
+            "input.source",
+            "compile and submit cannot observe local working-source bytes.",
+            "Run cruxible authoring bind with this input and the selected local file.",
+        )
+    if isinstance(value.source, ExistingCaptureInput):
+        if value.citation_role is None:
+            raise AuthoringInputError(
+                "cruxible.authoring.existing_capture_not_admitted",
+                "input.citation_role",
+                "An existing Capture requires evidence or copy intent.",
+                "Set citation_role to evidence or copy.",
+            )
+        return ClaimAuthoringPayload(
+            statement=AuthoringClaimStatement(
+                subject=_subject_address(value.subject, field_path="input.subject"),
+                predicate=value.predicate,
+                qualifier=value.qualifier,
+                object=_claim_object(value.object),
+                role=value.role,
+                effective_from=value.effective_from,
+                effective_until=value.effective_until,
+            ),
+            rationale=value.rationale,
+            source=ExistingCaptureCitationSource(
+                capture_digest=value.source.capture_digest,
+            ),
+            citation_role=value.citation_role,
+            revises=value.revises,
+            existing_claim_dispositions=_dispositions(value.dispositions),
+            dependency_drafts=ClaimDependencyDrafts(),
+        )
+    if value.citation_role is not None:
+        raise AuthoringInputError(
+            "cruxible.authoring.self_source_citation_role_forbidden",
+            "input.citation_role",
+            "Self-source fixes its copy citation role server-side.",
+            "Remove citation_role.",
+        )
+    return ClaimAuthoringPayload(
+        statement=AuthoringClaimStatement(
+            subject=_subject_address(value.subject, field_path="input.subject"),
+            predicate=value.predicate,
+            qualifier=value.qualifier,
+            object=_claim_object(value.object),
+            role=value.role,
+            effective_from=value.effective_from,
+            effective_until=value.effective_until,
+        ),
+        rationale=value.rationale,
+        source=SelfSourceBody(
+            content_base64=base64.b64encode(value.source.body.encode("utf-8")).decode("ascii")
+        ),
+        revises=value.revises,
+        existing_claim_dispositions=_dispositions(value.dispositions),
+    )
+
+
+def lower_bound_claim_input(
+    value: ClaimInput,
+    *,
+    observation: WorkingSelectionObservation,
+) -> ClaimAuthoringPayload:
+    """Lower the only client-observed input form after bind constructs its observation."""
+
+    if not isinstance(value.source, WorkingSelectionInput):
+        raise AuthoringInputError(
+            "cruxible.authoring.bind_requires_working_selection",
+            "input.source",
+            "authoring bind accepts only a working_selection source.",
+            "Use create or compile for self_source input.",
+        )
+    if observation.source_id != value.source.source_id:
+        raise AuthoringInputError(
+            "cruxible.authoring.bind_source_mismatch",
+            "input.source.source_id",
+            "The observation source differs from the declared logical source.",
+            "Bind the file using the declared source_id.",
+        )
+    if value.citation_role is None:
+        raise AuthoringInputError(
+            "cruxible.authoring.working_selection_citation_role_required",
+            "input.citation_role",
+            "A working selection requires evidence or copy intent.",
+            "Set citation_role to evidence or copy.",
+        )
+    return ClaimAuthoringPayload(
+        statement=AuthoringClaimStatement(
+            subject=_subject_address(value.subject, field_path="input.subject"),
+            predicate=value.predicate,
+            qualifier=value.qualifier,
+            object=_claim_object(value.object),
+            role=value.role,
+            effective_from=value.effective_from,
+            effective_until=value.effective_until,
+        ),
+        rationale=value.rationale,
+        source=observation,
+        citation_role=value.citation_role,
+        revises=value.revises,
+        existing_claim_dispositions=_dispositions(value.dispositions),
+    )
+
+
+def _procedure_payload(
+    value: ProcedureInput,
+) -> ProcedureAuthoringPayload:
+    try:
+        refuse_closed_steps(value.spec)  # the Procedure template (D-R37 h1)
+        lower_procedure_spec(value.spec)  # shared offline syntax/reference checks
+    except ProcedureSpecError as exc:
+        raise AuthoringInputError(exc.code, exc.field_path, exc.message, exc.repair) from exc
+    return ProcedureAuthoringPayload(
+        definition={
+            "name": value.spec.procedure,
+            "procedure_spec": value.spec.model_dump(mode="json", by_alias=True),
+        },
+        activation_policy=value.spec.activation,
+        retire=value.retire,
+    )
+
+
+def _mandate_payload(value: ProcedureMandateInput) -> ProcedureMandateAuthoringPayload:
+    return ProcedureMandateAuthoringPayload.model_validate(
+        value.model_dump(mode="python", exclude={"tag", "kind"})
+    )
+
+
+def _line_payload(value: LineInput) -> LineAuthoringPayload:
+    return LineAuthoringPayload(
+        name=value.name,
+        procedure_name=value.procedure_name,
+        bindings=value.bindings,
+        acquisition=value.acquisition,
+        findings=value.findings,
+        max_authority=value.max_authority,
+        trigger_input=value.trigger_input,
+        parameters=value.parameters,
+        budgets=value.budgets,
+        occurrence_epoch=value.occurrence_epoch,
+        retire=value.retire,
+    )
+
+
+def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayload:
+    return TriggerAuthoringPayload.model_validate(value.model_dump(mode="python", exclude={"kind"}))
+
+
+def _runbook_payload(value: RunbookInput) -> RunbookAuthoringPayload:
+    return RunbookAuthoringPayload(
+        name=value.name, description=value.description, steps=value.steps, retire=value.retire
+    )
+
+
+def _subject_creation_payload(value: SubjectInput) -> SubjectCreationAuthoringPayload:
+    """The key as given; lowering resolves short names and orders it by the kind's keys."""
+
+    try:
+        if not isinstance(value.key, dict):
+            return SubjectCreationAuthoringPayload(
+                subject_kind=value.subject_kind,
+                key_value=value.key,
+                rationale=value.rationale,
+                create_new=value.create_new,
+            )
+        return SubjectCreationAuthoringPayload(
+            subject_kind=value.subject_kind,
+            key=tuple(
+                SubjectKeyPart(
+                    predicate=name if "." in name else f"{value.subject_kind}.{name}",
+                    value=(
+                        SubjectClaimObject(
+                            address=_subject_address(
+                                item.subject, field_path=f"input.key.{name}.subject"
+                            )
+                        )
+                        if isinstance(item, SubjectObjectInput)
+                        else item
+                    ),
+                )
+                for name, item in value.key.items()
+            ),
+            rationale=value.rationale,
+            create_new=value.create_new,
+        )
+    except ValueError as exc:
+        raise AuthoringInputError(
+            "cruxible.authoring.subject_creation_invalid",
+            "input",
+            str(exc),
+            "Name the kind and give each key part once, as {key ClaimType: value}.",
+        ) from exc
+
+
+def _subject_kind_payload(value: SubjectKindInput) -> SubjectKindAuthoringPayload:
+    try:
+        return SubjectKindAuthoringPayload.model_validate(
+            value.model_dump(mode="python", exclude={"kind"})
+        )
+    except ValueError as exc:
+        raise AuthoringInputError(
+            "cruxible.authoring.subject_kind_invalid",
+            "input",
+            str(exc),
+            "Give keys with a uniqueness (unique or hint), or minted: true -- one of them; "
+            "name each normalizer by one of the keys.",
+        ) from exc
+
+
+def _contract_payload(value: ContractInput) -> ContractAuthoringPayload:
+    fields: dict[str, ContractField] = {}
+    try:
+        for name, declared in value.fields.items():
+            spelling = declared if isinstance(declared, str) else declared.type
+            description = None if isinstance(declared, str) else declared.description
+            field_type, optional = parse_field_spelling(spelling)
+            fields[name] = ContractField(
+                type=field_type, optional=optional, description=description
+            )
+        return ContractAuthoringPayload(
+            name=value.name,
+            version=value.version,
+            description=value.description,
+            fields=fields,
+        )
+    except ContractTypeRefused as exc:
+        raise AuthoringInputError(
+            "cruxible.contract.contract_type_refused",
+            "input.fields",
+            str(exc),
+            "Declare a typed shape: no json or untyped map (keep opaque bytes as a Capture), "
+            "and give every list max_items.",
+        ) from exc
+    except ValueError as exc:
+        refused = contract_type_refusal(exc)
+        raise AuthoringInputError(
+            "cruxible.contract.contract_type_refused"
+            if refused is not None
+            else "cruxible.contract.contract_invalid",
+            "input",
+            str(refused or exc),
+            "Name the Contract, its version, and each field's type from the Contract grammar.",
+        ) from exc
+
+
+def _capability_payload(value: CapabilityInput) -> CapabilityAuthoringPayload:
+    try:
+        return CapabilityAuthoringPayload.model_validate(
+            {
+                "name": value.name,
+                "version": value.version,
+                "description": value.description,
+                "effect": value.effect,
+                "in": parse_contract_ref(value.in_),
+                "out": parse_contract_ref(value.out),
+            }
+        )
+    except ContractFormatError as exc:
+        raise AuthoringInputError(
+            "cruxible.capability.invalid",
+            "input",
+            str(exc),
+            "Write in and out as accepted Contract versions, 'name@N'.",
+        ) from exc
+
+
+def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChangeSetMember:
+    if isinstance(member, ClaimInput):
+        return _claim_payload(member)
+    if isinstance(member, ClaimTypeInput):
+        return ClaimTypeAuthoringPayload(claim_type=member.claim_type)
+    if isinstance(member, ClaimTypeSuccessionInput):
+        # Dependent order carries no meaning, so the author's order is sorted
+        # here; only a duplicate still refuses.
+        return ClaimTypeSuccessionMember(
+            successor=member.successor,
+            dependents=tuple(
+                sorted(member.dependents, key=lambda item: item.identity.qualified.encode("utf-8"))
+            ),
+            carry_all=member.carry_all,
+        )
+    if isinstance(member, ClaimRetirementInput):
+        return ClaimRetirementMember(
+            retires=member.retires,
+            reason=member.reason,
+            effective_until=member.effective_until,
+            dependents=tuple(
+                sorted(
+                    member.dependents,
+                    key=lambda item: item.artifact_identity.qualified.encode("utf-8"),
+                )
+            ),
+        )
+    if isinstance(member, ProcedureInput):
+        return _procedure_payload(member)
+    if isinstance(member, SubjectInput):
+        return _subject_creation_payload(member)
+    if isinstance(member, SubjectSuccessionInput):
+        return SubjectAuthoringPayload(subject=member.subject)
+    if isinstance(member, QueryDefinitionInput):
+        return QueryDefinitionAuthoringPayload(query_definition=member.query_definition)
+    if isinstance(member, ApprovalPolicyInput):
+        return ApprovalPolicyAuthoringPayload(approval_policy=member.approval_policy)
+    if isinstance(member, ProcedureRuntimePolicyInput):
+        return ProcedureRuntimePolicyAuthoringPayload(
+            procedure_runtime_policy=member.procedure_runtime_policy
+        )
+    if isinstance(member, LineInput):
+        return _line_payload(member)
+    if isinstance(member, TriggerInput):
+        return _trigger_payload(member)
+    if isinstance(member, RunbookInput):
+        return _runbook_payload(member)
+    if isinstance(member, SubjectKindInput):
+        return _subject_kind_payload(member)
+    if isinstance(member, ContractInput):
+        return _contract_payload(member)
+    if isinstance(member, CapabilityInput):
+        return _capability_payload(member)
+    return _mandate_payload(member)
+
+
+def _input_invalid(exc: ValidationError, field_path: str) -> AuthoringInputError:
+    return AuthoringInputError(
+        "cruxible.authoring.input_invalid",
+        field_path,
+        validation_summary(exc) + ".",
+        "Correct the named field and submit again.",
+    )
+
+
+def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
+    """Lower typed input; accepted-state references are checked during preflight.
+
+    Lowering builds the stored payload models, whose validators are the last word
+    on shape. Their refusal is the author's input error, typed and located (the
+    change-set member it came from), never an unhandled validation failure.
+    """
+    try:
+        return _lower_authoring_input(value)
+    except ValidationError as exc:
+        raise _input_invalid(exc, "input") from exc
+
+
+def _lower_change_set_member(
+    index: int, member: AuthoringChangeSetMemberInput
+) -> AuthoringChangeSetMember:
+    try:
+        return _change_set_member(member)
+    except ValidationError as exc:
+        raise _input_invalid(exc, f"input.members[{index}]") from exc
+
+
+def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
+    if isinstance(value, ClaimInput):
+        return _claim_payload(value)
+    if isinstance(value, ProcedureInput):
+        return _procedure_payload(value)
+    if isinstance(value, SubjectInput):
+        return ChangeSetAuthoringPayload(members=(_subject_creation_payload(value),))
+    if isinstance(value, SubjectSuccessionInput):
+        return SubjectAuthoringPayload(subject=value.subject)
+    if isinstance(value, QueryDefinitionInput):
+        return QueryDefinitionAuthoringPayload(query_definition=value.query_definition)
+    if isinstance(value, ApprovalPolicyInput):
+        return ApprovalPolicyAuthoringPayload(approval_policy=value.approval_policy)
+    if isinstance(value, ProcedureRuntimePolicyInput):
+        return ProcedureRuntimePolicyAuthoringPayload(
+            procedure_runtime_policy=value.procedure_runtime_policy
+        )
+    if isinstance(value, ProcedureMandateInput):
+        return _mandate_payload(value)
+    if isinstance(value, LineInput):
+        return _line_payload(value)
+    if isinstance(value, TriggerInput):
+        return _trigger_payload(value)
+    if isinstance(value, RunbookInput):
+        return _runbook_payload(value)
+    if isinstance(value, SubjectKindInput):
+        return _subject_kind_payload(value)
+    if isinstance(value, ContractInput):
+        return _contract_payload(value)
+    if isinstance(value, CapabilityInput):
+        return _capability_payload(value)
+    if not isinstance(value, ChangeSetInput):
+        # Every single-member *Input wrapper matched above; what is left
+        # falls through assuming a change set (`.members`). A bare spec type
+        # (e.g. QueryDefinitionSpec, ClaimTypeUpgrade, ...) given directly
+        # instead of its *Input wrapper landed here and raised an
+        # AttributeError on `.members` with no hint of the actual mistake.
+        wrapper_hint = (
+            ' Wrap it: QueryDefinitionInput(kind="query_definition", query_definition=<spec>).'
+            if isinstance(value, QueryDefinitionSpec | QueryDefinition)
+            else ""
+        )
+        raise AuthoringInputError(
+            "cruxible.authoring.input_not_recognized",
+            "input",
+            f"{type(value).__name__} is not a recognized AuthoringInput: it matches none of "
+            "the single-member *Input wrappers and is not a ChangeSetInput either.",
+            "Wrap the value in its matching *Input type (its `kind` literal names it), or "
+            f"pass a ChangeSetInput with members=(...).{wrapper_hint}",
+        )
+    members = tuple(
+        _lower_change_set_member(index, member) for index, member in enumerate(value.members)
+    )
+    identities = tuple(authoring_member_identity(member) for member in members)
+    if len(set(identities)) != len(identities):
+        raise AuthoringInputError(
+            "cruxible.authoring.change_set_duplicate_identity",
+            "input.members",
+            "Change-set member semantic identities must be unique.",
+            "Remove or rename the duplicate member.",
+        )
+    return ChangeSetAuthoringPayload(
+        members=tuple(
+            sorted(
+                members,
+                key=lambda member: authoring_member_identity(member).encode("utf-8"),
+            )
+        ),
+        rationale=value.rationale,
+    )
+
+
+__all__ = [
+    "ApprovalPolicyInput",
+    "ProcedureRuntimePolicyInput",
+    "AuthoringChangeSetMemberInput",
+    "AuthoringInputError",
+    "AuthoringInput",
+    "AuthoringObjectInput",
+    "AuthoringSourceInput",
+    "CapabilityInput",
+    "ChangeSetInput",
+    "ClaimDispositionInput",
+    "ClaimRetirementInput",
+    "ClaimTypeInput",
+    "ClaimTypeSuccessionInput",
+    "ClaimInput",
+    "ContractFieldInput",
+    "ContractInput",
+    "ExistingCaptureInput",
+    "ExactContentObjectInput",
+    "LineInput",
+    "TriggerInput",
+    "RunbookInput",
+    "LiteralObjectInput",
+    "ProcedureInput",
+    "lowered_procedure_payload",
+    "ProcedureMandateInput",
+    "QueryDefinitionInput",
+    "SelfSourceInput",
+    "SubjectObjectInput",
+    "SubjectInput",
+    "SubjectKindInput",
+    "SubjectSuccessionInput",
+    "WorkingSelectionInput",
+    "lower_bound_claim_input",
+    "lower_authoring_input",
+]

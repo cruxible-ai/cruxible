@@ -1,38 +1,14 @@
-"""Runtime permission modes for Cruxible operations.
+"""Transport permission ceilings for the Cruxible daemon and MCP surface.
 
-Controls which operations a runtime session can invoke, resolved from the
-``CRUXIBLE_MODE`` environment variable of the process that owns the runtime.
+The process fixes a ceiling from ``CRUXIBLE_MODE`` at startup. Request
+credentials may narrow it but can never raise it. These tiers control endpoint
+reachability only; Cruxible principals and acceptance laws determine semantic
+authority.
 
-WHERE THIS IS A BOUNDARY. These tiers are a real boundary on the DAEMON and MCP
-surfaces: the daemon (or MCP server) process fixes its ceiling at startup, and
-nothing a caller sends afterwards can raise it — request credentials may narrow
-it, never lift it. That is the surface agents are given.
-
-WHERE IT IS NOT. The local CLI runs IN THE OPERATOR'S OWN PROCESS and reads
-``CRUXIBLE_MODE`` from the operator's own environment, so anyone who can run
-``cruxible`` can also set that variable. The local CLI is therefore an
-operator console at operator tier by design, not a sandbox against the person
-at the shell. Do not document or rely on ``CRUXIBLE_MODE`` as gating "all sessions".
-The intended deployment is: agents reach state through MCP or the daemon, and
-never get a shell on the state host.
-
-Four cumulative tiers:
-
-- ``READ_ONLY``: query, inspect, validate, and plan workflows
-- ``GOVERNED_WRITE``: execute governed operator actions such as feedback,
-  proposals, snapshots, policy additions, and subscribed state pulls
-- ``GRAPH_WRITE``: commit local governed state through direct graph writes,
-  group resolution, trust updates, or canonical workflow apply
-- ``ADMIN``: manage instance lifecycle, active config replacement, locks,
-  clones, overlays, and published state trust boundaries
-
-Default is ``ADMIN`` (backward compatible) when ``CRUXIBLE_MODE`` is unset.
-
-Audit logging uses structlog to stderr so it never interferes with the
-MCP stdio transport on stdout. A safe stderr default is configured at
-module level (guarded by ``if not structlog.is_configured()``) so audit
-logs work even without an explicit ``configure_structlog()`` call.
-Production JSON formatting is set by ``server.main()``.
+The names remain ``READ_ONLY``, ``GOVERNED_WRITE``, ``GRAPH_WRITE``, and
+``ADMIN`` during the destructive pivot so existing daemon credential records
+remain intelligible. The local CLI is still an operator process, not a sandbox
+against the shell user. Audit logging goes to stderr so MCP stdio stays clean.
 """
 
 from __future__ import annotations
@@ -43,11 +19,15 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from enum import IntEnum
-from pathlib import Path
 
 import structlog
 
-from cruxible_core.errors import ConfigError, InstanceScopeError, PermissionDeniedError
+from cruxible_core.errors import (
+    ConfigError,
+    DaemonOperationScopeError,
+    InstanceScopeError,
+    PermissionDeniedError,
+)
 
 # ---------------------------------------------------------------------------
 # Safe stderr default for structlog — never write to stdout (MCP stdio)
@@ -94,150 +74,134 @@ PERMISSION_MODE_NAMES: tuple[str, ...] = tuple(_MODE_NAMES)
 # ---------------------------------------------------------------------------
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
-    # READ_ONLY tools do not mutate graph/state. Some may still append
-    # decision-event audit metadata when an explicit decision_record_id is supplied.
-    "cruxible_version": PermissionMode.READ_ONLY,
+    # Capture and Document bodies are read at the instance's read tier (C14); a
+    # restricted CaptureKind's bytes additionally need cruxible_body_read_restricted,
+    # re-checked per Capture in the service once its kind resolves.
+    "cruxible_capture_read": PermissionMode.READ_ONLY,
+    # Erasing a retained body cannot be undone: the reviewing tier, never a
+    # propose-only agent (the contract's own erasure rule is the authority).
+    "cruxible_capture_erase": PermissionMode.GRAPH_WRITE,
+    "cruxible_provider_list": PermissionMode.READ_ONLY,
+    "cruxible_provider_install": PermissionMode.ADMIN,
+    "cruxible_provider_retire": PermissionMode.ADMIN,
+    "cruxible_provider_move": PermissionMode.GOVERNED_WRITE,
+    # Kit builds can preview an automation template as an authoring principal.
+    "cruxible_kit_build": PermissionMode.GOVERNED_WRITE,
+    "cruxible_kit_status": PermissionMode.READ_ONLY,
+    "cruxible_kit_add": PermissionMode.GOVERNED_WRITE,
+    "cruxible_kit_remove": PermissionMode.GOVERNED_WRITE,
     "cruxible_server_info": PermissionMode.READ_ONLY,
-    "cruxible_init": PermissionMode.READ_ONLY,
-    "cruxible_validate": PermissionMode.READ_ONLY,
-    "cruxible_schema": PermissionMode.READ_ONLY,
+    "cruxible_proposal_review": PermissionMode.READ_ONLY,
+    "cruxible_proposal_approve_prepare": PermissionMode.READ_ONLY,
+    "cruxible_files_check": PermissionMode.READ_ONLY,
+    "cruxible_get": PermissionMode.READ_ONLY,
+    "cruxible_backlinks": PermissionMode.READ_ONLY,
     "cruxible_query": PermissionMode.READ_ONLY,
-    "cruxible_query_inline": PermissionMode.READ_ONLY,
-    "cruxible_list_queries": PermissionMode.READ_ONLY,
-    "cruxible_describe_query": PermissionMode.READ_ONLY,
-    "cruxible_receipt": PermissionMode.READ_ONLY,
-    "cruxible_get_trace": PermissionMode.READ_ONLY,
-    "cruxible_list_traces": PermissionMode.READ_ONLY,
-    "cruxible_list": PermissionMode.READ_ONLY,
-    "cruxible_sample": PermissionMode.READ_ONLY,
-    "cruxible_evaluate": PermissionMode.READ_ONLY,
-    "cruxible_stats": PermissionMode.READ_ONLY,
-    "cruxible_lint": PermissionMode.READ_ONLY,
-    "cruxible_get_entity": PermissionMode.READ_ONLY,
-    "cruxible_get_relationship": PermissionMode.READ_ONLY,
-    "cruxible_relationship_lineage": PermissionMode.READ_ONLY,
-    "cruxible_inspect_entity": PermissionMode.READ_ONLY,
-    "cruxible_inspect_entity_history": PermissionMode.READ_ONLY,
-    "cruxible_inspect_ontology": PermissionMode.READ_ONLY,
-    "cruxible_inspect_workflows": PermissionMode.READ_ONLY,
-    "cruxible_inspect_queries": PermissionMode.READ_ONLY,
-    "cruxible_inspect_governance": PermissionMode.READ_ONLY,
-    "cruxible_inspect_overview": PermissionMode.READ_ONLY,
-    "cruxible_config_status": PermissionMode.READ_ONLY,
-    "cruxible_get_group": PermissionMode.READ_ONLY,
-    "cruxible_group_status": PermissionMode.READ_ONLY,
-    "cruxible_list_groups": PermissionMode.READ_ONLY,
-    "cruxible_list_resolutions": PermissionMode.READ_ONLY,
-    "cruxible_list_procedures": PermissionMode.READ_ONLY,
-    "cruxible_get_procedure": PermissionMode.READ_ONLY,
-    "cruxible_list_procedure_runs": PermissionMode.READ_ONLY,
-    "cruxible_list_attestations": PermissionMode.READ_ONLY,
-    "cruxible_attestation_queue": PermissionMode.READ_ONLY,
-    "cruxible_list_outcome_contracts": PermissionMode.READ_ONLY,
-    "cruxible_outcome_due": PermissionMode.READ_ONLY,
-    "cruxible_get_feedback_profile": PermissionMode.READ_ONLY,
-    "cruxible_get_outcome_profile": PermissionMode.READ_ONLY,
-    "cruxible_analyze_feedback": PermissionMode.READ_ONLY,
-    "cruxible_analyze_outcomes": PermissionMode.READ_ONLY,
-    "cruxible_get_decision_record": PermissionMode.READ_ONLY,
-    "cruxible_list_decision_records": PermissionMode.READ_ONLY,
-    "cruxible_list_decision_events": PermissionMode.READ_ONLY,
-    "cruxible_state_status": PermissionMode.READ_ONLY,
-    "cruxible_state_pull_preview": PermissionMode.READ_ONLY,
-    # READ_ONLY despite persisting a receipt row and a content-addressed diff
-    # artifact: reads are not side-effect-free here (`cruxible_query` and gate
-    # checks persist receipts too), and neither side effect touches graph state
-    # or advances read_revision.
-    "cruxible_state_diff": PermissionMode.READ_ONLY,
-    "cruxible_list_snapshots": PermissionMode.READ_ONLY,
-    "cruxible_dereference_source_evidence": PermissionMode.READ_ONLY,
-    "cruxible_plan_workflow": PermissionMode.READ_ONLY,
-    # GOVERNED_WRITE tools
-    "cruxible_feedback": PermissionMode.GOVERNED_WRITE,
-    "cruxible_feedback_batch": PermissionMode.GOVERNED_WRITE,
-    "cruxible_feedback_from_query": PermissionMode.GOVERNED_WRITE,
-    "cruxible_outcome": PermissionMode.GOVERNED_WRITE,
-    "cruxible_run_workflow": PermissionMode.GOVERNED_WRITE,
-    "cruxible_test_workflow": PermissionMode.GOVERNED_WRITE,
-    "cruxible_propose_workflow": PermissionMode.GOVERNED_WRITE,
-    "cruxible_propose_group": PermissionMode.GOVERNED_WRITE,
-    "cruxible_propose_procedure": PermissionMode.GOVERNED_WRITE,
-    "cruxible_run_procedure": PermissionMode.GOVERNED_WRITE,
-    # Withdrawing YOUR OWN pending proposal is the retraction half of proposing
-    # it, so it sits at the proposing tier. Withdrawing SOMEONE ELSE'S is a
-    # review act and is refused below GRAPH_WRITE inside the service transition
-    # (``WITHDRAW_NON_AUTHOR_PERMISSION``), where the refusal is receipted.
-    "cruxible_withdraw_procedure": PermissionMode.GOVERNED_WRITE,
-    "cruxible_attest": PermissionMode.GOVERNED_WRITE,
-    "cruxible_open_outcome_contract": PermissionMode.GOVERNED_WRITE,
-    "cruxible_resolve_outcome": PermissionMode.GOVERNED_WRITE,
-    "cruxible_create_decision_record": PermissionMode.GOVERNED_WRITE,
-    "cruxible_finalize_decision_record": PermissionMode.GOVERNED_WRITE,
-    "cruxible_abandon_decision_record": PermissionMode.GOVERNED_WRITE,
-    "cruxible_register_source_artifact": PermissionMode.GOVERNED_WRITE,
-    # GRAPH_WRITE tools
-    "cruxible_add_entity": PermissionMode.GRAPH_WRITE,
-    "cruxible_add_relationship": PermissionMode.GRAPH_WRITE,
-    "cruxible_batch_direct_write": PermissionMode.GRAPH_WRITE,
-    "cruxible_apply_workflow": PermissionMode.GRAPH_WRITE,
-    "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
-    "cruxible_update_trust_status": PermissionMode.GRAPH_WRITE,
-    "cruxible_resolve_procedure": PermissionMode.GRAPH_WRITE,
-    "cruxible_retire_procedure": PermissionMode.GRAPH_WRITE,
-    "cruxible_resolve_attestation": PermissionMode.GRAPH_WRITE,
-    "cruxible_dispose_outcome_resolution": PermissionMode.GRAPH_WRITE,
-    "cruxible_supersede_claim": PermissionMode.GRAPH_WRITE,
-    "cruxible_retract_claim": PermissionMode.GRAPH_WRITE,
-    "cruxible_supersede_entity": PermissionMode.GRAPH_WRITE,
-    "cruxible_retire_entity": PermissionMode.GRAPH_WRITE,
-    # Creating a snapshot MOVES the instance head. Every outstanding
-    # state-pull apply and every receipt coordinate that named the previous head
-    # is invalidated by it, which is the same class of authority as committing
-    # governed state -- not a governed-operator convenience. (wi-governance-narrows)
-    "cruxible_create_snapshot": PermissionMode.GRAPH_WRITE,
-    # ADMIN tools
-    "cruxible_lock_workflow": PermissionMode.ADMIN,
-    "cruxible_reload_config": PermissionMode.ADMIN,
-    # Constraints and decision policies are ACTIVE CONFIG. They are persisted to
-    # the config file and change how every subsequent query/workflow is
-    # adjudicated, exactly like the config replacement ``cruxible_reload_config``
-    # performs -- so they sit at the same tier as it. (wi-governance-narrows)
-    "cruxible_add_constraint": PermissionMode.ADMIN,
-    "cruxible_add_decision_policy": PermissionMode.ADMIN,
-    "cruxible_clone_snapshot": PermissionMode.ADMIN,
-    "cruxible_instance_backup": PermissionMode.ADMIN,
-    "cruxible_instance_restore": PermissionMode.ADMIN,
-    "cruxible_instance_relocate": PermissionMode.ADMIN,
-    "cruxible_state_publish": PermissionMode.ADMIN,
-    "cruxible_state_create_overlay": PermissionMode.ADMIN,
-    # Pull-apply REPLACES the active config and the whole graph with an upstream
-    # release. That is the same authority as reload_config plus a graph rewrite,
-    # not a governed operator action, so it sits with the other instance-
-    # lifecycle operations.
-    "cruxible_state_pull_apply": PermissionMode.ADMIN,
+    "cruxible_query_spec": PermissionMode.READ_ONLY,
+    "cruxible_procedure_run": PermissionMode.READ_ONLY,
+    "cruxible_procedure_readings": PermissionMode.READ_ONLY,
+    "cruxible_line_enable": PermissionMode.GOVERNED_WRITE,
+    "cruxible_line_disable": PermissionMode.GOVERNED_WRITE,
+    # Its tool tier is a read (dry run); enqueueing re-checks governed write.
+    "cruxible_line_evaluate": PermissionMode.READ_ONLY,
+    # Runs that can propose or settle additionally require GOVERNED_WRITE,
+    # decided per target at the served boundary and in the service.
+    "cruxible_line_dispatch": PermissionMode.READ_ONLY,
+    "cruxible_line_run": PermissionMode.READ_ONLY,
+    # A Runbook run gates each step as its own Line run or action fire does.
+    "cruxible_runbook_run": PermissionMode.READ_ONLY,
+    "cruxible_runbook_preview": PermissionMode.READ_ONLY,
+    # The Line inbox: reading is open; an agent's dispositions are governed writes.
+    "cruxible_inbox_list": PermissionMode.READ_ONLY,
+    "cruxible_inbox_get": PermissionMode.READ_ONLY,
+    "cruxible_inbox_ack": PermissionMode.GOVERNED_WRITE,
+    "cruxible_inbox_dismiss": PermissionMode.GOVERNED_WRITE,
+    "cruxible_inbox_link": PermissionMode.GOVERNED_WRITE,
+    "cruxible_since": PermissionMode.READ_ONLY,
+    "cruxible_next": PermissionMode.READ_ONLY,
+    "cruxible_curation_list": PermissionMode.READ_ONLY,
+    "cruxible_curation_duplicates": PermissionMode.READ_ONLY,
+    "cruxible_audit": PermissionMode.READ_ONLY,
+    "cruxible_curation_overrule": PermissionMode.GOVERNED_WRITE,
+    "cruxible_curation_accept_fixed": PermissionMode.GOVERNED_WRITE,
+    "cruxible_curation_suppress": PermissionMode.GOVERNED_WRITE,
+    "cruxible_curation_unsuppress": PermissionMode.GOVERNED_WRITE,
+    "cruxible_floor_export": PermissionMode.READ_ONLY,
+    "cruxible_coverage_resolve": PermissionMode.READ_ONLY,
+    "cruxible_files_compile": PermissionMode.READ_ONLY,
+    "cruxible_whoami": PermissionMode.READ_ONLY,
+    # Serves only the console's read routes, forwarded to the daemon.
+    "cruxible_console": PermissionMode.READ_ONLY,
+    "cruxible_orient": PermissionMode.READ_ONLY,
+    "cruxible_proposal_list": PermissionMode.READ_ONLY,
+    "cruxible_authoring_get": PermissionMode.READ_ONLY,
+    "cruxible_authoring_list": PermissionMode.READ_ONLY,
+    "cruxible_authoring_status": PermissionMode.READ_ONLY,
+    "cruxible_authoring_example": PermissionMode.READ_ONLY,
+    "cruxible_body_store": PermissionMode.GOVERNED_WRITE,
+    "cruxible_document_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_files_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_claim_type_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_capture_contract_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_authoring_compile": PermissionMode.GOVERNED_WRITE,
+    "cruxible_authoring_bind": PermissionMode.GOVERNED_WRITE,
+    "cruxible_authoring_preflight": PermissionMode.GOVERNED_WRITE,
+    "cruxible_authoring_submit": PermissionMode.GOVERNED_WRITE,
+    "cruxible_authoring_submit_file": PermissionMode.GOVERNED_WRITE,
+    # Also the daemon's init operation: one tier for the tool and the route.
+    "cruxible_init": PermissionMode.ADMIN,
+    # The write verbs propose at GOVERNED_WRITE; each activates in the same call
+    # only when the caller's tier also admits cruxible_proposal_activate.
+    "cruxible_set": PermissionMode.GOVERNED_WRITE,
+    "cruxible_retire": PermissionMode.GOVERNED_WRITE,
+    "cruxible_write": PermissionMode.GOVERNED_WRITE,
+    "cruxible_prediction_list": PermissionMode.READ_ONLY,
+    "cruxible_prediction_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_prediction_settle": PermissionMode.GOVERNED_WRITE,
+    "cruxible_procedure_dispose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_procedure_measure": PermissionMode.GOVERNED_WRITE,
+    "cruxible_block_repin": PermissionMode.GOVERNED_WRITE,
+    "cruxible_block_sync": PermissionMode.READ_ONLY,
+    "cruxible_block_detach": PermissionMode.GOVERNED_WRITE,
+    "cruxible_block_depublish": PermissionMode.GOVERNED_WRITE,
+    "cruxible_claim_type_migrate": PermissionMode.GOVERNED_WRITE,
+    "cruxible_claim_attest": PermissionMode.GOVERNED_WRITE,
+    "cruxible_proposal_readmit": PermissionMode.GOVERNED_WRITE,
+    "cruxible_proposal_withdraw": PermissionMode.GOVERNED_WRITE,
+    "cruxible_proposal_reject": PermissionMode.GRAPH_WRITE,
+    "cruxible_proposal_approve_submit": PermissionMode.GRAPH_WRITE,
+    "cruxible_proposal_approve": PermissionMode.GRAPH_WRITE,
+    "cruxible_proposal_activate": PermissionMode.GRAPH_WRITE,
+    "cruxible_compiler_upgrade": PermissionMode.ADMIN,
+    "cruxible_principal_propose": PermissionMode.ADMIN,
 }
 
-# Internal runtime operations that are not registered MCP tools but still need
-# permission gates owned by this module.
+# HTTP/CLI operations that share the same runtime boundary without being MCP tools.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
-    # Gate checks are read-only state evaluations. They append an audit receipt
-    # but never mutate graph state or advance read_revision.
-    "cruxible_gate_check": PermissionMode.READ_ONLY,
-    # Read-only state-health surface: exposed over HTTP (GET /state/health) and
-    # the CLI (`cruxible state health`), but deliberately NOT an MCP tool.
-    "cruxible_state_health": PermissionMode.READ_ONLY,
-    "cruxible_telemetry_summary": PermissionMode.READ_ONLY,
-    "cruxible_list_source_artifacts": PermissionMode.READ_ONLY,
-    "cruxible_get_source_artifact": PermissionMode.READ_ONLY,
-    # Adjudicating a claim (feedback accept / reject / correct). See
-    # FEEDBACK_ACTION_PERMISSIONS below: the feedback TOOLS sit at
-    # GOVERNED_WRITE, but the adjudication ACTIONS they carry are GRAPH_WRITE.
-    "cruxible_feedback_adjudicate": PermissionMode.GRAPH_WRITE,
-    "cruxible_governed_instance_lifecycle": PermissionMode.ADMIN,
-    "cruxible_hosted_instance_init": PermissionMode.ADMIN,
-    "cruxible_init_with_config": PermissionMode.ADMIN,
+    # Reading a restricted CaptureKind's bytes and body-derived metadata (C14).
+    # Not a tool: every body-reading surface consults it per Capture.
+    "cruxible_body_read_restricted": PermissionMode.GOVERNED_WRITE,
+    "cruxible_action_run": PermissionMode.GOVERNED_WRITE,
+    "cruxible_host_create": PermissionMode.ADMIN,
+    "cruxible_host_workspace_detach": PermissionMode.ADMIN,
+    "cruxible_host_workspace_attach": PermissionMode.ADMIN,
+    "cruxible_block_declare": PermissionMode.GOVERNED_WRITE,
+    "cruxible_block_observe": PermissionMode.GOVERNED_WRITE,
+    "cruxible_workspace_floor_delivery": PermissionMode.ADMIN,
+    "cruxible_floor_deliver_now": PermissionMode.READ_ONLY,
+    "cruxible_instance_decommission": PermissionMode.ADMIN,
+    "cruxible_instance_rebuild_next": PermissionMode.ADMIN,
+    "cruxible_host_workspace_registration": PermissionMode.READ_ONLY,
+    "cruxible_host_show": PermissionMode.READ_ONLY,
+    "cruxible_read": PermissionMode.READ_ONLY,
+    "cruxible_propose": PermissionMode.GOVERNED_WRITE,
+    "cruxible_body_read": PermissionMode.READ_ONLY,
+    "cruxible_ledger_set_mirror": PermissionMode.ADMIN,
+    "cruxible_ledger_publish": PermissionMode.GOVERNED_WRITE,
+    "cruxible_principal_change": PermissionMode.ADMIN,
     "cruxible_runtime_credentials": PermissionMode.ADMIN,
     "cruxible_server_restart": PermissionMode.ADMIN,
+    "cruxible_server_stop": PermissionMode.ADMIN,
 }
 
 PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
@@ -245,71 +209,12 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
     **RUNTIME_OPERATION_PERMISSIONS,
 }
 
-# ---------------------------------------------------------------------------
-# Feedback action → minimum permission tier (per-ACTION, not per-tool)
-# ---------------------------------------------------------------------------
-#
-# The permission map above is per-TOOL, and ``cruxible_feedback`` (with its
-# batch/from_query siblings) is not one operation: it multiplexes RECORDING an
-# observation with ADJUDICATING a claim. Recording is a governed-operator act.
-# Adjudication is not: ``accept``/``correct`` make a non-live edge LIVE and
-# ``reject`` retracts one, which is the same authority a direct graph write or a
-# group resolution carries. Leaving every action at the tool's GOVERNED_WRITE
-# floor let a single GOVERNED_WRITE actor attest a pending edge and then
-# accept their own proposal — a live approved claim on a proposal_only type
-# with no reviewer above them (wi-feedback-approval-rail).
-#
-# So the adjudication verbs are gated at GRAPH_WRITE, the same tier that
-# ``cruxible_resolve_group`` and the direct-write verbs require, matching the
-# procedure-resolve/disposition precedent.
-#
-# ``flag`` was REMOVED in 2026-07 (dd-flag-superseded-by-attestation, brought
-# forward from "retires later"): it moved an edge to ``pending`` while storing
-# no annotation, so it destroyed the reviewer's signal. It was also the only
-# feedback action sitting at GOVERNED_WRITE, so EVERY remaining feedback action
-# is now an adjudication requiring GRAPH_WRITE. What still sits at the tool's
-# GOVERNED_WRITE floor is the RECORDING half of an action — persisting the
-# FeedbackRecord — which is what an adjudication refusal rolls back along with
-# the transition. A GOVERNED_WRITE actor who wants to register a doubt uses
-# ``cruxible_attest`` with stance ``contradict``, which records the observation,
-# its evidence, and its actor and changes no status.
-#
-# Enforced in ``service/feedback.py`` (the single service chokepoint every
-# surface funnels through), not here, because the requirement is a property of
-# the payload's action rather than of the tool name.
-FEEDBACK_ACTION_PERMISSIONS: dict[str, PermissionMode] = {
-    "accept": PermissionMode.GRAPH_WRITE,
-    "reject": PermissionMode.GRAPH_WRITE,
-    "correct": PermissionMode.GRAPH_WRITE,
-}
-
-# Audited operation name the adjudication check reports under. It is a runtime
-# operation rather than a registered MCP tool, so the denial message names the
-# adjudication act instead of whichever feedback tool carried it.
-FEEDBACK_ADJUDICATION_OPERATION = "cruxible_feedback_adjudicate"
-
-# ---------------------------------------------------------------------------
-# Group resolution — the same adjudication act, reached by a second door
-# ---------------------------------------------------------------------------
-#
-# ``cruxible_resolve_group`` is GRAPH_WRITE in the map above, so the MCP/HTTP
-# surface is covered. The exported ``service_resolve_group`` is not: a direct
-# library caller holding only GOVERNED_WRITE could reach the transition (and
-# with ``stamp_existing=True`` bless a pending edge) with no tier check at all,
-# because the facade owns the only one. Since wi-feedback-approval-rail chose
-# the SERVICE layer as the enforcement seam for adjudication, group resolution
-# is made consistent with it: the transition re-asserts the requirement inside
-# its own mutation-receipt scope, so the refusal is receipted and every door
-# into the act is gated the same way.
-GROUP_RESOLUTION_OPERATION = "cruxible_resolve_group"
-GROUP_RESOLUTION_PERMISSION = PermissionMode.GRAPH_WRITE
 
 # ---------------------------------------------------------------------------
 # Cached state
 # ---------------------------------------------------------------------------
 
 _cached_mode: PermissionMode | None = None
-_cached_allowed_roots: list[Path] | None | bool = False  # False = not yet parsed
 
 # Per-request narrowing (for authenticated/cloud multi-tenant use)
 _request_mode: contextvars.ContextVar[PermissionMode | None] = contextvars.ContextVar(
@@ -336,27 +241,6 @@ def _default_read_only_opt_in() -> bool:
     return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def validate_allowed_roots() -> list[Path] | None:
-    """Parse and validate ``CRUXIBLE_ALLOWED_ROOTS`` at startup.
-
-    Returns ``None`` if the env var is unset.
-    Raises :class:`ConfigError` for empty lists or relative paths.
-    """
-    raw = os.environ.get("CRUXIBLE_ALLOWED_ROOTS")
-    if raw is None:
-        return None
-    paths = [p.strip() for p in raw.split(",") if p.strip()]
-    if not paths:
-        raise ConfigError("CRUXIBLE_ALLOWED_ROOTS is set but empty")
-    result: list[Path] = []
-    for p in paths:
-        path = Path(p)
-        if not path.is_absolute():
-            raise ConfigError(f"CRUXIBLE_ALLOWED_ROOTS contains relative path: '{p}'")
-        result.append(path.resolve())
-    return result
-
-
 def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     """Read ``CRUXIBLE_MODE`` once and cache the process capability ceiling.
 
@@ -374,7 +258,7 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     Raises:
         ConfigError: If the env var contains an invalid value.
     """
-    global _cached_mode, _cached_allowed_roots
+    global _cached_mode
 
     if mode is not None:
         resolved_mode = mode
@@ -418,10 +302,6 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
         return _cached_mode
 
     _cached_mode = resolved_mode
-
-    # Parse allowed roots (fail-fast on bad config)
-    _cached_allowed_roots = validate_allowed_roots()
-
     return _cached_mode
 
 
@@ -453,10 +333,9 @@ def get_current_mode() -> PermissionMode:
 
 
 def reset_permissions() -> None:
-    """Clear cached mode, allowed roots, and request scope. Used for test isolation."""
-    global _cached_mode, _cached_allowed_roots
+    """Clear cached mode and request scope. Used for test isolation."""
+    global _cached_mode
     _cached_mode = None
-    _cached_allowed_roots = False
     _request_mode.set(None)
     _request_instance_scope.set(None)
 
@@ -485,6 +364,12 @@ def request_instance_scope(instance_id: str | None) -> Iterator[None]:
         _request_instance_scope.reset(token)
 
 
+def current_request_instance_scope() -> str | None:
+    """Return the active credential's instance boundary, if it has one."""
+
+    return _request_instance_scope.get()
+
+
 # ---------------------------------------------------------------------------
 # Permission check
 # ---------------------------------------------------------------------------
@@ -504,15 +389,11 @@ def check_permission(
         tool_name: The operation or tool being called.
         instance_id: Optional instance ID for audit logging and scope enforcement.
         enforce_instance_scope: Whether to reject when request credentials are scoped
-            to a different instance. Disable only for legacy root-dir lifecycle checks
-            that authorize scope before calling the runtime facade.
+            to a different instance.
         required_override: Replace the static tool->tier requirement for this call.
-            Used by the direct-write facades whose effective requirement is
-            config-declared per payload type (``write_tier``): they first gate at
-            the ``GOVERNED_WRITE`` write floor (before any instance access, so the
-            scope gate still runs first), then re-check at the payload's computed
-            requirement. The tool must still exist in the static permission map —
-            the override adjusts the tier, never bypasses registration.
+            Temporarily retained for unserved donor transitions whose reviewed
+            adjudication act has a stricter tier than their recording path. The
+            operation must still exist in the static permission map.
         audit_success: Emit the ``mutation_allowed`` audit record on success. Set
             False ONLY for a pre-gate whose caller immediately re-checks (and
             audits) the same tool at its final computed requirement, so each
@@ -576,8 +457,8 @@ def require_unscoped_operator(operation: str) -> None:
     """Require an unscoped operator credential for a daemon-wide operation.
 
     Some operations act on the whole shared daemon rather than a single instance
-    (re-exec/restart, global server metadata, restore before the target instance
-    is known). On a shared multi-tenant daemon, an *instance-scoped* ADMIN
+    (re-exec/restart and global server metadata). On a shared multi-tenant daemon,
+    an *instance-scoped* ADMIN
     credential — one bound to a single tenant's instance — must not be able to
     perform these daemon-wide operations: that is a cross-tenant escalation
     (e.g. one tenant restarting the daemon hosting every tenant, a DoS).
@@ -610,35 +491,7 @@ def require_unscoped_operator(operation: str) -> None:
             operation=operation,
             credential_scope=credential_scope,
         )
-        raise InstanceScopeError(operation, credential_scope)
-
-
-# ---------------------------------------------------------------------------
-# Root directory sandboxing
-# ---------------------------------------------------------------------------
-
-
-def validate_root_dir(root_dir: str) -> None:
-    """Validate *root_dir* against ``CRUXIBLE_ALLOWED_ROOTS`` if set."""
-    global _cached_allowed_roots
-    # Ensure allowed roots are parsed
-    if _cached_allowed_roots is False:
-        _cached_allowed_roots = validate_allowed_roots()
-
-    allowed = _cached_allowed_roots
-    if allowed is None:
-        return  # No restriction — backward compatible
-    if not isinstance(allowed, list):
-        return  # Not yet parsed — should not happen after init
-
-    resolved = Path(root_dir).resolve()
-    if not any(resolved == a or a in resolved.parents for a in allowed):
-        _log.warning(
-            "root_dir_denied",
-            root_dir=root_dir,
-            allowed_roots=[str(a) for a in allowed],
-        )
-        raise ConfigError(f"root_dir '{root_dir}' is not under any allowed root")
+        raise DaemonOperationScopeError(operation, credential_scope)
 
 
 # ---------------------------------------------------------------------------

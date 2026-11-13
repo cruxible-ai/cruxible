@@ -1,0 +1,18 @@
+{
+  "artifact_format": "cruxible-trigger-v2",
+  "identity": {
+    "kind": "Trigger",
+    "name": "curation-detect"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "schedule": {
+    "kind": "generation_accepted"
+  },
+  "target": {
+    "action": "curation.detect",
+    "kind": "action"
+  }
+}

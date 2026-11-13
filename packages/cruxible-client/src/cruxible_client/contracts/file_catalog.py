@@ -1,0 +1,599 @@
+"""Local-only file catalogs, exact-byte compilation, and alignment reporting."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import os
+import stat
+from pathlib import Path, PurePosixPath
+from typing import Literal, TypeAlias
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import (
+    CasDigest,
+    Sha256Value,
+    typed_digest,
+)
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    document_digest,
+    document_path,
+    render_document,
+)
+from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.workspace_layout import (
+    WORKSPACE_DIRECTORY,
+    WorkspaceError,
+    workspace_path,
+)
+
+
+class FileCatalogRenameRequired(WorkspaceError):
+    """An unreleased catalog filename must be renamed before using this workspace."""
+
+    error_code = "cruxible.files.catalog_rename_required"
+
+    def __init__(self, paths: tuple[Path, ...]) -> None:
+        self.paths = paths
+        self.renames = tuple(
+            (path, path.with_name(path.name.replace("sources", "files", 1))) for path in paths
+        )
+        repair = "; ".join(f"rename {old} to {new}" for old, new in self.renames)
+        super().__init__(f"{self.error_code}: repair: {repair}; then retry")
+
+
+def refuse_legacy_file_catalogs(workspace: Path) -> None:
+    """Check four fixed paths, without reading or accepting an old catalog."""
+
+    directory = workspace / WORKSPACE_DIRECTORY
+    paths = tuple(
+        root / name
+        for root in (directory, workspace)
+        for name in ("sources.yaml", "sources.local.yaml")
+        if (root / name).exists()
+    )
+    if paths:
+        workspace_path(workspace)
+        raise FileCatalogRenameRequired(paths)
+
+
+FileCatalogKind = Literal["portable", "local", "merged"]
+FileAlignmentState = Literal[
+    "aligned",
+    "modified",
+    "ahead",
+    "pending",
+    "behind",
+    "diverged",
+    "untracked",
+]
+
+
+class _StrictCatalogModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class FileCatalogEntry(_StrictCatalogModel):
+    """One workspace file under a logical file name, and optionally its Document.
+
+    ``name`` and ``locator`` are all that citing the file as evidence needs. The
+    Document fields (``document_id``, ``document_kind``, ``title``,
+    ``media_type``, ``governance_scope``) come together or not at all: an entry
+    with them can be compiled and proposed as a governed Document, one without
+    them is evidence-only.
+    """
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    locator: str = Field(min_length=1, max_length=4096)
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    document_kind: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    title: str | None = Field(default=None, min_length=1, max_length=1024)
+    media_type: str | None = None
+    compiler_profile: Literal["document-v1"] = "document-v1"
+    required_tier: Literal["governed_write", "graph_write", "admin"] = "graph_write"
+    governance_scope: tuple[str, ...] | None = None
+    public_uri: str | None = None
+    root_alias: str | None = None
+
+    @property
+    def is_document(self) -> bool:
+        """Whether this entry declares the Document it compiles to."""
+
+        return self.document_id is not None
+
+    @model_validator(mode="after")
+    def _document_fields(self) -> FileCatalogEntry:
+        declared = [
+            self.document_id,
+            self.document_kind,
+            self.title,
+            self.media_type,
+            self.governance_scope,
+        ]
+        if any(value is None for value in declared) and any(
+            value is not None for value in declared
+        ):
+            raise ValueError(
+                f"file {self.name!r} declares only some Document fields: give document_id, "
+                "document_kind, title, media_type and governance_scope together, or none for "
+                "an evidence-only entry"
+            )
+        if not self.is_document and self.public_uri is not None:
+            raise ValueError(f"evidence-only file {self.name!r} cannot declare a public_uri")
+        return self
+
+    @model_validator(mode="after")
+    def _locator_shape(self) -> FileCatalogEntry:
+        path = Path(self.locator)
+        if self.root_alias is not None and path.is_absolute():
+            raise ValueError("root-aliased locators must be relative to their declared root")
+        parts = path.parts if path.is_absolute() else PurePosixPath(self.locator).parts
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("catalog locator must be an explicit normalized file path")
+        return self
+
+    @field_validator("public_uri")
+    @classmethod
+    def _public_uri(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if not parsed.scheme or parsed.scheme.lower() == "file":
+            raise ValueError("public_uri must be an explicit non-file URI")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("public_uri must not contain embedded credentials")
+        if parsed.scheme.lower() in {"http", "https"} and not parsed.netloc:
+            raise ValueError("HTTP public_uri requires an authority")
+        return value
+
+
+class ProcedureProjectionCatalogEntry(_StrictCatalogModel):
+    """Local projection intent for one accepted Procedure identity."""
+
+    kind: Literal["procedure"] = "procedure"
+    procedure_identity: ArtifactIdentity
+    locator: str = Field(min_length=1, max_length=4096)
+    root_alias: str | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProcedureProjectionCatalogEntry":
+        if self.procedure_identity.kind != "Procedure":
+            raise ValueError("a Procedure projection entry must identify a Procedure")
+        path = Path(self.locator)
+        if self.root_alias is not None and path.is_absolute():
+            raise ValueError("root-aliased locators must be relative to their declared root")
+        parts = path.parts if path.is_absolute() else PurePosixPath(self.locator).parts
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("catalog locator must be an explicit normalized file path")
+        return self
+
+
+FileCatalogEntryAny: TypeAlias = FileCatalogEntry | ProcedureProjectionCatalogEntry
+
+
+def _entry_key(entry: FileCatalogEntryAny) -> tuple[str, str]:
+    if isinstance(entry, FileCatalogEntry):
+        return ("document", entry.name)
+    return ("procedure", entry.procedure_identity.qualified)
+
+
+def _entry_sort_key(entry: FileCatalogEntryAny) -> tuple[bytes, bytes]:
+    kind, identity = _entry_key(entry)
+    return kind.encode("utf-8"), identity.encode("utf-8")
+
+
+class FileCatalog(_StrictCatalogModel):
+    tag: Literal["playbill-source-catalog-v1"] = "playbill-source-catalog-v1"
+    catalog_kind: FileCatalogKind
+    entries: tuple[FileCatalogEntryAny, ...]
+
+    @field_validator("entries")
+    @classmethod
+    def _entries(cls, value: tuple[FileCatalogEntryAny, ...]) -> tuple[FileCatalogEntryAny, ...]:
+        ordered = tuple(sorted(value, key=_entry_sort_key))
+        documents = tuple(item for item in value if isinstance(item, FileCatalogEntry))
+        procedures = tuple(
+            item for item in value if isinstance(item, ProcedureProjectionCatalogEntry)
+        )
+        if len({item.name for item in documents}) != len(documents):
+            raise ValueError("file catalog entries must be unique by name")
+        targets = [item.document_id for item in documents if item.document_id is not None]
+        if len(set(targets)) != len(targets):
+            raise ValueError("file catalog contains duplicate Document targets")
+        procedure_targets = [item.procedure_identity.qualified for item in procedures]
+        if len(set(procedure_targets)) != len(procedure_targets):
+            raise ValueError("file catalog contains duplicate Procedure projection targets")
+        if not value:
+            raise ValueError("file catalog must declare at least one file")
+        return ordered
+
+    @model_validator(mode="after")
+    def _catalog_locator_scope(self) -> FileCatalog:
+        if self.catalog_kind == "portable" and any(
+            Path(entry.locator).is_absolute() or entry.root_alias is not None
+            for entry in self.entries
+        ):
+            raise ValueError(
+                "portable catalogs require repository-relative locators without root aliases"
+            )
+        return self
+
+
+class ResolvedFileInput(_StrictCatalogModel):
+    name: str
+    document_id: str
+    media_type: str
+    compiler_profile: str
+    body_digest: str
+    byte_length: int = Field(ge=0)
+    public_uri: str | None
+
+
+class CompiledFileDocument(_StrictCatalogModel):
+    source: ResolvedFileInput
+    body_base64: str
+    envelope: DocumentShell
+    envelope_bytes_base64: str
+    envelope_digest: str
+    ledger_path: str
+
+
+class FileCompilationManifest(_StrictCatalogModel):
+    tag: Literal["playbill-source-compilation-v1"] = "playbill-source-compilation-v1"
+    catalog_digest: str
+    inputs: tuple[ResolvedFileInput, ...]
+    proposed_envelope_digests: tuple[str, ...]
+    proposed_tree_digest: str
+    accepted_base: AcceptedCoordinate
+    compiler_digest: str
+    compilation_digest: str
+
+    @field_validator(
+        "catalog_digest",
+        "proposed_tree_digest",
+        "compiler_digest",
+        "compilation_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _self_digest(self) -> FileCompilationManifest:
+        values = self.model_dump(mode="json")
+        values.pop("tag")
+        values.pop("compilation_digest")
+        expected = typed_digest(
+            Sha256Value,
+            "playbill-source-compilation-v1",
+            values,
+        ).tagged
+        if expected != self.compilation_digest:
+            raise ValueError("file-compilation digest does not reproduce")
+        return self
+
+
+class FileCompilationBundle(_StrictCatalogModel):
+    tag: Literal["playbill-source-compilation-bundle-v1"] = "playbill-source-compilation-bundle-v1"
+    manifest: FileCompilationManifest
+    documents: tuple[CompiledFileDocument, ...]
+    notes: tuple[Literal["no_document_entries_to_compile"], ...] = ()
+
+    @model_validator(mode="after")
+    def _binding(self) -> FileCompilationBundle:
+        if tuple(item.source for item in self.documents) != self.manifest.inputs:
+            raise ValueError("file bundle documents differ from manifest inputs")
+        if tuple(item.envelope_digest for item in self.documents) != (
+            self.manifest.proposed_envelope_digests
+        ):
+            raise ValueError("file bundle envelopes differ from manifest digests")
+        for item in self.documents:
+            try:
+                body = base64.b64decode(item.body_base64, validate=True)
+                envelope = base64.b64decode(item.envelope_bytes_base64, validate=True)
+            except ValueError as exc:
+                raise ValueError("file bundle contains malformed base64 bytes") from exc
+            if content_digest_bytes(body) != item.source.body_digest:
+                raise ValueError("file bundle body bytes differ from their digest")
+            if envelope != render_document(item.envelope):
+                raise ValueError("file bundle envelope bytes are not canonical")
+            if document_digest(item.envelope).tagged != item.envelope_digest:
+                raise ValueError("file bundle envelope digest does not reproduce")
+            if document_path(item.source.document_id) != item.ledger_path:
+                raise ValueError("file bundle ledger path differs from its Document identity")
+        expected_tree = _proposed_tree_digest(self.documents)
+        if expected_tree != self.manifest.proposed_tree_digest:
+            raise ValueError("file bundle proposed-tree digest does not reproduce")
+        return self
+
+
+class FileAlignment(_StrictCatalogModel):
+    name: str
+    document_id: str
+    state: FileAlignmentState
+    local_body_digest: str
+    accepted_body_digest: str | None
+    accepted_envelope_digest: str | None
+    pending_body_digest: str | None
+    accepted_coordinate: AcceptedCoordinate
+
+
+def merge_file_catalogs(
+    portable: FileCatalog,
+    local: FileCatalog | None,
+) -> FileCatalog:
+    """Merge a portable catalog with an explicit local override by file name only."""
+
+    if portable.catalog_kind != "portable":
+        raise FormatError("the base file catalog must be portable")
+    if local is None:
+        return portable
+    if local.catalog_kind != "local":
+        raise FormatError("file-catalog overlay must be local")
+    merged = {_entry_key(entry): entry for entry in portable.entries}
+    for entry in local.entries:
+        key = _entry_key(entry)
+        previous = merged.get(key)
+        if previous is not None:
+            if not isinstance(previous, type(entry)):
+                raise FormatError("local catalog ambiguously changes an entry kind")
+            if isinstance(entry, FileCatalogEntry):
+                assert isinstance(previous, FileCatalogEntry)
+                if (
+                    previous.document_id != entry.document_id
+                    or previous.compiler_profile != entry.compiler_profile
+                ):
+                    raise FormatError("local catalog ambiguously changes a file target/profile")
+        merged[key] = entry
+    try:
+        return FileCatalog(
+            catalog_kind="merged",
+            entries=tuple(sorted(merged.values(), key=_entry_sort_key)),
+        )
+    except ValueError as exc:
+        raise FormatError("merged file catalogs are ambiguous") from exc
+
+
+def _file_catalog_entries_digest(
+    catalog_kind: FileCatalogKind,
+    entries: tuple[FileCatalogEntryAny, ...],
+) -> str:
+    payload = {
+        "catalog_kind": catalog_kind,
+        "entries": [entry.model_dump(mode="json") for entry in entries],
+    }
+    return typed_digest(Sha256Value, "playbill-source-catalog-v1", payload).tagged
+
+
+def compile_file_catalog(
+    catalog: FileCatalog,
+    *,
+    repository_root: Path,
+    root_aliases: dict[str, Path],
+    accepted_base: AcceptedCoordinate,
+    accepted_documents: dict[str, DocumentShell],
+) -> FileCompilationBundle:
+    """Read only declared local bytes and freeze a deterministic proposal bundle."""
+
+    repository = _trusted_root(repository_root, label="repository root")
+    aliases = {
+        alias: _trusted_root(path, label=f"root alias {alias!r}")
+        for alias, path in root_aliases.items()
+    }
+    inputs: list[ResolvedFileInput] = []
+    documents: list[CompiledFileDocument] = []
+    # Evidence-only entries name a file for citation and compile to nothing.
+    document_entries = tuple(
+        entry
+        for entry in catalog.entries
+        if isinstance(entry, FileCatalogEntry) and entry.is_document
+    )
+    for entry in document_entries:
+        assert entry.document_id is not None and entry.document_kind is not None
+        assert entry.title is not None and entry.media_type is not None
+        assert entry.governance_scope is not None
+        locator = Path(entry.locator)
+        if locator.is_absolute():
+            candidates = tuple(
+                root for root in aliases.values() if locator == root or root in locator.parents
+            )
+            if len(candidates) != 1:
+                raise FormatError(
+                    "absolute file locator must belong to exactly one configured local root"
+                )
+            root = candidates[0]
+            relative = locator.relative_to(root).as_posix()
+        else:
+            resolved_root = (
+                repository if entry.root_alias is None else aliases.get(entry.root_alias)
+            )
+            if resolved_root is None:
+                raise FormatError(f"file root alias is not configured: {entry.root_alias}")
+            root = resolved_root
+            relative = entry.locator
+        path = _resolve_declared_file(root, relative)
+        content = _read_stable_file(path)
+        body_digest = content_digest_bytes(content)
+        previous = accepted_documents.get(entry.document_id)
+        revision = 1 if previous is None else previous.lifecycle.revision + 1
+        predecessor = None if previous is None else document_digest(previous).tagged
+        shell = DocumentShell(
+            identity=f"document:{entry.document_id}",
+            document_kind=entry.document_kind,
+            title=entry.title,
+            media_type=entry.media_type,
+            body_digest=body_digest,
+            authority=DocumentAuthority(
+                required_tier=entry.required_tier,
+            ),
+            governance_scope=entry.governance_scope,
+            predecessor_digest=predecessor,
+            lifecycle=DocumentLifecycle(revision=revision),
+        )
+        source = ResolvedFileInput(
+            name=entry.name,
+            document_id=entry.document_id,
+            media_type=entry.media_type,
+            compiler_profile=entry.compiler_profile,
+            body_digest=body_digest,
+            byte_length=len(content),
+            public_uri=entry.public_uri,
+        )
+        envelope_bytes = render_document(shell)
+        inputs.append(source)
+        documents.append(
+            CompiledFileDocument(
+                source=source,
+                body_base64=base64.b64encode(content).decode("ascii"),
+                envelope=shell,
+                envelope_bytes_base64=base64.b64encode(envelope_bytes).decode("ascii"),
+                envelope_digest=document_digest(shell).tagged,
+                ledger_path=document_path(entry.document_id),
+            )
+        )
+    input_tuple = tuple(inputs)
+    document_tuple = tuple(documents)
+    # Procedure projection entries are ungoverned presentation intent. They
+    # must not perturb a Document compilation or its proposal provenance.
+    catalog_value = _file_catalog_entries_digest(catalog.catalog_kind, document_entries)
+    envelope_digests = tuple(item.envelope_digest for item in document_tuple)
+    tree_digest = _proposed_tree_digest(document_tuple)
+    digest_values: dict[str, object] = {
+        "catalog_digest": catalog_value,
+        "inputs": [item.model_dump(mode="json") for item in input_tuple],
+        "proposed_envelope_digests": list(envelope_digests),
+        "proposed_tree_digest": tree_digest,
+        "accepted_base": accepted_base.model_dump(mode="json"),
+        "compiler_digest": accepted_base.compiler_digest,
+    }
+    compilation_digest = typed_digest(
+        Sha256Value,
+        "playbill-source-compilation-v1",
+        digest_values,
+    ).tagged
+    manifest = FileCompilationManifest(
+        catalog_digest=catalog_value,
+        inputs=input_tuple,
+        proposed_envelope_digests=envelope_digests,
+        proposed_tree_digest=tree_digest,
+        accepted_base=accepted_base,
+        compiler_digest=accepted_base.compiler_digest,
+        compilation_digest=compilation_digest,
+    )
+    return FileCompilationBundle(
+        manifest=manifest,
+        documents=document_tuple,
+        notes=(("no_document_entries_to_compile",) if not document_entries else ()),
+    )
+
+
+def content_digest_bytes(content: bytes) -> str:
+    """Return the exact Cruxible CAS spelling for local source bytes."""
+
+    return CasDigest(hashlib.sha256(content).hexdigest()).tagged
+
+
+def _proposed_tree_digest(documents: tuple[CompiledFileDocument, ...]) -> str:
+    return typed_digest(
+        Sha256Value,
+        "playbill-source-proposed-tree-v1",
+        {
+            "members": [
+                {
+                    "ledger_path": item.ledger_path,
+                    "envelope_digest": item.envelope_digest,
+                    "body_digest": item.source.body_digest,
+                }
+                for item in documents
+            ]
+        },
+    ).tagged
+
+
+def _trusted_root(path: Path, *, label: str) -> Path:
+    if path.is_symlink() or not path.is_dir():
+        raise FormatError(f"{label} must be an existing nonsymlink directory")
+    return path.resolve(strict=True)
+
+
+def _resolve_declared_file(root: Path, locator: str) -> Path:
+    candidate = root / locator
+    cursor = root
+    for part in PurePosixPath(locator).parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise FormatError(f"file catalog refuses symlink locator: {locator}")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise FormatError(f"declared file is missing: {locator}") from exc
+    if resolved == root or root not in resolved.parents:
+        raise FormatError(f"declared file escapes its configured root: {locator}")
+    metadata = os.lstat(resolved)
+    if not resolved.is_file() or os.path.islink(resolved) or metadata.st_nlink < 1:
+        raise FormatError(f"declared file must be a regular file: {locator}")
+    return resolved
+
+
+def _read_stable_file(path: Path) -> bytes:
+    """Read one resolved regular file once, refusing final-link swaps and in-read edits."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise FormatError(f"declared file cannot be opened safely: {path.name}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise FormatError(f"declared file must be a regular file: {path.name}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            content = handle.read()
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    stable_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    stable_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if stable_before != stable_after or len(content) != after.st_size:
+        raise FormatError(f"declared file changed while compiling: {path.name}")
+    return content
+
+
+__all__ = [
+    "FileCatalogRenameRequired",
+    "refuse_legacy_file_catalogs",
+    "CompiledFileDocument",
+    "ResolvedFileInput",
+    "ProcedureProjectionCatalogEntry",
+    "FileAlignment",
+    "FileAlignmentState",
+    "FileCatalog",
+    "FileCatalogEntry",
+    "FileCatalogEntryAny",
+    "FileCatalogKind",
+    "FileCompilationBundle",
+    "FileCompilationManifest",
+    "compile_file_catalog",
+    "content_digest_bytes",
+    "merge_file_catalogs",
+]

@@ -1,0 +1,45 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "Bytes the daemon read, handed to the structuring operation.",
+  "fields": {
+    "byte_length": {
+      "type": {
+        "kind": "int",
+        "min": 0
+      }
+    },
+    "bytes": {
+      "type": {
+        "kind": "string"
+      }
+    },
+    "bytes_digest": {
+      "type": {
+        "kind": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "commitment_digest": {
+      "type": {
+        "kind": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "content_encoding": {
+      "type": {
+        "kind": "enum",
+        "members": [
+          "base64"
+        ]
+      }
+    },
+    "logical_source": {
+      "type": {
+        "kind": "string",
+        "min_len": 1
+      }
+    }
+  },
+  "name": "workspace.file.request",
+  "version": 1
+}

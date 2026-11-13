@@ -1,0 +1,534 @@
+"""One vendor-neutral coverage operation over accepted state (§11.7).
+
+This is the service half of coverage delivery. It builds the reverse evidence
+index from accepted Claims and the Capture envelopes they pin, publishes the
+freshness manifest that lets an answer fail closed, and calls the one pure
+resolver. It decides nothing the resolver decides.
+
+What it may write, and what it may not
+--------------------------------------
+It writes exactly one thing: the local coverage manifest, in the instance's
+rebuildable cache root, and only when the observed snapshot or the accepted
+coordinate has actually moved. That file is not accepted state, not a wire
+record, and not an exhaust journal entry; deleting it costs provable freshness
+and nothing else. No receipt is appended -- see
+`playbill_resolve_coverage` for why that absence is a decision.
+
+Access, derived rather than declared
+------------------------------------
+The access profile is built here from the served surface's own read authority,
+never accepted from the caller. A request that could name its own permitted
+access classes would be a request that could widen its own disclosure, and
+§11.6.3's `denied` branch would then be advisory rather than enforced.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Mapping, Sequence
+
+from cruxible_client.contracts.captures import (
+    CaptureEnvelopeAny,
+)
+from cruxible_client.contracts.errors import CasError, ProposalIntegrityError
+from cruxible_client.contracts.read_values import ClaimLine
+from cruxible_client.contracts.source_references import (
+    ExternalSourceReference,
+    LedgerSourceReference,
+    SourceAccessClass,
+)
+from cruxible_core.coverage.adapter import (
+    WorkingSourceObservation,
+    build_overlay,
+    coverage_span_requests,
+)
+from cruxible_core.coverage.contracts import (
+    CitationWindowObservation,
+    CoverageAccessProfile,
+    CoverageCardBudget,
+    CoverageCommitmentMaterializationCorrupt,
+    CoverageRequestV1,
+    CoverageResultV3,
+    LogicalSourceIdentity,
+)
+from cruxible_core.coverage.indexes import (
+    CoverageScanBudget,
+    EvidenceCitationIndexV1,
+    EvidenceCitationIndexV2,
+    WorkingOccurrenceOverlayV1,
+    WorkingOccurrenceOverlayV2,
+)
+from cruxible_core.coverage.manifest import (
+    COVERAGE_DIRECTORY,
+    CoverageManifestBodyV2,
+    coverage_manifest_body_v2,
+    load_coverage_manifest_file_v2,
+    write_coverage_manifest_v2,
+)
+from cruxible_core.coverage.resolver import (
+    resolve_coverage_v3,
+)
+from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
+from cruxible_core.service.discovery.claim_lines import indexed_claim_lines
+from cruxible_core.storage.capture_metadata import capture_envelope
+from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, positioned_read, read_body
+
+COVERAGE_ACCESS_PROFILE_ID = "cruxible.coverage.read"
+COVERAGE_PRINCIPAL = "playbill-coverage"
+COVERAGE_EVIDENCE_ACCESS_CLASS: SourceAccessClass = "instance"
+
+
+COVERAGE_RESTRICTED_ACCESS_PROFILE_ID = "cruxible.coverage.read-restricted"
+
+
+def coverage_access_profile(*, restricted: bool = False) -> CoverageAccessProfile:
+    """The access profile the served coverage surface reads under.
+
+    Accepted evidence is indexed at the `instance` access class, or at
+    `restricted` when its Capture's kind is restricted (C14). A caller holding
+    this instance's read authority sees `instance` evidence; only one holding
+    ``cruxible_body_read_restricted`` (``restricted``) also sees restricted
+    evidence, and everyone else is told it exists and was withheld.
+    """
+
+    return CoverageAccessProfile(
+        profile_id=COVERAGE_RESTRICTED_ACCESS_PROFILE_ID
+        if restricted
+        else COVERAGE_ACCESS_PROFILE_ID,
+        permitted_access_classes=(
+            ("instance", "public", "restricted") if restricted else ("instance", "public")
+        ),
+        disclose_restricted_existence=True,
+    )
+
+
+def _resolve_coordinate(
+    instance: PlaybillInstance,
+    at: AcceptedCoordinate | None,
+) -> AcceptedCoordinate:
+    if at is not None and not isinstance(at, AcceptedCoordinate):
+        raise ProposalIntegrityError("coverage accepts only verified accepted coordinates")
+    if at is None:
+        return AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return AcceptedCoordinate.from_internal(
+        instance.resolve_accepted_coordinate(
+            git_oid=at.git_oid,
+            semantic_root=at.semantic_root,
+            generation_root=at.generation_root,
+            compiler_digest=at.compiler_digest,
+        )
+    )
+
+
+@positioned_read
+def build_accepted_evidence_index_v2(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate,
+    access: BodyAccessContext | None = None,
+) -> EvidenceCitationIndexV2:
+    """Export association-native coverage rows and verifier-owned trust."""
+    index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at, access=access)
+    return index
+
+
+def _accepted_evidence_inputs_v2(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate,
+    access: BodyAccessContext | None = None,
+) -> tuple[EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
+    """Retain only this request's exact envelopes and full digest export.
+
+    The retained digest commits all citation rows. SQL supplies those rows
+    directly without loading all Claims or constructing another reverse index.
+    Trust and CAS availability are checked again for each request.
+    """
+    at = _resolve_coordinate(instance, at)
+    internal = instance.resolve_accepted_coordinate(
+        git_oid=at.git_oid,
+        semantic_root=at.semantic_root,
+        generation_root=at.generation_root,
+        compiler_digest=at.compiler_digest,
+    )
+    from cruxible_core.service.evidence.body_access import (
+        NO_RESTRICTED_ACCESS,
+        capture_access_resolver,
+        citation_access,
+    )
+
+    # C14: each row's access is its Captures' exact kinds'; a reader without
+    # the key never has a restricted Capture's envelope or body read for it.
+    classify = citation_access(
+        capture_access_resolver(instance, internal), access or NO_RESTRICTED_ACCESS
+    )
+    with instance.bind_accepted_projection(internal) as projection:
+        return coverage_rows(
+            projection.citations, bodies=instance.body_store(), at=at, access=classify
+        )
+
+
+def accepted_evidence_sources(
+    index: EvidenceCitationIndexV1 | EvidenceCitationIndexV2,
+) -> tuple[LogicalSourceIdentity, ...]:
+    """The logical sources accepted evidence names, in canonical order."""
+
+    seen: dict[bytes, LogicalSourceIdentity] = {
+        citation.accepted_source.sort_key: citation.accepted_source
+        for citation in index.citations
+        if citation.accepted_source is not None
+    }
+    return tuple(seen[key] for key in sorted(seen))
+
+
+def _materialized_wanted_selections(
+    instance: PlaybillInstance,
+    *,
+    index: EvidenceCitationIndexV2,
+    envelopes: Mapping[str, CaptureEnvelopeAny] | None = None,
+) -> tuple[tuple[str, int, bytes | None], ...]:
+    """Resolve retained exact bytes before entering the pure occurrence scanner.
+
+    A missing retained body is an availability condition and selects the
+    exhaustive fallback. A present CAS object that fails its content address is
+    an integrity failure and must never be laundered into that fallback.
+    """
+
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    resolved_envelopes = (
+        _capture_envelopes(instance, index=index) if envelopes is None else envelopes
+    )
+    materialized: list[tuple[str, int, bytes | None]] = []
+    for digest, byte_length in index.wanted_selections():
+        needle: bytes | None = None
+        citations = index.by_commitment(digest)
+        capture_digests = sorted(
+            {capture for citation in citations for capture in citation.capture_digests}
+        )
+        for capture_digest in capture_digests:
+            envelope = resolved_envelopes.get(capture_digest)
+            if envelope is None:
+                # C14: withheld from this reader; its bytes are never read for it.
+                continue
+            if (
+                envelope.commitment.digest != digest
+                or envelope.commitment.byte_length != byte_length
+            ):
+                raise ProposalIntegrityError(
+                    "coverage index and retained Capture commitment disagree"
+                )
+            content: bytes | None = None
+            if envelope.commitment.materialization == "cas":
+                try:
+                    if not PositionedBodies(store).verify(digest):
+                        continue
+                    content = read_body(store, digest, access=access)
+                except CasError as exc:
+                    raise CoverageCommitmentMaterializationCorrupt(
+                        "retained commitment bytes failed CAS verification"
+                    ) from exc
+            elif isinstance(envelope.source, LedgerSourceReference):
+                content = instance.blob_at(
+                    envelope.source.coordinate.git_oid, envelope.source.address.artifact_path
+                )
+                # A ledger address may select a region whose materializer is not
+                # retained independently. Only an exact whole-body reproduction
+                # is a usable needle; otherwise the exhaustive route remains sound.
+                if content is not None and (
+                    len(content) != byte_length
+                    or hashlib.sha256(content).hexdigest() != digest.removeprefix("sha256:")
+                ):
+                    content = None
+            if content is None:
+                continue
+            observed = f"sha256:{hashlib.sha256(content).hexdigest()}"
+            if len(content) != byte_length or observed != digest:
+                if envelope.commitment.materialization == "cas":
+                    raise CoverageCommitmentMaterializationCorrupt(
+                        "retained commitment bytes do not reproduce their digest and length"
+                    )
+                continue
+            needle = content
+            break
+        materialized.append((digest, byte_length, needle))
+    return tuple(materialized)
+
+
+def _citation_window_observations(
+    *,
+    index: EvidenceCitationIndexV2,
+    observations: Sequence[WorkingSourceObservation],
+    envelopes: Mapping[str, CaptureEnvelopeAny],
+    retired_associations: Sequence[tuple[LogicalSourceIdentity, str, str]] = (),
+) -> tuple[CitationWindowObservation, ...]:
+    """Observe each accepted citation's original window in its named working source."""
+
+    by_source = {item.source.sort_key: item for item in observations}
+    source_content: dict[bytes, bytes] = {}
+    windows: dict[tuple[bytes, bytes, int, int], CitationWindowObservation] = {}
+    associations: list[tuple[LogicalSourceIdentity, str, str, str]] = []
+    for citation in index.citations:
+        if citation.accepted_source is None or citation.byte_length is None:
+            continue
+        for association in citation.citation_associations:
+            associations.append(
+                (
+                    citation.accepted_source,
+                    association.reference.citation_id,
+                    association.capture_digest,
+                    citation.commitment_digest,
+                )
+            )
+    for source, citation_id, capture_digest in retired_associations:
+        envelope = envelopes.get(capture_digest)
+        if envelope is None:
+            continue
+        associations.append((source, citation_id, capture_digest, envelope.commitment.digest))
+
+    for accepted_source, citation_id, capture_digest, commitment_digest in associations:
+        observed = by_source.get(accepted_source.sort_key)
+        envelope = envelopes.get(capture_digest)
+        if envelope is None or not isinstance(envelope.source, ExternalSourceReference):
+            continue
+        selector = envelope.source.selector
+        if not isinstance(selector, Mapping):
+            continue
+        window = selector.get("working_selection", selector)
+        raw_start = window.get("start_byte") if isinstance(window, Mapping) else None
+        raw_end = window.get("end_byte") if isinstance(window, Mapping) else None
+        if (
+            not isinstance(raw_start, int)
+            or isinstance(raw_start, bool)
+            or not isinstance(raw_end, int)
+            or isinstance(raw_end, bool)
+            or not 0 <= raw_start <= raw_end
+        ):
+            continue
+        start, end = raw_start, raw_end
+        addressable = observed is not None and end <= observed.byte_length
+        observed_digest = None
+        if addressable and observed is not None:
+            source_key = accepted_source.sort_key
+            if source_key not in source_content:
+                source_content[source_key] = observed.content
+            observed_digest = (
+                f"sha256:{hashlib.sha256(source_content[source_key][start:end]).hexdigest()}"
+            )
+        item = CitationWindowObservation(
+            source=accepted_source,
+            citation_id=citation_id,
+            commitment_digest=commitment_digest,
+            original_start=start,
+            original_end=end,
+            addressable=addressable,
+            observed_window_digest=observed_digest,
+        )
+        key = (
+            item.source.sort_key,
+            item.citation_id.encode("ascii"),
+            item.original_start,
+            item.original_end,
+        )
+        windows[key] = item
+    return tuple(windows[key] for key in sorted(windows))
+
+
+def _retired_citation_window_inputs(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedCoordinate,
+    observations: Sequence[WorkingSourceObservation],
+) -> tuple[tuple[LogicalSourceIdentity, str, str], ...]:
+    """Read retired citation windows from the coordinate-bound relation projection.
+
+    These inputs extend only the authenticated citation-window observation set.
+    They never enter coverage cards, so a retired Claim remains absent from the
+    ordinary coverage surface.
+    """
+
+    internal = instance.resolve_accepted_coordinate(
+        git_oid=coordinate.git_oid,
+        semantic_root=coordinate.semantic_root,
+        generation_root=coordinate.generation_root,
+        compiler_digest=coordinate.compiler_digest,
+    )
+    inputs: dict[tuple[bytes, bytes], tuple[LogicalSourceIdentity, str, str]] = {}
+    with instance.bind_accepted_projection(internal) as projection:
+        observed_sources = {
+            item.source.identity for item in observations if item.source.plane == "external"
+        }
+        for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
+            logical = LogicalSourceIdentity(plane="external", identity=source_id)
+            for use in projection.citations.source_claim_uses(source_id, lifecycle="retired"):
+                citation_id, digest = str(use["use_key"]), str(use["capture_digest"])
+                item = (logical, citation_id, digest)
+                inputs[(logical.sort_key, citation_id.encode("ascii"))] = item
+    return tuple(inputs[key] for key in sorted(inputs))
+
+
+def _capture_envelopes(
+    instance: PlaybillInstance,
+    *,
+    index: EvidenceCitationIndexV2,
+) -> dict[str, CaptureEnvelopeAny]:
+    """Read each retained capture envelope once for both coverage consumers."""
+
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    return {
+        digest: capture_envelope(store, digest, access=access)
+        for digest in sorted(
+            {capture for citation in index.citations for capture in citation.capture_digests}
+        )
+    }
+
+
+def _publish_manifest_v2(
+    instance: PlaybillInstance,
+    *,
+    instance_id: str,
+    index: EvidenceCitationIndexV2,
+    overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
+    access_profile: CoverageAccessProfile,
+) -> CoverageManifestBodyV2:
+    directory = instance.root / COVERAGE_DIRECTORY
+    existing = load_coverage_manifest_file_v2(directory)
+    epoch = 0 if existing is None else existing.body.epoch + 1
+    candidate = coverage_manifest_body_v2(
+        instance_id=instance_id,
+        index=index,
+        overlay=overlay,
+        access_profile=access_profile,
+        epoch=epoch,
+    )
+    if existing is not None:
+        previous = existing.body
+        unchanged = (
+            previous.instance_id == candidate.instance_id
+            and previous.at == candidate.at
+            and previous.index_digest == candidate.index_digest
+            and previous.overlay_digest == candidate.overlay_digest
+            and previous.scope == candidate.scope
+            and previous.access_profile == candidate.access_profile
+        )
+        if unchanged:
+            return previous
+    write_coverage_manifest_v2(directory, candidate)
+    return candidate
+
+
+@positioned_read
+def service_resolve_playbill_coverage(
+    instance: PlaybillInstance,
+    *,
+    instance_id: str,
+    observations: Sequence[WorkingSourceObservation],
+    at: AcceptedCoordinate | None = None,
+    budget: CoverageCardBudget | None = None,
+    scan_budget: CoverageScanBudget | None = None,
+    access: BodyAccessContext | None = None,
+) -> CoverageResultV3:
+    """Resolve one batch of working-set observations against accepted state.
+
+    ``access`` decides whether restricted evidence is shown (C14): only with
+    ``can_read_restricted``; ``None`` is the instance read profile.
+
+    The whole operation is: rebuild the index, hash the observed snapshot into
+    the overlay, publish the freshness manifest, resolve. Every step is a pure
+    function of accepted state and the observed bytes, so deleting both
+    disposable indexes and the manifest and running it again reproduces the
+    same answer.
+    """
+
+    if not observations:
+        raise ProposalIntegrityError("a coverage request must name at least one working source")
+
+    coordinate = _resolve_coordinate(instance, at)
+    index, envelopes = _accepted_evidence_inputs_v2(instance, at=coordinate, access=access)
+    retired_associations = _retired_citation_window_inputs(
+        instance,
+        coordinate=coordinate,
+        observations=observations,
+    )
+    overlay = build_overlay(
+        observations,
+        wanted=_materialized_wanted_selections(instance, index=index, envelopes=envelopes),
+        budget=scan_budget,
+    )
+    # The key holder's profile only when restricted evidence is indexed: with
+    # none, both profiles answer alike and the instance profile names it.
+    access_profile = coverage_access_profile(
+        restricted=access is not None
+        and access.can_read_restricted
+        and any(item.access_class == "restricted" for item in index.citations)
+    )
+    manifest = _publish_manifest_v2(
+        instance,
+        instance_id=instance_id,
+        index=index,
+        overlay=overlay,
+        access_profile=access_profile,
+    )
+    request = CoverageRequestV1(
+        instance_id=instance_id,
+        at=coordinate,
+        spans=coverage_span_requests(observations),
+        budget=budget or CoverageCardBudget(),
+    )
+    return resolve_coverage_v3(
+        request,
+        index=index,
+        overlay=overlay,
+        access=access_profile,
+        manifest=manifest,
+        window_observations=_citation_window_observations(
+            index=index,
+            observations=observations,
+            envelopes=envelopes,
+            retired_associations=retired_associations,
+        ),
+        additional_window_citation_ids=frozenset(
+            citation_id for _source, citation_id, _capture in retired_associations
+        ),
+    )
+
+
+def coverage_claim_lines(
+    instance: PlaybillInstance, result: CoverageResultV3
+) -> tuple[ClaimLine, ...]:
+    """The Claims an answer's cards address, as text lines show them.
+
+    Read from the Claim index at the answer's own coordinate, once per distinct
+    Claim: keyed reads, O(cards returned), and no Claim body parse. They ride
+    beside the frozen result grammar, so the answer's digests are unaffected.
+    """
+
+    paths = sorted(
+        {
+            address.artifact_path
+            for span in result.spans
+            for card in span.cards
+            for address in card.claim_addresses
+        },
+        key=str.encode,
+    )
+    if not paths:
+        return ()
+    coordinate = instance.coordinate_for_oid(result.at.git_oid)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        return indexed_claim_lines(projection, paths)
+
+
+__all__ = [
+    "COVERAGE_ACCESS_PROFILE_ID",
+    "COVERAGE_RESTRICTED_ACCESS_PROFILE_ID",
+    "coverage_claim_lines",
+    "accepted_evidence_sources",
+    "build_accepted_evidence_index_v2",
+    "coverage_access_profile",
+    "service_resolve_playbill_coverage",
+]

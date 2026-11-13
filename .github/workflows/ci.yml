@@ -2,21 +2,64 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, playbill]
   pull_request:
-    branches: [main]
+    # rc/0.5.0: a draft PR from a feature branch into the release branch
+    # runs CI on the branch merged into it, before the merge.
+    branches: [main, rc/0.5.0]
+
+env:
+  # The cruxible-providers commit the provider-runtime tests run against
+  # (tests/support/provider_checkout.py): the runtime is installed from it, the
+  # provider wheels the installation tests transfer are built from it, and the
+  # end-to-end skeleton (tests/test_e2e) runs its web.fetch. D-R37 providers
+  # template: runtime 0.4.0, web 0.5.0, noop 0.4.0, docs/quant/workspace 0.3.1
+  # (branch claude/providers-template).
+  CRUXIBLE_PROVIDERS_COMMIT: 40e8a84ddddc2a43e00ae0a20ca4ec24f5a9f91f
+  # The CLI starts a local daemon when a command needs one and none answers;
+  # CI never wants that (tests/conftest.py turns it off for pytest too).
+  CRUXIBLE_NO_AUTOSTART: "1"
 
 jobs:
   test:
+    name: test (${{ matrix.python-version }}, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
+      # Finish every job even when one fails, so one CI run reports them all.
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+        # The suite runs as 4 jobs per Python, split by test file
+        # (tests/support/sharding.py). Changing the count: edit this list and
+        # the 4 in CRUXIBLE_TEST_SHARD and the job name.
+        shard: [1, 2, 3, 4]
+
+    env:
+      CRUXIBLE_TEST_SHARD: ${{ matrix.shard }}/4
+      # Per-file seconds of this shard, uploaded below to rebalance the shards
+      # (tests/support/shard_durations.json).
+      CRUXIBLE_TEST_DURATIONS_OUT: ${{ github.workspace }}/test-durations.json
+      CRUXIBLE_PROVIDERS_CHECKOUT: ${{ github.workspace }}/cruxible-providers
+      # The checkout is mandatory here: its tests fail rather than skip.
+      CRUXIBLE_PROVIDERS_REQUIRED: "1"
+      # Later `uv run` steps must not re-sync to the lock, which would replace the
+      # provider runtime installed from the checkout with the locked PyPI release.
+      UV_NO_SYNC: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: astral-sh/setup-uv@v4
+      # cruxible-providers is public, so this is an ordinary second checkout and
+      # needs no credential. CRUXIBLE_PROVIDERS_REQUIRED makes its tests fail,
+      # never skip, if it is missing.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: cruxible-ai/cruxible-providers
+          ref: ${{ env.CRUXIBLE_PROVIDERS_COMMIT }}
+          path: cruxible-providers
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
@@ -24,48 +67,43 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-packages --all-extras
 
+      # Not a declared dependency: the daemon's operator installs the provider
+      # toolchain beside it. uv run keeps it (its sync is not exact).
+      - name: Install the provider runtime from the providers checkout
+        run: uv pip install "$CRUXIBLE_PROVIDERS_CHECKOUT/packages/cruxible-provider-runtime"
+
+      # Lint, format and type checks do not depend on the shard: run them once per Python.
       - name: Lint
+        if: matrix.shard == 1
         run: uv run ruff check src packages/cruxible-client/src tests
 
       - name: Format check
+        if: matrix.shard == 1
         run: uv run ruff format --check src packages/cruxible-client/src tests
 
       - name: Type check
+        if: matrix.shard == 1
         run: uv run mypy src packages/cruxible-client/src
 
       - name: Test
-        run: uv run pytest --tb=short
+        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread -o faulthandler_timeout=1200
 
-  # Fast standalone drift gate: runs in parallel with the test matrix so a
-  # stale kit lock/manifest surfaces immediately, not after ~25 min of tests
-  # (and not hidden behind unrelated lint/test failures).
-  kit-lockfiles:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python 3.12
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync --all-packages --all-extras
-
-      - name: Verify kit lockfiles and distribution manifest are current
-        run: uv run python scripts/check_kit_lockfiles.py
-
-      - name: Verify tagged kit release asset URLs are available
-        run: uv run python scripts/check_kit_release_assets.py
+      - name: Upload per-file test seconds
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-durations-py${{ matrix.python-version }}-shard${{ matrix.shard }}
+          path: test-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   docker-image-test:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       - name: Set up Python 3.12
         run: uv python install 3.12
@@ -85,9 +123,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       - name: Set up Python 3.12
         run: uv python install 3.12

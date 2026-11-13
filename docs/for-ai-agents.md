@@ -1,423 +1,427 @@
-# Guide For AI Agents
-
-This guide is the operating playbook for agents that use Cruxible. The
-agent supplies interpretation and planning. Cruxible supplies deterministic
-execution, governed state transitions, receipts, traces, review groups, and
-query surfaces.
-
-Prefer a local Cruxible daemon (`cruxible server start`). MCP should be
-a structured adapter over the daemon, not the place where workflow policy lives.
-
-## Runtime Boundary
-
-Use this split when permissions matter:
-
-- Daemon environment: `pip install "cruxible[mcp]"` (the daemon ships in the default install)
-- Agent/client environment: `pip install cruxible-client`
-- Agent access path: MCP or HTTP client
-- State path: daemon-owned `CRUXIBLE_SERVER_STATE_DIR`, outside the agent
-  workspace
-
-Permission modes are enforced at the daemon boundary. If the agent can import
-the `cruxible` runtime, read daemon state files, or control the daemon runtime, local
-permission modes are advisory.
-
-For auth bootstrapping, runtime credentials, and reviewer/writer identity
-boundaries, see [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md).
-
-Recommended agent mode:
-
-```bash
-CRUXIBLE_MODE=governed_write
-CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
-```
-
-Use `admin` only for bootstrap, lock regeneration, canonical apply, and explicit
-operator-approved maintenance.
-
-## Two Governance Axes
-
-Permission mode is one axis; direct-write policy is a second, **independent**
-one. Do not confuse them — and note that the permission tiers are cumulative, so
-a `graph_write` actor can both direct-add and propose. There is no permission
-tier meaning "may propose but may not direct-add."
-
-- **Permission mode** — `CRUXIBLE_MODE` (`read_only` ⊂ `governed_write` ⊂
-  `graph_write` ⊂ `admin`), enforced as a boundary on the **daemon and MCP
-  surfaces**, where the serving process fixes its ceiling at startup. The local
-  CLI reads the operator's own environment, so it is an operator console at
-  operator tier by design — not a sandbox against the person at the shell.
-  Agents should reach state through MCP or the daemon, not a shell on the state
-  host. See
-  [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md#where-permission-tiers-are-enforced).
-- **Direct-write policy** — `refuse_direct_writes`. A type marked
-  `write_policy: proposal_only` (per-type, via the instance
-  `runtime.default_write_policy`, or via the daemon `CRUXIBLE_REFUSE_DIRECT_WRITES`
-  env kill-switch) **refuses** direct graph-write verbs (`add_entity` /
-  `add_relationship` / `batch_direct_write` / lifecycle write) with
-  `DirectWriteRefusedError` (HTTP 403). This is a **hard** constraint independent
-  of permission tier — even `admin` is refused.
-
-  When you hit `DirectWriteRefusedError`, do not retry or escalate the
-  permission mode. Route the write through the governed path instead:
-  - relationships: `group propose` → resolve, or `add-relationship --pending` to
-    stage an edge for review (pending writes are always allowed);
-  - entities/relationships in bulk: a canonical `apply_entities` /
-    `apply_relationships` workflow.
-
-  See [Direct-Write Governance](config-reference.md#direct-write-governance-refuse_direct_writes)
-  for the precedence table and the three knobs.
-
-- **Adjudication tier** — `feedback approve` / `reject` / `correct` decide a
-  claim's fate, so they require `graph_write` regardless of the feedback tool's
-  own `governed_write` tier. A `governed_write` agent may stage evidence
-  (`attest`, `--pending`, `group propose`) — including `attest --stance
-  contradict` to register a doubt about an existing claim — but it cannot
-  approve its own proposal. Escalating is a human's call: hand the proposal to a
-  reviewer rather than retrying.
-
-- **Pending proposals are immutable while staged** — writing onto a tuple whose
-  edge is still `pending` is refused (`pending_edge_write_refused`, HTTP 409)
-  instead of quietly replacing what the reviewer is looking at. Withdraw and
-  re-propose (or stage a corrected edge with `pending=true` after the current
-  one is resolved) rather than overwriting.
-
-There is **no** `CRUXIBLE_AGENT_MODE` env var — if older docs or skills mention
-it, they are stale. The real knobs are `CRUXIBLE_MODE` and the
-`refuse_direct_writes` policy above.
-
-## Deterministic identity signals on write surfaces
-
-Entity types may declare three deterministic same-type identity controls:
-
-- `identity_hint: [property, ...]` lets a create succeed but adds a structured
-  `identity_warnings[].similar_existing_entity` result naming the reusable
-  entity ID and the matched properties. Inspect this array after
-  `cruxible_add_entity` and `cruxible_batch_direct_write`; do not create more
-  relationships on the new ID until you have decided whether to reuse the
-  named entity.
-- `unique_by: [property, ...]` rejects a normalized duplicate with
-  `DataValidationError` (HTTP 400) and names the existing entity ID. Reuse that
-  ID or deliberately change the declared identity properties; retrying with a
-  third ID cannot succeed.
-- `id_pattern: 'regex'` rejects IDs that do not fully match the type's declared
-  convention and names the required pattern. It also applies to updates and
-  lifecycle transitions, so choose a pattern that admits any pre-existing IDs
-  that must remain updatable.
-
-`identity_hint` and `unique_by` NFC-normalize, case-fold, trim/collapse
-whitespace, and delete Unicode punctuation before exact composite-key
-comparison. Punctuation deletion does not add a space: `Gold-Card` becomes
-`goldcard`, while `Gold Card` becomes `gold card`, so they do not collide. They
-do not perform fuzzy or semantic matching, never compare across entity types,
-and never merge entities automatically. Avoid putting the primary-key property
-in `unique_by`: its derived `entity_id` value is normalized too and usually
-defeats duplicate detection on the remaining business fields. Reference-image
-apply, state pull, and snapshot restore bypass the shared write chokepoint by
-design. See [Declared entity identity keys](config-reference.md#declared-entity-identity-keys).
-
-## Core Responsibilities
-
-The agent should:
-
-- read the kit README, generated config views, and source artifacts
-- edit config and provider code when authoring or customizing kits
-- run validation, lock, workflow preview, proposal, and query tools
-- explain receipts, traces, pending groups, and resolution choices to humans
-- collect human decisions and apply them through Cruxible surfaces
-- write prose properties (note bodies, descriptions, rationale) as Markdown —
-  GFM renders in UIs, so use headings, lists, and tables for structure instead
-  of ad-hoc separators; property descriptions in the schema say which fields
-  render this way
-
-The agent should not:
-
-- write graph state by editing SQLite, snapshots, or graph files directly
-- treat chat notes as accepted operational state
-- bypass governed proposal workflows for relationship judgments
-- use legacy `ingest` as the default path for new configs
-
-## Standard Lifecycle
-
-Use this lifecycle for existing kits:
-
-```text
-read kit docs
-  -> validate config
-  -> lock workflows after changes
-  -> refresh canonical state by preview/apply
-  -> run proposal workflows
-  -> inspect pending groups
-  -> resolve or defer proposals
-  -> query accepted state
-  -> inspect receipts/traces
-```
-
-Use this lifecycle for new or customized kits:
-
-```text
-inspect source data
-  -> define config schema and contracts
-  -> add providers only where source adaptation or domain policy is needed
-  -> use common step types for generic row mechanics
-  -> validate
-  -> lock
-  -> run workflow tests or focused previews
-  -> regenerate generated docs/readme blocks
-```
-
-When authoring graph schemas, keep configs compact: entity and relationship
-properties default to `type: string` and optional, `{}` is valid for optional
-string fields, and `required: true` is the positive form for required non-ID
-fields. Contract fields are different: they still need explicit `type`.
-For operation-style kits, use the reusable axes in
-[Kit Authoring And Distribution](kit-authoring.md#operation-style-relationship-axes)
-before adding domain-specific variants: sequencing dependencies, impediment
-blockers, composition roll-ups, lineage/follow-up, replacement, review gates,
-and durable state notes should remain distinct relationships.
-
-## Read-Visibility State (`--state`)
-
-Reads are gated at one read-visibility state, set with the `--state` flag (CLI),
-the `state` MCP/HTTP parameter, or the `relationship_state` query-config field
-(default `live` for named queries; inspection surfaces — `entity inspect`,
-including the expanded neighborhood read, and edge listing — default to `all`:
-every stored edge with its markers, filtered only on request). The SAME
-selector gates **entities** (by lifecycle) and **relationships** (by review AND
-lifecycle), so one flag controls every surface:
-
-| State | Entities (lifecycle) | Relationships (review + lifecycle) |
-|-------|----------------------|------------------------------------|
-| `live` (default) | Only `lifecycle.status == live` entities. | Active edges whose review state is neither `pending` nor `rejected`. |
-| `accepted` | Resolves to `live` (entities have no review axis). | Active edges whose review status is `approved`. |
-| `all` | Every entity, regardless of lifecycle. | Every stored edge, regardless of review/lifecycle. |
-| `not-live` | Exactly the gated-out set: `retired`/`superseded` entities. | Edges hidden from live reads: review-`rejected` OR lifecycle closed/retracted/superseded. |
-| `pending` | Resolves to `live`. | Active edges whose review status is `pending` (proposals awaiting review). |
-| `reviewable` | Resolves to `live`. | `live` edges plus pending edges — triage/context in one evidence path. |
-
-An explicit by-id `entity get` is **never gated**: it returns the entity and
-shows its `lifecycle.status` even when hidden from live reads (recovery path).
-
-`pending` and `reviewable` require `result_shape: path` or `relationship` and do
-not allow `dedupe: entity` (they refine the relationship review axis). See
-[Config Reference](config-reference.md) for the full query-field rules.
-
-## Recipe: Validate And Lock After Edits
-
-Use this after changing `config.yaml`, provider refs, provider code, artifacts,
-contracts, workflows, or decision policies.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 validate --config config.yaml
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> lock
-```
-
-MCP:
-
-```text
-cruxible_validate(config_path="config.yaml")
-cruxible_lock_workflow(instance_id)
-```
-
-If locking fails, inspect the named provider, artifact, contract, or workflow
-step in the error. Do not run workflows from an unlocked or stale config.
-
-## Recipe: Refresh Canonical State
-
-Canonical workflows mutate accepted state only after preview verification.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> run \
-  --workflow build_local_state \
-  --save-preview preview.json
-
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> apply \
-  --preview-file preview.json
-```
-
-MCP:
-
-```text
-preview = cruxible_run_workflow(instance_id, "build_local_state")
-cruxible_apply_workflow(
-  instance_id,
-  "build_local_state",
-  expected_apply_digest=preview.apply_digest,
-  expected_head_snapshot_id=preview.head_snapshot_id,
-)
-```
-
-Before apply, summarize the changed entities/relationships, receipt ID, trace
-IDs, and any warnings. If the source artifact changed unexpectedly, stop and ask
-for operator confirmation.
-
-## Recipe: Run A Proposal Workflow
-
-Use proposal workflows for relationship state that needs review, evidence, or
-classification. The workflow output is bridged into a candidate group.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> propose \
-  --workflow propose_asset_exposure
-```
-
-MCP:
-
-```text
-cruxible_propose_workflow(instance_id, "propose_asset_exposure")
-```
-
-If no group is created, check the workflow output status first. Some proposal
-workflows intentionally complete without creating a group when there are no
-candidates; those return `status: no_candidates` and `group_created: false`.
-Treat that as a terminal "nothing to review" outcome, not as a failed proposal.
-For other no-group outcomes, inspect suppressed members and prerequisite state.
-In KEV triage, for example, asset exposure proposals depend on accepted
-asset-product mappings and public vulnerability-product reference state.
-
-## Recipe: Inspect A Pending Group
-
-Always inspect the group before resolving it.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> group list \
-  --status pending_review
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> group get \
-  --group <group-id>
-```
-
-MCP:
-
-```text
-cruxible_list_groups(instance_id, status="pending_review")
-cruxible_get_group(instance_id, group_id)
-```
-
-Present:
-
-- thesis and thesis facts
-- relationship type and member count
-- member-level signals: support, unsure, contradict
-- review priority
-- pending version
-- source workflow receipt and trace IDs
-- suppressed members or prior resolution history when present
-
-## Recipe: Resolve Or Defer A Proposal
-
-Resolve only from the pending version the reviewer saw.
-
-CLI:
-
-```bash
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> group resolve \
-  --group <group-id> \
-  --action approve \
-  --expected-pending-version <pending-version> \
-  --rationale "Reviewed evidence and accepted the proposal"
-```
-
-MCP:
-
-```text
-cruxible_resolve_group(
-  instance_id,
-  group_id,
-  action="approve",
-  expected_pending_version=pending_version,
-  rationale="Reviewed evidence and accepted the proposal",
-)
-```
-
-Use rejection when the proposal is wrong. Use no action when evidence is not
-ready. Do not create accepted edges manually just to skip group review.
-
-## Recipe: Debug Provider Failure
-
-When a workflow fails:
-
-1. Capture the workflow name, step ID, provider name, receipt ID if present,
-   and trace IDs if present.
-2. Inspect the provider declaration and contracts in the generated config view.
-3. Check artifact names and hashes against the lock.
-4. Re-run with the smallest input payload that reproduces the failure.
-5. Fix the provider or config, then validate and lock again.
-
-Useful commands:
-
-```bash
-cruxible config views --config config.yaml --runtime --view workflow-steps
-cruxible config views --config config.yaml --runtime --view signal-policy-catalog
-cruxible --server-url http://127.0.0.1:8100 --instance-id <instance-id> decision-record events \
-  --trace <trace-id>
-```
-
-Receipts prove how a query or state transition was decided. Execution traces
-prove what provider ran, with which provider version, artifact hash, inputs,
-outputs, status, error, and timing.
-
-## Recipe: Update Source Data Safely
-
-When a source artifact changes:
-
-1. Confirm the file path belongs to the kit or local workspace.
-2. Validate the config.
-3. Regenerate the workflow lock. Use `--force` only when intentionally accepting
-   new live canonical artifact hashes.
-4. Run the canonical workflow in preview mode.
-5. Summarize the changed examples and receipt/trace evidence.
-6. Apply only after the operator accepts the preview.
-7. Run dependent proposal workflows and inspect new or refreshed groups.
-
-Do not edit SQLite or graph snapshots to "fix" source state.
-
-## Recipe: Regenerate Kit Docs
-
-Generated kit README blocks are code-owned. After changing a kit config, refresh
-the marked blocks:
-
-```bash
-cruxible config views --config kits/kev-triage/config.yaml --runtime \
-  --update-readme kits/kev-triage/README.md
-```
-
-The generated docs are grounding material for the agent and reviewer. They are
-not a substitute for MCP/CLI review actions.
-
-## Modeling Guidance
-
-Use Cruxible for shared operational truth:
-
-- accepted facts and relationships
-- governed judgments and review history
-- deterministic workflow outputs
-- receipts, traces, decision records, feedback, and outcomes
-
-Keep temporary reasoning in the agent. Commit only state that future agents,
-humans, or software should rely on.
-
-Use providers for source adapters, external services, model calls, and
-domain-specific policy. Use built-in step types for generic deterministic
-mechanics such as shaping rows, joining item sets, filtering, deduping, building
-graph objects, and applying canonical state.
-
-## Handoff Checklist
-
-Before handing work back to a human or another agent, report:
-
-- active instance ID and kit
-- current config/lock status
-- workflows run and whether they previewed, applied, or proposed
-- receipt IDs and trace IDs for meaningful operations
-- pending groups requiring review
-- accepted state changed
-- rejected/deferred proposals and rationale
-- next safe command to run
+# Operating Cruxible as an AI agent
+
+Cruxible is built so an agent's first reads are cheap and exact: a map, then
+what needs attention, then values with their flags, and one thing in depth
+only when the task needs it. Writes are governed: everything an agent changes
+is checked, and the instance's approval policy decides what is accepted.
+
+This page is the operating manual: how to connect, the loop to run, and the
+rules to keep. Each step links to the guide that covers it in full. The
+examples use the car parts example from
+[Concepts](concepts.md#knowledge-as-claims).
+
+## Connect
+
+**MCP.** An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the
+registry listing). Every tool runs on a daemon; the server is only its client.
+
+~~~json
+{
+  "mcpServers": {
+    "cruxible": {
+      "command": "uvx",
+      "args": ["cruxible", "mcp"],
+      "env": {
+        "CRUXIBLE_SERVER_SOCKET": "/home/me/.cruxible/run/daemon.sock",
+        "CRUXIBLE_INSTANCE_ID": "inst_…",
+        "CRUXIBLE_PRINCIPAL_ID": "agent-b"
+      }
+    }
+  }
+}
+~~~
+
+Without a socket or URL the server reuses the local daemon on
+`~/.cruxible/run/daemon.sock`, starting one when none answers. Without
+`CRUXIBLE_INSTANCE_ID` it uses the instance the workspace's
+`.cruxible/coverage.json` binds. `CRUXIBLE_PRINCIPAL_ID` names the principal
+the agent acts as; on a daemon with auth, `CRUXIBLE_SERVER_BEARER_TOKEN`
+carries its credential. `cruxible principal add NAME --key-dir DIR` writes
+exactly these settings to `DIR/cruxible.env`. Setup itself (starting a
+daemon, `cruxible init`, adding principals) is operator work on the CLI; MCP
+has no setup tools. See [MCP tools](mcp-tools.md) for every variable.
+
+First setup on one machine, in order:
+
+1. `git init` the project, so `init` can attach it.
+2. Start a daemon (`cruxible server start --socket ~/.cruxible/run/daemon.sock`,
+   or let the MCP server auto-start it there).
+3. `cruxible --server-socket ~/.cruxible/run/daemon.sock init --principal-id owner
+   --key-dir DIR --reviewer-key-dir DIR2`. The CLI needs the socket until the
+   project is bound to the daemon; "use server mode" in a refusal means it had
+   none.
+4. If init reports `workspace_advertisement.status: not_attached`, run
+   `cruxible workspace attach` from the Git worktree. Its
+   `.cruxible/coverage.json` then gives CLI and MCP the daemon and instance.
+5. An agent started in the project acts as its owner with no configuration:
+   init's `.cruxible/identity.json` names the owner (see
+   [MCP tools](mcp-tools.md#instances-and-the-adapter-environment)). Give a
+   session that should be another principal its own: `CRUXIBLE_PRINCIPAL_ID`, plus
+   `CRUXIBLE_MCP_KEY_DIR` (the key directory, for `cruxible_proposal_approve`)
+   and `CRUXIBLE_PRINCIPAL_KEY` (the key file, for `cruxible_claim_attest`),
+   copied from that principal's `cruxible.env`. Add more principals with
+   `cruxible principal add NAME --key-dir DIR`.
+
+The agent plugin's README (`plugins/README.md`) walks the same path through to
+installing a kit.
+
+The `default` profile advertises 13 tools, the everyday loop: `orient`,
+`query`, `get`, `next`, `set`, `retire`, `write`, `proposal_list`,
+`proposal_review`, `proposal_approve`, `proposal_activate`, `whoami` and
+`server_info` (each prefixed `cruxible_`). Set `CRUXIBLE_MCP_PROFILE=full` for
+the rest: authoring, ClaimTypes, Procedures, Lines, predictions, files,
+coverage, blocks, curation, kits and providers. Profiles change what is
+advertised; the credential's tier still gates every call.
+
+**CLI.** The same operations, with `--json` for structured output. After
+`cruxible init` or `cruxible context use`, commands need no flags.
+
+**Python.** `cruxible-client` is the SDK:
+
+~~~python
+from cruxible_client import Cruxible
+
+cx = Cruxible.connect()          # remembered context, or connect(target=..., instance=...)
+print(cx.world().describe())     # the verbs and the vocabulary
+~~~
+
+## A propose-only agent
+
+A propose-only agent writes and proposes but can't approve or accept, so
+everything it changes waits for a person. That limit is a credential tier
+(`governed_write`), so it needs a daemon with auth. Start one with its own
+state root:
+
+~~~bash
+cruxible server start --auth --state-root ~/.cruxible-team \
+  --socket ~/.cruxible-team/run/daemon.sock
+~~~
+
+The daemon never prints its bootstrap secret; it writes it owner-only to
+`<state-root>/daemon/bootstrap-secret`. In another shell, in a new repository,
+allocate a host with the secret, claim the host's one-time admin credential,
+and initialize with it:
+
+~~~bash
+mkdir team && cd team && git init
+export CRUXIBLE_SERVER_SOCKET=~/.cruxible-team/run/daemon.sock
+SECRET_FILE=~/.cruxible-team/daemon/bootstrap-secret
+CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" cruxible host create
+cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
+CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init
+~~~
+
+`init` makes you the owner and mints your own credential into your settings,
+which the CLI and the SDK remember. Add the agent in one command, which
+registers its key and writes its `governed_write` credential into its own
+settings file:
+
+~~~bash
+cruxible principal add agent-b --key-dir ~/agents/agent-b
+~~~
+
+Hand the agent `~/agents/agent-b/cruxible.env`: a shell or an MCP server loads
+it (`set -a; . ~/agents/agent-b/cruxible.env; set +a`), and on this machine
+`cruxible context use --principal agent-b` switches the CLI to it. Its writes
+wait, and its approvals are refused:
+
+~~~text
+$ cruxible set catalog.part/bp-1142 title "Front brake pads" --because "Acme catalog 2026."
+awaiting approval (generation 2, 4de2da8e1fc9)
+  set catalog.part/bp-1142 title: Front brake pads  [CLM-…; verdict supported]
+...
+$ cruxible proposal approve sha256:33bafcbb… --yes
+Error: cruxible proposal approve needs the graph_write tier; this credential is governed_write. …
+~~~
+
+You review and approve what it proposes under your own settings (`cruxible
+context use --principal YOUR_ID`). With auth off, the same `principal add`
+registers the agent and writes its settings without a credential, but every
+process of your OS user is equally trusted, so the principal ID is a claim,
+not a boundary. [Review and governance](review-and-governance.md) covers
+tiers and approval policy.
+
+## The loop
+
+### 1. Orient
+
+`orient` maps the instance in one call: each kind with its fields, value
+types, evidence and counts, who you are, what needs attention, and the next
+calls to make.
+
+~~~text
+$ cruxible orient
+Cruxible inst_902ea44b9b334717 generation=19 at 1a04bbdcd90b accepted 2026-10-21T20:06:49.528502Z
+Floor: .cruxible/floor at 1a04bbdcd90b, current
+You: YOUR_ID, can author
+Kinds (4):
+  ...
+  catalog.part  subjects=4  evidence=cruxible.coordinator-self-source-v1
+    category  one  enum[brakes|filters|wipers|lighting]
+    fits  many  subject<catalog.vehicle>  evidence=cruxible.coordinator-self-source-v1,cruxible.foreign-source.catalog,cruxible.foreign-source.fitment
+    ...
+Queries:
+  catalog.parts_for_vehicle(vehicle: string)  The parts that fit one vehicle.
+Attention: next=0 open_proposals=0
+Next:
+  cruxible orient --kind catalog.part
+  ...
+~~~
+
+`orient --kind K` reads one kind in full; `orient --section S` pages one
+family (claim_types, queries, lines, documents, generations, graph, pins, …).
+
+### 2. See what needs attention
+
+`next` lists what is wrong or waiting, most urgent first, each row with the
+exact repair: drifted or stale evidence, disagreements, uncovered Claims,
+stale proposals, stale pages, Line gaps and inbox items. Work it top down,
+judging each repair rather than running it blindly. When it's clear, `audit`
+ranks the Claims most worth verifying. [Keeping knowledge
+current](keeping-knowledge-current.md) goes through every family.
+
+### 3. Read what the task needs
+
+Cheapest first ([Asking questions](asking-questions.md)):
+
+- **Grep the floor** to find things by name. `.cruxible/floor/current/<kind>/<id>.yaml`
+  holds one Subject per file, and `.cruxible/floor/ontology/` describes every
+  kind and field. Without a shell, `query --contains TEXT` searches every value.
+- **`query`** answers across many Subjects as rows with flags: `--where`,
+  `--select`, `--follow`, `--order-by`, or a saved question with `--name` and
+  `--param`. A wrong kind, field or enum member is refused with the nearest
+  valid names, never answered empty.
+- **`get`** reads one thing by any reference you have seen (`kind/id`, a Claim
+  ID, a definition such as `ClaimType:catalog.part.fits`, a proposal ID), with
+  `--detail evidence|why|history|proof` going deeper.
+- **`coverage resolve --file PATH`** says which Claims rest on a file you are
+  about to edit, and which of its lines they cite.
+
+The floor follows accepted state shortly after each change; confirm with
+`get` or `query` before you act. A page or table in a document can be behind
+the state it reflects: before relying on one, check `next` for a stale block
+on it and read the Claims behind it instead.
+
+In a summary (a `query` cell, a card, a write's before and after) a string
+over 500 characters is a `TruncatedText` (`truncated`, `preview`, `length`,
+`read_whole`), never the value. `read_whole` is the exact read of the whole
+value, pinned to the generation the preview came from (`cx.read_whole(preview)`
+in the SDK).
+
+### 4. Act
+
+- **Values**: `set`, `add`, `retire`, and `write` for several changes as one,
+  each with a `because` and, where you have it, evidence ([Building team
+  knowledge](building-team-knowledge.md), [Evidence and
+  admission](evidence-and-admission.md)).
+- **Notes**: write the reasoning into a document section in the same `write`
+  as the Claims that cite it ([Documents and notes](documents-and-notes.md)).
+- **Definitions**: fields, kinds, saved queries and automation go through
+  authoring ([Evolving your vocabulary](evolving-your-vocabulary.md), [Lines
+  and automation](lines-and-automation.md)).
+- **Proposals**: review the exact candidate before anyone signs it ([Review
+  and governance](review-and-governance.md)).
+
+### 5. Check
+
+Every write reports each change's verdict. Anything other than `supported`
+is a signal, not a success: `uncovered` usually means the field's rules don't
+admit your evidence for that role. Run `next` again after a batch of work.
+
+## Writing from the SDK
+
+The value verbs on each surface:
+
+| | One change | Several, atomically |
+|---|---|---|
+| MCP | `cruxible_set`, `cruxible_retire` | `cruxible_write` (`set`, `add`, `retire` changes, plus `docs`) |
+| CLI | `cruxible set`, `add`, `retire`, `rebind` | `cruxible write FILE` or `write -` |
+| SDK | `cx.set(...)`, `cx.add(...)`, `cx.retire(...)`, `cx.rebind(...)` | `cx.changes(because=...)`, then `.set`, `.add`, `.retire`, `.write()` |
+
+A batch can write the note and the Claim that cites it together:
+
+~~~python
+batch = cx.changes(because="Fitment check at the shop.", subject="catalog.part/af-208")
+batch.append_section("docs/fitment.md", under=("Fitment notes",), id="check",
+                     text="## af-208 on the 2019 Civic\n\nFitted at the shop on 2026-10-21: no issues.\n")
+batch.add("fits", "catalog.vehicle/honda-civic-2019", evidence=batch.section("check"))
+outcome = batch.write()
+outcome.status                                        # 'accepted'
+[(c.field, c.after, c.verdict) for c in outcome.changes]
+# [('fits', 'catalog.vehicle/honda-civic-2019', 'supported')]
+~~~
+
+For MCP-only clients, the same write is one `cruxible_write` call:
+
+~~~json
+{
+  "because": "Fitment check at the shop.",
+  "subject": "catalog.part/af-208",
+  "docs": [
+    {
+      "op": "append",
+      "id": "check",
+      "file": "docs/fitment.md",
+      "under": ["Fitment notes"],
+      "text": "## af-208 on the 2019 Civic\n\nFitted at the shop on 2026-10-21: no issues.\n"
+    }
+  ],
+  "changes": [
+    {
+      "op": "add",
+      "field": "fits",
+      "value": "catalog.vehicle/honda-civic-2019",
+      "evidence": {"kind": "section", "ref": "check"}
+    }
+  ]
+}
+~~~
+
+`replace_section(..., expect=digest)` replaces a section only if nobody
+changed it since you read it. Each write accepts in the same call when the
+approval policy and your tier allow it; otherwise the outcome says `awaiting
+approval` and names who may approve. `dry_run` runs every check and writes
+nothing; `accept="never"` stops at a proposal; a write refuses if the field
+changed since the coordinate you read at.
+
+### The typed world
+
+`cx.world()` hands back the accepted vocabulary as objects, so names and
+allowed values come from the instance, not from memory:
+
+~~~python
+w = cx.world()
+w.catalog.part["bp-1142"]          # WorldSubject
+w.catalog.part.category            # WorldClaimType for that field
+w.catalog.part.category.filters    # a value only this field admits
+w.catalog.part.category.tyres      # AttributeError: names no enum member 'tyres';
+                                   # its literal schema admits: brakes, filters, lighting, wipers
+w.catalog.part["zz-999"]           # AbsentSubject: raised, with the repair to create it
+
+part = w.catalog.part["bp-1142"]
+part.category                      # tuple of ClaimViews: every live Claim of that field
+part.explain()                     # governance and provenance context
+w.catalog.part.where(category="brakes").select("title").run().rows
+~~~
+
+Where a name isn't a Python identifier, use `w.kind("catalog.part")` and
+`w.claim_type("catalog.part.fits")`. A World is pinned to the coordinate it
+was read at: after you write, read it again (`cx.world()`) before using its
+references in a new change, or the SDK refuses them as out of date.
+`.cruxible/world.pyi` holds the vocabulary as Python types, so an editor or a
+model completes real names; floor delivery keeps it current, and `cruxible
+stub` writes one.
+
+### Definitions
+
+`cx.changes(rationale=...)` collects definitions and Claims into one change
+set that lands whole or not at all:
+
+~~~python
+draft = cx.changes(rationale="Record a fitment finding as a note.")
+note = draft.subject(cx.new_subject("catalog.note", key="af-208-civic-fit"))  # usable in this set
+draft.claim(subject=note, predicate=w.catalog.note.about, value=w.catalog.part["af-208"],
+            role="observation", rationale="Checked at the shop.", self_source="about: af-208\n")
+intent = draft.submit()            # intent.outcome.status: 'landed'
+~~~
+
+`.submit(accept="never")` keeps the proposal, and `.prepare()` checks
+without submitting. On the CLI, `cruxible authoring submit FILE|-`;
+`cruxible authoring example NAME` prints a template for every input kind.
+
+### Evolving vocabulary
+
+`ChangeSetDraft.succeed_claim_type(successor, dependents=[...])` changes a
+field together with what happens to every Claim written under it, so "I need
+this distinction, and here is everything it changes" lands as one generation.
+The successor names its predecessor and pins its current digest. Each
+dependent takes one disposition:
+
+| Helper | What the dependent becomes |
+|---|---|
+| `carry(claim)` | Re-pinned to the successor, otherwise unchanged. |
+| `rescind(claim)` | Retired as `was-rescinded`, keeping the statement it was accepted with. |
+| `retire(claim, reason=..., effective_until=...)` | An attributed retirement (`was-wrong`, `was-rescinded`, or `superseded`). |
+| `re_author(claim)` | Said again by a sibling Claim member of the same set (`revises=` that Claim), under the successor. |
+
+A successor that changes `object_kind` can't carry anything. [Evolving your
+vocabulary](evolving-your-vocabulary.md) has a worked example and what each
+kind of change costs.
+
+## Approving
+
+Approval signs locally and sends only the public signature. `cruxible proposal
+approve` and `cruxible_proposal_approve` do it in one call; the MCP tool signs
+with a key from the server's `CRUXIBLE_MCP_KEY_DIR`, and passing the reviewed
+`candidate_digest` makes it refuse a candidate that changed since you read it.
+A signer outside the MCP process uses the full-profile pair
+`cruxible_proposal_approve_prepare` (the exact statement to sign) and
+`cruxible_proposal_approve_submit` (the public signature).
+
+Review the candidate first: `proposal review` shows what it changes and why,
+with the `git diff` command for the ledger. An agent with no attached
+workspace reads the same branches from the ledger mirror (`mirror_url` in
+`orient --json`). [Review and governance](review-and-governance.md) covers
+both.
+
+## Automation
+
+Lines run Procedures on schedules and events; the [Lines and
+automation](lines-and-automation.md) guide walks through one. From the SDK:
+
+- A Procedure is authored in one typed form, the `ProcedureSpec` (JSON over
+  MCP/HTTP, YAML on the CLI). In Python, `Sequence`
+  (`cruxible_client.authoring.procedures`) is a thin builder over that spec:
+  `read`, `call` (fetch, then derive), `extract`, `transform` (filter and
+  dedupe), `claims` and `inbox` steps, typed references (`handle["field"]`)
+  and typed predicates (`eq`, `gt`, `present`, `all_of`, ...), with
+  `.preview()` before submitting. Every other step kind refuses
+  `procedure_step_closed`: computation lives in a provider derive.
+- `cx.line(name).run()` runs a Line once; `.enable()` lets its Triggers fire.
+- `cx.accepted_procedure(name)` reads one: `.run(input=...)` for a direct run,
+  `.measure(run=...)` and `.readings(...)` for its measurements.
+- Read what a Line posted with `inbox list` and `inbox get`, and record your
+  judgment with `inbox link`, `dismiss` or `ack`: the inbox never changes
+  accepted state.
+
+## Operating rules
+
+1. Treat accepted coordinates as state and proposals as provisional. A
+   proposal isn't accepted state, and an approval isn't activation.
+2. Read before you write: grep the floor or `query` for an existing Subject or
+   Claim before creating an adjacent one.
+3. Cite where a value came from. Your own words are the default evidence; a
+   file passage or a Capture is checkable. Check the verdict on every write.
+4. Record disagreement as evidence (`claim attest --contradict`, or the value
+   you observed), never as an inverse field.
+5. Put reasoning in a document section the Claim cites, not in a field.
+   Measurements belong in a Procedure's readings, never in a title.
+6. Make one `write` per checkpoint, with one `because`.
+7. Before relying on a page, check `next` for a stale block on it.
+8. Review the exact candidate before you ask anyone to sign it.
+9. Never request, transmit, or place a private key in a repository or a tool
+   argument.
+10. Treat a repair a diagnostic names as an invitation to a governed
+    operation, never as authority.
+11. Handle each typed result: a write can be refused, a proposal can go stale,
+    an activation can lose a race. Stop and surface the refusal rather than
+    retrying blindly.
+
+[Building team knowledge](building-team-knowledge.md) explains the modeling
+rules behind several of these.
+
+## Fail closed
+
+Stop and surface the typed refusal when:
+
+- the accepted head moved under a write or a proposal (`readmit` or rebase,
+  then decide again);
+- a candidate or compiler digest differs from the one you reviewed;
+- an approval requirement is unsatisfied;
+- a principal is revoked, inactive, or outside its authority;
+- a source file escapes its declared root or is a symlink;
+- a requested detail is not served;
+- a coordinate is provisional where accepted state was requested.
+
+Recovery is a governed principal operation, not a bypass for ordinary
+approval.

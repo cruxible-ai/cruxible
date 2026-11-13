@@ -1,0 +1,514 @@
+"""PB-E structured review and client-held signing tests."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts.declared_blocks import (
+    PresentationPolicy,
+    ProjectionAdvisoryPolicy,
+    ProjectionCoverageBinding,
+    ProjectionCoverageObservation,
+    ReviewWorkspaceObservation,
+)
+from cruxible_client.contracts.errors import SigningKeyError
+from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.procedures.reference_binding import authored_procedure
+from cruxible_core.service.authoring.documents import (
+    service_propose_playbill_document,
+    service_propose_playbill_principal_change,
+    service_store_playbill_body,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.proposals.review import (
+    ProjectionAdvisory,
+    ReviewedMember,
+    _projection_advisory,
+    render_playbill_approval_summary,
+    render_playbill_proposal_review,
+    render_playbill_proposal_review_pointer,
+    service_prepare_playbill_approval,
+    service_review_playbill_proposal,
+)
+from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+from tests.core_support._knowledge_loop_support import activate, authoring
+from tests.core_support._support import generate_client
+from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
+from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
+
+CLAIM_PROJECTION_POLICY = PresentationPolicy(
+    projection_advisories=ProjectionAdvisoryPolicy(claim=True, procedure=True)
+)
+
+
+def _claim_proposal(tmp_path: Path, *, work_item: str = "wi-99"):  # type: ignore[no-untyped-def]
+    instance, owner, _reviewer = _instance(tmp_path)
+    _seed_claim_surface(instance, owner)
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=authoring(work_item, "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name=f"projection-{work_item}",
+        timestamp=TIMESTAMP,
+    )
+    return instance, owner, proposed
+
+
+def _review_observation(instance, *, coordinate=None):  # type: ignore[no-untyped-def]
+    selected = coordinate or instance.accepted_coordinate()
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(selected).model_dump(mode="json")
+    )
+    return ReviewWorkspaceObservation(
+        presentation_policy=CLAIM_PROJECTION_POLICY,
+        projection_coverage=ProjectionCoverageObservation(
+            coordinate=public,
+            complete_kinds=("Claim", "Procedure"),
+            bindings=(),
+        ),
+    )
+
+
+def test_review_and_signing_keep_private_key_outside_wire_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner, reviewer = _instance(tmp_path)
+    body = service_store_playbill_body(instance, content=b"# Cruxible\n\nGoverned prose.\n")
+    proposed = service_propose_playbill_document(
+        instance,
+        shell=_shell(body.digest),
+        actor_id="owner",
+        proposal_name="review",
+        timestamp=TIMESTAMP,
+    )
+    proposal_id = proposed.proposal.admission.proposal_id
+
+    monkeypatch.setattr(instance, "tree_at", lambda _oid: pytest.fail("review must select members"))
+    monkeypatch.setattr(
+        instance,
+        "proposal_tree",
+        lambda *_a, **_k: pytest.fail("review must select proposal members"),
+    )
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        detail=True,
+    )
+    assert review.coordinate_kind == "provisional"
+    assert review.base_oid == review.settlement_base.git_oid
+    assert review.parent_semantic_root == review.settlement_base.semantic_root
+    assert review.candidate_digest == review.candidate.candidate_digest
+    assert review.complete_members == review.candidate.members
+    assert review.documents[0].candidate_source_mapping is not None
+    assert "+# Cruxible" in (review.documents[0].readable_diff or "")
+    assert review.attestation_coverage["coverage"] == "containing_change_set"
+    rendered = render_playbill_proposal_review(review)
+    assert f"Candidate: {review.candidate_digest}" in rendered
+    assert f"Settlement base OID: {review.base_oid}" in rendered
+    # `proposal approve` shows the summary by default and the full rendering on --full.
+    summary = render_playbill_approval_summary(review)
+    assert f"Candidate: {review.candidate_digest}" in summary
+    assert f"Changes ({len(review.members)}):" in summary
+    assert "Semantic delta" not in summary
+    assert f"Proposal admission tier: {review.candidate.required_tier}" in rendered
+    assert "Approve requires: graph_write" in rendered
+    assert "Activate requires: graph_write" in rendered
+
+    # `proposal review` prints the ledger coordinates instead: the diff a
+    # reviewer runs, and the two note refs carrying the daemon's own records.
+    pointer = render_playbill_proposal_review_pointer(review)
+    key = review.proposal_id.removeprefix("sha256:")
+    assert f"git diff cruxible-ledger/accepted...cruxible-ledger/proposals/{key}" in pointer
+    # The note reads name the branch a reviewer actually holds, not a
+    # placeholder they would have to resolve: the notes are attached to the
+    # projected review commit, which is what the mirror and the workspace carry.
+    assert (
+        f"git notes --ref=refs/notes/cruxible-eval show cruxible-ledger/proposals/{key}" in pointer
+    )
+    assert (
+        f"git notes --ref=refs/notes/cruxible-approval show cruxible-ledger/proposals/{key}"
+        in pointer
+    )
+    assert "git fetch origin '+refs/notes/*:refs/notes/*'" in pointer
+    assert "--json" in pointer
+    # One line per member says what the change set does; the diff stays in Git.
+    assert f"Changes ({len(review.members)}):" in pointer
+    # Nothing of the second rendering survives in it.
+    assert "Semantic delta" not in pointer
+    assert "+# Cruxible" not in pointer
+
+    advisory_rendered = render_playbill_proposal_review(
+        review.model_copy(
+            update={
+                "projection_advisory": ProjectionAdvisory(
+                    unprojected_count=1,
+                    artifact_identities=("Procedure:release-guard",),
+                    message=(
+                        "1 changed artifact has no projection coverage; "
+                        "reviewers will see raw JSON only"
+                    ),
+                )
+            }
+        )
+    )
+    assert "Projection advisory: 1 changed artifact" in advisory_rendered
+
+    redacted = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=BodyAccessContext(principal_id="reader"),
+        detail=True,
+    )
+    assert redacted.documents[0].readable_diff is None
+    assert redacted.documents[0].candidate_source_mapping is None
+    assert "body" in redacted.redactions
+    assert body.digest in redacted.model_dump_json()
+    assert "Governed prose" not in redacted.model_dump_json()
+
+    challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        signer_id="reviewer",
+        access=BodyAccessContext(principal_id="reviewer", can_read_body=True),
+    )
+    serialized = challenge.model_dump_json()
+    assert str(reviewer.private_key_path) not in serialized
+    assert challenge.statement.payload_digest == review.candidate_digest
+    assert challenge.statement.signing_semantic_root == review.parent_semantic_root
+
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id="reviewer",
+        private_key_path=reviewer.private_key_path,
+        expected_public_key=challenge.signer_principal.public_key,
+        forbidden_roots=(instance.root, tmp_path / "workspace"),
+    )
+    attestation = signer.sign(challenge.statement)
+    receipt = service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=attestation,
+        authenticated_submitter="bearer-owner",
+    )
+    assert receipt.signer_id == "reviewer"
+    assert receipt.submitted_by == "bearer-owner"
+
+
+def test_local_signer_refuses_exposed_or_wrong_key(tmp_path: Path) -> None:
+    instance, owner, reviewer = _instance(tmp_path)
+    with pytest.raises(SigningKeyError, match="does not match"):
+        LocalEd25519ApprovalSigner.open(
+            signer_id="owner",
+            private_key_path=owner.private_key_path,
+            expected_public_key=reviewer.principal.public_key,
+            forbidden_roots=(instance.root, tmp_path / "workspace"),
+        )
+
+    os.chmod(owner.private_key_path, 0o644)
+    with pytest.raises(SigningKeyError, match="permissions"):
+        LocalEd25519ApprovalSigner.open(
+            signer_id="owner",
+            private_key_path=owner.private_key_path,
+            expected_public_key=owner.principal.public_key,
+            forbidden_roots=(instance.root, tmp_path / "workspace"),
+        )
+
+
+def test_lifecycle_review_names_the_proposing_actor(tmp_path: Path) -> None:
+    instance, owner, _reviewer = _instance(tmp_path)
+    keys = tmp_path / "keys-alice"
+    keys.mkdir()
+    record = generate_client(
+        tmp_path, managed_root=tmp_path / "managed-alice", principal_id="alice", roles=("reviewer",)
+    )
+    proposal = service_propose_playbill_principal_change(
+        instance,
+        principal=record.principal,
+        proposal_name="alice",
+        actor_id=owner.principal.principal_id,
+        timestamp=TIMESTAMP,
+    )
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal.proposal.admission.proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        detail=True,
+    )
+    rendered = render_playbill_proposal_review(review)
+    assert f"{owner.principal.principal_id}'s own signature" in rendered
+    assert "Required approvals: none" not in rendered
+
+
+def test_candidate_projection_advisory_counts_generated_successors_and_excludes_invalidations(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, _reviewer = _instance(tmp_path)
+    procedure = _accepted_procedure()
+    settlement = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    public = ClientAcceptedCoordinate.model_validate(settlement.model_dump(mode="json"))
+    coverage = ProjectionCoverageObservation(
+        coordinate=public,
+        complete_kinds=("Procedure",),
+        bindings=(),
+    )
+
+    def member(role: str) -> ReviewedMember:
+        return ReviewedMember(
+            path=procedure.path,
+            artifact_kind="procedure",
+            disposition="added",
+            closure_role=role,  # type: ignore[arg-type]
+            predecessor_artifact_digest=None,
+            candidate_artifact_digest=procedure.artifact_digest,
+            base_semantic_artifact=None,
+            candidate_semantic_artifact={},
+            semantic_delta=(),
+            law_identifier="procedure-law",
+            law_digest="sha256:" + "1" * 64,
+            law_evidence={},
+            dependency_proof_refs=(),
+        )
+
+    # The Procedure catalog advisory is off by default; a kit or workspace
+    # opts in.
+    default_policy = ReviewWorkspaceObservation(
+        presentation_policy=PresentationPolicy(),
+        projection_coverage=coverage,
+    )
+    assert (
+        _projection_advisory(
+            members=(member("generated_successor"),),
+            candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
+            settlement_base=settlement,
+            workspace_observation=default_policy,
+        )
+        is None
+    )
+    observation = default_policy.model_copy(update={"presentation_policy": CLAIM_PROJECTION_POLICY})
+    advisory = _projection_advisory(
+        members=(member("generated_successor"),),
+        candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
+        settlement_base=settlement,
+        workspace_observation=observation.model_dump(mode="json"),
+    )
+
+    assert advisory is not None
+    assert advisory.unprojected_count == 1
+    assert advisory.artifact_identities == (procedure.procedure.identity.qualified,)
+    assert "reviewers will see raw JSON only" in advisory.message
+    assert (
+        _projection_advisory(
+            members=(member("invalidation"),),
+            candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
+            settlement_base=settlement,
+            workspace_observation=observation,
+        )
+        is None
+    )
+
+    projected = observation.model_copy(
+        update={
+            "projection_coverage": coverage.model_copy(
+                update={
+                    "bindings": (
+                        ProjectionCoverageBinding(
+                            artifact=procedure.procedure.identity,
+                            workspace_path="runbooks/release.md",
+                            evidence_kind="procedure_catalog",
+                        ),
+                    )
+                }
+            )
+        }
+    )
+    assert (
+        _projection_advisory(
+            members=(member("authored"),),
+            candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
+            settlement_base=settlement,
+            workspace_observation=projected,
+        )
+        is None
+    )
+
+
+def test_review_uses_projection_evidence_from_a_newer_accepted_head(tmp_path: Path) -> None:
+    instance, owner, proposed = _claim_proposal(tmp_path)
+    proposal_id = proposed.proposal.proposal.admission.proposal_id
+    access = BodyAccessContext(principal_id="owner", can_read_body=True)
+    base = instance.accepted_coordinate()
+
+    at_base = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=access,
+        workspace_observation=_review_observation(instance, coordinate=base),
+        detail=True,
+    )
+    assert at_base.projection_advisory is not None
+    assert at_base.projection_evidence is not None
+    assert at_base.projection_evidence.status == "used"
+
+    activate(instance, owner, proposed)
+    head = instance.accepted_coordinate()
+    assert head != base
+    at_head = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=access,
+        workspace_observation=_review_observation(instance, coordinate=head),
+        detail=True,
+    )
+
+    assert at_head.projection_advisory is not None
+    assert at_head.projection_evidence is not None
+    assert at_head.projection_evidence.status == "used"
+    assert at_head.projection_evidence.coordinate is not None
+    assert at_head.projection_evidence.coordinate.git_oid == head.git_oid
+    assert f"Projection evidence: used@{head.git_oid}." in render_playbill_proposal_review(at_head)
+    assert instance.accepted_coordinate() == head
+
+
+def test_review_names_projection_evidence_older_than_the_settlement_base(
+    tmp_path: Path,
+) -> None:
+    instance, owner, first = _claim_proposal(tmp_path)
+    stale = instance.accepted_coordinate()
+    activate(instance, owner, first)
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-100", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="projection-wi-100",
+        timestamp="2026-08-24T17:00:04.000000Z",
+    )
+
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=second.proposal.proposal.admission.proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        workspace_observation=_review_observation(instance, coordinate=stale),
+        detail=True,
+    )
+
+    assert review.projection_advisory is None
+    assert review.projection_evidence is not None
+    assert review.projection_evidence.status == "rejected"
+    assert review.projection_evidence.reason == "coordinate_before_settlement_base"
+    assert (
+        "Projection evidence: rejected:coordinate_before_settlement_base."
+        in render_playbill_proposal_review(review)
+    )
+
+
+@pytest.mark.parametrize(
+    ("observation", "reason"),
+    (
+        ({"tag": "not-a-review-observation"}, "observation_invalid"),
+        (
+            {"tag": "playbill-review-workspace-observation-v1"},
+            "coverage_missing",
+        ),
+    ),
+)
+def test_review_names_rejected_projection_evidence(
+    tmp_path: Path,
+    observation: dict[str, object],
+    reason: str,
+) -> None:
+    instance, _owner, proposed = _claim_proposal(tmp_path)
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposed.proposal.proposal.admission.proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        workspace_observation=observation,
+        detail=True,
+    )
+
+    assert review.projection_advisory is None
+    assert review.projection_evidence is not None
+    assert review.projection_evidence.status == "rejected"
+    assert review.projection_evidence.reason == reason
+
+
+def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.proposals.review import proposal_change_lines
+
+    def claim(value: object, *, state: str = "live", kind: str = "literal") -> dict[str, object]:
+        claim_object: dict[str, object] = {"kind": kind}
+        if kind == "subject":
+            # A SubjectClaimObject names its Subject by ``address``.
+            claim_object["address"] = {"artifact_path": f"subjects/{value}.json"}
+        elif kind == "none":
+            if value is not None:
+                claim_object["of"] = {"kind": "literal", "value": value}
+        else:
+            claim_object["value"] = value
+        return {
+            "identity": {"kind": "Claim", "name": "CLM-1"},
+            "lifecycle": {"state": state},
+            "statement": {
+                "subject": {"artifact_path": "subjects/app.service/payments.json"},
+                "predicate": "app.service.owner",
+                "object": claim_object,
+            },
+        }
+
+    def member(
+        base: dict[str, object] | None, candidate: dict[str, object] | None, **extra: object
+    ) -> SimpleNamespace:
+        values: dict[str, object] = {
+            "artifact_kind": "claim",
+            "path": "claims/x.json",
+            "disposition": "replace",
+            "closure_role": "authored",
+            "base_semantic_artifact": base,
+            "candidate_semantic_artifact": candidate,
+        }
+        values.update(extra)
+        return SimpleNamespace(**values)
+
+    review = SimpleNamespace(
+        rationale="Reassigned.",
+        members=(
+            member(None, claim("ada")),
+            member(claim("ada"), claim("grace")),
+            member(claim("grace"), claim("grace", state="retired")),
+            member(claim(True), claim(True)),
+            member(None, claim("app.library/libfoo", kind="subject")),
+            member(claim("grace"), claim(None, kind="none")),
+            member(None, claim("ada", kind="none")),
+            member(
+                None,
+                None,
+                artifact_kind="subject",
+                path="subjects/app.service/x.json",
+                disposition="add",
+                closure_role="generated_successor",
+            ),
+        ),
+    )
+    assert proposal_change_lines(review) == [  # type: ignore[arg-type]
+        "Why:",
+        "  Reassigned.",
+        "Changes (8):",
+        "  set app.service/payments owner: ada  [CLM-1]",
+        "  set app.service/payments owner: ada -> grace  [CLM-1]",
+        "  retire app.service/payments owner: grace  [CLM-1]",
+        # A settle fallback re-citing a re-read file: the value did not move.
+        "  refresh evidence app.service/payments owner: true (value unchanged)  [CLM-1]",
+        "  set app.service/payments owner: app.library/libfoo  [CLM-1]",
+        "  set app.service/payments owner: grace -> none  [CLM-1]",
+        "  set app.service/payments owner: none of ada  [CLM-1]",
+        "  add subject subjects/app.service/x.json  (generated successor)",
+    ]

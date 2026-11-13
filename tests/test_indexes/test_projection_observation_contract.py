@@ -1,0 +1,184 @@
+"""Nested projection observation succession and closed queue-vocabulary pins."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import get_args
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_core.service.discovery.next import (
+    NextReason,
+    NextRepairOperation,
+    NextSourceObservation,
+    NextWorkspaceObservation,
+)
+from tests.test_client.test_playbill_projection_observation import _CoverageClient, _observe
+from tests.test_client.test_playbill_projection_repin import _repin, _RepinClient, _workspace
+
+
+def _v4(root: Path) -> dict[str, object]:
+    _workspace(root)
+    _repin(_RepinClient(), root, claims=("CLM-first",))
+    observation, _coordinate = _observe(_CoverageClient(), root)
+    return observation["source_observations"][0]  # type: ignore[index,no-any-return]
+
+
+def test_nested_observation_refuses_v1_v2_v3_and_accepts_strict_tagged_v4(
+    tmp_path: Path,
+) -> None:
+    previous = {
+        "source_id": "corpus.runbook",
+        "observed_source_digest": "sha256:" + "a" * 64,
+    }
+    richer = _v4(tmp_path)
+    scanned = [
+        item["commitment_digest"]  # type: ignore[index]
+        for item in richer["commitment_scan_proofs"]  # type: ignore[union-attr]
+    ]
+    prior_v2 = {
+        "tag": "playbill-next-source-observation-v2",
+        "source_id": richer["source_id"],
+        "observed_source_digest": richer["observed_source_digest"],
+        "byte_length": richer["byte_length"],
+        "marker_summaries": richer["marker_summaries"],
+        "occurrences": richer["occurrences"],
+        "scanned_commitment_digests": scanned,
+        "scan_complete": True,
+        "scan_notes": richer["scan_notes"],
+        "marker_notes": richer["marker_notes"],
+    }
+    prior_v3 = {**prior_v2, "tag": "playbill-next-source-observation-v3", "document_id": "runbook"}
+    result = NextWorkspaceObservation.model_validate({"source_observations": [richer]})
+    assert isinstance(result.source_observations[0], NextSourceObservation)  # type: ignore[index]
+    assert result.source_observations[0].model_dump(mode="json") == richer  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        NextWorkspaceObservation.model_validate({"source_observations": [previous]})
+    for prior in (prior_v2, prior_v3):
+        with pytest.raises(ValidationError):
+            NextWorkspaceObservation.model_validate({"source_observations": [prior]})
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.update({"extra": "not allowed"}),
+        lambda value: value.update({"tag": "playbill-next-source-observation-v5"}),
+        lambda value: value.update({"commitment_scan_proofs": []}),
+        lambda value: value["occurrences"][0].update({"identity_digest": "sha256:" + "f" * 64}),
+        lambda value: value["occurrences"][0]["source"].update({"identity": "corpus.other"}),
+        lambda value: value["occurrences"][0]["line_overlay"].update({"end_byte": 10_000_000}),
+        lambda value: value["commitment_scan_proofs"][0]["source"].update(
+            {"identity": "corpus.other"}
+        ),
+        lambda value: value.update({"scan_notes": ["z", "a"]}),
+    ],
+)
+def test_nested_v4_refuses_unknown_fields_and_unproved_or_mismatched_occurrences(
+    tmp_path: Path, mutation: object
+) -> None:
+    candidate = _v4(tmp_path)
+    mutation(candidate)  # type: ignore[operator]
+
+    with pytest.raises(ValidationError):
+        NextSourceObservation.model_validate(candidate)
+
+
+def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants() -> None:
+    assert set(get_args(NextReason)) == {
+        "claim_conflicted",
+        "claim_uncovered",
+        "claim_stale_evidence",
+        "citation_drifted",
+        "citation_source_unobserved",
+        "evidence_expiring",
+        "floor_invalid",
+        "projection_dirty",
+        "projection_backing_stale",
+        # A watched query surfaces CANDIDATES for a block's held list; its
+        # result moving is not the block falling out of date with what it
+        # holds, so it is its own row rather than a stale backing.
+        "projection_marker_invalid",
+        "claim_dependency_stale",
+        "claim_attestation_threshold_met",
+        "claim_contradicting_evidence_available",
+        "claim_new_evidence_supporting",
+        "claim_new_evidence_unreviewed",
+        "document_modified",
+        # A catalog entry binding a workspace file that does not exist.
+        "workspace_binding_missing",
+        "unregistered_projection_block",
+        "proposal_stale",
+        # An open candidate the calling principal could approve.
+        "proposal_awaiting_approval",
+        # The calling principal's own candidate that activation is next for.
+        "proposal_awaiting_activation",
+        "mandate_expiring",
+        # An armed Line that stopped by itself, or stopped draining its own work.
+        "consumer_stalled",
+        # D8 carry (dev.decision/d8-carry-1016) disables the upgraded Line version.
+        "line_disabled_by_upgrade",
+        # An accepted Line never enabled since it was added.
+        "line_not_enabled",
+        # A Line whose latest run of a Trigger's occurrence failed.
+        "line_run_failed",
+        "evidence_unavailable",
+        # A live Claim whose every cited Capture, own words aside, has an erased body.
+        "claim_evidence_erased",
+        # A closed prediction window its own resolution journal has not answered.
+        "prediction_settleable",
+        "prediction_window_unbindable",
+        # Enabled Lines report restart coverage gaps and queued work.
+        "line_coverage_gap",
+        "line_work_pending",
+        # A live Line whose settled items matched earlier refusals.
+        "line_settled_prior_refusals",
+        # A Line's unread inbox items, one row per Line with its volume.
+        "line_inbox_unread",
+        # A workspace file an enabled or Runbook-named Line reads is not there.
+        "line_input_missing",
+        # Live Subjects of a kind no SubjectKind declares (identity D6).
+        "subject_kind_undeclared",
+        # A recorded kit add whose resume refused at the head it ran on.
+        "kit_resume_blocked",
+    }
+    assert set(get_args(NextRepairOperation)) == {
+        "cruxible.authoring.example",
+        # A repair the queue fills in full (a Line successor): submitting it is the fix.
+        "cruxible.authoring.submit",
+        "cruxible.authoring.bind",
+        "cruxible.claim.retire",
+        # The write verbs: a row that asks for a Claim stated again, or a
+        # contest resolved, names the default-profile door that does it.
+        "cruxible.set",
+        "cruxible.write",
+        "cruxible.floor.export",
+        # A row that names a change a verb performs must name the verb. Two
+        # projection rows used to answer `hand_edit` with "depublish this
+        # block", which is a served command.
+        "cruxible.block.depublish",
+        # A block whose every backing retired leaves the page by `block detach`.
+        "cruxible.block.detach",
+        "cruxible.block.repin",
+        "cruxible.block.sync",
+        "cruxible.files.propose",
+        "cruxible.proposal.readmit",
+        "cruxible.proposal.approve",
+        "cruxible.proposal.activate",
+        "cruxible.compiler.upgrade",
+        "cruxible.line.enable",
+        "cruxible.line.dispatch",
+        # The unread inbox row names the list that shows the Line's items.
+        "cruxible.inbox.list",
+        "cruxible.prediction.settle",
+        # A blocked kit resume: preview the kit add again at the head.
+        "cruxible.kit.add",
+        "hand_edit",
+        "cruxible.line.evaluate",
+        # A drifted citation on an unchanged statement: re-bind beside retire.
+        "cruxible.rebind",
+        # A read the agent runs before it judges (first-run batch alternatives).
+        "cruxible.get",
+    }
