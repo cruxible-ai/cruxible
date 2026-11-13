@@ -15,8 +15,9 @@ Transcript shape::
       receipts: results web.search.results@1 fit structural
 
 Green when: both runs succeed; after the swap the live rank Claims are the
-same (url -> rank), the derived Capture the extract read is byte-identical
-(same digest), and nothing is proposed; each run's receipts record the same
+same (url -> rank), the derived document the extract read is byte-identical
+(same content digest; the Capture envelopes differ only in the build and
+operation signature that produced it), and nothing is proposed; each run's receipts record the same
 capability pin, with ``fit: identical`` before the swap and ``structural``
 after (the wide provider's own request accepts one more optional field), and
 the operation's own signature digest differs between the two.
@@ -34,19 +35,20 @@ from tests.pilot_contract_batch.fixtures import providers
 from tests.pilot_contract_batch.harness import Scenario
 
 
-def _derived(state: Any) -> tuple[str, ...]:
+def _derived(instance: Any, state: Any) -> tuple[Any, ...]:
+    """The envelopes of the Captures the ``ranked`` call derived, in order."""
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
     (call,) = (node for node in state.nodes if node.node == "ranked")
-    return tuple(call.summary.capture_digests)
+    access = BodyAccessContext(principal_id="pilot", can_read_body=True)
+    return tuple(
+        parse_capture_envelope(instance.body_store().read(digest, access=access))
+        for digest in call.summary.capture_digests
+    )
 
 
-# Stops at ``_derived(second) == _derived(first)``: every step before it holds (both
-# Lines accepted, identical then structural; both runs succeed; same ranks; nothing
-# proposed), and the receipts' capability pins and fits hold after it. The derived
-# Captures differ because a Capture's envelope digest covers its provider invocation
-# evidence (build, operation signature, occurrence plan).
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="owner: binding (needs capture-as-field merged)"
-)
 @pytest.mark.pilot(
     "s5-swap",
     owner=surfaces.SWAP,
@@ -102,6 +104,13 @@ def test_swapping_a_fitting_provider_keeps_claims_and_records_the_fit(
     proposal = second.terminal_egress[0].proposal_id
     pilot.got(f"{second.status}; proposal: {proposal or 'none (nothing changed)'}")
     pilot.got(
+        "derived document: "
+        + ", ".join(item.commitment.digest[:19] + "..." for item in _derived(instance, first))
+        + " before, "
+        + ", ".join(item.commitment.digest[:19] + "..." for item in _derived(instance, second))
+        + " after"
+    )
+    pilot.got(
         f"receipts: results {after['results'].capability.spelling} fit {after['results'].fit}"
     )
 
@@ -117,7 +126,20 @@ def test_swapping_a_fitting_provider_keeps_claims_and_records_the_fit(
     assert second.status == "succeeded", second.terminal
     assert proposal is None
     assert search_world.ranks(instance) == ranks
-    assert _derived(second) == _derived(first)
+    # The same document from both providers: one content digest each time. The
+    # envelopes differ only in which build and operation produced it (a Capture's
+    # envelope commits to its producer), so the Capture digests differ by design.
+    derived_first, derived_second = _derived(instance, first), _derived(instance, second)
+    assert [item.commitment for item in derived_first] == [
+        item.commitment for item in derived_second
+    ]
+    for one, other in zip(derived_first, derived_second, strict=True):
+        assert one.production_evidence.provider_artifact_digest != (
+            other.production_evidence.provider_artifact_digest
+        )
+        assert one.production_evidence.operation_signature_digest != (
+            other.production_evidence.operation_signature_digest
+        )
 
     assert before["results"].capability == after["results"].capability
     assert before["results"].capability.spelling == f"{providers.RESULTS}@1"
