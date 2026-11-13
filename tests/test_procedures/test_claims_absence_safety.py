@@ -199,10 +199,7 @@ def test_unusable_present_values_never_authorize_absence(tmp_path: Path, monkeyp
     "invalid",
     (
         "transformed",
-        pytest.param(
-            "provider_records",
-            marks=pytest.mark.xfail(strict=True, reason="owner: file-read"),
-        ),
+        "provider_records",
         "item_inverse",
     ),
 )
@@ -216,7 +213,8 @@ def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
         # The root of for_each's chain is a query read, not an extract.
         raw["steps"][-1]["for_each"] = "$steps.watched.rows"
     elif invalid == "provider_records":
-        raw["steps"][-1]["for_each"] = "$steps.doc.content"
+        # The read's value is the base kit's result: its one Capture field.
+        raw["steps"][-1]["for_each"] = "$steps.doc.capture"
         expected = "claims_expect_provider_enumeration_unsupported"
     else:
         raw["steps"][-1]["claims"][0]["when_absent"] = "inverse"

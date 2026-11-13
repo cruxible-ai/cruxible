@@ -163,7 +163,7 @@ def _kind(name: str, *, grade: str = "observed") -> Any:
     kind = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=name,
-            shape="http_response" if grade == "derived" else "database_snapshot",
+            shape="http_response",
             grade=grade,
             replay="attested" if grade == "derived" else "exact",
             max_bytes=1_048_576,
@@ -394,10 +394,6 @@ def sbom_spec(*, read_rows: int = 500, shape: str = "subject") -> Any:
                 "input": {
                     "logical_source": SOURCE,
                     "relative_path": SBOM_PATH,
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 1, "relation": "sbom"},
                 },
             },
             {
@@ -595,10 +591,6 @@ def seed_spec(shape: str) -> Any:
                 "input": {
                     "logical_source": "test.seed.file",
                     "relative_path": SEED_PATH,
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 2, "relation": "seed"},
                 },
             },
             {"extract": "members", "capture": "$steps.seed.capture", "records": "members"},

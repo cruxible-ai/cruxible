@@ -14,7 +14,7 @@ from cruxible_client.contracts.procedures.authored import ReadStep
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import QueryBudgets, QueryEntry
 from cruxible_client.transport.http import CruxibleClient
-from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.core_support._light_capture_support import file_contract as capture_contract
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 # Executor-only fixtures: these tests author Procedure step kinds the template

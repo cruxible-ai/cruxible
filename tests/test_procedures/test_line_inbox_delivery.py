@@ -256,7 +256,9 @@ def test_fields_without_for_each_are_one_item(tmp_path: Path) -> None:
 
     assert state.status == "succeeded", state.terminal
     (entry,) = _entries(instance)
-    assert entry.payload == {"severity": _feed().decode()}
+    # The shaped value names the Capture the read committed (a workspace read's value).
+    (observed,) = state.source_observations
+    assert entry.payload == {"severity": observed.capture_digest}
 
 
 def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
@@ -521,7 +523,6 @@ def _accept_sdk_input(instance: PlaybillInstance, owner: Any, payload: Any) -> N
     )
 
 
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Path) -> None:
     """Sequence(..., Extract, PostInbox) lowers to the same graph a Line posts from."""
 
@@ -529,7 +530,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     from cruxible_client.authoring.sdk import Cruxible
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.shapes import contract_digest, contract_path, render_contract
-    from tests.core_support._light_capture_support import record_contract as capture_contract
+    from tests.core_support._light_capture_support import file_contract as capture_contract
     from tests.support.procedures import project
     from tests.test_procedures.test_procedure_source_runs import _source_request
 
@@ -546,7 +547,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     plan = Sequence(
         "sdk-inbox",
         input={},
-        output={"severity": "string"},
+        output={"document": f"capture<{capture_contract().identity.name}>"},
         hard_caps=ProcedureLimits(
             wall_clock=f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
             provider_calls=4,
@@ -567,7 +568,8 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
         capture=source["capture"],
         records="rows",
     )
-    project(plan, "result", fields={"severity": source.ref("content", "text")})
+    # A workspace read's value is the Capture core committed.
+    project(plan, "result", fields={"document": source["capture"]})
     plan.inbox(
         f"{row.name}@{row.version}",
         for_each=rows["records"],

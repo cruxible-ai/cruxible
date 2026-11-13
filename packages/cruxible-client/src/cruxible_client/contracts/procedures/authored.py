@@ -1391,11 +1391,15 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     field: _ref("CaptureContract", name)
                     for field, name in sorted(step.captures.items())
                 }
-                node["input"] = template(
-                    {**details.get("request_defaults", {}), **step.input}
-                    if isinstance(step.input, dict)
-                    else step.input,
+                node["input"] = template(step.input, path + ".input")
+                # An acquiring call's input is typed when the resolver names its
+                # request (core's builtin workspace reads); otherwise not yet.
+                _check_call_input(
+                    step.input,
+                    details.get("acquiring_input"),
                     path + ".input",
+                    lookup,
+                    allow_extra=False,
                 )
             else:
                 node["input"] = template(step.input, path + ".input")

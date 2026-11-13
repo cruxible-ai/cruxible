@@ -21,10 +21,6 @@ from cruxible_client.contracts.captures import (
     build_provider_external_capture_v2,
     observed_content,
 )
-from cruxible_client.contracts.provider_execution import (
-    ProviderInvocationOutputDigest,
-    provider_invocation_output_digest,
-)
 from tests.core_support.p2b4_unit1._support import provider_capture_fixture
 from tests.test_integration.p2b4_unit2.test_workspace_capture_receipt import _workspace_fixture
 
@@ -118,17 +114,9 @@ def _reread(fixture: Any, source_read: Any, output: Any) -> tuple[Any, Any]:
     reread = source_read.model_copy(
         update={"derived_request_digest": "sha256:" + hashlib.sha256(b"rerun").hexdigest()}
     )
-    structured = {
-        **output,
-        "source": {**output["source"], "commitment_digest": reread.derived_request_digest},
-    }
-    receipt = fixture.receipt.model_copy(
-        update={
-            "output": ProviderInvocationOutputDigest(
-                output_digest=provider_invocation_output_digest(structured)
-            ).model_dump(mode="json")
-        }
-    )
+    # The builtin's output names no field of its own; the read receipt differs.
+    structured = output
+    receipt = fixture.receipt
     return _build(
         replace(fixture, receipt=receipt),
         source_read_receipt=reread,

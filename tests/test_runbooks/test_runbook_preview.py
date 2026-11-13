@@ -509,7 +509,7 @@ def _described(instance: Any) -> None:
     raw["procedure"] = DESCRIBED
     raw["params"] = {
         "path": {
-            "type": 'string{max_len: 64, pattern: "^data/[a-z]+[.]json$"}',
+            "type": 'string{min_len: 1, max_len: 64, pattern: "^data/[a-z]+[.]json$"}',
             "description": DOC_HELP,
         }
     }

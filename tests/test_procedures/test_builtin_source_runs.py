@@ -1,4 +1,4 @@
-"""The built-in workspace.file runs in-process: binding, lane rules and crash closure."""
+"""The built-in workspace reads run in-process: binding, lane rules and crash closure."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
     workspace_file_builtin_provider,
-    workspace_file_operation,
+    workspace_file_operations,
 )
 from cruxible_core.providers.builtin_runtime import (
     BuiltinDispatchingInvoker,
@@ -45,7 +45,7 @@ from tests.test_procedures.test_procedure_source_runs import (
 
 
 def _accepted() -> tuple[AcceptedProvider, Any]:
-    operation = workspace_file_operation()
+    operation, _glob = workspace_file_operations()
     provider = workspace_file_builtin_provider()
     accepted = AcceptedProvider(
         path="providers/cruxible-builtin.json",
@@ -105,10 +105,8 @@ def test_a_degraded_provider_lane_still_admits_and_runs_the_built_in(tmp_path: P
         deadline=None,
     )
     assert outcome.envelope.status == "ok"
-    assert outcome.envelope.output["content"]["lines"] == ["high"]
-    # The output's bucket is the adapter's own reading of the bytes, never the
-    # context's meaningless placeholder.
-    assert outcome.envelope.output["input_bucket"] == "content_kind=text;byte_size=tiny"
+    # The builtin returns no field of its own: core commits the bytes it read.
+    assert outcome.envelope.output == {}
     assert outcome.egress.observer_backend == "core.in-process"
     assert outcome.verified_binding == binding
     # A subprocess occurrence still refuses on the degraded lane.
@@ -168,7 +166,8 @@ def test_the_built_in_honours_its_output_budget() -> None:
     with pytest.raises(ProviderLocalRuntimeRefused) as refused:
         invoker.invoke_provider(
             occurrence=occurrence,
-            context=_context(binding, _payload(b"x" * 4000), output_bytes=1000),
+            # The builtin's envelope names no output field, so even it is over 16 bytes.
+            context=_context(binding, _payload(b"x" * 4000), output_bytes=16),
             invocation_id="sha256:" + "1" * 64,
             bound=invoker.bind_provider(occurrence=occurrence),
             deadline=None,

@@ -75,16 +75,8 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
         provider_input_digest=fixture.receipt.input_digest,
         read_at=fixture.result.observed_at,
     )
-    provider_output = {
-        "input_bucket": "content_kind=text;byte_size=tiny",
-        "source": {
-            "logical_source": source_read.logical_source,
-            "commitment_digest": source_read.derived_request_digest,
-            "bytes_digest": source_read.bytes_digest,
-            "byte_length": source_read.byte_length,
-        },
-        "content": {"kind": "text", "text": "orders"},
-    }
+    # The builtin returns no field of its own: core commits the bytes it read.
+    provider_output: dict[str, object] = {}
     material = file_bytes
     result = ProviderResultToExternalCapture(
         **{
@@ -170,8 +162,9 @@ def test_workspace_capture_forbids_missing_or_mixed_read_receipt(tmp_path) -> No
             bound_generation=fixture.bound_generation,
             provider_output=output,
         )
+    # A read receipt of another attempt names other bytes than the Capture commits.
     mixed = source_read.model_copy(update={"bytes_digest": digest("other", "attempt")})
-    with pytest.raises(CaptureFormatError, match="mixes source attempts"):
+    with pytest.raises(CaptureFormatError, match="not the bytes core read"):
         build_provider_external_capture_v2(
             store=fixture.store,
             contract=fixture.contract,
@@ -183,7 +176,6 @@ def test_workspace_capture_forbids_missing_or_mixed_read_receipt(tmp_path) -> No
             source_read_receipt=mixed,
             provider_output=output,
         )
-    assert output["source"]["bytes_digest"] == source_read.bytes_digest  # type: ignore[index]
 
 
 @pytest.mark.parametrize(

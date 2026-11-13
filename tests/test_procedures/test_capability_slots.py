@@ -340,24 +340,27 @@ def test_a_workspace_read_commits_core_bytes_as_its_one_capture_field() -> None:
     from cruxible_client.contracts.procedures.capture_outputs import procedure_capture_problem
     from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
+    # A workspace.file version whose result declares a plain field, not the Capture.
     read = _workspace_read()
-    definition = _one_call(pinned_slot(read), acquires=True, field="document")
+    definition = _one_call(pinned_slot(read), acquires=True, field="capture")
 
     def problem(builtins: Any) -> Any:
         return procedure_capture_problem(
             definition,
-            contract_lookup=lambda ref: None,
+            contract_lookup=lambda ref: VALUE if ref.name == VALUE.name else None,
             capture_lookup=lambda name: object(),  # type: ignore[arg-type,return-value]
             capability_lookup=capability_lookup(read),
             builtin_capabilities=builtins,
         )
 
-    # Recognised by name, the read's one capture field is core's: "document" is refused.
+    # Recognised by name, the capability must ask for what the builtin reads and
+    # return what it returns; this one's request (test.value) is checked first.
     found = problem(BUILTIN_CAPABILITY_NAMES)
-    assert found is not None and found[0] == "cruxible.procedure.captures_mismatch"
-    assert "workspace.file" in found[1]
+    assert found is not None and found[0] == "cruxible.procedure.workspace_request_field_unread"
+    assert "workspace.file@1" in found[1] and "core's builtin" in found[1]
     # The same slot not recognised is an ordinary call; nothing about core's field.
-    assert problem(()) is None
+    ordinary = problem(())
+    assert ordinary is not None and "core's builtin" not in ordinary[1]
 
 
 def test_an_acquiring_call_whose_result_declares_no_capture_field_is_refused() -> None:

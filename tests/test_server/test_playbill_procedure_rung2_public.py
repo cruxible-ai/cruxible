@@ -43,10 +43,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
-from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_OPERATION,
-    WorkspaceFileSourceRequestV2,
-)
+from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_OPERATION
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -58,8 +55,8 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from tests.core_support._light_capture_support import file_contract as capture_contract
 from tests.core_support._light_capture_support import procedure_contract
-from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
 from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.procedures import (
@@ -94,7 +91,37 @@ POLICY_NAME = "osv-advisory-reads"
 LINE_NAME = "osv-advisory-hourly"
 MANDATE_NAME = "osv-advisory-mandate"
 RELATIVE_PATH = "data/osv-severity.txt"
-ADVISORY = b"high"
+#: The advisory document: the Procedure extracts its severity through the kind's
+#: ``document`` record set (a workspace read's value is the Capture core committed).
+ADVISORY = b'{"severity":"high"}'
+DOCUMENT_ALIAS = "document"
+#: The row a whole-document read types: its severity.
+DOCUMENT_ROW = {
+    "name": "test.rung2-advisory-document",
+    "version": 1,
+    "description": "One advisory document: its severity.",
+    "fields": {"severity": {"type": {"kind": "string"}}},
+}
+
+
+def _document_row() -> Any:
+    from cruxible_client.contracts.shapes import validate_contract
+
+    return validate_contract(DOCUMENT_ROW)
+
+
+def _document_kind() -> Any:
+    """The read's kind, declaring the whole document as one record set."""
+
+    from cruxible_client.contracts.shapes import contract_digest
+    from tests.support.layouts import record_set, with_layout
+
+    row = _document_row()
+    pinned = {"name": row.name, "version": row.version, "digest": contract_digest(row).tagged}
+    return with_layout(
+        capture_contract(),
+        {"document": record_set(at="/", row=pinned, fields={"severity": {"at": "severity"}})},
+    )
 
 
 @pytest.fixture
@@ -208,15 +235,11 @@ def _procedure_definition(
     input_contract, output_contract = _contracts()
     contract_in = boundary_pin("contract-in", input_contract)
     contract_out = boundary_pin("contract-out", output_contract)
-    request = WorkspaceFileSourceRequestV2(
-        logical_source="commerce.production.orders",
-        relative_path=RELATIVE_PATH,
-        coordinate_type="database-snapshot-v1",
-        coordinate={"lsn": "workspace"},
-        selector_type="relation-primary-key-v1",
-        selector={"id": 7, "relation": "orders"},
-        replayability="exact",
-    )
+    from tests.support.layouts import thin_node
+
+    # The authored request: workspace.file@1's request, nothing else.
+    request = {"logical_source": "commerce.production.orders", "relative_path": RELATIVE_PATH}
+    severity = f"$steps.{DOCUMENT_ALIAS}.rows.0.severity"
     return procedure_definition(
         name=PROCEDURE_NAME,
         description="Read the advisory document and propose its severity as a Claim.",
@@ -229,21 +252,29 @@ def _procedure_definition(
                 node_id="read",
                 captures={"capture": named(contract_pin)},
                 slot="read",
-                input=request.model_dump(mode="json"),
+                input=request,
                 as_="advisory",
+                next="document_read",
+            ),
+            thin_node(
+                node_id="document_read",
+                capture="$steps.advisory.capture",
+                records="document",
+                as_=DOCUMENT_ALIAS,
                 next="shape",
+                row=_document_row(),
             ),
             ProjectNode(
                 node_id="shape",
                 fields={
-                    "severity": "$steps.advisory.content.text",
+                    "severity": severity,
                     **(
                         {
                             "rows": [
                                 {
                                     "record": "/",
                                     "key": {},
-                                    "fields": {"observed": "$steps.advisory.content.text"},
+                                    "fields": {"observed": severity},
                                 }
                             ]
                         }
@@ -395,7 +426,6 @@ def _claim_proof(
 
 
 @pytest.mark.parametrize("terminal_kind", ["claims", "emit_capture"])
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_the_rung2_loop_runs_over_public_surfaces_only(
     installed_host: tuple[TestClient, str, Path, Path],
     terminal_kind: str,
@@ -415,7 +445,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert any(item["name"] == WORKSPACE_FILE_OPERATION for item in operations)
 
     # 2. Author definitions through public surfaces, including the typed SDK for capture.
-    contract = capture_contract()
+    contract = _document_kind()
     contract_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
@@ -439,6 +469,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             "tag": "playbill-capture-contract-authoring-payload-v1",
             "capture_contract": contract.model_dump(mode="json"),
         },
+        {"tag": "cruxible-contract-authoring-payload-v1", **DOCUMENT_ROW},
         {
             "tag": "playbill-claim-type-authoring-payload-v1",
             "claim_type": _claim_type(
@@ -583,7 +614,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         # It commits the workspace file's exact bytes.
         source = pb.capture(state.source_observations[0].capture_digest)
         assert source.result.envelope.producer.kind == "Provider"
-        assert source.content == b"high"
+        assert source.content == ADVISORY
         claim = pb.claim(
             subject=f"{SUBJECT_KIND}/{SUBJECT_ID}",
             predicate=PREDICATE,

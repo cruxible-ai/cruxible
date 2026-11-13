@@ -967,35 +967,39 @@ def test_install_by_name_from_an_index_uses_the_embedded_lock(
 
 #: One workspace.file request: the bytes the daemon read, as the operation takes them.
 _WORKSPACE_BYTES = b"high\nlow\n"
+_WORKSPACE_KIND = "test.readme"
+_WORKSPACE_PATH = "docs/readme.txt"
 
 
-def _workspace_request() -> dict[str, object]:
-    import hashlib
+def _workspace_reader(instance_id, root):  # type: ignore[no-untyped-def]
+    """The daemon-local reader over ``root``, the one workspace the run may read."""
 
-    return {
-        "logical_source": "docs.readme",
-        "commitment_digest": "sha256:" + "c0" * 32,
-        "content_encoding": "base64",
-        "bytes": base64.b64encode(_WORKSPACE_BYTES).decode("ascii"),
-        "byte_length": len(_WORKSPACE_BYTES),
-        "bytes_digest": "sha256:" + hashlib.sha256(_WORKSPACE_BYTES).hexdigest(),
-    }
+    from cruxible_core.documents.workspace_file import WorkspaceFileReader
+
+    instance = get_playbill_manager().get(instance_id)
+    return WorkspaceFileReader(
+        instance_id=instance.descriptor.instance_id,
+        operating_profile="local",
+        attached_roots=(root,),
+        managed_roots=(instance.root,),
+    )
 
 
 def _author_workspace_line(http, instance_id, reviewer, *, build, name):
-    """A Procedure calling one workspace.file slot, and a Line binding it to ``build``."""
+    """A Procedure reading one file through a workspace.file slot, and a Line binding it."""
 
-    from tests.support.capabilities import (
-        WORKSPACE_FILE_SPEC,
-        head_tree,
-        missing_capability_files,
-    )
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+    from tests.core_support._light_capture_support import file_contract
 
     line = f"test.{name}-line"
-    instance = get_playbill_manager().get(instance_id)
-    members = missing_capability_files(head_tree(instance), WORKSPACE_FILE_SPEC)
-    if members:
-        _accept(http, instance_id, reviewer, members, name="workspace-file-capability")
+    kind = file_contract(name=_WORKSPACE_KIND, decoding=None)
+    _accept(
+        http,
+        instance_id,
+        reviewer,
+        {capture_contract_path(_WORKSPACE_KIND): render_capture_contract(kind)},
+        name="workspace-kind",
+    )
     _author_line(
         http,
         instance_id,
@@ -1003,14 +1007,20 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
         spec=procedure_spec_data(
             procedure=f"test.{name}",
             input={},
-            output={"lines": "int"},
+            output={"document": f"capture<{_WORKSPACE_KIND}>"},
             slots={"read": {"capability": "workspace.file@1"}},
             steps=[
-                CallStep(call="structured", slot="read", input=_workspace_request()),
-                ProjectStep(project="out", fields={"lines": "$structured.content.line_count"}),
+                CallStep(
+                    call="structured",
+                    slot="read",
+                    captures={"capture": _WORKSPACE_KIND},
+                    # The authored request: workspace.file@1's request, nothing else.
+                    input={"logical_source": "docs.readme", "relative_path": _WORKSPACE_PATH},
+                ),
+                ProjectStep(project="out", fields={"document": "$structured.capture"}),
             ],
             returns="out",
-            hard_caps=procedure_limits(provider_calls=1),
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
         ),
         line=line,
         bindings={"read": f"{build}#workspace.file"},
@@ -1020,7 +1030,6 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
     return line
 
 
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_the_built_in_reads_a_workspace_file_and_an_install_beside_it_moves_no_seed(
     installer_http, tmp_path, provider_checkout
 ):
@@ -1062,10 +1071,20 @@ def test_the_built_in_reads_a_workspace_file_and_an_install_beside_it_moves_no_s
     line_path = f"lines/{builtin_line}.json"
     line_bytes = accepted_tree()[line_path]
 
+    root = tmp_path / "workspace"
+    (root / "docs").mkdir(parents=True)
+    (root / _WORKSPACE_PATH).write_bytes(_WORKSPACE_BYTES)
+
     def run():
-        state = _line_state(instance_id, builtin_line)
+        state = _line_state(
+            instance_id, builtin_line, workspace_file_reader=_workspace_reader(instance_id, root)
+        )
         assert state.status == "succeeded", state.terminal
-        assert state.result == {"lines": 2}
+        (observed,) = state.source_observations
+        assert observed.source_read_receipt is not None
+        assert observed.source_read_receipt.byte_length == len(_WORKSPACE_BYTES)
+        # The run's value names the one Capture the builtin read.
+        assert state.result == {"document": observed.capture_digest}
         (receipt,) = _invocation_receipts(instance, state.run_id)
         assert receipt.operation == "workspace.file"
         assert receipt.provider_artifact_digest == provider_digest(builtin).tagged

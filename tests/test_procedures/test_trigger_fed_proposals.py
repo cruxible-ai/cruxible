@@ -43,7 +43,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
 )
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.core_support._light_capture_support import file_contract as capture_contract
 from tests.support.lines import line_trigger, trigger_members
 from tests.support.procedures import boundary_contract, procedure_members
 from tests.test_procedures import test_procedure_source_runs as fixtures

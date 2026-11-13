@@ -10,7 +10,6 @@ from cruxible_client.contracts.capabilities import (
     capability_pin,
     tree_capability_resolver,
 )
-from cruxible_client.contracts.captures import capture_components
 from cruxible_client.contracts.procedures.authored import (
     CallStep,
     ProcedureSpec,
@@ -20,6 +19,10 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
+from cruxible_client.contracts.workspace_file import (
+    workspace_read_operation,
+    workspace_read_problem,
+)
 from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 from cruxible_core.indexes.evaluated_state import EvaluationRows
 
@@ -36,8 +39,11 @@ def resolve_procedure_spec(
     A Procedure names no provider: a slot names one capability version, pinned
     here to its exact digest in ``tree`` (the base plus this change set), and a
     call step is typed against that capability's request and result Contracts;
-    a Line binds the slot. A step outside the Procedure template is refused
-    first, for every Procedure (D-R37 h1).
+    a Line binds the slot. A call on a capability core's builtin serves
+    (``workspace.file``, ``workspace.files``) is typed the same way; its request
+    may declare only fields the builtin reads, and its Capture lands only under
+    a kind core can derive the read's source from. A step outside the Procedure
+    template is refused first, for every Procedure (D-R37 h1).
     """
     refuse_closed_steps(spec)
     with instance.bind_accepted_projection(base) as projection:
@@ -155,7 +161,7 @@ def resolve_procedure_spec(
             )
             reads_list = False
             slot = spec.slots.get(call.slot)
-            if slot is not None and slot.capability.name not in BUILTIN_CAPABILITY_NAMES:
+            if slot is not None:
                 out = contract(slot_capability(call.slot, slot).out, path)
                 reads_list = field in {name for name, _kind, _cap in capture_list_fields(out)}
             node = LayoutExtractNode.model_validate(
@@ -249,31 +255,30 @@ def resolve_procedure_spec(
             capture = captures[0] if len(captures) == 1 else None
             slot = spec.slots[step.slot]
             capability = slot_capability(step.slot, slot)
-            input_view: Contract | None = contract(capability.in_, authored_path)
+            input_view = contract(capability.in_, authored_path)
             output_view = contract(capability.out, authored_path)
-            request_defaults: dict[str, Any] = {}
             output_fields: Any = output_view.fields
-            output_contract: Any = dict(output_view.fields)
-            # Provisional builtin recognition: by capability name. Glob reads keep
-            # today's request handling until the file-read slice moves them.
-            workspace_source = acquiring and slot.capability.name in BUILTIN_CAPABILITY_NAMES
-            from cruxible_client.contracts.procedures.capture_outputs import CAPTURE_FIELD
-            from cruxible_client.contracts.shapes import (
-                ANY_CAPTURE_KIND,
-                CaptureType,
-                ContractField,
+            builtin = (
+                workspace_read_operation(slot.capability.name)
+                if slot.capability.name in BUILTIN_CAPABILITY_NAMES
+                else None
             )
-            from cruxible_client.contracts.source_references import HTTP_RESPONSE_COORDINATE_TYPE
-
-            # The workspace read's Capture is typed by the kind it is taken
-            # under, so it flows into a derive's capture<K> or capture<*> input.
-            wire_capture = ContractField(
-                type=CaptureType(
-                    capture_kind=ANY_CAPTURE_KIND if capture is None else capture.identity.name
+            if builtin is not None:
+                _check_workspace_read(
+                    builtin,
+                    capability,
+                    input_view,
+                    output_view,
+                    capture,
+                    path=authored_path,
+                    captures=step.captures,
                 )
-            )
-            if acquiring and not workspace_source:
-                from cruxible_client.contracts.shapes import ListType
+            if acquiring:
+                from cruxible_client.contracts.shapes import (
+                    ANY_CAPTURE_KIND,
+                    CaptureType,
+                    ListType,
+                )
 
                 # A capture<*> field, or a list<capture<*>>'s members, is typed by
                 # the kind the call's captures map binds (D-R37 a1). A Capture is
@@ -306,39 +311,14 @@ def resolve_procedure_spec(
                             }
                         )
                 output_fields = retyped
-            if workspace_source:
-                # The read's exact bytes, committed by core beside its result.
-                output_fields = {**output_fields, CAPTURE_FIELD: wire_capture}
-                output_contract = None
-            if workspace_source and capture is not None:
-                components = capture_components(capture)
-                coordinates = components.coordinate_schema_pins
-                selectors = components.selector_schema_pins
-                if len(coordinates) == len(selectors) == 1:
-                    coordinate_type, selector_type = (
-                        coordinates[0].target.name,
-                        selectors[0].target.name,
-                    )
-                    request_defaults = {
-                        "tag": "playbill-workspace-file-source-request-v2",
-                        "coordinate_type": coordinate_type,
-                        "selector_type": selector_type,
-                        "replayability": "exact"
-                        if getattr(capture, "replay", "exact") == "exact"
-                        else "attested_only",
-                    }
-                    if coordinate_type == HTTP_RESPONSE_COORDINATE_TYPE:
-                        request_defaults["coordinate"] = {"revision": "working"}
-                    if selector_type == "whole-response-v1":
-                        request_defaults["selector"] = {"whole": True}
-                # The daemon reads the workspace; the request is not the slot input.
-                input_view = None
             return {
-                "request_defaults": request_defaults,
-                "input": None if input_view is None else input_view.fields,
+                "input": input_view.fields,
+                # A builtin read's request is typed like any call's; a provider's
+                # acquiring call is not typed here yet.
+                "acquiring_input": input_view.fields if builtin is not None else None,
                 "input_allow_extra": False,
                 "output": output_fields,
-                "output_contract": output_contract,
+                "output_contract": dict(output_fields),
             }
 
         def maybe_source_identity(identity: Any) -> Any:
@@ -378,6 +358,48 @@ def resolve_procedure_spec(
                 f"Procedure {spec.procedure}: {exc}",
             ) from exc
         return lowered
+
+
+def _check_workspace_read(
+    builtin: str,
+    capability: Capability,
+    request: Contract,
+    result: Contract,
+    capture: Any,
+    *,
+    path: str,
+    captures: Mapping[str, str],
+) -> None:
+    """Refuse a call core's builtin could not serve as authored (section 7.4).
+
+    The same check the Procedure acceptance law makes
+    (:func:`workspace_read_problem`): a request field the builtin does not
+    read, a result field it does not return, or a kind core cannot derive the
+    read's coordinate and selector from, each named.
+    """
+
+    problem = workspace_read_problem(
+        builtin,  # type: ignore[arg-type]
+        capability=capability.ref.spelling,
+        request=request,
+        result=result,
+        capture_kind=capture,
+        capture_field=next(iter(captures), None) if len(captures) == 1 else None,
+    )
+    if problem is None:
+        return
+    repairs = {
+        "workspace_request_field_unread": "Remove the field from the request Contract in a new "
+        f"version of {capability.name}, or pin a version whose request declares only fields "
+        "the builtin reads.",
+        "workspace_result_field_unserved": "Declare exactly the result field the builtin "
+        f"returns in a new version of {capability.name}, or pin a version that does.",
+        "workspace_read_kind_unsupported": "Land the read under a CaptureKind with one "
+        "coordinate and one selector schema (an http_response kind).",
+    }
+    raise ProcedureSpecError(
+        problem.code, f"{path}.{problem.element}", problem.message, repair=repairs[problem.code]
+    )
 
 
 def _claims_refusal_path(spec: Any, refusal: Exception) -> str:

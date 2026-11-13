@@ -27108,7 +27108,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "What the daemon executed for one authored v2 request: the root it resolved.\n\n``workspace`` is the logical name of the root the daemon read under (the\nauthored name, or the one it defaulted to), and ``workspace_binding_digest``\nthat root's binding to this instance. This, not the authored request, is the\nderived Source request a read receipt names, so provenance is unchanged: a\nmoved instance records a different binding.",
+        "description": "What the daemon executed for one file read: the root it resolved.\n\n``workspace`` is the logical name of the root the daemon read under (the\nauthored name, or the one it defaulted to), and ``workspace_binding_digest``\nthat root's binding to this instance. This, not the authored request, is the\nderived Source request a read receipt names, so provenance is unchanged: a\nmoved instance records a different binding.",
         "properties": {
           "coordinate": {
             "title": "Coordinate"
@@ -107838,20 +107838,6 @@
             "type": "string"
           }
         },
-        "tag": {
-          "default": "playbill-workspace-file-source-request-v2",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-workspace-file-source-request-v2",
-            "default": "playbill-workspace-file-source-request-v2",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
         "workspace": {
           "default": null,
           "default_json_serializable": true,
@@ -107875,7 +107861,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "The authored ``workspace.file`` Source request: intent only, no transport.\n\n``workspace`` names an authorized root logically -- the last component of\nits path -- or is omitted: the instance's attached workspace, else its only\nauthorized root. The daemon resolves the root and records its binding\ndigest on the executed request, the read receipt and the Capture; an author\nnever supplies it.",
+        "description": "One file read as core performs it, before its workspace root is resolved.\n\nBuilt by core from the authored :class:`WorkspaceFileRequest` and the\n:class:`WorkspaceReadShape` of the kind the read lands under; never authored\nand never stored. The daemon resolves the root and records its binding\ndigest on the executed request, the read receipt and the Capture.",
         "properties": {
           "coordinate": {
             "title": "Coordinate"
@@ -107906,12 +107892,6 @@
           },
           "selector_type": {
             "title": "Selector Type",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-workspace-file-source-request-v2",
-            "default": "playbill-workspace-file-source-request-v2",
-            "title": "Tag",
             "type": "string"
           },
           "workspace": {

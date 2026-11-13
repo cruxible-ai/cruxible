@@ -33,9 +33,6 @@ from cruxible_client.contracts.uploads import (
     CaptureUploadCompleteRequest,
     CaptureUploadOpenRequest,
 )
-from cruxible_client.contracts.workspace_file import (
-    WorkspaceFileSourceRequestV2,
-)
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
@@ -45,7 +42,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
-from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.core_support._light_capture_support import file_contract as capture_contract
 from tests.support.procedures import (
     named,
     procedure_definition,
@@ -531,8 +528,13 @@ def _contracts() -> tuple[Any, Any]:
     from tests.support.procedures import boundary_contract
 
     return (
-        boundary_contract(f"{PROCEDURE}.input", {"relative_path": "string"}),
-        boundary_contract(f"{PROCEDURE}.output", {"severity": "string"}),
+        # Typed to fit workspace.file@1's request, which the read is typed against.
+        boundary_contract(
+            f"{PROCEDURE}.input", {"relative_path": "string{min_len: 1, max_len: 1024}"}
+        ),
+        boundary_contract(
+            f"{PROCEDURE}.output", {"document": f"capture<{capture_contract().identity.name}>"}
+        ),
     )
 
 
@@ -544,19 +546,15 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
 
         return contract_pin(role, contract)
 
-    request = WorkspaceFileSourceRequestV2(
-        logical_source="commerce.production.orders",
-        relative_path="placeholder",
-        coordinate_type="database-snapshot-v1",
-        coordinate={"lsn": "workspace"},
-        selector_type="relation-primary-key-v1",
-        selector={"id": 7, "relation": "orders"},
-        replayability="exact",
-    ).model_dump(mode="json")
-    request["relative_path"] = "$input.relative_path"
+    # The authored request: workspace.file@1's request, the path from the input
+    # the daemon sets to the staged upload.
+    request = {
+        "logical_source": "commerce.production.orders",
+        "relative_path": "$input.relative_path",
+    }
     return procedure_definition(
         name=PROCEDURE,
-        description="Read an uploaded advisory and return its severity.",
+        description="Read an uploaded advisory and return its Capture.",
         contract_in=named(pin("contract-in", input_contract)),
         contract_out=named(pin("contract-out", output_contract)),
         # Authoring pins it to the version the instance holds.
@@ -572,7 +570,7 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
             ),
             ProjectNode(
                 node_id="shape",
-                fields={"severity": "$steps.advisory.content.text"},
+                fields={"document": "$steps.advisory.capture"},
                 as_="result",
             ),
         ),
@@ -708,7 +706,6 @@ def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_an_upload_lands_as_a_capture_through_the_acquire_procedure(
     upload_host: tuple[CruxibleClient, str, Path],
 ) -> None:
@@ -738,9 +735,10 @@ def test_an_upload_lands_as_a_capture_through_the_acquire_procedure(
     )
     run = completed.run
     assert run.status == "succeeded", run.model_dump_json(indent=2)
-    assert run.result == {"severity": "high"}
     (observation,) = run.source_observations
     assert observation.capture_digest is not None
+    # The run's value names the one Capture the upload landed as.
+    assert run.result == {"document": observation.capture_digest}
     assert observation.source_read_receipt is not None
     assert observation.source_read_receipt.relative_path == "advisory.txt"
     assert observation.source_read_receipt.bytes_digest == _sha(ADVISORY)
@@ -755,7 +753,10 @@ def test_an_upload_lands_as_a_capture_through_the_acquire_procedure(
         instance_id, b"low", filename="second.txt", procedure=PROCEDURE
     )
     assert again.run.status == "succeeded"
-    assert again.run.result == {"severity": "low"}
+    (second,) = again.run.source_observations
+    assert second.source_read_receipt is not None
+    assert second.source_read_receipt.bytes_digest == _sha(b"low")
+    assert again.run.result == {"document": second.capture_digest}
 
 
 def test_a_part_travels_as_raw_octets_under_the_edge_cap(
