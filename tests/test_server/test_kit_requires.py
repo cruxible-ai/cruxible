@@ -338,3 +338,197 @@ def test_the_automation_template_is_checked_beside_the_required_kits(tmp_path: P
     ).bundle
     assert bundle.manifest.requires == (KitRequirement(kit_id="base", min_version="1.0.0"),)
     assert bundle.manifest.automation_template == "automation.json"
+
+
+# -- F-001: requirements are rechecked when a delayed kit change lands ---------------------
+
+
+def _independent_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A consumer instance under independent approval, with base 1.0.0 approved."""
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from tests.test_server.test_playbill_kits import _fresh_open_worlds
+
+    worlds = _fresh_open_worlds(tmp_path / "worlds", monkeypatch, independent=True)
+    _publisher, world = next(worlds)
+    consumer = get_playbill_manager().get(world.instance_id)
+    base = _add_as_operator(consumer, _base())
+    assert base.status == "proposed"
+    world.approve(base.proposal_id)
+    return worlds, world, consumer
+
+
+def _add_as_operator(instance: PlaybillInstance, bundle: KitBundle):
+    return service_add_kit(
+        instance, KitAddRequest(bundle=bundle, dry_run=False), actor_id="operator", timestamp=STAMP
+    )
+
+
+def _remove_as_operator(instance: PlaybillInstance, kit_id: str):
+    return service_remove_kit(
+        instance,
+        KitRemoveRequest(kit_id=kit_id, dry_run=False),
+        actor_id="operator",
+        timestamp=STAMP,
+    )
+
+
+def _approval(world, proposal_id: str):
+    """The reviewer's approval of ``proposal_id``, as the HTTP surface answers it."""
+
+    from tests.test_server.test_playbill_kits import ApprovalStatement, LocalEd25519ApprovalSigner
+
+    path = f"/api/v1/{world.instance_id}/proposals/{proposal_id}"
+    challenge = world.http.post(f"{path}/approval-challenge", json={"signer_id": "reviewer"})
+    assert challenge.status_code == 200, challenge.text
+    body = challenge.json()
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id="reviewer",
+        private_key_path=world.reviewer_key,
+        expected_public_key=body["signer_principal"]["public_key"],
+        forbidden_roots=(),
+    )
+    attestation = signer.sign(ApprovalStatement.model_validate(body["statement"]))
+    return world.http.post(
+        f"{path}/approvals", json={"attestation": attestation.model_dump(mode="json")}
+    )
+
+
+def test_a_pending_dependent_is_refused_at_approval_once_its_required_kit_is_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dependent: KitBundle
+) -> None:
+    worlds, world, consumer = _independent_consumer(tmp_path, monkeypatch)
+    try:
+        pending = _add_as_operator(consumer, dependent)
+        assert pending.status == "proposed"
+        removal = _remove_as_operator(consumer, "base")
+        assert removal.status == "proposed"
+        world.approve(removal.proposal_id)
+
+        approved = _approval(world, pending.proposal_id)
+        assert approved.status_code == 400, approved.text
+        assert "cruxible.kit.requires_missing" in approved.text
+        assert "Kit acme 0.1.0 requires kit base 1.0.0 or later; this instance holds none." in (
+            approved.text
+        )
+        assert service_kit_status(consumer).kits == ()
+    finally:
+        for _ in worlds:
+            pass
+
+
+def test_a_pending_removal_is_refused_at_approval_once_a_dependent_was_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dependent: KitBundle
+) -> None:
+    worlds, world, consumer = _independent_consumer(tmp_path, monkeypatch)
+    try:
+        removal = _remove_as_operator(consumer, "base")
+        assert removal.status == "proposed"
+        added = _add_as_operator(consumer, dependent)
+        assert added.status == "proposed"
+        world.approve(added.proposal_id)
+
+        approved = _approval(world, removal.proposal_id)
+        assert approved.status_code == 400, approved.text
+        assert "cruxible.kit.remove_required" in approved.text
+        assert "Kit base cannot be removed: kit acme requires it." in approved.text
+        assert {kit.kit_id for kit in service_kit_status(consumer).kits} == {"base", "acme"}
+    finally:
+        for _ in worlds:
+            pass
+
+
+def test_the_activation_itself_rechecks_a_recompiled_dependent(
+    tmp_path: Path, dependent: KitBundle
+) -> None:
+    """The last gate, for a candidate that reaches activation at a head without base."""
+
+    from cruxible_core.service.kits import refuse_unmet_kit_requires
+
+    consumer = _instance(tmp_path / "consumer", _base(), dependent)
+    tree = consumer.tree_at(consumer.accepted_coordinate().git_oid)
+    assert _remove(consumer, "acme").status == "accepted"
+    assert _remove(consumer, "base").status == "accepted"
+    after = {
+        **consumer.tree_at(consumer.accepted_coordinate().git_oid),
+        "documents/kit-acme.json": tree["documents/kit-acme.json"],
+    }
+    with pytest.raises(RequestRefusedError) as refused:
+        refuse_unmet_kit_requires(consumer, ("documents/kit-acme.json",), after)
+    assert refused.value.error_code == "cruxible.kit.requires_missing"
+    # A change that writes no kit receipt is not read at all.
+    refuse_unmet_kit_requires(consumer, ("contracts/acme.hit-row/v1.json",), after)
+
+
+# -- F-002: a key type naming a required kit's SubjectKind -----------------------------------
+
+ITEM = "web.item"
+
+
+def _item_kind() -> dict[str, bytes]:
+    """SubjectKind web.item, keyed by its ClaimType web.item.slug."""
+
+    key = _key_type(f"{ITEM}.slug", ITEM)
+    return {
+        claim_type_path(key.predicate): render_claim_type(key),
+        subject_kind_path(ITEM): render_subject_kind(keyed_subject_kind(ITEM, (f"{ITEM}.slug",))),
+    }
+
+
+def _keyed_base(*, with_kind: bool = True) -> KitBundle:
+    tree = _contract_files(HIT, OTHER)
+    if with_kind:
+        tree.update(_item_kind())
+    return build_kit(tree, KitBuildRequest(kit_id="base", version="1.0.0", owns=("web.",)))
+
+
+KEYED = Contract.model_validate(
+    {
+        "name": "acme.keyed-row",
+        "version": 1,
+        "fields": {"id": f"key<{ITEM}>", "slugs": f"list<key_part<{ITEM}:slug>>{{4}}"},
+    }
+)
+
+
+def test_a_key_type_on_a_required_kind_builds_previews_and_commits(tmp_path: Path) -> None:
+    publisher = _instance(tmp_path / "publisher", _keyed_base())
+    accept_tree(publisher, _contract_files(KEYED), name="keyed")
+    bundle = _build(publisher)
+    assert bundle.manifest.requires == (KitRequirement(kit_id="base", min_version="1.0.0"),)
+    assert sorted(bundle.contents()) == [contract_path("acme.keyed-row", 1)]
+
+    consumer = _instance(tmp_path / "consumer", _keyed_base())
+    before = consumer.accepted_coordinate().git_oid
+    preview = service_add_kit(
+        consumer, KitAddRequest(bundle=bundle), actor_id="owner", timestamp=STAMP
+    )
+    assert preview.status == "would_propose", preview
+    assert consumer.accepted_coordinate().git_oid == before
+    assert _add(consumer, bundle).status == "accepted"
+
+    kindless = _instance(tmp_path / "kindless", _keyed_base(with_kind=False))
+    for options in ({}, {"dry_run": False}):
+        with pytest.raises(RequestRefusedError) as refused:
+            service_add_kit(
+                kindless,
+                KitAddRequest(bundle=bundle, **options),  # type: ignore[arg-type]
+                actor_id="owner",
+                timestamp=STAMP,
+            )
+        assert refused.value.error_code == "cruxible.kit.requires_unresolved"
+        assert f"SubjectKind:{ITEM} from kit base" in str(refused.value)
+
+
+def test_a_key_type_on_a_kind_the_required_kit_does_not_hold_refuses_the_build(
+    tmp_path: Path,
+) -> None:
+    # Base here was installed without the kind; the kind was authored locally
+    # under base's prefix, so a consumer of base would not hold it.
+    publisher = _instance(tmp_path / "publisher", _keyed_base(with_kind=False))
+    accept_tree(publisher, _item_kind(), name="local-kind")
+    accept_tree(publisher, _contract_files(KEYED), name="keyed")
+    with pytest.raises(RequestRefusedError) as refused:
+        _build(publisher)
+    assert refused.value.error_code == "cruxible.kit.requires_unresolved"
+    assert f"SubjectKind:{ITEM}, under web., which kit base owns" in str(refused.value)

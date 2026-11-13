@@ -109,6 +109,8 @@ from cruxible_client.contracts.shapes import (
     contract_path,
     contract_path_for_identity,
     evaluate_contract_law,
+    key_type_problem,
+    key_types,
 )
 from cruxible_core.claims.artifact_references import (
     immutable_capability_error,
@@ -166,6 +168,17 @@ _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
 #: Definitions pinned at an exact digest whatever the compiler mode: immutable
 #: versions. A pin to any other definition a required kit owns resolves by name.
 _EXACT_KINDS = frozenset({"Contract", CAPABILITY_IDENTITY_KIND})
+#: Left-out definitions whose bytes a release's own laws read: nested Contract
+#: and Capability versions, and the SubjectKinds a ``key<K>`` field names.
+_HELD_FAMILIES = ("capabilities/", "contracts/", "subject-kinds/")
+
+
+def _contract_key_kinds(payload: Mapping[str, Any]) -> Iterator[tuple[str, Any]]:
+    """Every (SubjectKind name, key type) a Contract's ``key<K>``/``key_part<K:p>`` fields name."""
+
+    for declared in Contract.model_validate(payload).fields.values():
+        for found in key_types(declared.type):
+            yield found.subject_kind, found
 
 
 @functools.cache
@@ -303,8 +316,9 @@ def _dependency_order(
 ) -> Iterator[tuple[str, tuple[str, ...]]]:
     """Paths with the paths they pin, dependencies first; a cycle refuses.
 
-    ``outside`` holds the Contracts a release pins but leaves out because a kit
-    it requires owns them, so their nesting is checked against the bytes held.
+    ``outside`` holds the definitions a release names but leaves out because a
+    kit it requires owns them (nested Contracts, the SubjectKinds of key types),
+    so the Contract law reads the bytes held.
     """
 
     by_digest = {state.artifact_digest: path for path, state in states.items()}
@@ -669,6 +683,10 @@ def _named_definitions(
         yield pin.target, pin.artifact_digest if isinstance(pin, ArtifactPin) else None
     for kind, name in referenced_identities(path, payload):
         yield ArtifactIdentity(kind=kind, name=name), None
+    if path.startswith("contracts/"):
+        # A key type reads its kind's identity rules: a name, resolved live.
+        for name, _found in _contract_key_kinds(payload):
+            yield ArtifactIdentity(kind="SubjectKind", name=name), None
 
 
 def _required_definitions(
@@ -793,7 +811,7 @@ def build_kit(
     }
     remap: dict[str, str] = {}
     built: dict[str, bytes] = {}
-    held = {path: tree[path] for path in outside.values() if path.startswith("contracts/")}
+    held = {path: tree[path] for path in outside.values() if path.startswith(_HELD_FAMILIES)}
     for path, pinned in _dependency_order(states, payloads, within=roots, outside=held):
         for dependency in pinned:
             if not kit_artifact_path_allowed(dependency):
@@ -1059,7 +1077,7 @@ def _diff_release(
     differently takes the release's version as a successor of its own,
     unless ``keep`` (or ``keep_local_edits``) keeps this instance's version or an
     earlier install kept it on purpose against this same release version.
-    ``held`` holds the Contracts the release left out because a kit it
+    ``held`` holds the definitions the release left out because a kit it
     requires owns them, as this instance holds them.
     """
 
@@ -1987,9 +2005,11 @@ def _left_out_pins(
 
     A name under a prefix a required kit owns, which the release does not carry,
     must resolve on this instance: an immutable version (Contract, Capability)
-    at its pinned digest, any other definition by name, live. Refuses
-    ``cruxible.kit.requires_unresolved`` otherwise. Returns the Contracts held
-    (path -> bytes) and the moves of mutable pins to the digests held here.
+    at its pinned digest, any other definition by name, live; a SubjectKind a
+    ``key<K>`` field names must also declare the key named. Refuses
+    ``cruxible.kit.requires_unresolved`` otherwise. Returns the definitions the
+    release's laws read (Contracts, Capabilities, SubjectKinds; path -> bytes)
+    and the moves of mutable pins to the digests held here.
     One indexed lookup per name, never a scan of this instance's definitions.
     """
 
@@ -2038,10 +2058,34 @@ def _left_out_pins(
                     ),
                 )
             assert held_path is not None and raw is not None and here is not None
-            if held_path.startswith("contracts/"):
+            if held_path.startswith(_HELD_FAMILIES):
                 held[held_path] = raw
-            elif digest is not None and digest != here.artifact_digest:
+            if not exact and digest is not None and digest != here.artifact_digest:
                 moves[digest] = here.artifact_digest
+    # A key type names one of the left-out kind's keys, as this instance holds it.
+    for path in sorted(contents):
+        if not path.startswith("contracts/"):
+            continue
+        for name, found in _contract_key_kinds(json.loads(contents[path])):
+            owner = next((r for p, r in owners if name.startswith(p)), None)
+            if owner is None or name.startswith(manifest.owns):
+                continue
+            problem = key_type_problem(found, held.get)
+            if problem is not None:
+                raise RequestRefusedError(
+                    KIT_REQUIRES_UNRESOLVED,
+                    f"{path}: {problem}. "
+                    + requires_unresolved_message(
+                        manifest.kit_id,
+                        manifest.version,
+                        owner.kit_id,
+                        f"SubjectKind:{name}",
+                        exact=False,
+                    ),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.add", arguments={"kit": owner.kit_id}
+                    ),
+                )
     return held, moves
 
 
@@ -2106,6 +2150,7 @@ def _install_provider_contracts(
     *,
     actor_id: str,
     timestamp: str,
+    held: Mapping[str, bytes] | None = None,
 ) -> KitChangeResult | None:
     """Accept bundled operations' Contract closure before registering their builds.
 
@@ -2131,7 +2176,10 @@ def _install_provider_contracts(
     }
     writes = {}
     for path, _dependencies in _dependency_order(
-        states, {path: json.loads(content) for path, content in contracts.items()}, within=roots
+        states,
+        {path: json.loads(content) for path, content in contracts.items()},
+        within=roots,
+        outside=held,
     ):
         current = tree.get(path)
         if current is None:
@@ -2525,6 +2573,7 @@ def _add_kit(
             missing,
             actor_id=actor_id,
             timestamp=timestamp,
+            held=held,
         )
         if prerequisite is not None:
             return prerequisite.model_copy(update=described)
@@ -2903,6 +2952,102 @@ def _remove_kit(
         actor_id=actor_id,
         timestamp=timestamp,
     )
+
+
+_RECEIPT_PATH_PREFIX = "documents/kit-"
+
+
+def _changed_receipts(
+    instance: PlaybillInstance, paths: Iterable[str], tree: Mapping[str, bytes]
+) -> dict[str, KitReceipt]:
+    """The kit receipts among a change's member ``paths``, as ``tree`` holds them."""
+
+    found: dict[str, KitReceipt] = {}
+    for path in paths:
+        if not (path.startswith(_RECEIPT_PATH_PREFIX) and path.endswith(".json")):
+            continue
+        raw = tree.get(path)
+        if raw is None:
+            continue
+        kit_id = path.removeprefix(_RECEIPT_PATH_PREFIX).removesuffix(".json")
+        held = _receipt_at(instance, path, raw, kit_id)
+        if held is not None:
+            found[kit_id] = held[1]
+    return found
+
+
+def _refuse_unmet_requires(
+    after: Mapping[str, KitReceipt], changed: Mapping[str, KitReceipt]
+) -> None:
+    """A kit change lands only where every kit it installs still has what it requires,
+    and where it removes no kit an installed kit requires.
+
+    ``after``: every receipt once the change lands (kit id -> receipt); ``changed``:
+    the receipts the change writes.
+    """
+
+    installed = {kit_id: receipt for kit_id, receipt in after.items() if receipt.artifacts}
+    for kit_id, receipt in sorted(changed.items()):
+        if not receipt.artifacts:
+            dependents = sorted(
+                other.kit_id
+                for other in installed.values()
+                if any(item.kit_id == kit_id for item in other.requires)
+            )
+            if dependents:
+                raise RequestRefusedError(
+                    KIT_REMOVE_REQUIRED,
+                    remove_required_message(kit_id, dependents),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.remove", arguments={"kit_id": dependents[0]}
+                    ),
+                )
+            continue
+        for requirement in receipt.requires:
+            held = installed.get(requirement.kit_id)
+            version = None if held is None else held.version
+            if not requirement.met_by(version):
+                raise RequestRefusedError(
+                    KIT_REQUIRES_MISSING,
+                    requires_missing_message(kit_id, receipt.version, requirement, version),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.add", arguments={"kit": requirement.kit_id}
+                    ),
+                )
+
+
+def refuse_unmet_kit_requires(
+    instance: PlaybillInstance, member_paths: Iterable[str], candidate_tree: Mapping[str, bytes]
+) -> None:
+    """Before a kit change is accepted: recheck its requirements in the tree it lands as.
+
+    ``candidate_tree`` is the accepted base with the change applied. Only a change
+    that writes a kit receipt is checked, against the installed-kit receipts the
+    candidate holds (O(installed kits)); no definition is read.
+    """
+
+    changed = _changed_receipts(instance, member_paths, candidate_tree)
+    if changed:
+        after = {receipt.kit_id: receipt for receipt in _receipts(instance, candidate_tree)}
+        _refuse_unmet_requires(after, changed)
+
+
+def refuse_unmet_kit_requires_at(
+    instance: PlaybillInstance,
+    member_paths: Iterable[str],
+    proposal_tree: Callable[[], Mapping[str, bytes]],
+    head_tree: Mapping[str, bytes],
+) -> None:
+    """Before a moved kit change is recompiled at the head: the same recheck, with
+    the change's receipts (read from ``proposal_tree``) over the head's receipts."""
+
+    paths = [path for path in member_paths if path.startswith(_RECEIPT_PATH_PREFIX)]
+    if not paths:
+        return
+    changed = _changed_receipts(instance, paths, proposal_tree())
+    if changed:
+        after = {receipt.kit_id: receipt for receipt in _receipts(instance, head_tree)}
+        _refuse_unmet_requires({**after, **changed}, changed)
 
 
 def service_kit_status(instance: PlaybillInstance) -> KitStatus:
