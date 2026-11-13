@@ -36,6 +36,7 @@ from cruxible_client.contracts.operational_reads import (
     LiveView,
     RunRow,
 )
+from cruxible_client.contracts.orient import OrientOperation
 from cruxible_client.contracts.policies import CaptureContractFamily
 from cruxible_client.contracts.procedures.authored import ProcedureSpec
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
@@ -714,8 +715,9 @@ class GetProviderCard(_StrictGetModel):
     package: str | None = None
     version: str | None = None
     state: Literal["live", "retired"]
-    #: Each operation as ``<name>: <in>@N -> <out>@N (<effect>)``.
-    operations: tuple[str, ...] = ()
+    #: Each operation: its description, what it serves, its source, its own
+    #: Contracts, refusals and which are absorbable (the orient operation row).
+    operations: tuple[OrientOperation, ...] = ()
     next: tuple[str, ...] = ()
 
 

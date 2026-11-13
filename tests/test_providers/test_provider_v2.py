@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.provider_operations import OperationRefusal
+from cruxible_client.contracts.provider_registration import ProviderDeclares
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderDistributionRef,
@@ -30,7 +31,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_client.contracts.shapes import ContractRef, contract_digest
+from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
 from tests.support.operation_world import VALUE, operation
 
 
@@ -98,6 +99,7 @@ def _bare_v2() -> ProviderV2:
                 }
             ),
         ),
+        declares=ProviderDeclares(contracts=(VALUE,)),
     )
 
 
@@ -194,6 +196,7 @@ def test_provider_v1_bytes_remain_version_discriminated() -> None:
     payload.pop("runtime_artifact")
     payload.pop("implementations")
     payload.pop("operations", None)
+    payload.pop("declares", None)
     payload["artifact_format"] = "playbill-provider-v1"
     historical = ProviderV1.model_validate(payload)
     content = render_provider(historical)
@@ -209,6 +212,7 @@ def test_provider_v1_to_v2_succession_and_reserved_refusal_codes() -> None:
     historical_payload.pop("runtime_artifact")
     historical_payload.pop("implementations")
     historical_payload.pop("operations", None)
+    historical_payload.pop("declares", None)
     historical_payload["artifact_format"] = "playbill-provider-v1"
     historical = ProviderV1.model_validate(historical_payload)
     predecessor = AcceptedProvider(
@@ -219,16 +223,13 @@ def test_provider_v1_to_v2_succession_and_reserved_refusal_codes() -> None:
     successor = provider.model_copy(
         update={"lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)}
     )
-    # B2: the install law resolves each operation's pinned Contracts by exact
-    # digest instead of a ProviderInterface registration (removed).
-    contracts = {(VALUE.name, VALUE.version): contract_digest(VALUE).tagged}
-
+    # The install law resolves each operation's pinned Contracts inside the
+    # copies the build carries, never in the instance.
     assert (
         evaluate_provider_law(
             successor,
             path=predecessor.path,
             predecessor=predecessor,
-            contracts=contracts,
         ).verdict
         == "accepted"
     )
@@ -254,17 +255,16 @@ def test_provider_v1_to_v2_succession_and_reserved_refusal_codes() -> None:
         reserved,
         path=predecessor.path,
         predecessor=predecessor,
-        contracts=contracts,
         reserved_refusal_codes=frozenset({"budget_wall_clock"}),
     )
     assert refused.diagnostics[0].code == "cruxible.provider.operation_refusal_reserved"
 
     # ProviderInterface pinning (the old "interface_pin_missing" refusal) is
     # removed (C12); there is no surviving equivalent to probe here.
+    other = Contract.model_validate({"name": "test.other", "version": 1, "fields": {}})
     unresolved = evaluate_provider_law(
-        successor,
+        successor.model_copy(update={"declares": ProviderDeclares(contracts=(other,))}),
         path=predecessor.path,
         predecessor=predecessor,
-        contracts={},
     )
-    assert unresolved.diagnostics[0].code == "cruxible.provider.operation_contract_unresolved"
+    assert unresolved.diagnostics[0].code == "cruxible.provider.declared_contract_missing"

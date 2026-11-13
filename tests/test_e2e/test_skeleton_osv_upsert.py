@@ -49,8 +49,8 @@ from tests.test_e2e.test_skeleton_capture_lists import _wire, install
 from tests.test_e2e.test_skeleton_kev_epss import (
     VULN,
     _claim_type,
-    _contract_digest_in,
     _key_type,
+    _web_contracts,
     activate,
     proposed,
     run,
@@ -91,7 +91,6 @@ X, Y, Z, W = "CVE-2026-1001", "CVE-2026-1002", "CVE-2026-1003", "CVE-2026-1004"
 def _osv_build(checkout: Path) -> Any:
     """A core test-double provider: the advisory fetch and the pure match derive."""
 
-    from cruxible_client.contracts.provider_operations import ProviderOperation
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
         ProviderImplementationManifest,
@@ -99,16 +98,10 @@ def _osv_build(checkout: Path) -> Any:
         ProviderLocalEnvBackendPin,
         ProviderRuntimeManifest,
     )
-    from cruxible_client.contracts.shapes import contract_digest
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from tests.support.declared_operations import declared_operation, registration_document
 
-    digests = {
-        (item.ref.name, item.ref.version): contract_digest(item).tagged
-        for item in (OSV_REQUEST, OSV_RESULT, OSV_DERIVE)
-    }
-    digests[("web.fetch.result", 1)] = _contract_digest_in(checkout, "web.fetch.result")
     served = tuple(
-        ProviderOperation.model_validate(
+        declared_operation(
             {
                 "name": name,
                 "in": request,
@@ -133,7 +126,11 @@ def _osv_build(checkout: Path) -> Any:
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+    document = registration_document(
+        manifest,
+        served,
+        (OSV_REQUEST, OSV_RESULT, OSV_DERIVE, COMPONENT_ROW, *_web_contracts(checkout)),
+    )
     return document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=PROVIDER,
@@ -146,7 +143,7 @@ def _osv_build(checkout: Path) -> Any:
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain=PROVIDER,
-        operations=document.pinned_operations(lambda ref: digests.get((ref.name, ref.version))),
+        operations=document.pinned_operations(),
     )
 
 

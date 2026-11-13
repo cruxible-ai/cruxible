@@ -58,7 +58,7 @@ from cruxible_client.contracts.providers import (
     ProviderLocalEnvBackendPin,
 )
 from cruxible_client.contracts.query.authored import QuerySpecInput
-from cruxible_client.contracts.shapes import contract_digest, parse_contract, parse_type
+from cruxible_client.contracts.shapes import contract_digest, parse_type
 from cruxible_client.contracts.subject_kinds import render_subject_kind, subject_kind_path
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
@@ -264,19 +264,17 @@ def _key_type(predicate: str, kind: str) -> Any:
 
 
 def _web_provider_files(checkout: Path) -> tuple[dict[str, bytes], Any]:
-    """The package's shipped Contracts and a build of its registration, as installed."""
+    """The Contracts the package carries (as tree members) and a build of its registration."""
 
+    from cruxible_client.contracts.shapes import contract_path, render_contract
     from cruxible_core.providers.package_metadata import read_package_registration
 
     root = checkout / "packages/cruxible-provider-web/src/cruxible_provider_web"
-    members: dict[str, bytes] = {}
-    digests: dict[tuple[str, int], str] = {}
-    for path in sorted((root / "contracts").rglob("*.json")):
-        member = "contracts/" + path.relative_to(root / "contracts").as_posix()
-        contract = parse_contract(path.read_bytes(), path=member)
-        members[member] = path.read_bytes()
-        digests[(contract.name, contract.version)] = contract_digest(contract).tagged
     registration = read_package_registration(root)
+    members = {
+        contract_path(contract.name, contract.version): render_contract(contract)
+        for contract in registration.declares.contracts
+    }
     build = registration.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=registration.manifest.distribution.name,
@@ -289,7 +287,7 @@ def _web_provider_files(checkout: Path) -> tuple[dict[str, bytes], Any]:
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain="cruxible-provider-web",
-        operations=registration.pinned_operations(lambda ref: digests.get((ref.name, ref.version))),
+        operations=registration.pinned_operations(),
     )
     return members, build
 
@@ -906,39 +904,39 @@ DERIVE_PROVIDER = "test-derive"
 VIEW_URL = "https://derive.test/kev-view"
 
 
+def _web_contracts(checkout: Path) -> tuple[Any, ...]:
+    """The Contracts the web package carries in its registration's ``declares``."""
+
+    from cruxible_core.providers.package_metadata import read_package_registration
+
+    root = checkout / "packages/cruxible-provider-web/src/cruxible_provider_web"
+    return read_package_registration(root).declares.contracts
+
+
 def _contract_digest_in(checkout: Path, name: str) -> str:
-    root = checkout / "packages/cruxible-provider-web/src/cruxible_provider_web/contracts"
-    (path,) = sorted((root / name).glob("*.json"))
-    member = "contracts/" + path.relative_to(root).as_posix()
-    return contract_digest(parse_contract(path.read_bytes(), path=member)).tagged
+    (contract,) = (item for item in _web_contracts(checkout) if item.name == name)
+    return contract_digest(contract).tagged
 
 
 def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
     """A core test-double provider: one pure ``derive`` returning Capture wire."""
 
-    from cruxible_client.contracts.provider_operations import ProviderOperation
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
         ProviderImplementationManifest,
         ProviderRuntimeManifest,
     )
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from tests.support.declared_operations import registration_document
 
-    digests = {
-        ("test.derive.request", 1): contract_digest(DERIVE_REQUEST).tagged,
-        ("web.fetch.result", 1): _contract_digest_in(checkout, "web.fetch.result"),
-    }
     served = (
-        ProviderOperation.model_validate(
-            {
-                "name": "derive",
-                "in": "test.derive.request@1",
-                "out": "web.fetch.result@1",
-                "effect": effect,
-                "refusals": {},
-                "entrypoint": "demo.runtime:Derive",
-            }
-        ),
+        {
+            "name": "derive",
+            "in": "test.derive.request@1",
+            "out": "web.fetch.result@1",
+            "effect": effect,
+            "refusals": {},
+            "entrypoint": "demo.runtime:Derive",
+        },
     )
     manifest = ProviderRuntimeManifest(
         provider_id=DERIVE_PROVIDER,
@@ -950,7 +948,9 @@ def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+    document = registration_document(
+        manifest, served, (DERIVE_REQUEST, WATCH_ROW, *_web_contracts(checkout))
+    )
     return document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=DERIVE_PROVIDER,
@@ -963,7 +963,7 @@ def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain=DERIVE_PROVIDER,
-        operations=document.pinned_operations(lambda ref: digests.get((ref.name, ref.version))),
+        operations=document.pinned_operations(),
     )
 
 

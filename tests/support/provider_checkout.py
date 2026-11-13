@@ -29,7 +29,7 @@ import pytest
 CHECKOUT_ENV = "CRUXIBLE_PROVIDERS_CHECKOUT"
 REQUIRED_ENV = "CRUXIBLE_PROVIDERS_REQUIRED"
 # The provider distributions the installation tests transfer or index.
-WHEEL_PACKAGES = ("runtime", "workspace", "web", "noop")
+WHEEL_PACKAGES = ("runtime", "web", "noop")
 
 
 @dataclass(frozen=True)

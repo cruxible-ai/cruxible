@@ -142,7 +142,7 @@ def test_a_provider_row_that_borrows_the_built_in_digest_refuses() -> None:
 
 
 def test_a_package_operation_of_the_built_in_signature_never_runs_as_the_built_in() -> None:
-    """A package may serve workspace.file's exact signature beside the built-in.
+    """A package operation of workspace.file's exact signature never runs in process.
 
     Its operation is its own (its entrypoint), so naming the built-in's
     implementation digest for it refuses: a signature is never a licence to run
@@ -150,9 +150,7 @@ def test_a_package_operation_of_the_built_in_signature_never_runs_as_the_built_i
     """
 
     provider, operation = _accepted()
-    package = operation.model_copy(
-        update={"entrypoint": "cruxible_provider_workspace.file:WorkspaceFile"}
-    )
+    package = operation.model_copy(update={"entrypoint": "demo_package.file:WorkspaceFile"})
     assert package.signature() == operation.signature()
     with pytest.raises(ProviderLocalRuntimeRefused) as refused:
         builtin_provider_binding(provider, package, WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST)

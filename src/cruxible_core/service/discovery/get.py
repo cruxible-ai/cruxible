@@ -1773,6 +1773,9 @@ def _provider_card(
     *,
     surface: ReadSurface,
 ) -> GetProviderCard:
+    from cruxible_client.contracts.providers import ProviderV2
+    from cruxible_core.service.discovery.discovery import operation_row
+
     with instance.bind_accepted_projection(coordinate) as projection:
         provider = projection.typed.source(resolved.identity)
     assert provider is not None
@@ -1784,10 +1787,9 @@ def _provider_card(
         package=None if distribution is None else distribution.name,
         version=None if distribution is None else distribution.version,
         state=provider.lifecycle.state,
-        operations=tuple(
-            f"{item.name}: {item.in_.spelling} -> {item.out.spelling} ({item.effect})"
-            for item in getattr(provider, "operations", ())
-        ),
+        operations=tuple(operation_row(provider, item) for item in provider.operations)
+        if isinstance(provider, ProviderV2)
+        else (),
         next=(_render_get(surface, resolved.display, "proof"),),
     )
 

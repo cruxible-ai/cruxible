@@ -279,6 +279,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
         runtime_artifact=payload,
         implementations=provider_expected_implementation_records(payload),
         operations=base.operations,
+        declares=base.declares,
     )
     accepted = AcceptedProvider(
         path=provider_path(provider.identity.name),

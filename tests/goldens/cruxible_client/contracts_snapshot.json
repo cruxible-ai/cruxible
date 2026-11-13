@@ -45054,6 +45054,46 @@
             "title": "MandateValueCondition",
             "type": "object"
           },
+          "OperationSource": {
+            "additionalProperties": false,
+            "description": "Where an operation's code is.\n\n``path`` is relative to the root of ``repository`` (or, for a local build\nwith no repository, to the provider's project directory). ``revision`` is\nthe full commit id the build was made from, and needs ``repository``.",
+            "properties": {
+              "path": {
+                "maxLength": 512,
+                "title": "Path",
+                "type": "string"
+              },
+              "repository": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Repository"
+              },
+              "revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revision"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "title": "OperationSource",
+            "type": "object"
+          },
           "OrientActivityCaptureErased": {
             "additionalProperties": false,
             "description": "A Capture's retained body was erased, by ``by``; ``ref`` is the Capture.\n\n``at`` is when the erasure was recorded. ``unavailable`` marks a lost\nerasure payload: the erasure is listed without the Capture it names.",
@@ -46735,10 +46775,22 @@
           },
           "OrientOperation": {
             "additionalProperties": false,
-            "description": "One operation a live provider build serves: what a Line can bind a slot to.\n\n``input`` and ``output`` name its Contracts (``name@N``); a slot whose\nsignature is ``{in: input, out: output, effect}`` fits it. ``build`` is the\nexact build (``Provider:<name>/<build key>``); a Line binding names it as\n``<build>#<operation>``. ``refusals`` lists the typed refusal codes it may\nreturn. ``get(\"Provider:<build>\")`` reads the whole build.",
+            "description": "One operation a live provider build serves: what a Line can bind a slot to.\n\n``description`` is the provider's own words for it; ``serves`` names the\ncapabilities it declares; ``source`` is where its code is (``path`` in\n``repository`` at ``revision``, when the build names them). ``input`` and\n``output`` name its own Contracts (``name@N``), copies the build carries.\n``build`` is the exact build (``Provider:<name>/<build key>``); a Line\nbinding names it as ``<build>#<operation>``. ``refusals`` lists the typed\nrefusal codes it may return, and ``absorbable`` those a Line rule with\n``on_unavailable: omit`` may absorb. ``may_truncate``: it may return a\ntruncated listing. ``get(\"Provider:<build>\")`` reads the whole build.",
             "properties": {
+              "absorbable": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Absorbable",
+                "type": "array"
+              },
               "build": {
                 "title": "Build",
+                "type": "string"
+              },
+              "description": {
+                "title": "Description",
                 "type": "string"
               },
               "effect": {
@@ -46753,6 +46805,11 @@
               "input": {
                 "title": "Input",
                 "type": "string"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
               },
               "operation": {
                 "title": "Operation",
@@ -46770,14 +46827,27 @@
                 "title": "Refusals",
                 "type": "array"
               },
+              "serves": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Serves",
+                "type": "array"
+              },
               "signature_digest": {
                 "title": "Signature Digest",
                 "type": "string"
+              },
+              "source": {
+                "$ref": "#/$defs/OperationSource"
               }
             },
             "required": [
               "build",
               "operation",
+              "description",
+              "serves",
+              "source",
               "input",
               "output",
               "effect",

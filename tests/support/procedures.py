@@ -551,7 +551,6 @@ def bind_fixture(
     extra_pins: Iterable[ArtifactPin | ArtifactNameRef] = (),
     lookup: Any = None,
     bindings: Mapping[str, Any] | None = None,
-    contracts: Any = None,
     partial: bool = True,
 ) -> AcceptedProcedure:
     """``accepted`` bound into its execution plan at the fixture's pins.
@@ -586,7 +585,6 @@ def bind_fixture(
         accepted,
         lookup=resolve,
         bindings=bindings,
-        contracts=contracts,
         partial=partial,
     )
 

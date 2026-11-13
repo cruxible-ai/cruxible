@@ -10,20 +10,21 @@ from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlan,
     VerifiedProviderBinding,
 )
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
 from cruxible_core.procedures.ports import (
     ResolvedAcquisitionRules,
     bound_operation,
 )
+from tests.support.declared_operations import declared_operation
 
 _D = "sha256:" + "1" * 64
 
 
 def _operation(
     *, signature: tuple[str, str] = ("security.fetch-request@1", "security.fetch-result@1")
-) -> ProviderOperation:
-    return ProviderOperation.model_validate(
+) -> DeclaredOperation:
+    return declared_operation(
         {
             "name": "security.fetch",
             "in": signature[0],
@@ -50,7 +51,7 @@ def test_resolved_rules_answer_as_the_line_and_the_core_default_did() -> None:
 
 
 def _occurrence(
-    *, kind: str, operation: ProviderOperation, signature_digest: str
+    *, kind: str, operation: DeclaredOperation, signature_digest: str
 ) -> ProviderExternalOccurrencePlan:
     local = VerifiedProviderBinding.model_construct(entrypoint="pkg.mod:fn")
     return ProviderExternalOccurrencePlan.model_construct(
@@ -73,7 +74,7 @@ def test_bound_operation_names_the_workspace_builtin() -> None:
     from cruxible_client.contracts.workspace_file import workspace_file_contracts
 
     _source, _content, request, result = workspace_file_contracts()
-    operation = ProviderOperation.model_validate(
+    operation = declared_operation(
         {
             "name": "workspace.file",
             "in": {

@@ -24,7 +24,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretResolutionPlan,
     VerifiedProviderBinding,
 )
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     LocalProviderExecutionDriver,
@@ -39,6 +39,7 @@ from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeBudgets,
     ProviderRuntimeRunContext,
 )
+from tests.support.declared_operations import declared_operation
 from tests.support.invocation_ids import unique_invocation_id
 from tests.support.short_temporary_root import short_temporary_directory
 
@@ -81,9 +82,9 @@ def _digest(label: str) -> str:
     return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
 
 
-def _operation(name: str) -> ProviderOperation:
+def _operation(name: str) -> DeclaredOperation:
     pin = {"name": "demo.value", "version": 1, "digest": _digest("contract")}
-    return ProviderOperation.model_validate(
+    return declared_operation(
         {
             "name": name,
             "in": pin,

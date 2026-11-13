@@ -32,9 +32,6 @@ from tests.pilot_contract_batch.harness import Scenario
 from tests.pilot_contract_batch.search_world import fresh_instance
 
 
-@pytest.mark.xfail(
-    strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.REGISTRATION}"
-)
 @pytest.mark.pilot(
     "s3-provider-install",
     owner=surfaces.REGISTRATION,

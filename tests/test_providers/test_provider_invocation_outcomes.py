@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_core.providers.provider_outcomes import (
     PROVIDER_RUNTIME_REFUSAL_CODES,
     map_operation_refusal,
@@ -19,9 +18,10 @@ from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeRefusal,
     ProviderRuntimeResultEnvelope,
 )
+from tests.support.declared_operations import declared_operation
 
 _PIN = "sha256:" + "1" * 64
-OPERATION = ProviderOperation.model_validate(
+OPERATION = declared_operation(
     {
         "name": "demo.score",
         "in": {"name": "demo.in", "version": 1, "digest": _PIN},

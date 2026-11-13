@@ -1,12 +1,13 @@
-"""A provider package's metadata is read at registration schema 2 only.
+"""A provider package's metadata is read at registration schema 3 only.
 
 Each wheel here is written by hand, so the reader runs with the provider runtime
-made unimportable: it imports and executes nothing. A schema-2 package names its
-manifest (schema 2, one row per entrypoint) and declares typed operations; one
-entrypoint may serve several. A schema-1 registration or manifest -- interfaces,
-bucket vocabularies, classifiers -- refuses, as does any disagreement between
-the operations, the manifest rows, the runtime requirements and the wheel's
-``cruxible.providers`` entry points.
+made unimportable: it imports and executes nothing. A schema-3 package names its
+manifest (schema 2, one row per entrypoint), declares typed operations (each
+with a description, its source and the capabilities it serves; one entrypoint
+may serve several) and carries the Contracts they reach. A schema-2 or schema-1
+registration, a schema-1 manifest, and any disagreement between the
+operations, the manifest rows, the runtime requirements and the wheel's
+``cruxible.providers`` entry points refuse.
 """
 
 from __future__ import annotations
@@ -49,14 +50,18 @@ def _operation(name: str, **extra: Any) -> dict[str, Any]:
         "effect": "pure",
         "refusals": {"too_long": {"contract": "test.refusal@1", "absorbable": True}},
         "entrypoint": ENTRYPOINT,
+        "description": f"Test operation {name}.",
+        "source": {"path": f"src/{MODULE}/operation.py"},
+        "serves": [name],
         **extra,
     }
 
 
 #: Two operations served by one entrypoint, with a runtime resource on it.
 REGISTRATION: dict[str, Any] = {
-    "schema_version": 2,
+    "schema_version": 3,
     "operations": [_operation("local.double"), _operation("local.increment")],
+    "declares": {"contracts": [contract.model_dump(mode="json") for contract in (REFUSAL, VALUE)]},
     "runtime_requirements": [
         {
             "entrypoint": ENTRYPOINT,
@@ -139,14 +144,7 @@ def no_provider_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "cruxible_provider_runtime", None)
 
 
-def _digests(ref: Any) -> str | None:
-    for contract in (VALUE, REFUSAL):
-        if (ref.name, ref.version) == (contract.name, contract.version):
-            return contract_digest(contract).tagged
-    return None
-
-
-def test_a_schema_2_package_with_two_operations_on_one_entrypoint_lowers_to_one_implementation(
+def test_a_schema_3_package_with_two_operations_on_one_entrypoint_lowers_to_one_implementation(
     tmp_path: Path,
 ) -> None:
     document = read_wheel_registration(build_wheel(tmp_path))
@@ -166,7 +164,7 @@ def test_a_schema_2_package_with_two_operations_on_one_entrypoint_lowers_to_one_
             materialization_digests={"linux-cp313": "sha256:" + "c" * 64},
         ),
         control_domain="operator",
-        operations=document.pinned_operations(_digests),
+        operations=document.pinned_operations(),
     )
     # One entrypoint, one implementation identity, serving both operations.
     (record,) = build.implementations
@@ -175,15 +173,13 @@ def test_a_schema_2_package_with_two_operations_on_one_entrypoint_lowers_to_one_
         entrypoint=ENTRYPOINT, distribution_sha256="sha256:" + "a" * 64
     )
     assert {item.entrypoint for item in build.operations} == {ENTRYPOINT}
-    contracts = {
-        (contract.name, contract.version): contract_digest(contract).tagged
-        for contract in (VALUE, REFUSAL)
-    }
+    # The build carries the package's copies; the law reads nothing else.
+    assert build.declares == document.declares
+    assert build.operations[0].in_.digest == contract_digest(VALUE).tagged
     law = evaluate_provider_law(
         build,
         path=provider_path(build.identity.name),
         predecessor=None,
-        contracts=contracts,
         reserved_refusal_codes=PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
     )
     assert law.verdict == "accepted", law.diagnostics
@@ -229,6 +225,11 @@ def _with(**changes: Any) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("label", "kwargs", "match"),
     [
+        (
+            "a schema-2 registration (operations that carry no shapes)",
+            {"registration": {**_with(), "schema_version": 2}},
+            "registration.json schema 2 is not read",
+        ),
         (
             "a schema-1 registration (interfaces, vocabularies, classifiers)",
             {"registration": _schema_1_registration()},
@@ -294,7 +295,7 @@ def _with(**changes: Any) -> dict[str, Any]:
     ],
     ids=lambda value: value if isinstance(value, str) and " " in value else None,
 )
-def test_a_package_outside_schema_2_or_disagreeing_with_itself_is_refused(
+def test_a_package_outside_schema_3_or_disagreeing_with_itself_is_refused(
     tmp_path: Path, label: str, kwargs: dict[str, Any], match: str
 ) -> None:
     del label

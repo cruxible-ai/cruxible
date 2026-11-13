@@ -616,35 +616,26 @@ def test_attention_summary_preserves_complete_orient_bytes(
     )
 
 
-def test_orient_and_get_show_operation_contracts_and_source_parsing_declarations(
+def test_orient_and_get_show_what_each_operation_serves_with_its_source_and_carried_copies(
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
-    from cruxible_client.contracts.get_reads import GetContractCard, GetProviderCard, GetRequest
-    from cruxible_client.contracts.provider_operations import (
-        ProviderOperation,
-        operation_signature_digest,
-    )
-    from cruxible_client.contracts.shapes import (
-        Contract,
-        contract_digest,
-        contract_path,
-        render_contract,
-    )
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_client.contracts.get_reads import GetProviderCard, GetRequest
+    from cruxible_client.contracts.provider_operations import operation_signature_digest
+    from cruxible_client.contracts.shapes import Contract
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
     from tests.core_support._identity_support import accept_tree
-    from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
-    from tests.support.operation_world import build_files, operation, operation_build
+    from tests.support.declared_operations import declared_operation
+    from tests.support.operation_world import REFUSAL, VALUE, build_files, operation_build
 
     instance, _owner = initialize_local(tmp_path)
-    capture_kind = record_contract()
     request = Contract.model_validate(
         {
             "name": "demo.parse.request",
             "version": 1,
-            "fields": {"document": {"type": f"capture<{capture_kind.identity.name}>"}},
+            "fields": {"document": {"type": "capture<demo.records>"}},
         }
     )
     output = Contract.model_validate(
@@ -654,38 +645,29 @@ def test_orient_and_get_show_operation_contracts_and_source_parsing_declarations
             "fields": {"advisory": {"type": "string"}, "release": {"type": "string"}},
         }
     )
-    declaration = {
-        "capture": "document",
-        "selector": "/records/*",
-        "fields": {"advisory": {"at": "/advisory"}, "release": {"at": "/release"}},
-    }
-    parse = ProviderOperation.model_validate(
+    parse = declared_operation(
         {
             "name": "demo.parse",
+            "description": "Reads the advisories out of one records document.",
+            "source": {
+                "path": "src/demo/parse.py",
+                "repository": "https://github.com/example/demo",
+                "revision": "a" * 40,
+            },
+            "serves": ["demo.parse", "demo.parse-records"],
             "effect": "pure",
             "entrypoint": "demo.runtime:Provider",
-            "in": {"name": request.name, "version": 1, "digest": contract_digest(request).tagged},
-            "out": {"name": output.name, "version": 1, "digest": contract_digest(output).tagged},
-            "enumerates": declaration,
+            "in": "demo.parse.request@1",
+            "out": "demo.parse.result@1",
+            "refusals": {
+                "declined": {"contract": "test.refusal@1", "absorbable": True},
+                "too_big": {"contract": "test.refusal@1"},
+            },
         }
     )
-    # Reuse the valid runtime/build fixture; this test exercises accepted reads,
-    # not provider execution or package installation.
-    build = operation_build(operations=(operation(name="demo.parse"),)).model_copy(
-        update={"operations": (parse,)}
-    )
-    accept_tree(
-        instance,
-        {
-            capture_contract_path(capture_kind.identity.name): render_capture_contract(
-                capture_kind
-            ),
-            contract_path(request.name, 1): render_contract(request),
-            contract_path(output.name, 1): render_contract(output),
-            **build_files(build),
-        },
-        name="operation-parsing-declaration",
-    )
+    build = operation_build(operations=(parse,), contracts=(request, output, REFUSAL, VALUE))
+    # Only the build is accepted: its operation's Contracts are copies it carries.
+    accept_tree(instance, build_files(build), name="operation-reads")
 
     page = service_playbill_orient(instance, section="operations", surface="mcp")
     assert page.operations is not None and len(page.operations) == 2
@@ -695,13 +677,20 @@ def test_orient_and_get_show_operation_contracts_and_source_parsing_declarations
         (build.identity.qualified, "demo.parse"),
     }
     parsed = rows[(build.identity.qualified, "demo.parse")]
-    assert (parsed.input, parsed.output, parsed.effect, parsed.refusals) == (
+    assert parsed.description == "Reads the advisories out of one records document."
+    assert parsed.serves == ("demo.parse", "demo.parse-records")
+    assert parsed.source.model_dump(mode="json") == {
+        "path": "src/demo/parse.py",
+        "repository": "https://github.com/example/demo",
+        "revision": "a" * 40,
+    }
+    assert (parsed.input, parsed.output, parsed.effect) == (
         "demo.parse.request@1",
         "demo.parse.result@1",
         "pure",
-        (),
     )
-    assert parsed.signature_digest == operation_signature_digest(parse.signature())
+    assert (parsed.refusals, parsed.absorbable) == (("declined", "too_big"), ("declined",))
+    assert parsed.signature_digest == operation_signature_digest(build.operations[0].signature())
     assert page.truncated is False and page.next_cursor is None
 
     access = BodyAccessContext(principal_id="reader", can_read_body=False)
@@ -714,32 +703,27 @@ def test_orient_and_get_show_operation_contracts_and_source_parsing_declarations
     card = get(build.identity.qualified).card
     assert isinstance(card, GetProviderCard)
     assert card.build == build.identity.name
-    assert card.operations == ("demo.parse: demo.parse.request@1 -> demo.parse.result@1 (pure)",)
-    input_card = get("Contract:demo.parse.request@1").card
-    assert isinstance(input_card, GetContractCard)
-    assert [(field.name, field.type) for field in input_card.fields] == [
-        ("document", f"capture<{capture_kind.identity.name}>")
-    ]
-    output_card = get("Contract:demo.parse.result@1").card
-    assert isinstance(output_card, GetContractCard)
-    assert [(field.name, field.type) for field in output_card.fields] == [
-        ("advisory", "string"),
-        ("release", "string"),
-    ]
-    # Logical source names are chosen by Procedure calls, not a ProviderInterface
-    # produces list. Current provider-parsed source declarations live on each
-    # operation and remain inspectable in the accepted Provider proof.
+    assert card.operations == (parsed,)
+    # The carried copies are never instance Contracts.
+    with pytest.raises(ReadRefusalError, match="ref_not_found"):
+        get("Contract:demo.parse.request@1")
     proof = get(build.identity.qualified, "proof").proof
     assert proof is not None
-    assert proof["envelope"]["operations"][0]["enumerates"] == declaration
+    envelope = proof["envelope"]
+    assert "enumerates" not in envelope["operations"][0]
+    assert [item["name"] for item in envelope["declares"]["contracts"]] == [
+        "demo.parse.request",
+        "demo.parse.result",
+        "test.refusal",
+    ]
+    assert envelope["declares"]["capture_kinds"] == [{"name": "demo.records"}]
+
     builtin = get("Provider:cruxible-builtin").card
     assert isinstance(builtin, GetProviderCard)
-    assert builtin.operations == (
-        "workspace.file: workspace.file.request@1 -> workspace.file.result@1 (pure)",
-    )
-    builtin_proof = get("Provider:cruxible-builtin", "proof").proof
-    assert builtin_proof is not None
-    assert all("enumerates" not in op for op in builtin_proof["envelope"]["operations"])
+    (row,) = builtin.operations
+    assert (row.operation, row.serves) == ("workspace.file", ("workspace.file", "workspace.files"))
+    assert row.source.path == "src/cruxible_core/providers/builtin_workspace_file.py"
+    assert row.absorbable == ("invalid_parameter", "mismatched_lengths", "provider_declined")
 
 
 def test_a_default_map_listing_fewer_queries_than_it_counts_says_so(  # type: ignore[no-untyped-def]

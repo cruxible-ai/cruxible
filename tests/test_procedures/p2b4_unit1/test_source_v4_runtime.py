@@ -67,7 +67,6 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretReference,
     provider_invocation_receipt_digest,
 )
-from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderDistributionRef,
@@ -98,7 +97,6 @@ from cruxible_core.procedures.execution import (
     procedure_pin_set_digest,
     seal_procedure_run_admission,
 )
-from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
@@ -113,6 +111,7 @@ from cruxible_core.storage.material_reservations import (
     ReservedCaptureStore,
 )
 from tests.core_support._pc_c_support import capture_contract, digest
+from tests.support.declared_operations import declared_operation, registration_document
 from tests.support.procedures import MAX_WALL_CLOCK, named
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
@@ -196,13 +195,6 @@ _SOURCE_CONTRACTS = (
 )
 
 
-def _source_contract_digest(ref: Any) -> str | None:
-    for item in _SOURCE_CONTRACTS:
-        if (ref.name, ref.version) == (item.name, item.version):
-            return contract_digest(item).tagged
-    return None
-
-
 def source_contract_files() -> dict[str, bytes]:
     """Every Contract :func:`_source_provider`'s operation pins, for an accepted tree."""
 
@@ -216,7 +208,7 @@ def source_contract_files() -> dict[str, bytes]:
 def _source_provider() -> AcceptedProvider:
     """A ``read`` operation: ``test.source-value@1 -> test.source-envelope@1`` (external_read)."""
 
-    operation = ProviderOperation.model_validate(
+    operation = declared_operation(
         {
             "name": "read",
             "in": f"{_VALUE_CONTRACT.name}@{_VALUE_CONTRACT.version}",
@@ -237,9 +229,7 @@ def _source_provider() -> AcceptedProvider:
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(
-        schema_version=2, manifest=manifest, operations=(operation,)
-    )
+    document = registration_document(manifest, (operation,), _SOURCE_CONTRACTS)
     build = document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name="source-demo-provider",
@@ -252,7 +242,7 @@ def _source_provider() -> AcceptedProvider:
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain="source-demo-provider",
-        operations=document.pinned_operations(_source_contract_digest),
+        operations=document.pinned_operations(),
     )
     return AcceptedProvider(
         path=provider_path(build.identity.name),

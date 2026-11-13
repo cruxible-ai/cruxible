@@ -2076,21 +2076,17 @@ def test_a_template_binding_a_bundled_provider_operation_builds(
 
 
 @pytest.mark.parametrize("preaccept", [False, True])
-def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
+def test_a_bundled_providers_own_contracts_are_never_exported_and_install_needs_none(
     worlds: tuple[_World, _World], tmp_path: Path, provider_checkout: typing.Any, preaccept: bool
 ) -> None:
-    """D-R48 review fix round 3, F1: ``build_kit`` sweeps a bundled package's
-    complete operation Contract closure -- input, output AND refusal -- into
-    the export, whatever namespace those Contracts live in, never only the
-    ``owns`` prefix's own dependency closure.
+    """A bundled package carries its own operation Contracts (registration
+    schema 3), refusal Contracts included: ``build_kit`` exports none of them
+    on the package's account, and ``kit add`` installs the provider with no
+    prerequisite Contract change.
 
-    ``other.declined`` is outside ``acme.`` (the kit's only owned prefix,
-    never widened here): nothing but the Provider's own registration pins
-    it, so before this fix the kit would not export it at all and the build
-    would refuse ``cruxible.kit.automation_template_invalid`` /
-    ``cruxible.provider.operation_contract_unresolved``. The consumer can
-    pre-accept these Contracts or let kit add govern them before installing
-    the bundled provider.
+    ``other.declined`` is outside ``acme.`` and nothing the kit owns pins it,
+    so it is not in the export even though the publisher holds it; the
+    consumer installs the provider whether or not it holds the Contract.
     """
 
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
@@ -2110,8 +2106,8 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
         local_call_contract_files,
     )
 
-    # A refusal Contract also pins a nested version with a predecessor:
-    # all three must land in the prerequisite change, before registration.
+    # A refusal Contract that pins a nested version with a predecessor: none of
+    # the three is exported for the package.
     leaf1 = Contract.model_validate({"name": "other.detail", "version": 1, "fields": {}})
     leaf2 = Contract.model_validate(
         {
@@ -2196,11 +2192,7 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     assert instance.accepted_coordinate() == head
     assert bundle.manifest.owns == ("acme.",)
     refusal_path = "contracts/other.declined/v1.json"
-    assert refusal_files.items() <= bundle.contents().items()
-    assert refusal_path in bundle.contents(), (
-        "the bundled provider's refusal Contract must be swept into the export "
-        "even though it is outside every owned prefix"
-    )
+    assert not set(refusal_files) & set(bundle.contents())
 
     consumer_instance = get_playbill_manager().get(consumer.instance_id)
     if preaccept:
@@ -2224,12 +2216,61 @@ def test_a_bundled_providers_refusal_contract_outside_owns_builds_and_installs(
     assert added.status == "accepted", added
 
     tree = consumer.tree()
-    assert refusal_files.items() <= tree.items()
-    assert refusal_path in tree, (
-        "the kit's own definitions must carry the refusal Contract to the "
-        "installed tree, as a carried dependency (never owned, never widened "
-        "into owns)"
+    # Present exactly when the consumer held it already: the kit never adds it.
+    assert (refusal_path in tree) == preaccept
+    assert any(path.startswith("providers/kit-call/") for path in tree)
+
+
+def test_a_bundled_provider_never_carries_an_instance_contract_of_the_same_name(
+    worlds: tuple[_World, _World], tmp_path: Path, provider_checkout: typing.Any
+) -> None:
+    """The publisher holds a ``local.increment.value@1`` whose bytes differ from
+    the copy the bundled package carries. Nothing the kit owns pins it, so the
+    bundle holds only ``acme.value``, and it previews and commits on a consumer
+    holding yet another ``local.increment.value@1``, which it leaves as it is.
+    """
+
+    from cruxible_client.contracts.kits import KitAddRequest
+    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+    from tests.core_support._identity_support import accept_tree
+
+    def contract(name: str, fields: dict[str, typing.Any]) -> dict[str, bytes]:
+        item = Contract.model_validate({"name": name, "version": 1, "fields": fields})
+        return {contract_path(item.name, item.version): render_contract(item)}
+
+    publisher, consumer = worlds
+    instance = get_playbill_manager().get(publisher.instance_id)
+    accept_tree(
+        instance,
+        {
+            **contract("local.increment.value", {"n": {"type": "string"}}),
+            **contract("acme.value", {}),
+        },
+        name="publisher-contracts",
+        actor_id="operator",
     )
+    provider = _bundled_local_call_provider(tmp_path, instance, provider_checkout)
+    bundle = playbill_api.playbill_kit_build(
+        publisher.instance_id,
+        KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",), providers=(provider,)),
+    ).bundle
+    assert sorted(path for path in bundle.contents() if path.startswith("contracts/")) == [
+        "contracts/acme.value/v1.json"
+    ]
+
+    consumer_instance = get_playbill_manager().get(consumer.instance_id)
+    held = contract("local.increment.value", {"n": {"type": "int"}})
+    accept_tree(consumer_instance, held, name="consumer-contract", actor_id="operator")
+    for item in bundle.provider_files:
+        consumer_instance.body_store().store(item.content)
+    staged = bundle.model_copy(update={"provider_files": ()})
+    preview = _kit_preview(consumer, KitAddRequest(bundle=staged, source="test", dry_run=True))
+    assert preview.status == "would_propose", preview
+    added = consumer.add(staged)
+    assert added.status == "accepted", added
+    tree = consumer.tree()
+    assert held.items() <= tree.items()
+    assert "contracts/acme.value/v1.json" in tree
     assert any(path.startswith("providers/kit-call/") for path in tree)
 
 
