@@ -87,6 +87,7 @@ from cruxible_core.service.floor.floor_definitions import (
     RECEIPTS_PREFIX,
     TRIGGERS_PREFIX,
     DefinitionRevision,
+    is_tracked,
     reach_moves,
     view_changed_at,
 )
@@ -1157,6 +1158,10 @@ class _Renderer:
             retired: list[str] = []
             live = 0
             for entry in receipt.artifacts:
+                if not is_tracked(entry.path):
+                    # A family the floor keeps no history of (Contracts,
+                    # capabilities): neither counted nor judged edited.
+                    continue
                 held = self.state.value(entry.path)
                 if held is not None and not _live(held):
                     retired.append(_ref(entry.path))

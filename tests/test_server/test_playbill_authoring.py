@@ -495,7 +495,12 @@ def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
     )
 
     assert response.status_code == 200, response.text
-    warnings = response.json()["lint"]["warnings"]
+    # The base kit's web.search-results is one more capture contract the lint names.
+    warnings = [
+        warning
+        for warning in response.json()["lint"]["warnings"]
+        if warning.get("contract_identity") != "CaptureContract:web.search-results"
+    ]
     by_code = {warning["code"]: warning for warning in warnings}
     assert len(warnings) == len(by_code) == 2
     assert set(by_code) == {

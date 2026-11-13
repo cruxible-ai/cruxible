@@ -78,7 +78,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
 
     assert isinstance(bundle.record, ChangeSetRecord)
@@ -132,7 +132,7 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)
@@ -217,7 +217,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
 
     assert isinstance(bundle.record, ChangeSetRecord)

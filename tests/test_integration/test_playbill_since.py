@@ -102,7 +102,8 @@ def test_signed_history_reports_each_member_wire(
     result = service_playbill_since(current, request=_request())
     assert result.rows
 
-    assert result.generation == 4
+    # Genesis, creation's base kit, then the built generations.
+    assert result.generation == 5
     assert [row.generation for row in result.rows] == sorted(row.generation for row in result.rows)
     assert all(row.artifact_digest is not None for row in result.rows)
     assert {row.disposition for row in result.rows} <= {

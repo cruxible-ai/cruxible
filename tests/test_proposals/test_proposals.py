@@ -54,7 +54,9 @@ from cruxible_core.service.proposals.proposal_names import canonical_playbill_pr
 from cruxible_core.service.proposals.proposals import (
     service_resolve_playbill_proposal_selector,
 )
-from tests.core_support._support import initialize_local
+
+# Counts proposal evidence files from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
 DOCUMENT_PATH = "documents/playbill-design.json"

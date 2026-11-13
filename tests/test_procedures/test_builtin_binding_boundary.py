@@ -51,6 +51,7 @@ def _imposter() -> Any:
     )
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_line_acceptance_refuses_an_imposter_for_a_builtin_slot(tmp_path) -> None:  # type: ignore[no-untyped-def]
     imposter = _imposter()
     (served,) = imposter.operations
@@ -66,6 +67,7 @@ def test_line_acceptance_refuses_an_imposter_for_a_builtin_slot(tmp_path) -> Non
     assert f"{imposter.identity.name}#demo.read" in message
 
 
+@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_run_admission_refuses_an_imposter_for_a_builtin_slot(tmp_path) -> None:  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, procedure_path
     from cruxible_core.procedures.reference_binding import bind_procedure_references

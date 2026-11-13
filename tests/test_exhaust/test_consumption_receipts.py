@@ -153,7 +153,8 @@ def test_identical_public_retry_collapses_and_aggregate_is_replay_derived(
 
     assert first == retry
     assert aggregate.initialized is True
-    assert aggregate.consumption_epoch_generation == 0
+    # Generation 1 is creation's base kit.
+    assert aggregate.consumption_epoch_generation == 1
     assert aggregate.artifacts[0].total_touch_count == 1
     assert aggregate.artifacts[0].qualifying_touch_count == 1
     assert aggregate.artifacts[0].touches_by_operation == (("playbill.claim_type.get", 1),)
@@ -315,7 +316,7 @@ def test_switching_receipts_off_then_on_leaves_a_closed_gap_not_zero_use(
     read()
     aggregate = consumption_aggregate(instance)
     assert aggregate.observation_gap_open is False
-    assert aggregate.observed_since_generation == 0
+    assert aggregate.observed_since_generation == 1
 
 
 def test_a_historical_first_read_cannot_backdate_resumed_observation(

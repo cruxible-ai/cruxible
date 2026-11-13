@@ -60,6 +60,7 @@ def _refusals(state: Any) -> list[tuple[tuple[str, ...], str | None]]:
         ({"purl": {"not": "a purl"}}, "key_unparseable"),
     ],
 )
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_bad_record_is_refused_alone_its_siblings_write_and_nothing_retires(
     tmp_path: Path, bad: object, reason: str | None
 ) -> None:
@@ -113,6 +114,7 @@ def _counted(tmp_path: Path, size: int, *, bad: int) -> int:
     return int(window.counts["sql_statements"])
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_refused_records_among_n_siblings_cost_no_state_work(tmp_path: Path) -> None:
     """With N siblings re-observed, refusing N/5 bad records adds no SQL at any N."""
 

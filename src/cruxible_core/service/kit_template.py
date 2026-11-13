@@ -111,6 +111,8 @@ def _closure_instance(
             instance_id="kit-template-check",
             client_principals=(material.principal,),
             workspace_roots=(),
+            # Exactly the exported closure: the bundled base kit stays out.
+            install_base_kit=False,
         )
         base = instance.accepted_coordinate()
         candidate_tree = {**instance.tree_at(base.git_oid), **closure}

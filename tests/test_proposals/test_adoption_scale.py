@@ -13,11 +13,19 @@ from pathlib import Path
 
 from cruxible_client.contracts.triggers import parse_trigger
 from cruxible_core.compiler.projection_tree import TreeReadLimits
+from cruxible_core.kits.base_kit import bundled_base_kit
 from cruxible_core.ledger.bootstrap import GENESIS_SEEDS
 from cruxible_core.proposals.proposals import ProposalReceiveLimits
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposal_receive import ProposalReceiveOperationalConfigV1
 from tests.core_support._adoption_fixture import MINIATURE, TIER_1, build_fixture
+
+#: The artifacts creation's base kit lands on every instance.
+_BASE = bundled_base_kit().manifest.artifacts
+
+
+def _from_base(prefix: str) -> int:
+    return sum(1 for item in _BASE if item.path.startswith(prefix))
 
 
 def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> None:
@@ -25,9 +33,11 @@ def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> N
     from tests.core_support._adoption_fixture import SELF_SOURCE
 
     assert SELF_SOURCE.artifact_format == "cruxible-capture-contract-v4"
-    assert fixture.member_count == MINIATURE.expected_members
-    # One vocabulary generation, one readings generation, one seed-Claim chunk.
-    assert fixture.head_sequence == 3 + MINIATURE.generations
+    # Creation's base kit adds its artifacts and its receipt Document.
+    assert fixture.member_count == MINIATURE.expected_members + len(_BASE) + 1
+    # Creation's base kit, one vocabulary generation, one readings generation,
+    # one seed-Claim chunk.
+    assert fixture.head_sequence == 4 + MINIATURE.generations
 
     reopened = PlaybillInstance.open(
         fixture.managed_root,
@@ -39,10 +49,11 @@ def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> N
         # The authored ClaimTypes and the seeded builtins semantic.alias and
         # semantic.distinct_from.
         "claim-types/": MINIATURE.claim_types + 2,
-        "documents/": MINIATURE.documents,
+        "documents/": MINIATURE.documents + 1,
         "query-definitions/": MINIATURE.query_definitions,
-        "capture-contracts/": 1,
-        "contracts/": sum(path.startswith("contracts/") for path, _ in GENESIS_SEEDS),
+        "capture-contracts/": 1 + _from_base("capture-contracts/"),
+        "contracts/": sum(path.startswith("contracts/") for path, _ in GENESIS_SEEDS)
+        + _from_base("contracts/"),
         "providers/": 1,
         "subject-kinds/": 0,
         "triggers/": 3,
@@ -160,11 +171,11 @@ def test_an_interrupted_build_resumes_where_it_stopped(tmp_path: Path) -> None:
 
     interrupted = replace(MINIATURE, generations=2)
     partial = build_fixture(tmp_path, interrupted)
-    assert partial.head_sequence == 3 + interrupted.generations
+    assert partial.head_sequence == 4 + interrupted.generations
 
     finished = build_fixture(tmp_path, MINIATURE, resume=True)
-    assert finished.head_sequence == 3 + MINIATURE.generations
-    assert finished.member_count == MINIATURE.expected_members
+    assert finished.head_sequence == 4 + MINIATURE.generations
+    assert finished.member_count == MINIATURE.expected_members + len(_BASE) + 1
 
     reference = build_fixture(tmp_path / "reference", MINIATURE)
     resumed_instance = PlaybillInstance.open(

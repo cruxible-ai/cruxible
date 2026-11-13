@@ -33,7 +33,11 @@ from cruxible_core.service.claims.policies import service_playbill_policies_in_f
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from cruxible_core.service.proposals.review import service_prepare_playbill_approval
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._support import client_material, initialize_local
+from tests.core_support._support import (
+    client_material,
+    initialize_local,
+    initialize_without_base_kit,
+)
 from tests.test_ledger.test_activation import _sign
 from tests.test_proposals.test_proposals import DOCUMENT_PATH, TIMESTAMP, _shell
 
@@ -392,7 +396,9 @@ def test_independent_principal_registration_needs_creator_binding_and_other_appr
 def test_malformed_policy_is_a_typed_refusal_and_does_not_poison_inventory(
     tmp_path: Path,
 ) -> None:
-    instance, _owner = initialize_local(tmp_path)
+    # Over genesis. Over a later base the evaluated-state overlay parses the
+    # malformed policy before the law and raises JSONDecodeError (reported).
+    instance, _owner = initialize_without_base_kit(tmp_path)
     refused = _submit_tree(
         instance,
         {

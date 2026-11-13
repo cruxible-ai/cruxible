@@ -581,8 +581,14 @@ class PlaybillInstance:
         require_independent_approval: bool = False,
         timestamp: str | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+        install_base_kit: bool = True,
     ) -> "PlaybillInstance":
-        """Create and reopen one managed instance from explicit bootstrap inputs."""
+        """Create and reopen one managed instance from explicit bootstrap inputs.
+
+        ``install_base_kit`` False leaves the bundled base kit out: only for a
+        throwaway instance that must hold exactly the definitions it is given
+        (the kit build's automation template check).
+        """
 
         if not root.is_absolute():
             raise BootstrapError("managed Cruxible root must be absolute")
@@ -683,7 +689,8 @@ class PlaybillInstance:
             )
             genesis_time = parse_datetime(commit_timestamp)
             assert genesis_time is not None
-            record_pending_base_kit(managed_root, actor_id=owner, at=genesis_time)
+            if install_base_kit:
+                record_pending_base_kit(managed_root, actor_id=owner, at=genesis_time)
             _exclusive_write(
                 managed_root / DESCRIPTOR_FILE,
                 canonical_bytes(descriptor.model_dump(mode="json")) + b"\n",

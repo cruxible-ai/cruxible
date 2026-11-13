@@ -121,7 +121,8 @@ def test_http_document_lifecycle_and_explanation(
     listed = client.get(f"/api/v1/{instance_id}/orient", params={"section": "documents"})
     assert listed.status_code == 200, listed.text
     assert listed.json()["coordinate"] == coordinate
-    assert [row["name"] for row in listed.json()["documents"]] == ["design"]
+    # Beside the receipt of creation's base kit.
+    assert [row["name"] for row in listed.json()["documents"]] == ["design", "kit-base"]
     read = client.post(
         f"/api/v1/{instance_id}/get", json={"ref": "Document:design", "detail": "body"}
     )
@@ -225,7 +226,12 @@ def test_policy_read_is_a_real_http_behavior(
 
     policies = client.get(f"/api/v1/{instance_id}/orient", params={"section": "policies"})
     assert policies.status_code == 200, policies.text
-    rows = policies.json()["policies"]
+    # Leave out what creation's base kit declares (its shared kind and its receipt).
+    rows = [
+        item
+        for item in policies.json()["policies"]
+        if not item["declaring_artifact_identity"].endswith(("web.search-results", "kit-base"))
+    ]
     # The builtin semantic.alias and semantic.distinct_from ClaimTypes every new
     # instance seeds embed three each.
     assert [item["policy_kind"] for item in rows] == [

@@ -117,19 +117,31 @@ def initialize_without_base_kit(
     object_format: GitObjectFormat = "sha256",
     instance_id: str = "inst_playbill_test",
 ) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
-    """A fresh instance whose creation skips the base kit add.
+    """A fresh instance whose creation leaves the base kit out.
 
-    For tests of proposal evidence and ledger mechanics that count every
-    proposal, evidence file or generation from genesis; the base kit plays no
-    part in what they check. Never shared through a world template.
+    For tests of proposal evidence, ledger and kit mechanics that count every
+    proposal, evidence file, Document or generation from genesis, or that
+    install their own kit named ``base``; the bundled base kit plays no part in
+    what they check. Never shared through a world template.
     """
 
-    from unittest import mock
-
-    import cruxible_core.kits.base_kit as base_kit_module
-
-    with mock.patch.object(base_kit_module, "record_pending_base_kit", lambda *a, **k: None):
-        return initialize_fresh(tmp_path, object_format=object_format, instance_id=instance_id)
+    managed_root = tmp_path / f"managed-{object_format}"
+    owner = generate_client(
+        tmp_path, managed_root=managed_root, principal_id="owner", roles=("owner",)
+    )
+    reviewer = generate_client(
+        tmp_path, managed_root=managed_root, principal_id="reviewer", roles=("reviewer",)
+    )
+    instance = PlaybillInstance.initialize(
+        managed_root,
+        instance_id=instance_id,
+        client_principals=(owner.principal, reviewer.principal),
+        workspace_roots=(tmp_path / "workspace",),
+        git_object_format=object_format,
+        timestamp=FIXED_TIMESTAMP,
+        install_base_kit=False,
+    )
+    return instance, owner
 
 
 @dataclass(frozen=True)
