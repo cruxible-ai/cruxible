@@ -18,10 +18,10 @@ from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
     ClaimsNode,
-    ExtractNode,
     GuardNode,
     InboxEgressNode,
     InvokeNode,
+    LayoutExtractNode,
     ProcedureDefinition,
     ProcedureNode,
     ProjectNode,
@@ -115,7 +115,7 @@ def _reference_templates(
         yield "input", node.input
         if isinstance(node, InvokeNode) and node.parameters:
             yield "parameters", node.parameters
-    elif isinstance(node, ExtractNode):
+    elif isinstance(node, LayoutExtractNode):
         yield "capture", node.capture
         if node.only_keys is not None:
             yield "only_keys", node.only_keys
@@ -369,7 +369,7 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
         _validate_node_references(node, available=available[node.node_id])
 
     for node in definition.nodes:
-        if not isinstance(node, ExtractNode):
+        if not isinstance(node, LayoutExtractNode):
             continue
         reader = alias_nodes.get(node.capture_alias)
         if not isinstance(reader, CallNode) or node.capture_field not in reader.captures:

@@ -451,33 +451,66 @@ def document_contract() -> Any:
 
 def fan_out_members() -> dict[str, bytes]:
     from cruxible_client.contracts.shapes import contract_path, render_contract
+    from tests.support.claims_terminals import delivery_row
 
     return {
         contract_path(contract.name, contract.version): render_contract(contract)
-        for contract in (*fan_out_contracts(), document_contract(), *_contracts())
+        for contract in (*fan_out_contracts(), document_contract(), delivery_row(), *_contracts())
     }
 
 
-def proposals_extract(*, next_node: str | None = None) -> Any:
-    """Read ``/proposals/*`` of the workspace read's bytes, one row per proposal item."""
-
-    from cruxible_client.contracts.procedures.extract import ExtractNode
+def _pinned(row: Any) -> dict[str, object]:
     from cruxible_client.contracts.shapes import contract_digest
 
+    return {"name": row.name, "version": row.version, "digest": contract_digest(row).tagged}
+
+
+def world_layout(contract: Any) -> Any:
+    """The world's kind with the two record sets its extracts read: the proposal items
+    (``/proposals/*``) and the whole advisory document (``/``). A kind without a JSON
+    decoding takes no layout."""
+
+    from tests.support.claims_terminals import DELIVERY_HEADER, delivery_record_sets
+    from tests.support.layouts import record_set, with_layout
+
+    decoding = getattr(contract, "decoding", None)
+    if (
+        decoding is None
+        or decoding.format != "json"
+        or getattr(contract, "layout", None) is not None
+        or "layout" not in type(contract).model_fields
+    ):
+        return contract
     *_nested, row = fan_out_contracts()
-    return ExtractNode(
+    document = document_contract()
+    return with_layout(
+        contract,
+        {
+            "proposals": record_set(
+                at="/proposals/*",
+                row=_pinned(row),
+                fields={name: {"at": name} for name in _FAN_OUT_ROW["fields"]},  # type: ignore[union-attr]
+            ),
+            "document": record_set(
+                at="/",
+                row=_pinned(document),
+                fields={"severity": {"at": "severity"}, "advisory_id": {"at": "advisory_id"}},
+            ),
+            **delivery_record_sets(),
+        },
+        DELIVERY_HEADER,
+    )
+
+
+def proposals_extract(*, next_node: str | None = None) -> Any:
+    """Read the ``proposals`` record set of the workspace read's bytes, one row per item."""
+
+    from tests.support.layouts import thin_node
+
+    return thin_node(
         node_id="items",
         capture=f"$steps.{SOURCE_ALIAS}.capture",
-        records="/proposals/*",
-        row={
-            "name": row.name,
-            "version": row.version,
-            "digest": contract_digest(row).tagged,
-        },
-        fields={
-            name: {"at": name}
-            for name in _FAN_OUT_ROW["fields"]  # type: ignore[union-attr]
-        },
+        records="proposals",
         as_=PROPOSALS_ALIAS,
         next=next_node,
     )
@@ -502,21 +535,13 @@ def severity_from_document(nodes: tuple[Any, ...]) -> tuple[Any, ...]:
     The document may then change anywhere else while its severity stays.
     """
 
-    from cruxible_client.contracts.procedures.extract import ExtractNode
-    from cruxible_client.contracts.shapes import contract_digest
+    from tests.support.layouts import thin_node
 
-    row = document_contract()
     source, shape, *rest = nodes
-    extract = ExtractNode(
+    extract = thin_node(
         node_id="document_read",
         capture=f"$steps.{SOURCE_ALIAS}.capture",
-        records="/",
-        row={
-            "name": row.name,
-            "version": row.version,
-            "digest": contract_digest(row).tagged,
-        },
-        fields={"severity": {"at": "severity"}, "advisory_id": {"at": "advisory_id"}},
+        records="document",
         as_=DOCUMENT_ALIAS,
         next=shape.node_id,
     )
@@ -565,7 +590,7 @@ def _world(  # noqa: PLR0913
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(ADVISORY if contents is None else contents)
 
-    accepted_contract = capture_contract() if contract is None else contract
+    accepted_contract = world_layout(capture_contract() if contract is None else contract)
     accepted_policy = _policy() if policy is None else policy
     procedure = _procedure(
         instance,
@@ -735,7 +760,7 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
         item.capture_event for item in state.outcomes if item.event_kind == "produced_capture"
     )
     assert event is not None and event.run_id == state.run_id
-    capture = capture_contract()
+    capture = world_layout(capture_contract())
     assert (
         capture_event_time(
             instance,

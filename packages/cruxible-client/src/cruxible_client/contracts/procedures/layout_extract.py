@@ -26,7 +26,7 @@ from cruxible_client.contracts.capture_layouts import (
     validate_layout_field_name,
     validate_record_set_name,
 )
-from cruxible_client.contracts.procedures.authored import (
+from cruxible_client.contracts.procedures.authored_base import (
     StepId,
     StepOptions,
     Template,

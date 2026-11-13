@@ -201,7 +201,7 @@ def test_a_subject_created_with_its_claim_then_retired_by_absence_keeps_its_iden
 
     raw = claims_spec(subject_create="if_absent").model_dump(mode="python", by_alias=True)
     raw["steps"].insert(1, {"read": "watched", "query": "test.watched-by-key"})
-    raw["steps"][2]["complete_when"] = {"count_at": "/count"}
+    raw["steps"][2]["records"] = "entries_counted"
     write = raw["steps"][-1]
     write["claims"][0]["when_absent"] = "mirror"
     write["expect"] = {"$ref": "step", "step": "watched", "path": ["rows"]}
@@ -249,7 +249,7 @@ def _created_then_retired(tmp_path: Path, spelling: str) -> tuple[str, str, str]
         expected_type = f"list<{row.ref.spelling}>{{max_items: 4}}"
     raw = claims_spec(subject_create="if_absent").model_dump(mode="python", by_alias=True)
     raw["params"] = {"expected": expected_type}
-    raw["steps"][1]["complete_when"] = {"count_at": "/count"}
+    raw["steps"][1]["records"] = "entries_counted"
     write = raw["steps"][-1]
     write["claims"][0]["when_absent"] = "mirror"
     write["expect"] = "$params.expected"

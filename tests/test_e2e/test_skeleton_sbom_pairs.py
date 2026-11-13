@@ -43,7 +43,6 @@ from tests.test_e2e.test_skeleton_sbom_late_read import (
     PURL,
     SBOM_KIND,
     SBOM_PATH,
-    SBOM_ROW,
     SOURCE,
     Sbom,
     run,
@@ -147,13 +146,9 @@ def sbom_pairs_spec() -> Any:
             {
                 "extract": "listed",
                 "capture": "$steps.derived.capture",
-                "records": "/components/*",
-                "row": SBOM_ROW.ref.spelling,
-                "key": {"purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"}},
+                "records": "components",
                 "duplicates": "refuse_key",
-                "complete_when": {"count_at": "/count"},
-                "fields": {"name": {"at": "name"}, "inventory": {"at": "inventory"}},
-                "header": {"inventory": {"at": "/inventory", "type": "string{max_len: 256}"}},
+                "header": ["inventory"],
             },
             {
                 "id": "write",

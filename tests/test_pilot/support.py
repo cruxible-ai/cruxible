@@ -36,6 +36,44 @@ WATCH_ROW = boundary_contract(
 )
 
 
+#: The KEV catalog's record fields as the kind's layout reads them.
+KEV_RULES: dict[str, Any] = {
+    "date_added": {"at": "dateAdded", "parse": "date"},
+    "due_date": {"at": "dueDate", "parse": "date"},
+    "ransomware_use": {"at": "knownRansomwareCampaignUse", "canonicalize": "claim_type"},
+    "listed_from": {"at": "dateAdded", "parse": "date", "project": "utc_start_of_day"},
+}
+EPSS_RULES: dict[str, Any] = {
+    "score": {"at": "epss", "parse": "decimal"},
+    "percentile": {"at": "percentile", "parse": "decimal"},
+}
+
+
+def pilot_records(kev: bool, rows: Any = None) -> dict[str, Any]:
+    """The world kind's KEV record sets (``vulnerabilities`` counted, ``vulnerabilities_all``
+    not) or its EPSS record set (``data``), each keyed by the vulnerability's CVE."""
+
+    from tests.support.layouts import record_set
+
+    row = rows or (KEV_ROW if kev else EPSS_ROW)
+    rules = KEV_RULES if kev else EPSS_RULES
+    fields = {name: rules.get(name, {"at": name}) for name in row.fields}
+    key_at = "cveID" if kev else "cve"
+    key = {"cve_id": {"at": key_at, "type": f"key_part<{KIND}:cve_id>"}}
+    if not kev:
+        return {"data": record_set(at="/data/*", row=row.ref.spelling, key=key, fields=fields)}
+    return {
+        name: record_set(
+            at="/vulnerabilities/*",
+            row=row.ref.spelling,
+            key=key,
+            fields=fields,
+            count_at=count_at,
+        )
+        for name, count_at in (("vulnerabilities", "/count"), ("vulnerabilities_all", None))
+    }
+
+
 def _watched(instance: Any) -> None:
     accept_tree(instance, contract_files(WATCH_ROW), name="watch-row")
     author(
@@ -95,20 +133,9 @@ def kev_spec(
             {
                 "extract": "entries",
                 "capture": "$steps.catalog.capture",
-                "records": "/vulnerabilities/*",
-                "row": KEV_ROW.ref.spelling,
-                "key": {"cve_id": {"at": "cveID", "type": f"key_part<{KIND}:cve_id>"}},
-                "complete_when": {"count_at": "/count"},
+                "records": "vulnerabilities",
+                "header": ["catalog_version"],
                 "duplicates": "refuse_key",
-                "fields": {
-                    "date_added": {"at": "dateAdded", "parse": "date"},
-                    "due_date": {"at": "dueDate", "parse": "date"},
-                    "ransomware_use": {
-                        "at": "knownRansomwareCampaignUse",
-                        "canonicalize": "claim_type",
-                    },
-                },
-                "header": {"catalog_version": {"at": "/catalogVersion"}},
             },
             {
                 "id": "write",
@@ -157,17 +184,9 @@ def epss_spec() -> Any:
             {
                 "extract": "scores",
                 "capture": "$steps.catalog.capture",
-                "records": "/data/*",
-                "row": EPSS_ROW.ref.spelling,
-                "key": {"cve_id": {"at": "cve", "type": f"key_part<{KIND}:cve_id>"}},
+                "records": "data",
+                "header": ["score_date"],
                 "only_keys": "$steps.watch_keys.rows",
-                "fields": {
-                    "score": {"at": "epss", "parse": "decimal"},
-                    "percentile": {"at": "percentile", "parse": "decimal"},
-                },
-                "header": {
-                    "score_date": {"at": "/created", "parse": "datetime", "project": "utc_date"}
-                },
             },
             {
                 "id": "write",
@@ -220,6 +239,7 @@ def pilot_world(
         types=types,
         rows=rows or (KEV_ROW if kev else EPSS_ROW),
         capture_body_access=capture_body_access,
+        records=pilot_records(kev, rows),
     )
     (root / "data" / fixture).write_bytes((FIXTURES / fixture).read_bytes())
     _watched(instance)

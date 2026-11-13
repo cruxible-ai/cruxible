@@ -129,6 +129,64 @@ def resolve_procedure_spec(
             value = maybe_source(contract_identity(ref.name, ref.version).qualified)
             return value if isinstance(value, Contract) else None
 
+        def extract_layout(step: Any) -> dict[str, Any]:
+            """An extract step through its call's CaptureKind layout: the row typing its
+            records, or the layout refusal at the step's path."""
+
+            from cruxible_client.contracts.procedures.layout_extract import (
+                LayoutExtractNode,
+                LayoutExtractRefused,
+                resolve_layout_extract,
+            )
+            from cruxible_client.contracts.provider_operations import capture_list_fields
+
+            path = step_paths.get(id(step), "$.steps")
+            alias, field = step.capture.step, step.capture.path[0]
+            call = next(
+                (item for item in spec.steps if isinstance(item, CallStep) and item.call == alias),
+                None,
+            )
+            kind_name = None if call is None else call.captures.get(field)
+            if call is None or kind_name is None:
+                # The graph law names a capture no acquiring call commits.
+                return {}
+            kind = source(
+                "CaptureContract:" + kind_name.removeprefix("CaptureContract:"), path + ".capture"
+            )
+            reads_list = False
+            slot = spec.slots.get(call.slot)
+            if slot is not None and slot.capability.name not in BUILTIN_CAPABILITY_NAMES:
+                out = contract(slot_capability(call.slot, slot).out, path)
+                reads_list = field in {name for name, _kind, _cap in capture_list_fields(out)}
+            node = LayoutExtractNode.model_validate(
+                {
+                    "node_id": step.id or step.extract,
+                    "capture": f"$steps.{alias}.{field}",
+                    "records": step.records,
+                    "header": step.header,
+                    "key": {part: rule.model_dump() for part, rule in step.key.items()},
+                    "duplicates": step.duplicates,
+                    "only_keys": None if step.only_keys is None else [],
+                    "as": step.extract,
+                }
+            )
+            try:
+                resolved = resolve_layout_extract(
+                    node, getattr(kind, "layout", None), reads_list=reads_list
+                )
+            except LayoutExtractRefused as refused:
+                raise ProcedureSpecError(
+                    refused.code.rsplit(".", 1)[-1],
+                    path,
+                    refused.message,
+                    repair=f"Name a record set and header fields CaptureKind {kind_name} "
+                    "declares in its layout, or add them to the kind's layout.",
+                ) from refused
+            row = resolved.row
+            if row.digest is None:
+                row = row.model_copy(update={"digest": contract_digest(contract(row, path)).tagged})
+            return {"row": row.model_dump(mode="json")}
+
         def resolve(kind: str, name: Any) -> Any:
             if kind == "query":
                 return source(
@@ -172,18 +230,8 @@ def resolve_procedure_spec(
             if kind == "slot":
                 assert isinstance(name, ProcedureSlot)
                 return pinned(slot_name_of(name), name)
-            if kind == "extract_row":
-                from cruxible_client.contracts.shapes import parse_contract_ref
-
-                row_path = step_paths.get(id(name), "$.steps") + ".row"
-                ref = parse_contract_ref(name.row)
-                row = contract(ref, row_path)
-                return {
-                    "row": ref.model_copy(
-                        update={"digest": contract_digest(row).tagged}
-                    ).model_dump(mode="json"),
-                    "row_fields": row.fields,
-                }
+            if kind == "extract_layout":
+                return extract_layout(name)
             step = name
             authored_path = step_paths.get(id(step), "$.steps")
             acquiring = isinstance(step, CallStep) and bool(step.captures)

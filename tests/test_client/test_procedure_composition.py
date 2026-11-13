@@ -370,9 +370,7 @@ def test_claims_step_is_terminal_and_derives_maximum_authority():
     entries = plan.extract(
         "entries",
         capture=fetched["capture"],
-        records="/entries/*",
-        row="test.row@1",
-        fields={"status": {"at": "status"}},
+        records="entries",
     )
     project(plan, "summary", output={"count": "int"}, fields={"count": 1})
     plan.claims(
@@ -468,10 +466,7 @@ def test_claims_templates_lower_typed_subject_keys_and_values():
     entries = plan.extract(
         "entries",
         capture=fetched["capture"],
-        records="/entries/*",
-        row="test.row@1",
-        fields={"in_stock": {"at": "in_stock", "type": "bool"}},
-        key={"part_id": {"at": "part_id"}},
+        records="entries",
     )
     project(plan, "summary", output={"count": "int"}, fields={"count": 1})
     plan.claims(

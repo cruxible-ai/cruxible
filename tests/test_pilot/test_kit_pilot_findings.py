@@ -28,13 +28,7 @@ def _kev_listed_from(effective_from: str) -> tuple[Any, Any]:
 
     rows = boundary_contract("kev-listed-from.row", {**KEV_FIELDS, "listed_from": "datetime?"})
     data = kev_spec().model_dump(mode="python", by_alias=True)
-    extract, claims = data["steps"][2], data["steps"][3]
-    extract["row"] = rows.ref.spelling
-    extract["fields"]["listed_from"] = {
-        "at": "dateAdded",
-        "parse": "date",
-        "project": "utc_start_of_day",
-    }
+    claims = data["steps"][3]
     (listed,) = (c for c in claims["claims"] if c["type"] == KEV + "listed")
     listed["effective_from"] = effective_from
     return procedure_spec(base=data, reference_text=True), rows

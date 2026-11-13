@@ -42,7 +42,6 @@ from tests.test_procedures.test_claims_value_upsert import (
     CAPTURE,
     COMPONENT,
     KIND,
-    ROW,
     _accepted_affected,
     upsert_world,
 )
@@ -77,17 +76,7 @@ def override_spec() -> Any:
                     "selector": {"id": 7, "relation": "orders"},
                 },
             },
-            {
-                "extract": "entries",
-                "capture": "$steps.doc.capture",
-                "records": "/entries/*",
-                "row": ROW.ref.spelling,
-                "key": {
-                    "purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"},
-                    "advisory": {"at": "cve", "type": f"key_part<{KIND}:cve_id>"},
-                },
-                "fields": {"cve": {"at": "cve"}, "since": {"at": "since", "parse": "datetime"}},
-            },
+            {"extract": "entries", "capture": "$steps.doc.capture", "records": "entries"},
             {
                 "id": "write",
                 "for_each": "$steps.entries.records",

@@ -335,6 +335,7 @@ def _identity_procedure(
         render_contract,
     )
     from tests.support.claims_terminals import delivery_definition
+    from tests.support.layouts import grown_kind_members, record_set
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = procedure_path(fixtures.PROCEDURE_NAME)
@@ -361,13 +362,22 @@ def _identity_procedure(
         }
     )
     source, extract, terminal = definition.nodes
-    extract = type(extract).model_validate(
+    # The identity rows are another record set of the world kind's layout.
+    identity_set = "identity_rows_counted" if expect else "identity_rows_all"
+    grown = grown_kind_members(
+        instance,
+        source.captures["capture"].target.name,
         {
-            **extract.model_dump(mode="python", by_alias=True),
-            "row": row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
-            "fields": {name: {"at": name} for name in row.fields},
-        }
+            identity_set: record_set(
+                at="/proposals/*",
+                row=row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
+                fields={name: {"at": name} for name in row.fields},
+                key={"slug": {"at": "id"}},
+                count_at="/count" if expect else None,
+            )
+        },
     )
+    extract = extract.model_copy(update={"records": identity_set})
     terminal = ClaimsNode.model_validate(
         {
             **terminal.model_dump(mode="python", by_alias=True),
@@ -390,7 +400,8 @@ def _identity_procedure(
         }
     )
     return procedure, {
-        contract_path(c.name, c.version): render_contract(c) for c in (row, contracts[1])
+        **{contract_path(c.name, c.version): render_contract(c) for c in (row, contracts[1])},
+        **grown,
     }
 
 

@@ -32,7 +32,6 @@ from tests.test_e2e.test_skeleton_sbom_late_read import (
     MEMBER_ROW,
     PURL,
     SBOM_KIND,
-    SBOM_ROW,
     Sbom,
     activate,
     proposed,
@@ -73,11 +72,8 @@ def glob_spec(*, glob: str = "inventories/*.json", max_files: int = 100) -> Any:
             {
                 "extract": "members",
                 "capture": "$steps.files.capture",
-                "records": "/members/*",
-                "row": SBOM_ROW.ref.spelling,
-                "key": {"purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"}},
+                "records": "members",
                 "duplicates": "refuse_key",
-                "fields": {"inventory": {"at": "inventory"}},
             },
             {
                 "id": "write",

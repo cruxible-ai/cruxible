@@ -45,12 +45,7 @@ def _document(*entries: tuple[str, str, str]) -> dict[str, Any]:
 
 def _membership_spec(*, role: str = "observation", name: str = "test.claims") -> Any:
     base = claims_spec().model_dump(mode="python", by_alias=True)
-    extract, write = base["steps"][1], base["steps"][2]
-    extract["row"] = ROWS.ref.spelling
-    extract["fields"] = {
-        "catalog": {"at": "catalog"},
-        "listed_from": {"at": "dateAdded", "parse": "date", "project": "utc_start_of_day"},
-    }
+    write = base["steps"][2]
     write["claims"] = [
         {
             "type": LISTED_IN,
@@ -71,7 +66,29 @@ def _world(tmp_path: Path, document: dict[str, Any], **install_options: Any) -> 
             cardinality="many", eligible_verdicts=("supported",), selector="all"
         ),
     )
-    instance, root = claims_world(tmp_path, document, types=(membership,), rows=ROWS)
+    from tests.support.layouts import record_set
+
+    instance, root = claims_world(
+        tmp_path,
+        document,
+        types=(membership,),
+        rows=ROWS,
+        records={
+            "entries": record_set(
+                at="/entries/*",
+                row=ROWS.ref.spelling,
+                key={"cve_id": {"at": "id", "type": f"key_part<{KIND}:cve_id>"}},
+                fields={
+                    "catalog": {"at": "catalog"},
+                    "listed_from": {
+                        "at": "dateAdded",
+                        "parse": "date",
+                        "project": "utc_start_of_day",
+                    },
+                },
+            )
+        },
+    )
     install(instance, _membership_spec(**install_options.pop("spec", {})), **install_options)
     return instance, root
 

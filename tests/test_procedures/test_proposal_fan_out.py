@@ -357,8 +357,7 @@ def test_a_400_item_terminal_keeps_every_reason_and_reads_one_in_constant_work(
             }
         ]
     ).model_dump(mode="python", by_alias=True)
-    spec["steps"][1]["key"] = {}
-    spec["steps"][1]["fields"]["qualifier"] = {"at": "qualifier"}
+    spec["steps"][1]["records"] = "entries_unkeyed"
     spec["steps"][-1]["subject"]["key"] = {"cve_id": "CVE-2026-0001"}
     from tests.support.procedures import procedure_limits, procedure_spec
 

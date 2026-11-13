@@ -25,9 +25,9 @@ import pytest
 
 from cruxible_client.contracts.procedures.authored import (
     CallStep,
-    ExtractStep,
     InboxStep,
     InvokeStep,
+    LayoutExtractStep,
     ProjectStep,
     RepeatStep,
     RepeatTransform,
@@ -166,7 +166,22 @@ def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any,
     (root / "data").mkdir(parents=True, exist_ok=True)
     for name, document in documents.items():
         (root / "data" / name).write_text(json.dumps(document))
-    capture = record_contract()
+    from tests.support.layouts import record_set, with_layout
+
+    def entries(count_at: str | None) -> dict[str, Any]:
+        return record_set(
+            at="/entries/*",
+            row=f"{ENTRY.name}@{ENTRY.version}",
+            key={"id": {"at": "id"}},
+            fields={"status": {"at": "status"}, "note": {"at": "note"}},
+            count_at=count_at,
+        )
+
+    capture = with_layout(
+        record_contract(),
+        {"entries": entries(None), "entries_counted": entries("/count")},
+        {"next": {"at": "/next", "presence": "required"}},
+    )
     accept_tree(
         instance,
         {
@@ -179,14 +194,15 @@ def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any,
     return instance, root
 
 
-def _entries(capture: str, *, node_id: str = "entries", **extra: Any) -> ExtractStep:
-    return ExtractStep(
+def _entries(
+    capture: str, *, node_id: str = "entries", counted: bool = False, **extra: Any
+) -> LayoutExtractStep:
+    """The kind's ``entries`` record set (``entries_counted`` when ``counted``)."""
+
+    return LayoutExtractStep(
         extract=node_id,
         capture=ref(capture),
-        records="/entries/*",
-        row=f"{ENTRY.name}@{ENTRY.version}",
-        key={"id": {"at": "id"}},
-        fields={"status": {"at": "status"}, "note": {"at": "note"}},
+        records="entries_counted" if counted else "entries",
         **extra,
     )
 
@@ -382,8 +398,8 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
             _entries(
                 "$steps.index.capture",
                 node_id="listing",
-                complete_when={"count_at": "/count"},
-                header={"next": {"at": "/next", "presence": "required"}},
+                counted=True,
+                header=("next",),
             ),
             CallStep(
                 call="doc",
@@ -432,7 +448,7 @@ def _child(instance: Any) -> None:
                     slot="read",
                     input={**_READ, "relative_path": "data/doc.json"},
                 ),
-                _entries("$steps.doc.capture", complete_when={"count_at": "/count"}),
+                _entries("$steps.doc.capture", counted=True),
                 ProjectStep(
                     project="result",
                     fields={"status": "$steps.entries.rows.0.status"},

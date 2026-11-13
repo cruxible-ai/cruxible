@@ -96,7 +96,7 @@ def safety_world(
         mode="python", by_alias=True
     )
     raw["steps"][-1]["claims"][0]["when_absent"] = policy
-    raw["steps"][1]["complete_when"] = {"count_at": "/count"}
+    raw["steps"][1]["records"] = "entries_counted"
     raw["steps"].insert(1, {"read": "watched", "query": "security.watched-vulnerabilities"})
     raw["steps"][-1].update(expect="$steps.watched.rows")
     install(instance, procedure_spec(base=raw, reference_text=True))
@@ -353,7 +353,7 @@ def test_unresolved_held_unit_is_a_typed_run_refusal(tmp_path: Path, monkeypatch
 def test_mirror_and_inverse_need_no_count_declaration(tmp_path: Path, policy):
     """D-R19: declaring mirror/inverse is the completeness statement; no count required."""
     instance, root, raw = safety_world(tmp_path, policy)
-    raw["steps"][2].pop("complete_when")
+    raw["steps"][2]["records"] = "entries"
     reinstall(instance, raw)
     (root / "data/doc.json").write_text(json.dumps({"entries": []}))
     result = run(instance, root, minute=1, line="safety-followup")
@@ -411,7 +411,7 @@ def test_absence_obeys_within_and_counts_expected_subjects_outside_it(tmp_path: 
 
 def test_surface_without_a_count_declaration_keeps_existing_completeness(tmp_path: Path):
     instance, root, raw = safety_world(tmp_path, "surface")
-    raw["steps"][2].pop("complete_when")
+    raw["steps"][2]["records"] = "entries"
     reinstall(instance, raw)
     (root / "data/doc.json").write_text(json.dumps({"entries": [], "count": 0}))
     result = run(instance, root, minute=1, line="safety-followup")

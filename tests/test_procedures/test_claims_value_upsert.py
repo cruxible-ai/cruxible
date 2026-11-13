@@ -57,14 +57,36 @@ ROW = Contract.model_validate(
 )
 
 
-def _capture_contract() -> Any:
+def _entries(advisory: dict[str, Any], count_at: str | None = None) -> dict[str, Any]:
+    from tests.support.layouts import record_set
+
+    return record_set(
+        at="/entries/*",
+        row=ROW.ref.spelling,
+        key={"purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"}, "advisory": advisory},
+        fields={"cve": {"at": "cve"}, "since": {"at": "since", "parse": "datetime"}},
+        count_at=count_at,
+    )
+
+
+def _capture_contract(*, minted: bool = False) -> Any:
+    """The kind: ``entries`` keyed by component and advisory (``entries_counted`` with
+    the document's count), ``entries_plain`` with the advisory a plain string; the
+    header lists the components queried. Over a minted vulnerability kind only the
+    plain reading names no vulnerability key."""
+
     from cruxible_client.contracts.capture_contract_inputs import (
         CaptureContractInputRecord,
         lower_capture_contract_input,
     )
     from tests.core_support._light_capture_support import JSON_DECODING
+    from tests.support.layouts import with_layout
 
-    return lower_capture_contract_input(
+    advisory = {"at": "cve", "type": f"key_part<{KIND}:cve_id>"}
+    records = {"entries_plain": _entries({"at": "cve", "type": "string{max_len: 256}"})}
+    if not minted:
+        records.update(entries=_entries(advisory), entries_counted=_entries(advisory, "/count"))
+    bare = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=CAPTURE,
             shape="database_snapshot",
@@ -73,6 +95,11 @@ def _capture_contract() -> Any:
             decoding=JSON_DECODING,
         ),
         named=True,
+    )
+    return with_layout(
+        bare,
+        records,
+        {"queried": {"at": "/queried", "type": "list<string{max_len: 256}>{max_items: 8}"}},
     )
 
 
@@ -141,7 +168,9 @@ def upsert_world(
     accept_tree(
         instance,
         {
-            capture_contract_path(CAPTURE): render_capture_contract(_capture_contract()),
+            capture_contract_path(CAPTURE): render_capture_contract(
+                _capture_contract(minted=minted)
+            ),
             contract_path(ROW.name, ROW.version): render_contract(ROW),
             subject_kind_path(KIND): render_subject_kind(
                 minted_subject_kind(KIND)
@@ -188,6 +217,15 @@ def target(create: str | None = "if_absent", key: object = "$item.fields.cve") -
     return value
 
 
+def _record_set_of(extract: dict[str, Any]) -> str:
+    """The record set a test's extract variant reads: a plain-string advisory key, the
+    counted set, or the default."""
+
+    if "key" in extract:
+        return "entries_plain"
+    return "entries_counted" if "complete_when" in extract else "entries"
+
+
 def upsert_spec(
     *,
     value: Any = None,
@@ -223,14 +261,12 @@ def upsert_spec(
             {
                 "extract": "entries",
                 "capture": "$steps.doc.capture",
-                "records": "/entries/*",
-                "row": ROW.ref.spelling,
-                "key": {
-                    "purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"},
-                    "advisory": {"at": "cve", "type": f"key_part<{KIND}:cve_id>"},
-                },
-                "fields": {"cve": {"at": "cve"}, "since": {"at": "since", "parse": "datetime"}},
-                **(extract or {}),
+                "records": _record_set_of(extract or {}),
+                **(
+                    {"header": sorted((extract or {})["header"])}
+                    if (extract or {}).get("header")
+                    else {}
+                ),
             },
             {
                 "id": "write",

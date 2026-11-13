@@ -25,6 +25,7 @@ import pytest
 from cruxible_client.contracts.claim_evidence import CaptureBasis
 from tests.core_support._identity_support import accept_tree
 from tests.support.capabilities import ensure_capabilities
+from tests.support.layouts import grown_kind_members
 from tests.support.operation_world import NOW, Invoker, author_line, author_procedure, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -36,7 +37,6 @@ from tests.test_e2e.test_skeleton_kev_epss import (
     EXCHANGES,
     FIXTURES,
     KEV_KIND,
-    KEV_ROW,
     KEV_VIEW_KIND,
     LISTED_IN,
     UNLISTED,
@@ -50,6 +50,7 @@ from tests.test_e2e.test_skeleton_kev_epss import (
     _manifest,
     _summaries,
     activate,
+    kev_records,
     pinned_extract_digest,
     proposed,
     run,
@@ -264,14 +265,13 @@ def _claims_step(entries: str, *, absence: bool) -> dict[str, Any]:
 
 
 def _extract_step(capture: str, **changes: Any) -> dict[str, Any]:
+    """The KEV kind's ``vulnerabilities`` record set (declared on the kind's layout)."""
+
     return {
         "extract": "entries",
         "capture": capture,
-        "records": "/vulnerabilities/*",
-        "row": KEV_ROW.ref.spelling,
-        "key": {"cve_id": {"at": "cveID", "type": f"key_part<{VULN}:cve_id>"}},
+        "records": "vulnerabilities",
         "duplicates": "refuse_key",
-        "fields": {"date_added": {"at": "dateAdded", "parse": "date"}},
         **changes,
     }
 
@@ -535,16 +535,27 @@ def test_an_extract_over_a_list_declares_no_header_or_complete_when(
     tmp_path: Path, declared: str
 ) -> None:
     instance = pages_world(tmp_path)
-    changes = (
-        {"header": {"catalog_version": {"at": "/catalogVersion"}}}
-        if declared == "header"
-        else {"complete_when": {"count_at": "/count"}}
-    )
-    # The capture law refuses it when the Procedure is accepted.
-    with pytest.raises(AssertionError, match="cruxible.procedure.extract_format_unsupported"):
+    if declared == "header":
+        # The KEV kind's layout declares the header field; a list cannot select it.
+        changes: dict[str, Any] = {"header": ["catalog_version"]}
+    else:
+        # A record set with a count (complete_when): the kind's successor declares one.
+        accept_tree(
+            instance,
+            grown_kind_members(
+                instance, KEV_KIND, {"vulnerabilities_counted": kev_records("/count")}
+            ),
+            name="kev-counted",
+        )
+        changes = {"records": "vulnerabilities_counted"}
+    # Authoring resolves the thin step against the kind's layout and refuses it there.
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+
+    with pytest.raises(AuthoringLoweringError) as refused:
         author_procedure(
             instance, list_spec(absence=False, extract=changes), name="refused-procedure"
         )
+    assert refused.value.code == "cruxible.authoring.extract_format_unsupported", refused.value
 
 
 @pytest.mark.parametrize("failed", [False, True])

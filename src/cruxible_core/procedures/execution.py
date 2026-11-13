@@ -100,11 +100,13 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
+from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import (
     analyze_procedure,
     late_state_taps,
     reference_templates,
 )
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractRefused
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     line_identity_digest,
@@ -114,11 +116,11 @@ from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CallNode,
     CaptureEgressNode,
-    ExtractNode,
     GuardNode,
     HaltNode,
     InboxEgressNode,
     InvokeNode,
+    LayoutExtractNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -274,7 +276,13 @@ from cruxible_core.procedures.egress import (
     effective_rung_digest,
     verify_terminal_egress_receipt,
 )
-from cruxible_core.procedures.extract import ExtractOutcome, ExtractRefused, run_extract
+from cruxible_core.procedures.extract import (
+    ExtractOutcome,
+    ExtractRefused,
+    extract_specs,
+    plan_kind_lookup,
+    run_extract,
+)
 from cruxible_core.procedures.input_planes import (
     AcceptedClaimRunInputV1,
     AcceptedStateRunInputV2,
@@ -2575,6 +2583,9 @@ class ProcedureExecutor:
         self.provider_runtime_invoker = provider_runtime_invoker
         self.provider_runtime_invoker_factory = provider_runtime_invoker_factory
         self.capture_contracts = dict(capture_contracts or {})
+        # Each extract node's resolved spec, resolved through one resolver per plan.
+        self._extract_specs_plan: object = None
+        self._extract_spec_of: Callable[[LayoutExtractNode], ExtractNode] | None = None
         # Execution reads acquisition only through the port.
         self.acquisition_rules = acquisition_rules
         # Each slot's exact build and operation, from the execution plan.
@@ -3596,7 +3607,7 @@ class ProcedureExecutor:
                     ),
                 )
                 self._track_completeness(node, state)
-                if isinstance(node, ExtractNode):
+                if isinstance(node, LayoutExtractNode):
                     self._route_findings(node.node_id, admission, state)
                 summary = state.node_summaries.get(node.node_id)
                 self._append_event(
@@ -3797,8 +3808,8 @@ class ProcedureExecutor:
                 lambda: call_summary(node.captures, state.outputs.get(node.as_)),
             )
             return None
-        if isinstance(node, ExtractNode):
-            self._run_extract(node, state=state)
+        if isinstance(node, LayoutExtractNode):
+            self._run_extract(self._extract_spec(node), state=state)
             return None
         if isinstance(node, CallNode):
             self._run_provider_v4(
@@ -4896,6 +4907,28 @@ class ProcedureExecutor:
         state.consumed_captures.add(capture_digest)
         return body
 
+    def _extract_spec(self, node: LayoutExtractNode) -> ExtractNode:
+        """The full spec a stored extract node reads, resolved once per plan.
+
+        The kind is the one the admitted plan pinned for the node's capture
+        field; acceptance already resolved the node against it, so a refusal
+        here means the accepted state is inconsistent.
+        """
+
+        if self._extract_spec_of is None or self._extract_specs_plan is not self.plan:
+            self._extract_specs_plan = self.plan
+            self._extract_spec_of = extract_specs(
+                () if self.plan is None else self.plan.definition.nodes,
+                plan_kind_lookup(self.plan, self.capture_contracts),
+            )
+        try:
+            return self._extract_spec_of(node)
+        except LayoutExtractRefused as exc:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node.node_id, "reason": exc.message},
+            ) from exc
+
     def _run_extract(self, node: ExtractNode, *, state: _RunState) -> None:
         """Read one Capture's records, typed, by its CaptureContract's decoding.
 
@@ -5232,7 +5265,7 @@ class ProcedureExecutor:
         if isinstance(node, GuardNode):
             tracker.guard(_predicate_reads(node.predicate))
             return
-        if isinstance(node, ExtractNode | InvokeNode | RepeatNode) or (
+        if isinstance(node, LayoutExtractNode | InvokeNode | RepeatNode) or (
             isinstance(node, TransformNode) and node.transform_kind in CLOSED_TRANSFORM_KINDS
         ):
             return

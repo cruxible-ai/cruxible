@@ -39,7 +39,6 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ExtractNode,
     InboxEgressNode,
     ProcedureDefinition,
     RepeatNode,
@@ -445,15 +444,13 @@ def _node_contracts(definition: ProcedureDefinition) -> tuple[tuple[str, str, Co
 
     found: list[tuple[str, str, ContractRef]] = []
     for node in definition.nodes:
-        if isinstance(node, ExtractNode):
-            found.append(("extract", node.node_id, node.row))
-        elif isinstance(node, InboxEgressNode):
+        if isinstance(node, InboxEgressNode):
             found.append(("post_inbox", node.node_id, node.contract))
     return tuple(found)
 
 
 def procedure_contract_refs(definition: ProcedureDefinition) -> tuple[ContractRef, ...]:
-    """Every Contract version the graph pins itself: extract rows and inbox items.
+    """Every Contract version the graph pins itself: inbox items.
 
     A slot pins a capability, which pins its own two Contracts.
     """
@@ -464,7 +461,7 @@ def procedure_contract_refs(definition: ProcedureDefinition) -> tuple[ContractRe
 def extract_row_problem(
     definition: ProcedureDefinition, contracts: Mapping[tuple[str, int], str]
 ) -> str | None:
-    """Why a node's Contract (an extract row, an inbox item) is not pinned to its
+    """Why a node's Contract (an inbox item) is not pinned to its
     accepted version, or ``None``."""
 
     for label, node_id, ref in _node_contracts(definition):
