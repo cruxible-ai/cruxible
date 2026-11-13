@@ -483,6 +483,7 @@ def workspace_read_shape(contract: CaptureContractAny) -> WorkspaceReadShape:
 #: prefix: authoring raises them under ``cruxible.authoring.``, the Procedure
 #: acceptance law under ``cruxible.procedure.``.
 WORKSPACE_REQUEST_FIELD_UNREAD: Final = "workspace_request_field_unread"
+WORKSPACE_RESULT_FIELD_UNSERVED: Final = "workspace_result_field_unserved"
 WORKSPACE_READ_KIND_UNSUPPORTED: Final = "workspace_read_kind_unsupported"
 
 
@@ -496,10 +497,22 @@ class WorkspaceReadProblem(_StrictWorkspaceFileModel):
 
     code: Literal[
         "workspace_request_field_unread",
+        "workspace_result_field_unserved",
         "workspace_read_kind_unsupported",
     ]
     message: str
     element: str
+
+
+def _type_form(field: object) -> str | None:
+    from cruxible_client.contracts.shapes import CaptureType, ListType
+
+    typed = getattr(field, "type", None)
+    if isinstance(typed, CaptureType):
+        return "capture"
+    if isinstance(typed, ListType) and isinstance(typed.item, CaptureType):
+        return "list<capture>"
+    return None
 
 
 def workspace_read_problem(
@@ -523,7 +536,7 @@ def workspace_read_problem(
     Authoring and the Procedure acceptance law both ask this.
     """
 
-    from cruxible_client.contracts.shapes import Contract
+    from cruxible_client.contracts.shapes import Contract, validate_contract
 
     if isinstance(request, Contract):
         read = WORKSPACE_READ_FIELDS[operation]
@@ -538,6 +551,35 @@ def workspace_read_problem(
                     "Remove the field in a new version of the capability's request."
                 ),
                 element="input",
+            )
+    if isinstance(result, Contract):
+        served = validate_contract(
+            WORKSPACE_FILE_RESULT_CONTRACT
+            if operation == WORKSPACE_FILE_OPERATION
+            else WORKSPACE_FILES_RESULT_CONTRACT
+        )
+        unserved = sorted(
+            (
+                name
+                for name in set(result.fields) | set(served.fields)
+                if name not in result.fields
+                or name not in served.fields
+                or _type_form(result.fields[name]) != _type_form(served.fields[name])
+            ),
+            key=lambda name: name.encode("utf-8"),
+        )
+        if unserved:
+            (expected,) = served.fields
+            return WorkspaceReadProblem(
+                code=WORKSPACE_RESULT_FIELD_UNSERVED,
+                message=(
+                    f"{capability}'s result {result.name}@{result.version} declares "
+                    f"{sorted(result.fields)}; core's builtin {operation} read returns "
+                    f"exactly {expected!r} ({_type_form(served.fields[expected])}), so "
+                    f"{', '.join(repr(name) for name in unserved)} cannot be served. "
+                    f"Name the result field {expected!r} in a new version of the capability."
+                ),
+                element="captures",
             )
     if capture_kind is not None:
         try:
@@ -866,6 +908,7 @@ __all__ = [
     "WORKSPACE_READ_FIELDS",
     "WORKSPACE_READ_KIND_UNSUPPORTED",
     "WORKSPACE_REQUEST_FIELD_UNREAD",
+    "WORKSPACE_RESULT_FIELD_UNSERVED",
     "WorkspaceReadProblem",
     "WorkspaceBindingDigestAuthored",
     "WorkspaceFileGlobRequestV1",

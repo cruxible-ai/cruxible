@@ -392,6 +392,8 @@ def _check_workspace_read(
         "workspace_request_field_unread": "Remove the field from the request Contract in a new "
         f"version of {capability.name}, or pin a version whose request declares only fields "
         "the builtin reads.",
+        "workspace_result_field_unserved": "Declare exactly the result field the builtin "
+        f"returns in a new version of {capability.name}, or pin a version that does.",
         "workspace_read_kind_unsupported": "Land the read under a CaptureKind with one "
         "coordinate and one selector schema (an http_response kind).",
     }

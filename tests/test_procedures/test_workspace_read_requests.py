@@ -178,6 +178,14 @@ def _encoding_request() -> Any:
     )
 
 
+def _renamed_result() -> Any:
+    from cruxible_client.contracts.shapes import Contract
+
+    return Contract.model_validate(
+        {"name": "test.file-result", "version": 1, "fields": {"document": {"type": "capture<*>"}}}
+    )
+
+
 def test_a_request_field_core_does_not_read_is_refused_naming_it(tmp_path: Path) -> None:
     """An adopter may author workspace.file@2; core serves it by name, so its request
     may declare only fields the builtin reads."""
@@ -189,6 +197,22 @@ def test_a_request_field_core_does_not_read_is_refused_naming_it(tmp_path: Path)
     assert refused.value.code == "cruxible.authoring.workspace_request_field_unread"
     assert "'encoding'" in str(refused.value)
     assert refused.value.offending_element == "$.steps[0].input"
+
+
+def test_a_result_field_core_does_not_return_is_refused_naming_it(tmp_path: Path) -> None:
+    """A workspace.file@2 whose result renames ``capture`` cannot be served: the
+    builtin returns exactly ``capture``, and no mapping renames it."""
+
+    instance = _world(tmp_path)
+    _version_2(instance, result=_renamed_result())
+    with pytest.raises(AuthoringLoweringError) as refused:
+        author_procedure(
+            instance,
+            _spec(REQUEST, capability_spelling=f"{WORKSPACE_FILE}@2", field="document"),
+        )
+    assert refused.value.code == "cruxible.authoring.workspace_result_field_unserved"
+    assert "'document'" in str(refused.value) and "'capture'" in str(refused.value)
+    assert refused.value.offending_element == "$.steps[0].captures"
 
 
 def test_a_kind_core_cannot_derive_a_read_source_from_is_refused(tmp_path: Path) -> None:
@@ -286,6 +310,26 @@ def test_acceptance_refuses_a_stored_call_whose_request_declares_an_unread_field
     _version_2(instance, request=_encoding_request())
     refused = _submit_raw(instance, _pin_version_2(instance))
     assert "cruxible.procedure.workspace_request_field_unread" in _codes(refused)
+
+
+def test_acceptance_refuses_a_stored_call_whose_result_renames_the_capture(
+    tmp_path: Path,
+) -> None:
+    instance = _world(tmp_path)
+    author_procedure(instance, _spec(REQUEST))
+    _version_2(instance, result=_renamed_result())
+    pin = _pin_version_2(instance)
+
+    def edit(definition: dict[str, Any]) -> None:
+        pin(definition)
+        (call,) = (node for node in definition["nodes"] if node["kind"] == "call")
+        call["captures"] = {"document": call["captures"]["capture"]}
+        (out,) = (node for node in definition["nodes"] if node["kind"] == "project")
+        out["fields"] = {"document": "$steps.doc.document"}
+
+    assert "cruxible.procedure.workspace_result_field_unserved" in _codes(
+        _submit_raw(instance, edit)
+    )
 
 
 def test_acceptance_refuses_a_stored_call_landing_under_an_unsupported_kind(

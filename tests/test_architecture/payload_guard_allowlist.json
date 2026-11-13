@@ -16,7 +16,8 @@
       },
       "dispatch": {
         "src/cruxible_core/procedures/execution.py::ProcedureExecutor._run_acquiring_call": "the daemon serves the builtin read itself (BoundOperation.builtin, set by signature)",
-        "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::workspace_read_signature_digest": "picks the result Contract of the builtin operation whose signature it derives"
+        "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::workspace_read_signature_digest": "picks the result Contract of the builtin operation whose signature it derives",
+        "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::workspace_read_problem": "compares a capability's result with the result Contract of the builtin operation serving it"
       }
     },
     "cruxible-builtin": {
