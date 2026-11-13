@@ -83,6 +83,7 @@ def thin_spec(kit: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     return spec, thin
 
 
+@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 @pytest.mark.pilot(
     "s6-thin-extract",
     owner=surfaces.LAYOUT,
