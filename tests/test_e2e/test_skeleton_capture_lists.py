@@ -89,6 +89,9 @@ def _pages_build(checkout: Path) -> Any:
         declared_operation(
             {
                 "name": name,
+                "serves": [
+                    {"fetch_pages": "test.pages", "derive_pages": "test.pages-derive"}[name]
+                ],
                 "in": request,
                 "out": result,
                 "effect": effect,

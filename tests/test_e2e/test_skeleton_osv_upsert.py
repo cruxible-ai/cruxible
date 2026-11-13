@@ -105,6 +105,9 @@ def _osv_build(checkout: Path) -> Any:
         declared_operation(
             {
                 "name": name,
+                "serves": [
+                    {"fetch_advisories": "test.osv", "derive_matches": "test.osv-derive"}[name]
+                ],
                 "in": request,
                 "out": result,
                 "effect": effect,

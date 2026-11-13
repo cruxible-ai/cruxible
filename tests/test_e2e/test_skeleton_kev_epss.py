@@ -959,6 +959,7 @@ def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
     served = (
         {
             "name": "derive",
+            "serves": [derive_capability_name(effect)],
             "in": "test.derive.request@1",
             "out": "web.fetch.result@1",
             "effect": effect,

@@ -95,6 +95,7 @@ def _derive_build(checkout: Path) -> Any:
         declared_operation(
             {
                 "name": "sbom_components",
+                "serves": ["test.sbom-derive"],
                 "in": "test.sbom-derive.request@1",
                 "out": "web.fetch.result@1",
                 "effect": "pure",
