@@ -25,6 +25,7 @@ from cruxible_client.contracts.kits import (
     KitProviderFileBytes,
     KitProviderStatus,
     KitProviderStep,
+    KitRequirementStatus,
     KitStatus,
 )
 from cruxible_core.cli.main import cli
@@ -443,6 +444,39 @@ def test_kit_status_lists_bundled_providers_and_their_install_state(
 
     assert result.exit_code == 0, result.output
     assert "provider kit-call (kit-call 0.2.0): differs (installed: 0.1.0)" in result.output
+
+
+def test_kit_status_shows_each_required_kit_and_whether_it_is_met(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="acme",
+                        version="1.0.0",
+                        content_digest="sha256:" + "1" * 64,
+                        requires=(
+                            KitRequirementStatus(
+                                kit_id="base",
+                                min_version="1.0.0",
+                                installed_version="1.2.0",
+                                met=True,
+                            ),
+                            KitRequirementStatus(kit_id="other", min_version="2.0.0", met=False),
+                        ),
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert "  requires base >= 1.0.0: met (installed 1.2.0)\n" in result.output
+    assert "  requires other >= 2.0.0: not met (not installed)\n" in result.output
 
 
 def test_a_registry_refusal_prints_its_code_without_the_class_name() -> None:

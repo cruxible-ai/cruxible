@@ -33,6 +33,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_client.contracts.validation_messages import internal_validation_segment
+from cruxible_client.contracts.write import WRITE_REQUEST_REFUSAL_REPAIRS
 from cruxible_core import __version__, startup_progress
 from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.ledger.checkpoints import QUIET_CHECKPOINT_SECONDS
@@ -187,6 +188,18 @@ def create_app() -> FastAPI:
             content["errors"] = [_format_request_validation_error(err) for err in exc.errors()]
             return JSONResponse(status_code=status_code, content=content)
         errors = [_format_request_validation_error(err) for err in exc.errors()]
+        # A request model that raises one of its declared typed refusals keeps
+        # that code and its repair: the caller learns the rule, not just a 422.
+        typed_codes = {str(err.get("type", "")) for err in exc.errors()}
+        if len(typed_codes) == 1 and (code := typed_codes.pop()) in WRITE_REQUEST_REFUSAL_REPAIRS:
+            body = ErrorResponse(
+                error_type="RequestValidationError",
+                message=str(exc.errors()[0].get("msg", code)),
+                error_code=code,
+                errors=errors,
+                repair=hand_edit_repair(code, required_change=WRITE_REQUEST_REFUSAL_REPAIRS[code]),
+            )
+            return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
         body = ErrorResponse(
             error_type="RequestValidationError",
             message="Request validation failed",

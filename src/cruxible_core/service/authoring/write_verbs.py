@@ -125,6 +125,7 @@ from cruxible_client.contracts.read_values import (
     whole_value_read,
 )
 from cruxible_client.contracts.recompilation import ProposalRecompiled
+from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     claim_literal_detail,
@@ -153,6 +154,8 @@ from cruxible_client.contracts.write import (
     CLAIM_ID_PATTERN,
     DOCS_ONLY_HINT,
     MAX_REBIND_FROM_CAPTURE,
+    RATIONALE_TOO_LONG,
+    RATIONALE_TOO_LONG_REPAIR,
     AboutChange,
     AddChange,
     ApprovalNeeded,
@@ -184,12 +187,15 @@ from cruxible_client.contracts.write import (
     WriteStatus,
     WriteWarning,
     capture_handle,
+    change_set_rationale,
+    change_set_rationale_too_long,
     subject_reference,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
+from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     SubjectRefResolution,
@@ -3324,7 +3330,7 @@ class _Planner:
         )
         key_claims = [_bare(identity) for identity, predicate in own if predicate in keys]
         if change.because is not None:
-            self.plan.retire_notes.append(f"Retire {named}: {change.because}")
+            self.plan.retire_notes.append(f"Retire {named}: {change.because.strip()}")
         return _Planned(
             index=index,
             op="retire",
@@ -3515,7 +3521,7 @@ class _Planner:
             )
         )
         if change.because is not None:
-            self.plan.retire_notes.append(f"Retire {claim_id}: {change.because}")
+            self.plan.retire_notes.append(f"Retire {claim_id}: {change.because.strip()}")
         return _Planned(
             index=index,
             op="retire",
@@ -3688,7 +3694,15 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
             if identity in minted:
                 earlier.append(minted[identity])
         members.append(member)
-    rationale = "\n\n".join((because.strip(), *plan.retire_notes))
+    rationale = change_set_rationale(because, tuple(plan.retire_notes))
+    # The request held because alone to the limit; the retire notes resolved
+    # here can carry the whole over it.
+    if (message := change_set_rationale_too_long(rationale)) is not None:
+        raise RequestRefusedError(
+            RATIONALE_TOO_LONG,
+            message.removeprefix(f"{RATIONALE_TOO_LONG}: "),
+            repair=hand_edit_repair(RATIONALE_TOO_LONG, required_change=RATIONALE_TOO_LONG_REPAIR),
+        )
     return _Lowered(
         payload=ChangeSetAuthoringPayload(members=tuple(members), rationale=rationale),
         claim_ids=tuple(claim_ids),

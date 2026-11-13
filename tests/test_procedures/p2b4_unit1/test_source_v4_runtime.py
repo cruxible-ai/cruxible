@@ -431,7 +431,10 @@ def _source_fixture(
             from tests.support.procedures import fixture_digest
 
             return object(), fixture_digest(identity)
-        return None
+        # The capability the provider slot names (declared by the stock Procedure).
+        from tests.support.capabilities import declared_capability
+
+        return declared_capability(identity)
 
     operation = historical_provider.provider.operations[0]
     accepted = bind_procedure_references(
