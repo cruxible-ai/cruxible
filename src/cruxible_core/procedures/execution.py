@@ -206,10 +206,12 @@ from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt,
     WorkspaceBindingDigestAuthored,
     WorkspaceFileGlobRequestV1,
-    is_workspace_glob,
+    WorkspaceReadShape,
+    WorkspaceReadShapeRefused,
     parse_authored_workspace_glob,
     parse_authored_workspace_request,
     source_read_receipt_digest,
+    workspace_read_shape,
 )
 from cruxible_core.documents.workspace_file import (
     DirectoryEntryCache,
@@ -308,6 +310,7 @@ from cruxible_core.procedures.node_summaries import (
 )
 from cruxible_core.procedures.ports import (
     WORKSPACE_FILE_BUILTIN,
+    WORKSPACE_FILES_BUILTIN,
     AcquisitionRules,
     bound_operation,
 )
@@ -3962,10 +3965,35 @@ class ProcedureExecutor:
             description=description,
         )
 
+    @staticmethod
+    def _workspace_read_shape(node: CallNode, contract: CaptureContract) -> WorkspaceReadShape:
+        """What core derives for a workspace read from the kind it lands under, or a refusal.
+
+        Authoring refuses a kind core cannot derive a read's source from, so this
+        refuses only a graph that did not pass authoring.
+        """
+
+        try:
+            return workspace_read_shape(contract)
+        except WorkspaceReadShapeRefused as exc:
+            raise _RunRefusal(
+                "workspace_file_read_refused",
+                str(exc),
+                node_id=node.node_id,
+                detail_code="binding",
+                details={
+                    "path_class": "binding",
+                    "repair_commands": [
+                        "land the read under a CaptureKind with one coordinate and one "
+                        "selector schema"
+                    ],
+                },
+            ) from exc
+
     def _executed_workspace_request(
-        self, node: CallNode, resolved_request: object
+        self, node: CallNode, resolved_request: object, shape: WorkspaceReadShape
     ) -> ExecutedWorkspaceFileSourceRequestV2:
-        """The authored workspace request as the daemon executes it, or a typed refusal."""
+        """The authored ``workspace.file`` request as the daemon executes it, or a refusal."""
 
         if self.workspace_file_reader is None:
             context = self._workspace_input_context(node, resolved_request)
@@ -3990,7 +4018,7 @@ class ProcedureExecutor:
                 },
             )
         try:
-            authored = parse_authored_workspace_request(resolved_request)
+            authored = parse_authored_workspace_request(resolved_request, shape)
         except WorkspaceBindingDigestAuthored as exc:
             raise _RunRefusal(
                 "workspace_file_read_refused",
@@ -4017,14 +4045,14 @@ class ProcedureExecutor:
             ) from exc
 
     def _authored_workspace_glob(
-        self, node: CallNode, resolved_request: object
+        self, node: CallNode, resolved_request: object, shape: WorkspaceReadShape
     ) -> WorkspaceFileGlobRequestV1:
-        """The authored glob read, or a typed refusal (D-R41)."""
+        """The authored ``workspace.files`` read, or a typed refusal (D-R41)."""
 
         if self.workspace_file_reader is None:
-            self._executed_workspace_request(node, resolved_request)  # refuses, typed
+            self._executed_workspace_request(node, resolved_request, shape)  # refuses, typed
         try:
-            return parse_authored_workspace_glob(resolved_request)
+            return parse_authored_workspace_glob(resolved_request, shape)
         except WorkspaceBindingDigestAuthored as exc:
             raise _RunRefusal(
                 "workspace_file_read_refused",
@@ -4299,11 +4327,16 @@ class ProcedureExecutor:
                 )
         # A glob read (D-R41) is one ordinary workspace read per matched file;
         # each member carries its own read and invocation receipts.
+        builtin = bound_operation(occurrence).builtin
+        workspace_shape: WorkspaceReadShape | None = None
+        if builtin is not None:
+            # The core-served read has exactly one capture field (an acceptance law).
+            (workspace_contract,) = contracts.values()
+            workspace_shape = self._workspace_read_shape(node, workspace_contract)
         glob_request: WorkspaceFileGlobRequestV1 | None = None
-        if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN and is_workspace_glob(
-            resolved_request
-        ):
-            glob_request = self._authored_workspace_glob(node, resolved_request)
+        if builtin == WORKSPACE_FILES_BUILTIN:
+            assert workspace_shape is not None
+            glob_request = self._authored_workspace_glob(node, resolved_request, workspace_shape)
         receipts: dict[str, tuple[ProviderInvocationReceipt, str]] = {}
         source_reads: dict[str, SourceReadReceipt | None] = {}
         outputs: dict[str, object] = {}
@@ -4340,11 +4373,14 @@ class ProcedureExecutor:
                 ),
             )
         else:
-            if bound_operation(occurrence).builtin == WORKSPACE_FILE_BUILTIN:
+            if builtin == WORKSPACE_FILE_BUILTIN:
                 # The author names the workspace logically, or not at all; the daemon
                 # resolves its root and executes -- and journals -- the request with
                 # that root's binding digest, before anything is read.
-                workspace_request = self._executed_workspace_request(node, resolved_request)
+                assert workspace_shape is not None
+                workspace_request = self._executed_workspace_request(
+                    node, resolved_request, workspace_shape
+                )
             derived_request = build_procedure_derived_source_request(
                 run_id=admission.run_id,
                 admission_binding_digest=admission.admission_binding_digest,
@@ -4367,8 +4403,6 @@ class ProcedureExecutor:
             provider_payload = resolved_request
             if workspace_request is not None:
                 assert self.workspace_file_reader is not None  # resolved by it above
-                # The core-served read has exactly one capture field (an acceptance law).
-                (workspace_contract,) = contracts.values()
                 try:
                     workspace_read = self.workspace_file_reader.read(
                         workspace_request,
@@ -4669,44 +4703,28 @@ class ProcedureExecutor:
         else:
             assert isinstance(output, dict)
             # The call's value: its out record, each committed capture field
-            # naming its Capture. An oversized field is checked as absent.
-            record = (
-                {
-                    **output,
-                    **{field: digest for field, digest in digests.items() if field not in members},
-                    **{
-                        field: [digests[key] for key in keys if key in digests]
-                        for field, keys in member_keys.items()
-                    },
-                }
-                if workspace_request is None
-                else {
-                    **self._validate_operation_value(
-                        occurrence,
-                        normalize_canonical(output),
-                        direction="out",
-                        admission=admission,
-                        state=state,
-                        node_id=node.node_id,
-                    ),  # type: ignore[dict-item]
-                    **digests,
-                }
-            )
+            # naming its Capture. An oversized field is checked as absent. The
+            # core-served read returns no field of its own: its value is the
+            # Capture core committed from the bytes it read.
+            record = {
+                **output,
+                **{field: digest for field, digest in digests.items() if field not in members},
+                **{
+                    field: [digests[key] for key in keys if key in digests]
+                    for field, keys in member_keys.items()
+                },
+            }
             for field in fields:
-                if field not in digests and workspace_request is None:
+                if field not in digests:
                     record.pop(field, None)
-            material = (
-                normalize_canonical(record)
-                if workspace_request is not None
-                else self._validate_operation_value(
-                    occurrence,
-                    normalize_canonical(record),
-                    direction="out",
-                    admission=admission,
-                    state=state,
-                    node_id=node.node_id,
-                    absent_captures=frozenset(field for field in fields if field not in digests),
-                )
+            material = self._validate_operation_value(
+                occurrence,
+                normalize_canonical(record),
+                direction="out",
+                admission=admission,
+                state=state,
+                node_id=node.node_id,
+                absent_captures=frozenset(field for field in fields if field not in digests),
             )
         for field, item in built.items():
             envelope = item.envelope

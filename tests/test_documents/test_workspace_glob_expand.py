@@ -82,8 +82,19 @@ def test_a_glob_names_a_pattern_within_its_workspace(glob: str) -> None:
 def test_a_glob_input_is_told_apart_and_never_carries_the_binding_digest() -> None:
     assert is_workspace_glob({"glob": "*.json"})
     assert not is_workspace_glob({"relative_path": "a.json"})
+    from cruxible_client.contracts.workspace_file import WorkspaceReadShape
+
+    shape = WorkspaceReadShape(
+        coordinate_type="http-response-v1", selector_type="whole-response-v1", replayability="exact"
+    )
     with pytest.raises(ValueError, match="resolved by the daemon"):
-        parse_authored_workspace_glob({"glob": "*.json", "workspace_binding_digest": "x"})
+        parse_authored_workspace_glob({"glob": "*.json", "workspace_binding_digest": "x"}, shape)
+    # The glob core performs: the authored glob and cap, the kind's source shape.
+    glob = parse_authored_workspace_glob(
+        {"logical_source": "test.files", "glob": "*.json", "max_files": 5}, shape
+    )
+    assert (glob.glob, glob.max_files, glob.coordinate_type) == ("*.json", 5, "http-response-v1")
+    assert glob.member("a.json").selector == {"whole": True}
 
 
 # -- directory-entry cache correctness (F3): a stale candidate is never consumed -----

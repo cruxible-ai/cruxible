@@ -129,13 +129,7 @@ def _run(instance: Any, line: str, *, invoker: Invoker | None = None, root: Path
 
 # --- extract rows -------------------------------------------------------------
 
-_READ = {
-    "logical_source": "commerce.production.orders",
-    "coordinate_type": "database-snapshot-v1",
-    "coordinate": {"lsn": "workspace"},
-    "selector_type": "relation-primary-key-v1",
-    "selector": {"id": 7, "relation": "orders"},
-}
+_READ = {"logical_source": "commerce.production.orders"}
 _SLOT = {"capability": "workspace.file@1"}
 
 
@@ -159,7 +153,7 @@ def _typed(node: dict[str, Any], *, repeat: bool = False, next: str | None = Non
 def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any, Path]:
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from tests.core_support._identity_support import accept_tree
-    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._light_capture_support import file_contract
 
     instance = world(tmp_path, operation_build())
     root = tmp_path / "workspace"
@@ -178,7 +172,7 @@ def _workspace_world(tmp_path: Path, documents: dict[str, object]) -> tuple[Any,
         )
 
     capture = with_layout(
-        record_contract(),
+        file_contract(),
         {"entries": entries(None), "entries_counted": entries("/count")},
         {"next": {"at": "/next", "presence": "required"}},
     )

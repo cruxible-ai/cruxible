@@ -5,20 +5,18 @@
       "reason": "Core's own builtin operation (R3): the daemon performs the read itself and recognizes the operation by its builtin signature.",
       "declarations": {
         "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::<module>": "declares the builtin's Contracts and operation name",
-        "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::workspace_file_signature_digest": "derives the builtin signature it is recognized by",
         "src/cruxible_core/procedures/ports.py::<module>": "BuiltinOperation / WORKSPACE_FILE_BUILTIN, set by signature in bound_operation",
         "src/cruxible_core/providers/builtin_workspace_file.py::<module>": "the builtin's in-process implementation",
         "src/cruxible_core/governance/seed_artifacts/workspace_file.py::workspace_file_builtin_provider": "seeds the builtin Provider (drift refusal message)",
-        "src/cruxible_core/providers/builtin_workspace_file.py::WorkspaceFile.__call__": "refusal message of the builtin itself",
         "src/cruxible_core/service/uploads.py::check_upload_procedure": "refusal message: an upload is read by the builtin",
         "packages/cruxible-client/src/cruxible_client/contracts/captures.py::ProviderInvocationCaptureEvidence._workspace_receipt": "refusal message on builtin evidence",
         "packages/cruxible-client/src/cruxible_client/contracts/captures.py::validate_provider_external_capture_result": "refusal messages on builtin evidence",
         "packages/cruxible-client/src/cruxible_client/contracts/captures.py::build_provider_external_capture_v2": "refusal messages on builtin evidence",
-        "packages/cruxible-client/src/cruxible_client/contracts/captures.py::_verify_capture_once": "refusal messages on builtin evidence",
-        "packages/cruxible-client/src/cruxible_client/contracts/procedures/capture_outputs.py::procedure_capture_problem": "refusal message: the builtin's one capture field"
+        "packages/cruxible-client/src/cruxible_client/contracts/captures.py::_verify_capture_once": "refusal messages on builtin evidence"
       },
       "dispatch": {
-        "src/cruxible_core/procedures/execution.py::ProcedureExecutor._run_acquiring_call": "the daemon serves the builtin read itself (BoundOperation.builtin, set by signature)"
+        "src/cruxible_core/procedures/execution.py::ProcedureExecutor._run_acquiring_call": "the daemon serves the builtin read itself (BoundOperation.builtin, set by signature)",
+        "packages/cruxible-client/src/cruxible_client/contracts/workspace_file.py::workspace_read_signature_digest": "picks the result Contract of the builtin operation whose signature it derives"
       }
     },
     "cruxible-builtin": {

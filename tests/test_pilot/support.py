@@ -101,10 +101,6 @@ def _fetch(file: str) -> dict[str, Any]:
         "input": {
             "logical_source": "$params.logical_source",
             "relative_path": "$params.relative_path",
-            "coordinate_type": "database-snapshot-v1",
-            "coordinate": {"lsn": "recorded-fixture"},
-            "selector_type": "relation-primary-key-v1",
-            "selector": {"id": 7, "relation": file},
         },
     }
 
@@ -115,7 +111,11 @@ def _spec(name: str, nodes: list[dict[str, Any]], *, may_truncate: bool = False)
         reference_text=True,
         input={},
         output={},
-        params={"logical_source": "string", "relative_path": "string"},
+        # Typed to fit workspace.file@1's request, which the read is typed against.
+        params={
+            "logical_source": 'string{pattern: "^[a-z][a-z0-9_.-]{0,255}$"}',
+            "relative_path": "string{min_len: 1, max_len: 1024}",
+        },
         slots={"fetch": {"capability": "workspace.file@1", "may_truncate": may_truncate}},
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536, read_rows=500),
         steps=nodes,

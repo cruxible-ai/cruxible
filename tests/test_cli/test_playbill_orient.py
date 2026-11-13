@@ -57,23 +57,25 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     page = cruxible.json("orient", "--section", "claim_types", "--limit", "1")
     assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.slug"]
     assert "(no procedures)" in cruxible.run("orient", "--section", "procedures").stdout
-    # A new instance starts with the exact workspace.file operation signature.
-    assert mapped["artifacts"]["operations"] == 1
+    # A new instance starts with the builtin's two workspace reads (ruling O2).
+    assert mapped["artifacts"]["operations"] == 2
     assert "cruxible orient --section operations" in mapped["next"]
-    (operation,) = cruxible.json("orient", "--section", "operations")["operations"]
+    operation, glob = cruxible.json("orient", "--section", "operations")["operations"]
     assert (operation["build"], operation["operation"], operation["effect"]) == (
         "Provider:cruxible-builtin",
         "workspace.file",
         "pure",
     )
     assert (operation["input"], operation["output"]) == (
-        "workspace.file.request@1",
+        "workspace.file.handoff@1",
         "workspace.file.result@1",
     )
+    assert glob["operation"] == "workspace.files"
+    assert glob["output"] == "workspace.files.result@1"
     assert operation["refusals"] == ["invalid_parameter", "mismatched_lengths", "provider_declined"]
     text = cruxible.run("orient", "--section", "operations").stdout
     assert (
-        "cruxible-builtin#workspace.file  workspace.file.request@1 -> "
+        "cruxible-builtin#workspace.file  workspace.file.handoff@1 -> "
         "workspace.file.result@1  (pure)"
     ) in text
     assert "  refuses invalid_parameter, mismatched_lengths, provider_declined" in text

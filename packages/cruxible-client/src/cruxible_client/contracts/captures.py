@@ -3026,9 +3026,9 @@ def build_provider_external_capture_v2(
 
     ``result`` carries the field's exact bytes, which are committed byte-exact.
     ``provider_output`` is the operation's whole output record, which the
-    receipt digests (every Capture is a field of it; for the core-served
-    ``workspace.file`` read, the bytes are the file core read itself and the
-    output structures them); without it the receipt digests ``result`` itself.
+    receipt digests (every Capture is a field of it; for a core-served
+    workspace read, the bytes are the file core read itself and the builtin's
+    output is empty); without it the receipt digests ``result`` itself.
 
     A derived CaptureContract's Capture (a derive call's output) requires
     ``derivation``, the exact inputs it was computed from: the manifest and the
@@ -3061,7 +3061,7 @@ def build_provider_external_capture_v2(
     workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     content = base64.b64decode(result.content_base64, validate=True)
     if workspace_source and provider_output is None:
-        raise CaptureFormatError("a workspace.file Capture is built with its structured output")
+        raise CaptureFormatError("a workspace.file Capture is built with the builtin's output")
     # An external result is the provider's output, checked against its
     # operation Contract, in which optional means an absent key and no value
     # is null: the decoder's defaults (an unstated validity window) are absent
@@ -3074,15 +3074,10 @@ def build_provider_external_capture_v2(
     if output_commitment.output_digest != provider_invocation_output_digest(digested):
         raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
     if workspace_source:
+        # The invocation's input is this read's handoff (its digest is the read
+        # receipt's provider_input_digest, checked above), and the builtin's
+        # output names no field of its own: the bytes are the read's bytes.
         assert source_read_receipt is not None
-        source_echo = digested.get("source") if isinstance(digested, dict) else None
-        if not isinstance(source_echo, dict) or source_echo != {
-            "logical_source": source_read_receipt.logical_source,
-            "commitment_digest": source_read_receipt.derived_request_digest,
-            "bytes_digest": source_read_receipt.bytes_digest,
-            "byte_length": source_read_receipt.byte_length,
-        }:
-            raise CaptureFormatError("workspace.file result mixes source attempts")
         if result.bytes_digest != source_read_receipt.bytes_digest:
             raise CaptureFormatError("workspace.file Capture bytes are not the bytes core read")
     stored = store.store(content)

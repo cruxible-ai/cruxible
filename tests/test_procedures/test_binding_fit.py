@@ -416,7 +416,8 @@ def test_a_builtin_slot_refuses_any_other_build_before_fit(tmp_path: Path) -> No
     from cruxible_client.contracts.procedures.line_specs import LINE_BINDING_BUILTIN_MISMATCH
 
     instance = _world(tmp_path, EXACT)
-    refusal = _refused(instance, {"compute": "cruxible-builtin"})
+    # The builtin has two operations, neither serving test.compute: name one.
+    refusal = _refused(instance, {"compute": "cruxible-builtin#workspace.file"})
     assert refusal.error_code == LINE_BINDING_BUILTIN_MISMATCH
     assert "test.compute@1" in str(refusal) and "core's builtin" in str(refusal)
 

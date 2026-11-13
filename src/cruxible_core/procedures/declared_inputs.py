@@ -1,8 +1,9 @@
 """The external inputs a Line's Procedure declares, read from definitions only.
 
 An external input is what a run takes from outside accepted state: a file a
-person or agent puts in the workspace (``workspace_file``), the files a glob
-matches (``workspace_glob``), a fetch the run makes (``fetch``), or the
+person or agent puts in the workspace (``workspace_file``, a ``workspace.file``
+read), the files a glob matches (``workspace_glob``, a ``workspace.files``
+read), a fetch the run makes (``fetch``), or the
 Capture a Trigger hands the run (``trigger_capture``). Each is one acquiring
 call node of the Procedure. Where it reads -- the path, glob or URL -- is the
 call input's own value, resolved against the Line's parameters when it is a
@@ -25,12 +26,14 @@ from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.procedures.nodes import CallNode
 from cruxible_client.contracts.shapes import Contract
 from cruxible_client.contracts.workspace_file import (
-    WorkspaceFileGlobRequestV1,
+    WORKSPACE_FILES_OPERATION,
+    WorkspaceFilesRequest,
     is_workspace_glob,
+    workspace_read_operation,
 )
 from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
-_GLOB_DEFAULT_MAX_FILES = WorkspaceFileGlobRequestV1.model_fields["max_files"].default
+_GLOB_DEFAULT_MAX_FILES = WorkspaceFilesRequest.model_fields["max_files"].default
 
 DeclaredInputKind = Literal["workspace_file", "workspace_glob", "fetch", "trigger_capture"]
 
@@ -103,16 +106,32 @@ def parameter_description(contract: Contract | None, name: str | None) -> str | 
 def reads_workspace(slot: Any) -> bool:
     """Whether ``slot`` is a workspace read core's builtin serves.
 
-    Provisional recognition: by the slot's capability name, one of the names in
-    ``BUILTIN_CAPABILITY_NAMES``. Glob reads keep today's request handling
-    until the file-read slice moves them to their own capability.
+    Recognised by the slot's capability name, one of the names in
+    ``BUILTIN_CAPABILITY_NAMES``: ``workspace.file`` (one path) or
+    ``workspace.files`` (a glob), any version.
     """
 
     return slot is not None and slot.capability.name in BUILTIN_CAPABILITY_NAMES
 
 
+def reads_one_workspace_file(slot: Any) -> bool:
+    """Whether ``slot`` reads one workspace file by path (``workspace.file``)."""
+
+    return reads_workspace(slot) and workspace_read_operation(slot.capability.name) not in (
+        None,
+        WORKSPACE_FILES_OPERATION,
+    )
+
+
 def _workspace_call(definition: Any, node: CallNode) -> bool:
     return reads_workspace(definition.slots.get(node.slot))
+
+
+def _glob_call(definition: Any, node: CallNode) -> bool:
+    slot = definition.slots.get(node.slot)
+    return slot is not None and workspace_read_operation(slot.capability.name) == (
+        WORKSPACE_FILES_OPERATION
+    )
 
 
 def _external_read(definition: Any, node: CallNode, capabilities: CapabilityLookup | None) -> bool:
@@ -122,7 +141,12 @@ def _external_read(definition: Any, node: CallNode, capabilities: CapabilityLook
 
 
 def workspace_location_key(node_input: object) -> str:
-    """Which field of a workspace call's input names what it reads."""
+    """Which field of a workspace call's input names what it reads.
+
+    A call's input is typed against its capability's request, so a
+    ``workspace.files`` read names ``glob`` and a ``workspace.file`` read
+    ``relative_path``.
+    """
 
     return "glob" if is_workspace_glob(node_input) else "relative_path"
 
@@ -166,7 +190,7 @@ def declared_inputs(
             )
             continue
         if _workspace_call(definition, node):
-            key = workspace_location_key(node_input)
+            key = "glob" if _glob_call(definition, node) else "relative_path"
             location, parameter = resolve_input_value(node_input.get(key), parameters)
             workspace, _ = resolve_input_value(node_input.get("workspace"), parameters)
             max_files: int | None = None
@@ -213,6 +237,7 @@ __all__ = [
     "DeclaredInput",
     "DeclaredInputKind",
     "declared_inputs",
+    "reads_one_workspace_file",
     "reads_workspace",
     "effective_parameters",
     "parameter_description",

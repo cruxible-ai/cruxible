@@ -794,23 +794,20 @@ def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
         procedure="test.sourced",
         description=description,
         input={},
-        output={"length": "int"},
+        output={"document": "capture<test.orders-v1>"},
         slots={"read": slot(f"{WORKSPACE_FILE}@1")},
         steps=[
             CallStep(
                 call="doc",
                 captures={"capture": "test.orders-v1"},
                 slot="read",
+                # The authored request: workspace.file@1's request, nothing else.
                 input={
                     "logical_source": "commerce.production.orders",
                     "relative_path": "data/doc.json",
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 7, "relation": "orders"},
                 },
             ),
-            ProjectStep(project="out", fields={"length": "$doc.source.byte_length"}),
+            ProjectStep(project="out", fields={"document": "$doc.capture"}),
         ],
         returns="out",
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
@@ -822,13 +819,13 @@ def sourced_world(  # type: ignore[no-untyped-def]
 ):
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from tests.core_support._identity_support import accept_tree
-    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._light_capture_support import file_contract
 
     instance = world(tmp_path, operation_build(), *builds)
     root = tmp_path / "workspace"
     (root / "data").mkdir(parents=True, exist_ok=True)
     (root / "data/doc.json").write_text('{"value": 7}')
-    contract = record_contract()
+    contract = file_contract()
     accept_tree(
         instance,
         {capture_contract_path(contract.identity.name): render_capture_contract(contract)},
@@ -929,19 +926,19 @@ def test_an_ordinary_call_records_operation_fields_and_replays(tmp_path):
     assert replayed.procedure.pins == state.receipt.validated_pins
 
 
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_captured_source_call_records_operation_fields_and_replays(tmp_path):
     from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
 
     instance, root = sourced_world(tmp_path)
     state = run_sourced(instance, root)
     assert state.status == "succeeded", state.terminal
-    assert state.result == {"length": len('{"value": 7}')}
     (receipt,) = invocation_receipts(instance, state.run_id)
     assert receipt.operation == "workspace.file"
     assert receipt.operation_signature_digest == workspace_file_signature_digest()
     (observed,) = state.source_observations
     assert observed.capture_digest is not None
+    # The call's value is the base kit's result: the one Capture core read.
+    assert state.result == {"document": observed.capture_digest}
     _grain, replayed = replay(instance, state)
     assert replayed.procedure.pins == state.receipt.validated_pins
 
@@ -977,7 +974,6 @@ def test_a_typed_refusal_detail_outside_its_contract_is_refused(tmp_path):
 
 
 @pytest.mark.parametrize("on_unavailable", ["omit", "refuse"])
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(
     tmp_path, on_unavailable, monkeypatch
 ):
@@ -993,12 +989,16 @@ def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(
     assert accepted_line(instance, SOURCE_LINE).bindings["read"].build.target.name == (
         "cruxible-builtin"
     )
-    # The builtin declines this read (its size guard's refusal, as it returns it).
+    # The builtin declines this read (its digest guard's refusal, as it returns it).
     monkeypatch.setattr(
         builtin_runtime,
         "_guarded_call",
         lambda adapter, context: builtin_runtime._envelope(
-            context, "provider_declined", "not today", byte_length=2, max_bytes=1
+            context,
+            "provider_declined",
+            "not today",
+            declared="sha256:" + "0" * 64,
+            computed="sha256:" + "1" * 64,
         ),
     )
     state = run_sourced(instance, root)
@@ -1573,7 +1573,6 @@ def _succeed_procedure_and_line(instance, spec, line):  # type: ignore[no-untype
     )
 
 
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path):
     from cruxible_client.contracts.cas_contracts import BodyAccessContext
     from cruxible_core.service.evidence.capture_reads import verify_accepted_capture
@@ -1631,7 +1630,6 @@ def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path
 # --- 9. Line acquisition max_age ----------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="owner: file-read")
 def test_a_line_acquisition_max_age_violation_refuses_like_the_old_policy(tmp_path):
     from datetime import timedelta
     from types import SimpleNamespace

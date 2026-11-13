@@ -36,7 +36,7 @@ from cruxible_client.contracts.shapes import Contract, contract_path, render_con
 from cruxible_client.contracts.subject_kinds import render_subject_kind, subject_kind_path
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from tests.core_support._identity_support import accept_tree
-from tests.core_support._light_capture_support import record_contract
+from tests.core_support._light_capture_support import file_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
 from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.mandates import procedure_mandate
@@ -158,7 +158,7 @@ def claims_world(
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=()),
     )
     capture = entries_layout(
-        record_contract(
+        file_contract(
             **({} if capture_body_access == "open" else {"body_access": capture_body_access})
         ),
         rows,
@@ -217,10 +217,6 @@ def claims_spec(
                 "input": {
                     "logical_source": "commerce.production.orders",
                     "relative_path": "data/doc.json",
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 7, "relation": "orders"},
                 },
             },
             {"extract": "entries", "capture": "$steps.doc.capture", "records": "entries"},
