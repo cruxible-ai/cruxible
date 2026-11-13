@@ -4755,10 +4755,16 @@ def _evaluate_scoped_members(
             try:
                 parse(proposed, path=path)
             except format_error as exc:
+                # Each of these laws refuses a member that is not the whole
+                # change set before it reads the bytes; keep that order.
                 return CandidateEvaluation(
                     candidate_tree,
                     None,
-                    (_diagnostic(format_code, str(exc), path),),
+                    (
+                        _unregistered(path)
+                        if tuple(scope) != (path,)
+                        else _diagnostic(format_code, str(exc), path),
+                    ),
                     rebased,
                 )
         try:

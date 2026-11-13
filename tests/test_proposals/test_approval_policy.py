@@ -455,3 +455,24 @@ def test_malformed_singleton_is_a_typed_refusal_after_genesis(
 
     assert refused.candidate is None
     assert tuple(item.code for item in refused.evaluation.diagnostics) == (code,)
+
+
+def test_malformed_policy_bundled_with_an_artifact_is_refused_after_genesis(
+    tmp_path: Path,
+) -> None:
+    instance = _past_genesis(tmp_path)
+    body = instance.store_document_body(b"# Bundled\n")
+    refused = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            APPROVAL_POLICY_PATH: b"not canonical bytes\n",
+            DOCUMENT_PATH: render_document(_shell(body.digest)),
+        },
+        name="malformed-policy-bundled",
+    )
+
+    assert refused.candidate is None
+    assert tuple(item.code for item in refused.evaluation.diagnostics) == (
+        "cruxible.proposal.unregistered_semantic_kind",
+    )
