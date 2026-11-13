@@ -352,5 +352,11 @@ def test_install_cost_is_linear_in_kit_members(worlds: tuple[_World, _World]) ->
         counts[size] = statements[0]
     print("item 11 kit install statements", counts)
     small, middle, large = (counts[size] for size in sizes[2:])
-    # Linear in members: 4 more Documents cost about twice what 2 more cost.
-    assert large - middle <= 2 * (middle - small) * 1.25 + 60, counts
+    # Linear in members: each added Document costs a bounded number of
+    # statements (about 20 measured), whatever else the instance holds. The
+    # counts vary by a few dozen between runs, so each step is held to a fixed
+    # per-Document budget; a bound taken from the measured 2-to-4 difference
+    # fails whenever that difference happens to come out near zero.
+    per_document, noise = 30, 60
+    assert middle - small <= 2 * per_document + noise, counts
+    assert large - middle <= 4 * per_document + noise, counts
