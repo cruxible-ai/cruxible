@@ -168,14 +168,8 @@ def dependency_pins(
                         role=CONTRACT_PIN_ROLE, target=contract_identity(row.name, row.version)
                     )
                 )
-    if kind == "Provider":
-        for operation in getattr(artifact, "operations", ()):
-            for ref in operation.contract_refs():
-                pins.append(
-                    ArtifactRef(
-                        role=CONTRACT_PIN_ROLE, target=contract_identity(ref.name, ref.version)
-                    )
-                )
+    # A Provider build pins no instance Contract: its operations resolve inside
+    # the copies it carries (``declares``).
     if getattr(artifact, "identity", None) is not None:
         if artifact.identity.kind == "QueryDefinition":
             if not getattr(artifact, "pins", ()):

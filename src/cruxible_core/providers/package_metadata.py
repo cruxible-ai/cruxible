@@ -1,15 +1,18 @@
 """Read a provider package's registration metadata.
 
-A provider package ships a ``registration.json`` (schema 2) naming its runtime
-manifest (schema 2, one row per entrypoint, by package-relative path and
-digest) and declaring its typed operations inline: ``{name, in, out, effect,
-refusals, enumerates?, entrypoint}``, Contracts named ``name@N``. Runtime
-requirements are keyed by the entrypoint they belong to, and the wheel's
-``cruxible.providers`` entry points are exactly ``{operation: entrypoint}``.
+A provider package ships a ``registration.json`` (schema 3,
+:class:`~cruxible_client.contracts.provider_registration.PackageRegistration`)
+naming its runtime manifest (schema 2, one row per entrypoint, by
+package-relative path and digest), declaring its typed operations inline
+(``{name, description, source, serves, in, out, effect, may_truncate?,
+refusals, entrypoint}``, Contracts named ``name@N``) and carrying every shape
+they reach in ``declares``. Runtime requirements are keyed by the entrypoint
+they belong to, and the wheel's ``cruxible.providers`` entry points are exactly
+``{operation: entrypoint}``.
 
 Every resource reference, digest, entry point and extra is checked here, and
-no package code is imported or executed. A schema-1 registration or manifest
-refuses: rebuild the package for provider runtime protocol 2.0.
+no package code is imported or executed. Only schema 3 is read: rebuild an
+older package with the provider runtime's ``write_registration``.
 """
 
 from __future__ import annotations
@@ -22,14 +25,16 @@ from contextlib import contextmanager
 from importlib.metadata import PathDistribution
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
-from typing import Literal
 from zipfile import ZipFile
 
 import yaml
 from packaging.utils import canonicalize_name
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import (
+    REGISTRATION_SCHEMA_VERSION,
+    PackageRegistration,
+    RegistrationResource,
+)
 from cruxible_client.contracts.providers import ProviderRuntimeManifest
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 
@@ -39,93 +44,21 @@ MAX_UNPACKED_WHEEL_BYTES = 128 * 1024 * 1024
 _SHA256_PREFIX = "sha256:"
 
 
-class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+def _read_resource(resource: RegistrationResource, root: Path) -> bytes:
+    """One package file the registration names, refusing an escape or a digest mismatch."""
 
-
-def _callable_path(value: str) -> str:
-    module, separator, member = value.partition(":")
-    if (
-        not separator
-        or not member.isidentifier()
-        or not all(part.isidentifier() for part in module.split("."))
-    ):
-        raise ValueError("entrypoint must be module:callable")
-    return value
-
-
-class _ResourceRef(_Strict):
-    path: str
-    digest: str
-
-    @field_validator("path")
-    @classmethod
-    def _relative(cls, value: str) -> str:
-        path = PurePosixPath(value)
-        if (
-            not value
-            or path.is_absolute()
-            or ".." in path.parts
-            or "\\" in value
-            or path.as_posix() != value
-            or value == "."
-        ):
-            raise ValueError("resource path must be a normalized package-relative path")
-        return value
-
-    @field_validator("digest")
-    @classmethod
-    def _sha256(cls, value: str) -> str:
-        hexadecimal = value.removeprefix(_SHA256_PREFIX)
-        if (
-            not value.startswith(_SHA256_PREFIX)
-            or len(hexadecimal) != 64
-            or any(character not in "0123456789abcdef" for character in hexadecimal)
-        ):
-            raise ValueError("resource digest must be sha256:<64 lowercase hex>")
-        return value
-
-    def read(self, root: Path) -> bytes:
-        root = root.resolve(strict=True)
-        path = root / self.path
-        try:
-            resolved = path.resolve(strict=True)
-        except OSError as exc:
-            raise ValueError(f"resource is missing: {self.path}") from exc
-        if path.is_symlink() or not resolved.is_relative_to(root):
-            raise ValueError(f"resource escapes package: {self.path}")
-        data = path.read_bytes()
-        if _SHA256_PREFIX + hashlib.sha256(data).hexdigest() != self.digest:
-            raise ValueError(f"resource digest mismatch: {self.path}")
-        return data
-
-
-class PackageRuntimeRequirement(_Strict):
-    #: The manifest implementation the requirement belongs to.
-    entrypoint: str
-    kind: Literal["python_extra", "runtime_resource"]
-    name: str
-    description: str
-    probe_entrypoint: str | None = None
-
-    @model_validator(mode="after")
-    def _probe(self) -> PackageRuntimeRequirement:
-        if self.kind == "runtime_resource":
-            if self.probe_entrypoint is None:
-                raise ValueError("runtime resources require a package readiness probe")
-            _callable_path(self.probe_entrypoint)
-        elif self.probe_entrypoint is not None:
-            raise ValueError("Python extras do not use resource probes")
-        return self
-
-
-class PackageRegistrationDescriptor(_Strict):
-    """``registration.json`` schema 2, exactly as a package ships it."""
-
-    schema_version: Literal[2]
-    manifest: _ResourceRef
-    operations: tuple[ProviderOperation, ...] = Field(min_length=1)
-    runtime_requirements: tuple[PackageRuntimeRequirement, ...] = ()
+    root = root.resolve(strict=True)
+    path = root / resource.path
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"resource is missing: {resource.path}") from exc
+    if path.is_symlink() or not resolved.is_relative_to(root):
+        raise ValueError(f"resource escapes package: {resource.path}")
+    data = path.read_bytes()
+    if _SHA256_PREFIX + hashlib.sha256(data).hexdigest() != resource.digest:
+        raise ValueError(f"resource digest mismatch: {resource.path}")
+    return data
 
 
 def _yaml_document(content: bytes, *, label: str) -> object:
@@ -136,20 +69,23 @@ def _yaml_document(content: bytes, *, label: str) -> object:
 
 
 def read_package_registration(root: Path) -> PackageRegistrationDocumentV1:
-    """Read the registration a package directory ships (``registration.json``)."""
+    """Read the registration a package directory ships (``registration.json``, schema 3)."""
 
     raw = (root / REGISTRATION_FILE).read_bytes()
     try:
         version = json.loads(raw).get("schema_version")
     except (UnicodeDecodeError, ValueError, AttributeError) as exc:
         raise ValueError("registration.json is not a JSON object") from exc
-    if version != 2:
+    if version != REGISTRATION_SCHEMA_VERSION:
         raise ValueError(
-            f"registration.json schema {version!r} is not read; schema 2 declares the "
-            "package's typed operations (rebuild it for provider runtime protocol 2.0)"
+            f"registration.json schema {version!r} is not read; schema 3 declares the "
+            "capabilities each operation serves and carries the shapes it reaches (rebuild "
+            "the package with the provider runtime's write_registration)"
         )
-    descriptor = PackageRegistrationDescriptor.model_validate_json(raw)
-    manifest_document = _yaml_document(descriptor.manifest.read(root), label="provider manifest")
+    registration = PackageRegistration.model_validate_json(raw)
+    manifest_document = _yaml_document(
+        _read_resource(registration.manifest, root), label="provider manifest"
+    )
     if not isinstance(manifest_document, dict):
         raise ValueError("provider manifest must be a mapping")
     if manifest_document.get("schema_version") != 2:
@@ -157,18 +93,12 @@ def read_package_registration(root: Path) -> PackageRegistrationDocumentV1:
             f"provider manifest schema {manifest_document.get('schema_version')!r} is not "
             "read; a schema-2 manifest keys implementations by entrypoint"
         )
-    manifest = ProviderRuntimeManifest.model_validate(manifest_document)
-    return PackageRegistrationDocumentV1.model_validate(
-        {
-            "schema_version": 2,
-            "manifest": manifest.model_dump(mode="json"),
-            "operations": [
-                item.model_dump(mode="json", by_alias=True) for item in descriptor.operations
-            ],
-            "runtime_requirements": [
-                item.model_dump(mode="json") for item in descriptor.runtime_requirements
-            ],
-        }
+    return PackageRegistrationDocumentV1(
+        schema_version=3,
+        manifest=ProviderRuntimeManifest.model_validate(manifest_document),
+        operations=registration.operations,
+        declares=registration.declares,
+        runtime_requirements=registration.runtime_requirements,
     )
 
 
@@ -241,8 +171,6 @@ def read_wheel_registration(path: Path) -> PackageRegistrationDocumentV1:
 
 __all__ = [
     "MAX_UNPACKED_WHEEL_BYTES",
-    "PackageRegistrationDescriptor",
-    "PackageRuntimeRequirement",
     "read_package_registration",
     "read_wheel_registration",
 ]

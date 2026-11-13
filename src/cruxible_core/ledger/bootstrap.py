@@ -194,7 +194,7 @@ GENESIS_SEEDS: tuple[tuple[str, str], ...] = (
     ),
     (
         "providers/cruxible-builtin.json",
-        "566565e135c186d06e4a9afe6329ed48ff2cca758ebbb0e29ec227a0fa89232d",
+        "cc0e1e50117f68be98863470b6246e451d711bdd9c55cb43e1b709431018c93d",
     ),
     (
         "triggers/evidence-sweep.json",

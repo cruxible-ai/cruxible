@@ -99,6 +99,9 @@ def test_an_operations_page_prints_its_build_contracts_effect_and_refusals() -> 
     operation = OrientOperation(
         build="Provider:cruxible-builtin",
         operation="workspace.file",
+        description="Reads a workspace file.",
+        serves=("workspace.file", "workspace.files"),
+        source={"path": "src/cruxible_core/providers/builtin_workspace_file.py"},
         input="workspace.file.request@1",
         output="workspace.file.result@1",
         effect="pure",

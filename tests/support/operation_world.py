@@ -27,10 +27,8 @@ from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
     VerifiedProviderBinding,
 )
-from cruxible_client.contracts.provider_operations import (
-    ProviderOperation,
-    operation_signature_digest,
-)
+from cruxible_client.contracts.provider_operations import operation_signature_digest
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     NamedProviderBuild,
@@ -44,16 +42,15 @@ from cruxible_client.contracts.providers import (
 )
 from cruxible_client.contracts.shapes import (
     Contract,
-    contract_digest,
     contract_path,
     render_contract,
 )
-from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
 )
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelope
+from tests.support.declared_operations import declared_operation, registration_document
 from tests.support.procedures import procedure_limits, procedure_spec, ref
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
@@ -124,10 +121,10 @@ def operation(
     refusals: Mapping[str, bool] | None = None,
     entrypoint: str = "demo.runtime:Provider",
     signature: tuple[str, str] = ("test.value@1", "test.value@1"),
-) -> ProviderOperation:
+) -> DeclaredOperation:
     """One unpinned operation (``signature`` = in, out); ``refusals`` maps code -> absorbable."""
 
-    return ProviderOperation.model_validate(
+    return declared_operation(
         {
             "name": name,
             "in": signature[0],
@@ -142,22 +139,25 @@ def operation(
     )
 
 
-def _digests(ref: Any) -> str | None:
+def _carried_pool() -> tuple[Contract, ...]:
+    """The Contracts a fixture build may carry copies of."""
+
     from cruxible_client.contracts.workspace_file import workspace_file_contracts
 
-    for contract in (VALUE, REFUSAL, *workspace_file_contracts()):
-        if (ref.name, ref.version) == (contract.name, contract.version):
-            return contract_digest(contract).tagged
-    return None
+    return (VALUE, REFUSAL, *workspace_file_contracts())  # type: ignore[arg-type]
 
 
 def operation_build(
     *,
     provider_id: str = "demo-provider",
     build: str = "a",
-    operations: tuple[ProviderOperation, ...] | None = None,
+    operations: tuple[DeclaredOperation, ...] | None = None,
+    contracts: tuple[Contract, ...] = (),
 ) -> NamedProviderBuild:
     """One provider build declaring ``operations`` (pinned), as an install lowers it.
+
+    The build carries exactly the Contracts its operations reach, taken from
+    the fixture Contracts, the ``workspace.file`` ones and ``contracts``.
 
     ``build`` varies the wheel digest, so each value is a distinct build of the
     same provider name.
@@ -178,7 +178,7 @@ def operation_build(
             for entry in entrypoints
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+    document = registration_document(manifest, served, (*contracts, *_carried_pool()))
     return document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=provider_id,
@@ -191,7 +191,7 @@ def operation_build(
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain=provider_id,
-        operations=document.pinned_operations(_digests),
+        operations=document.pinned_operations(),
     )
 
 
@@ -287,7 +287,7 @@ class Operator:
     def admit_line_provider(  # type: ignore[no-untyped-def]
         self,
         accepted_provider: AcceptedProvider,
-        bound: ProviderOperation,
+        bound: DeclaredOperation,
         implementation_digest: str,
         *,
         eligible_environment_pin_keys,

@@ -67,14 +67,13 @@ def _paired_world(
     )
     from cruxible_client.contracts.shapes import (
         Contract,
-        contract_digest,
         contract_path,
         render_contract,
     )
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
     from tests.core_support._identity_support import accept_tree
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
+    from tests.support.declared_operations import registration_document
     from tests.support.operation_world import (
         REFUSAL,
         VALUE,
@@ -117,13 +116,7 @@ def _paired_world(
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
-
-    def digests(ref):  # type: ignore[no-untyped-def]
-        for item in (VALUE, REFUSAL, request, result):
-            if (ref.name, ref.version) == (item.name, item.version):
-                return contract_digest(item).tagged
-        return None
+    document = registration_document(manifest, served, (VALUE, REFUSAL, request, result))
 
     build = document.provider_definition(
         distribution=ProviderLocalDistributionPin(
@@ -137,7 +130,7 @@ def _paired_world(
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain="pairer",
-        operations=document.pinned_operations(digests),
+        operations=document.pinned_operations(),
     )
     instance, _owner = initialize_local(tmp_path)
     accept_tree(

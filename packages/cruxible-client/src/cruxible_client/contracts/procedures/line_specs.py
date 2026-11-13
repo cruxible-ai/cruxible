@@ -56,8 +56,8 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.provider_operations import (
     LineBinding,
     OperationSignature,
-    ProviderOperation,
 )
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
@@ -696,7 +696,7 @@ def _law_slots(
 
 def bound_operation_of(
     binding: LineBinding, providers: Mapping[str, AcceptedProvider]
-) -> ProviderOperation | None:
+) -> DeclaredOperation | None:
     """The exact operation a binding names, or ``None`` if its build is not accepted live."""
 
     accepted = providers.get(binding.build.target.qualified)

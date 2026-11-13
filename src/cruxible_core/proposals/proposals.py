@@ -2821,12 +2821,16 @@ def _sibling_control_domains(
 
 
 def _provider_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.governance.seed_artifacts.workspace_file import (
+        WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+    )
+
     provider = parse_provider(context.content, path=context.path)
     if (
         context.parent_content is None
         and not context.rechecking
         and "/" not in provider.identity.name
-        and provider.identity.name != "cruxible-builtin"
+        and provider.identity.name != WORKSPACE_FILE_BUILTIN_PROVIDER_ID
     ):
         return _MemberVerdict(
             diagnostics=(
@@ -2850,16 +2854,11 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         provider,
         path=context.path,
         predecessor=predecessor,
-        contracts=_candidate_contract_digests(
-            context,
-            (
-                ref
-                for operation in getattr(provider, "operations", ())
-                for ref in operation.contract_refs()
-            ),
-        ),
         reserved_refusal_codes=_RESERVED_PROVIDER_REFUSAL_CODES,
         by_name=True,
+        # Only core's builtin (its single-path genesis lineage) serves a
+        # ``workspace.`` capability; every package build is build-qualified.
+        serves_reserved=provider.identity.name == WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
         sibling_control_domains=(
             _sibling_control_domains(
                 context.candidate_tree, provider, context.path, context.candidate_states

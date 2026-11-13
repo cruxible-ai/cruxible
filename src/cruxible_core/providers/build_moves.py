@@ -39,7 +39,8 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRepinV1,
     StoppedAutomationV1,
 )
-from cruxible_client.contracts.provider_operations import LineBinding, ProviderOperation
+from cruxible_client.contracts.provider_operations import LineBinding
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import (
     ProviderV2,
     parse_provider,
@@ -82,8 +83,8 @@ class ProviderBuildMove:
 
     source: ArtifactPin
     target: ArtifactPin
-    source_operations: tuple[ProviderOperation, ...]
-    target_operations: tuple[ProviderOperation, ...]
+    source_operations: tuple[DeclaredOperation, ...]
+    target_operations: tuple[DeclaredOperation, ...]
 
     def moved(self, binding: LineBinding) -> LineBinding:
         """The binding on the target build: its operation with the same exact signature.

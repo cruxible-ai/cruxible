@@ -40,18 +40,14 @@ def installer_http(tmp_path, monkeypatch, request, provider_checkout):
             }
         )
     )
-    from tests.support.provider_installation import accept_local_call_contract
     from tests.test_server.conftest import _playbill_http
-    from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
     world = _playbill_http(
         tmp_path, monkeypatch, require_independent_approval=getattr(request, "param", False)
     )
+    # No kit and no Contract is accepted before an install: a package carries
+    # the shapes its operations use.
     http, instance_id, reviewer = next(world)
-    # The Contract the local-call package's operation pins, accepted before it installs.
-    accept_local_call_contract(
-        instance_id, lambda proposal: _approve_and_activate(http, instance_id, reviewer, proposal)
-    )
     yield http, instance_id, reviewer
     for _ in world:
         pass
@@ -85,8 +81,8 @@ def test_transfer_install_and_restart_reuse(
     client._client = http
     repository = provider_checkout.repository
     wheels = provider_checkout.wheels
-    # workspace.file is built into new instances, so the transferred wheel is
-    # the unpublished local-call package rather than cruxible-provider-workspace.
+    # File reading is core's built-in; the transferred wheel is the unpublished
+    # local-call package.
     wheel, lock = build_local_call(tmp_path, repository)
     arguments = dict(
         wheel=wheel,
@@ -173,10 +169,16 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
     through the daemon's real provider operator to the installed runtime child.
     """
 
-    from tests.support.provider_installation import LOCAL_CALL_SLOT, local_call_capability_files
+    from tests.support.provider_installation import (
+        LOCAL_CALL_SLOT,
+        local_call_capability_files,
+        local_call_contract_files,
+    )
 
     line = f"test.{name}-line"
-    members = local_call_capability_files()
+    # The slot's capability pins its Contract on the instance; the build carries
+    # its own copy, and the binding reads that one.
+    members = {**local_call_contract_files(), **local_call_capability_files()}
     instance = get_playbill_manager().get(instance_id)
     if not set(members) <= set(instance.tree_at(instance.accepted_coordinate().git_oid)):
         _accept(http, instance_id, reviewer, members, name="local-call-capability")
@@ -330,7 +332,7 @@ def local_call_dependency_wheels(provider_checkout, tmp_path_factory):
 
     runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
     lock = resolution.load_uv_lock(
-        provider_checkout.repository / "packages/cruxible-provider-workspace/uv.lock"
+        provider_checkout.repository / "packages/cruxible-provider-noop/uv.lock"
     )
     environment = resolution.MarkerEnvironment(
         id=f"{sys.platform}-{platform.machine().lower()}-cp{sys.version_info.major}{sys.version_info.minor}",
@@ -339,7 +341,7 @@ def local_call_dependency_wheels(provider_checkout, tmp_path_factory):
     )
     resolved = resolution.resolve(
         lock,
-        "cruxible-provider-workspace",
+        "cruxible-provider-noop",
         environment,
         local_wheels={"cruxible-provider-runtime": wheels.wheel_pin(runtime)},
     )
@@ -421,24 +423,28 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
 
 
 def _web_contract_members(wheel: Path) -> dict[str, bytes]:
-    """The Contract members the web wheel ships, read from the wheel itself.
+    """The Contracts the web wheel carries (its registration's ``declares``), as tree members."""
 
-    ``cruxible_provider_web/contracts/<name>/v<N>.json`` is the exact accepted-tree
-    member at ``contracts/<name>/v<N>.json``; nothing is rendered here.
-    """
+    from cruxible_client.contracts.provider_registration import PackageRegistration
+    from cruxible_client.contracts.shapes import contract_path, render_contract
 
-    prefix = "cruxible_provider_web/contracts/"
     with zipfile.ZipFile(wheel) as archive:
-        return {
-            "contracts/" + name.removeprefix(prefix): archive.read(name)
-            for name in sorted(archive.namelist())
-            if name.startswith(prefix) and name.endswith(".json")
-        }
+        (name,) = [item for item in archive.namelist() if item.endswith("/registration.json")]
+        registration = PackageRegistration.model_validate_json(archive.read(name))
+    return {
+        contract_path(item.name, item.version): render_contract(item)
+        for item in registration.declares.contracts
+    }
 
 
 @pytest.fixture
 def installed_web(installer_http, provider_checkout):
-    """The real web wheel installed after its thirty-five Contracts (and their closure)."""
+    """The real web wheel, installed with no Contract accepted, then its carried copies.
+
+    The install pins every operation to the copies the wheel carries; the same
+    copies are accepted afterwards only because the test's Procedures name
+    capabilities over them.
+    """
 
     from cruxible_client.contracts.shapes import contract_digest, parse_contract
 
@@ -448,12 +454,6 @@ def installed_web(installer_http, provider_checkout):
     wheels = provider_checkout.wheels
     wheel = next(wheels.glob("cruxible_provider_web-*.whl"))
     members = _web_contract_members(wheel)
-    # 5 operations x (in, out), 5 web.fetch + 5 web.fetch.pages + 2 web.render +
-    # 2 web.render.dom + 5 search.web refusals, and the six nested Contracts
-    # they pin: the coordinate (with its headers and pages), the zero-field
-    # selector, the window and the render's cited source.
-    assert len(members) == 35
-    _accept(http, instance_id, reviewer, members, name="web-contracts")
     installed = install_provider_wheel(
         client,
         instance_id,
@@ -465,6 +465,9 @@ def installed_web(installer_http, provider_checkout):
         extras=("browser",),
     )
     assert installed.installed and installed.registered, installed
+    instance = get_playbill_manager().get(instance_id)
+    assert not set(members) & set(instance.tree_at(instance.accepted_coordinate().git_oid))
+    _accept(http, instance_id, reviewer, members, name="web-contracts")
     digests = {
         path: contract_digest(parse_contract(content, path=path)).tagged
         for path, content in members.items()
@@ -514,8 +517,8 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert installed.status == (
         "blocked" if readiness["web.render.dom"].missing_requirements else "ready"
     )
-    # The registration pinned every operation and every declared refusal to
-    # the accepted Contracts.
+    # The install pinned every operation and every declared refusal to the
+    # copies the wheel carries (accepted afterwards, byte for byte).
     instance = get_playbill_manager().get(instance_id)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     build_path = provider_path(installed.build)
@@ -539,6 +542,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert set(served["web.fetch"].refusals) == {
         "credential_unavailable",
         "cross_origin_credentialed_redirect",
+        "private_or_internal_address",
         "provider_declined",
         "redirect_limit",
         "unsupported_redirect_scheme",
@@ -546,12 +550,17 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert set(served["web.fetch.pages"].refusals) == {
         "credential_unavailable",
         "cross_origin_credentialed_redirect",
+        "private_or_internal_address",
         "provider_declined",
         "redirect_limit",
         "unsupported_redirect_scheme",
     }
     assert set(served["web.render"].refusals) == {"provider_declined"}
-    assert set(served["web.render.dom"].refusals) == {"engine_unavailable", "provider_declined"}
+    assert set(served["web.render.dom"].refusals) == {
+        "engine_unavailable",
+        "private_or_internal_address",
+        "provider_declined",
+    }
     assert set(served["search.web"].refusals) == {
         "cross_origin_credentialed_redirect",
         "provider_declined",
@@ -846,20 +855,16 @@ def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
     from cruxible_core.service.procedures import provider_installation as service
 
     http, instance_id, reviewer = installer_http
-    from tests.support.provider_installation import noop_contract_files
-
-    _accept(http, instance_id, reviewer, noop_contract_files(), name="noop-contracts")
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     catalog = client.list_provider_packages(instance_id)
+    # docs and quant are still at registration schema 2 in the repository: this
+    # release cannot install them, so the catalog does not offer them.
     assert {item.name for item in catalog.packages} == {
         "cruxible-provider-noop",
         "cruxible-provider-web",
-        "cruxible-provider-workspace",
-        "cruxible-provider-docs",
-        "cruxible-provider-quant",
     }
-    # workspace.file is built in on new instances; noop stands in for a package.
+    # noop installs by name with no kit and no Contract accepted.
     request = ProviderInstallRequest(package="cruxible-provider-noop")
     result = client.install_provider(instance_id, request)
     assert result.status == "ready", result
@@ -912,9 +917,6 @@ def test_install_by_name_from_an_index_uses_the_embedded_lock(
     from cruxible_core.service.procedures import provider_installation as service
 
     http, instance_id, reviewer = index_installer_http
-    from tests.support.provider_installation import noop_contract_files
-
-    _accept(http, instance_id, reviewer, noop_contract_files(), name="indexed-noop-contracts")
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     assert "install by name" in (client.list_provider_packages(instance_id).detail or "")
@@ -987,29 +989,26 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
     return line
 
 
-def test_a_package_serving_a_built_in_operation_installs_beside_the_built_in(
-    installer_http, provider_checkout
+def test_the_built_in_reads_a_workspace_file_and_an_install_beside_it_moves_no_seed(
+    installer_http, tmp_path, provider_checkout
 ):
-    """The workspace package and the seeded built-in serve one signature side by side.
+    """The seeded built-in runs a workspace Line in process; installing a package moves nothing.
 
-    Installing ``cruxible-provider-workspace`` (``workspace.file``, pure) registers a
-    build of its own beside the genesis-seeded ``Provider:cruxible-builtin``. Nothing
-    seeded moves: the built-in's bytes, the Contracts both pin, and a Line already
-    bound to the built-in, which runs the built-in in process before and after. A
-    Line bound to the package build runs that exact build in its own child.
+    The built-in carries its own Contracts, so its Line binds with none accepted
+    for it. Installing another package registers a build of its own: nothing
+    seeded moves, nor the Line bound to the built-in, which runs the same
+    before and after. A package may not serve a ``workspace.`` capability: its
+    install is refused before anything is proposed.
     """
 
     from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
-    from cruxible_client.contracts.shapes import (
-        contract_digest,
-        contract_path_parts,
-        parse_contract,
-    )
+    from cruxible_client.errors import CoreError
     from cruxible_core.governance.seed_artifacts.workspace_file import (
         WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
         WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
     )
     from cruxible_core.ledger.bootstrap import GENESIS_SEEDS
+    from tests.support.provider_installation import build_local_call
 
     http, instance_id, reviewer = installer_http
     client = CruxibleClient(base_url="http://cruxible")
@@ -1022,16 +1021,8 @@ def test_a_package_serving_a_built_in_operation_installs_beside_the_built_in(
     def seeded(tree):
         return {path: tree[path] for path, _digest in GENESIS_SEEDS}
 
-    def contract_digests(tree):
-        return {
-            path: contract_digest(parse_contract(content, path=path)).tagged
-            for path, content in seeded(tree).items()
-            if contract_path_parts(path) is not None
-        }
-
     builtin_path = provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID)
     before = accepted_tree()
-    assert builtin_path in seeded(before)
     builtin = parse_provider(before[builtin_path], path=builtin_path)
     builtin_line = _author_workspace_line(
         http, instance_id, reviewer, build=WORKSPACE_FILE_BUILTIN_PROVIDER_ID, name="builtin-read"
@@ -1039,60 +1030,40 @@ def test_a_package_serving_a_built_in_operation_installs_beside_the_built_in(
     line_path = f"lines/{builtin_line}.json"
     line_bytes = accepted_tree()[line_path]
 
-    def run(line, *, build):
-        state = _line_state(instance_id, line)
+    def run():
+        state = _line_state(instance_id, builtin_line)
         assert state.status == "succeeded", state.terminal
         assert state.result == {"lines": 2}
         (receipt,) = _invocation_receipts(instance, state.run_id)
         assert receipt.operation == "workspace.file"
-        assert receipt.provider_artifact_digest == provider_digest(build).tagged
+        assert receipt.provider_artifact_digest == provider_digest(builtin).tagged
+        assert receipt.implementation_digest == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+        assert receipt.fence_scope == "in_process"
         return receipt
 
-    first = run(builtin_line, build=builtin)
-    assert first.implementation_digest == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
-    assert first.fence_scope == "in_process"
-
+    first = run()
     wheels = provider_checkout.wheels
+    runtime = (next(wheels.glob("cruxible_provider_runtime-*.whl")),)
+    wheel, lock = build_local_call(tmp_path, provider_checkout.repository)
     installed = install_provider_wheel(
-        client,
-        instance_id,
-        wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
-        lock=provider_checkout.repository / "packages/cruxible-provider-workspace/uv.lock",
-        dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=runtime
     )
     assert installed.status == "ready" and installed.registered, installed
-    assert installed.provider_id == "cruxible-provider-workspace"
-    assert [
-        (row.operation, row.installed, row.missing_requirements) for row in installed.operations
-    ] == [("workspace.file", True, ())]
     after = accepted_tree()
-    package_path = provider_path(installed.build)
-    assert package_path != builtin_path
-    package = parse_provider(after[package_path], path=package_path)
-    (served,) = package.operations
-    (builtin_served,) = builtin.operations
-    # The same signature, pinned to the same seeded Contracts.
-    assert served.signature() == builtin_served.signature()
-    assert served.refusals == builtin_served.refusals
-    # Nothing seeded moved, and neither did the Line bound to the built-in.
+    assert provider_path(installed.build) != builtin_path
     assert seeded(after) == seeded(before)
-    assert contract_digests(after) == contract_digests(before)
     assert after[line_path] == line_bytes
-    assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
-
-    again = run(builtin_line, build=builtin)
-    assert again.implementation_digest == first.implementation_digest
+    again = run()
     assert again.provider_artifact_digest == first.provider_artifact_digest
-    assert again.fence_scope == "in_process"
 
-    package_line = _author_workspace_line(
-        http, instance_id, reviewer, build=installed.build, name="package-read"
+    reserved, reserved_lock = build_local_call(
+        tmp_path / "reserved", provider_checkout.repository, operations=("workspace.file",)
     )
-    own = run(package_line, build=package)
-    assert own.implementation_digest != WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
-    assert own.implementation_digest == package.implementations[0].implementation_digest
-    assert own.fence_scope != "in_process"
-    assert own.operation_signature_digest == first.operation_signature_digest
+    with pytest.raises(CoreError, match="capability_reserved"):
+        install_provider_wheel(
+            client, instance_id, wheel=reserved, lock=reserved_lock, dependency_wheels=runtime
+        )
+    assert seeded(accepted_tree()) == seeded(before)
 
 
 def test_a_transferred_wheel_resolves_registry_dependencies_from_the_default_index(

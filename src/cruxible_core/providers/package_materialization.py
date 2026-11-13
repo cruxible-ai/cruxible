@@ -242,8 +242,7 @@ def prepare_provider_package(
         distribution=distribution,
         local_env=local_env,
         control_domain=control_domain,
-        # Unpinned here: the install pins each Contract at its base.
-        operations=document.operations,
+        operations=document.pinned_operations(),
     )
     custody = wheel.parent.resolve()
     fetcher = toolchain("index").ArtifactFetcher(

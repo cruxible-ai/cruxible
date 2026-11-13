@@ -33,7 +33,7 @@ from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProjectNode,
 )
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import (
     ProviderDistributionRef,
     ProviderImplementationManifest,
@@ -51,10 +51,10 @@ from cruxible_client.contracts.shapes import (
     validate_contract,
 )
 from cruxible_client.transport.http import CruxibleClient
-from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.support.capabilities import capability, capability_files, pinned_slot
+from tests.support.declared_operations import declared_operation, registration_document
 from tests.support.procedures import (
     named,
     procedure_definition,
@@ -74,7 +74,7 @@ URL = "https://fixture.invalid/api/v1/measurements.json"
 
 
 def web_provider(
-    operation: ProviderOperation,
+    operation: DeclaredOperation,
     contracts: tuple[Contract, ...],
 ):
     """A fresh build serving ``operation``, declaring exactly ``contracts``.
@@ -85,12 +85,6 @@ def web_provider(
     operations/package-registration path, rather than pinning a shared
     interface artifact.
     """
-
-    def digests(ref: object) -> str | None:
-        for item in contracts:
-            if (ref.name, ref.version) == (item.name, item.version):  # type: ignore[attr-defined]
-                return contract_digest(item).tagged
-        return None
 
     manifest = ProviderRuntimeManifest(
         provider_id="web-fetch-demo",
@@ -105,9 +99,7 @@ def web_provider(
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(
-        schema_version=2, manifest=manifest, operations=(operation,)
-    )
+    document = registration_document(manifest, (operation,), contracts)
     build = document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name="web-fetch-demo",
@@ -120,7 +112,7 @@ def web_provider(
             materialization_digests={"linux-cp311": "sha256:" + "0" * 64},
         ),
         control_domain="web-fetch-demo",
-        operations=document.pinned_operations(digests),
+        operations=document.pinned_operations(),
     )
     return name_provider(as_build(build))
 
@@ -224,7 +216,7 @@ _FETCH_CONTRACTS = (
     _FETCH_EFFECTIVE,
     _FETCH_OUTPUT,
 )
-_FETCH_OPERATION = ProviderOperation.model_validate(
+_FETCH_OPERATION = declared_operation(
     {
         "name": "fetch",
         "in": f"{_FETCH_INPUT.name}@{_FETCH_INPUT.version}",
@@ -551,7 +543,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     call_output = Contract.model_validate(
         {"name": "test.sdk-call-output", "version": 1, "fields": {"size": {"type": "int"}}}
     )
-    operation = ProviderOperation.model_validate(
+    operation = declared_operation(
         {
             "name": "invoke",
             "in": f"{call_input.name}@{call_input.version}",

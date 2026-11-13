@@ -1,12 +1,12 @@
 """workspace.file as a core built-in: parity, purity, identity and seeded bytes.
 
-The parity golden (``tests/fixtures/workspace_file_parity.json``) was produced by
-running ``cruxible_provider_workspace.file.WorkspaceFile`` from cruxible-providers
-db085204 (the commit CI pins) over the package's six registration fixtures and a
-set of edge and refusal vectors, rendering each result the way the package's
-child harness does, and digesting the envelope without its run id. Core's port
-must reproduce every digest. When a checkout is configured
-(``CRUXIBLE_PROVIDERS_CHECKOUT``) the package is also run live against the port.
+The parity golden (``tests/fixtures/workspace_file_parity.json``) is recorded
+provenance: it was produced by running the file reader of a provider package
+(``cruxible-provider-workspace`` at cruxible-providers db085204; the package has
+since been deleted, file reading being core's alone) over its six registration
+fixtures and a set of edge and refusal vectors, rendering each result the way
+the child harness does, and digesting the envelope without its run id. The
+built-in must reproduce every digest.
 
 The same golden is the behaviour pin for ``WORKSPACE_FILE_BUILTIN_REVISION``: an
 adapter change that moves any digest fails here, and is a semantic change that
@@ -57,7 +57,6 @@ from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeBudgets,
     ProviderRuntimeRunContext,
 )
-from tests.support.provider_checkout import provider_checkout_path
 
 GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures/workspace_file_parity.json").read_text())
 
@@ -263,18 +262,28 @@ def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> No
     provider = workspace_file_builtin_provider()
     path = provider_path(provider.identity.name)
     assert seeds[path] == render_provider(provider)
-    contracts = {
+    # The builtin carries its own four handoff and three refusal Contracts, each
+    # nested Contract pinned by digest, so its law needs no instance Contract.
+    carried = {
         (contract.name, contract.version): contract_digest(contract).tagged
         for contract in (*workspace_file_contracts(), *workspace_file_refusal_contracts())
         if isinstance(contract, Contract)
     }
+    assert provider.declares is not None
+    assert {
+        (item.name, item.version): contract_digest(item).tagged
+        for item in provider.declares.contracts
+    } == carried
+    (operation,) = provider.operations
+    assert operation.serves == ("workspace.file", "workspace.files")
+    assert operation.description and operation.source.path.endswith("builtin_workspace_file.py")
     provider_law = evaluate_provider_law(
-        provider,
-        path=path,
-        predecessor=None,
-        contracts=contracts,
+        provider, path=path, predecessor=None, serves_reserved=True
     )
-    assert provider_law.verdict == "accepted"
+    assert provider_law.verdict == "accepted", provider_law.diagnostics
+    # Any other Provider serving a workspace. capability is refused.
+    refused = evaluate_provider_law(provider, path=path, predecessor=None)
+    assert refused.diagnostics[0].code == "cruxible.provider.capability_reserved"
     (record,) = provider.implementations
     assert record.implementation_digest == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
 
@@ -332,45 +341,6 @@ def test_built_in_implementations_are_append_only_and_keep_their_adapters() -> N
         assert callable(item.adapter)
     # The revision new instances seed is one of them.
     assert WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST in BUILTIN_IMPLEMENTATIONS
-
-
-def test_the_port_matches_the_package_live_when_a_checkout_is_configured(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    checkout = provider_checkout_path()
-    if checkout is None:
-        pytest.skip("set CRUXIBLE_PROVIDERS_CHECKOUT to run the package side by side")
-    monkeypatch.syspath_prepend(str(checkout / "packages/cruxible-provider-workspace/src"))
-    from cruxible_provider_runtime.egress import EgressRecorder
-    from cruxible_provider_runtime.protocol import Budgets
-    from cruxible_provider_runtime.provider_api import ProviderRunContext
-    from cruxible_provider_workspace.file import WorkspaceFile as PackageWorkspaceFile
-
-    inputs = [fixture.canonical_input for fixture in WORKSPACE_FILE_FIXTURES]
-    inputs += [vector["input"] for vector in GOLDEN["vectors"]]
-    for payload in inputs:
-        result = PackageWorkspaceFile()(
-            ProviderRunContext(
-                run_id="parity",
-                operation="workspace.file",
-                operation_signature_digest=_SIGNATURE_DIGEST,
-                build_digest=_BUILD_DIGEST,
-                implementation_digest="sha256:" + "0" * 64,
-                input=payload,  # type: ignore[arg-type]
-                coordinates={},
-                budgets=Budgets(wall_clock_seconds=5.0, output_bytes=1 << 24),
-                declared_endpoints=(),
-                capture_contract=None,
-                secrets={},
-                egress=EgressRecorder(),
-            )
-        )
-        _digest, ours = _envelope_digest(payload)
-        assert ours["status"] == result.status
-        assert ours["output"] == result.output
-        assert ours["trace"]["metrics"] == result.metrics
-        if result.refusal is not None:
-            assert ours["refusal"] == json.loads(result.refusal.model_dump_json())
 
 
 def test_provider_list_names_the_providers_installed_here(tmp_path) -> None:  # type: ignore[no-untyped-def]

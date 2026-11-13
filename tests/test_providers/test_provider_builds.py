@@ -17,17 +17,10 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_client.contracts.shapes import contract_digest
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.providers.builds import BuildRow, resolve_provider_build
 from tests.core_support._p2b1_support import provider_v2
-from tests.support.operation_world import REFUSAL, VALUE
 from tests.support.provider_builds import as_build
-
-_OPERATION_CONTRACTS = {
-    (contract.name, contract.version): contract_digest(contract).tagged
-    for contract in (VALUE, REFUSAL)
-}
 
 
 def build() -> ProviderBuild:
@@ -57,10 +50,8 @@ def test_build_key_excludes_host_materialization_and_normalizes_distribution() -
 
 def test_build_law_accepts_add_and_retire_but_refuses_mutation_and_domain_takeover() -> None:
     provider = build()
-    kw = {
-        "path": provider_path(provider.identity.name),
-        "contracts": _OPERATION_CONTRACTS,
-    }
+    # The law reads the build's carried copies only; no instance Contract.
+    kw = {"path": provider_path(provider.identity.name)}
     assert evaluate_provider_law(provider, predecessor=None, **kw).verdict == "accepted"
     previous = AcceptedProvider(
         provider=provider, artifact_digest=provider_digest(provider).tagged, path=kw["path"]

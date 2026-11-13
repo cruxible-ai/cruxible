@@ -19,6 +19,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.capabilities import Capability, CapabilityRef
+from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
@@ -34,12 +35,11 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.provider_operations import (
-    ContractLookup,
     LineBinding,
-    ProviderOperation,
     contract_closure,
     operation_signature_digest,
 )
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import ProviderV2
 from cruxible_client.contracts.shapes import Contract
 
@@ -56,18 +56,43 @@ _KIND_ROLES = {
 }
 
 
+#: Each bound operation's carried Contract closure, by (build digest, operation):
+#: a build is immutable, so its closure is read once per process.
+_CARRIED_CLOSURES: ValueMemo[tuple[Contract, ...] | None] = ValueMemo(capacity=1024)
+
+
+def carried_closure(
+    provider: ProviderV2, build_digest: str, operation: DeclaredOperation
+) -> tuple[Contract, ...] | None:
+    """The exact Contract closure ``operation`` pins, from the build's own carried copies.
+
+    Never reads the instance: a build carries every Contract its operations reach
+    (``declares``). ``None`` when a pin does not resolve there at its digest.
+    Linear in the closure, once per (build digest, operation).
+    """
+
+    declares = provider.declares
+    if declares is None:
+        return None
+    return _CARRIED_CLOSURES.derive(
+        (build_digest, operation.name),
+        lambda: contract_closure(operation.contract_refs(), declares.lookup()),
+    )
+
+
 class ResolvedSlotBinding(BaseModel):
     """One slot of an execution plan, bound to its exact build and operation.
 
-    ``contracts`` is the exact Contract closure the operation pins, resolved at
-    admission; it is empty in a replayed plan (a replay reads the recorded
-    acquisition plan, which carries its own closure).
+    ``contracts`` is the exact Contract closure the operation pins, taken from
+    the bound build's own carried copies at admission (never from the
+    instance's Contracts); it is empty in a replayed plan (a replay reads the
+    recorded acquisition plan, which carries its own closure).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     slot: str
     build: ArtifactPin
-    operation: ProviderOperation
+    operation: DeclaredOperation
     operation_signature_digest: str
     contracts: tuple[Contract, ...] = ()
 
@@ -197,7 +222,6 @@ def bind_procedure_references(
     *,
     lookup: ReferenceLookup,
     bindings: Mapping[str, LineBinding] | None = None,
-    contracts: ContractLookup | None = None,
     frozen_pins: tuple[ArtifactPin, ...] | None = None,
     partial: bool = False,
 ) -> BoundAcceptedProcedure:
@@ -206,8 +230,9 @@ def bind_procedure_references(
     ``lookup`` must be bound to the admission's accepted coordinate. Recovery
     supplies that recorded coordinate, never the head. ``bindings`` holds each
     slot's exact ``{build, operation}`` (the Line's, or a direct run's
-    ephemeral spec); nothing is fitted here. ``contracts`` resolves the bound
-    operations' Contract closures; a replay passes none. With ``partial`` a
+    ephemeral spec); nothing is fitted here. Each bound operation's Contract
+    closure comes from its build's carried copies; a replay resolves none. With
+    ``partial`` a
     Source-only slot may be left unbound (a replay of a slot only supplied
     Sources used); a slot any Call node also uses still fails closed, since a
     Call is always invoked and never has supplied material standing in for
@@ -303,11 +328,12 @@ def bind_procedure_references(
                 f"{binding.spelling} serves {operation.signature().spelling()}"
             )
         closure: tuple[Contract, ...] = ()
-        if contracts is not None:
-            found = contract_closure(operation.contract_refs(), contracts)
+        if frozen_pins is None:
+            found = carried_closure(provider, digest, operation)
             if found is None:
                 raise ExecutionError(
-                    f"Slot {name!r}: a Contract {binding.spelling} pins is not accepted"
+                    f"Slot {name!r}: a Contract {binding.spelling} pins is not among the "
+                    "copies its build carries"
                 )
             closure = found
         slot_bindings.append(

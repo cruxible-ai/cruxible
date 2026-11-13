@@ -48,10 +48,8 @@ from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlan,
     VerifiedProviderBinding,
 )
-from cruxible_client.contracts.provider_operations import (
-    ProviderOperation,
-    operation_signature_digest,
-)
+from cruxible_client.contracts.provider_operations import operation_signature_digest
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
@@ -139,7 +137,9 @@ class BuiltinImplementation:
 #: adapter, in place. A guard test pins the keys
 #: (tests/test_providers/test_builtin_workspace_file.py).
 _BUILTIN_REVISIONS: tuple[BuiltinImplementation, ...] = (
-    # Revision 1 (2026-10-07): the port of cruxible-provider-workspace db085204.
+    # Revision 1 (2026-10-07): ported from a provider package's file reader
+    # (cruxible-providers db085204; that package is deleted, its envelopes are
+    # recorded in tests/fixtures/workspace_file_parity.json).
     BuiltinImplementation(
         identity=workspace_file_builtin_identity(
             "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
@@ -156,7 +156,7 @@ if WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST not in BUILTIN_IMPLEMENTATIONS:
 
 def builtin_provider_binding(
     accepted_provider: AcceptedProvider,
-    operation: ProviderOperation,
+    operation: DeclaredOperation,
     implementation_digest: str,
 ) -> VerifiedProviderBinding | None:
     """The constant binding for a built-in implementation, or None for any other.

@@ -153,7 +153,12 @@ def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, 
 
 
 def _repository_packages(operator: ProviderRuntimeOperator) -> tuple[ProviderPackageSummary, ...]:
-    """The packages the configured provider repository offers, by name."""
+    """The packages the configured provider repository offers, by name.
+
+    A package whose registration is not schema 3 (one still pending its
+    rewrite) is not offered: this release cannot install it. Any other fault in
+    a schema-3 package refuses the listing, as before.
+    """
 
     packages = []
     for name, path in _repository_projects(operator).items():
@@ -162,6 +167,8 @@ def _repository_packages(operator: ProviderRuntimeOperator) -> tuple[ProviderPac
             continue
         if len(descriptors) != 1:
             raise ConfigError("provider package must have exactly one registration descriptor")
+        if not _schema_3(descriptors[0]):
+            continue
         with package_preparation_errors():
             document = read_package_registration(descriptors[0].parent)
         if document.manifest.distribution.name != name:
@@ -174,6 +181,20 @@ def _repository_packages(operator: ProviderRuntimeOperator) -> tuple[ProviderPac
             )
         )
     return tuple(sorted(packages, key=lambda item: item.name))
+
+
+def _schema_3(descriptor: Path) -> bool:
+    """Whether a registration descriptor declares schema 3 (read without validating it)."""
+
+    from cruxible_client.contracts.provider_registration import REGISTRATION_SCHEMA_VERSION
+
+    try:
+        document = json.loads(descriptor.read_bytes())
+    except (UnicodeDecodeError, ValueError):
+        return True  # malformed: the full read below refuses it, naming why
+    return not isinstance(document, dict) or (
+        document.get("schema_version") == REGISTRATION_SCHEMA_VERSION
+    )
 
 
 def service_provider_catalog(
@@ -344,51 +365,28 @@ def _source_files(
     )
 
 
-def tree_contract_digests(tree: Mapping[str, bytes]) -> Any:
-    """Each accepted Contract version's digest at ``tree``, by name and version."""
-
-    from cruxible_client.contracts.shapes import contract_digest, contract_path, parse_contract
-
-    def digest(ref: Any) -> str | None:
-        path = contract_path(ref.name, ref.version)
-        content = tree.get(path)
-        return (
-            None if content is None else contract_digest(parse_contract(content, path=path)).tagged
-        )
-
-    return digest
-
-
 def _refuse_unproven_provider(
     provider: ProviderBuild,
-    tree: Mapping[str, bytes],
     sibling_control_domains: frozenset[str],
 ) -> None:
-    """The Provider law, before anything is proposed, against the Contracts it pins.
+    """The Provider law, before anything is proposed, over what the build carries.
 
-    Every operation pin resolves to an accepted Contract version, no refusal
-    code it declares is one the runtime reserves, and a new build joins its
-    name's control domain: a disagreement is refused here, typed, rather than as
-    a blocked proposal.
+    Every operation pin resolves to the build's own carried copy (the instance's
+    Contracts are never read), nothing serves a ``workspace.`` capability, no
+    refusal code it declares is one the runtime reserves, and a new build joins
+    its name's control domain: a disagreement is refused here, typed, rather
+    than as a blocked proposal.
     """
 
     from cruxible_core.providers.provider_runtime_contract import (
         PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
     )
 
-    digests = tree_contract_digests(tree)
-    contracts: dict[tuple[str, int], str] = {}
-    for operation in getattr(provider, "operations", ()):
-        for ref in operation.contract_refs():
-            digest = digests(ref)
-            if digest is not None:
-                contracts[(ref.name, ref.version)] = digest
     path = provider_path(provider.identity.name)
     law = evaluate_provider_law(
         provider,
         path=path,
         predecessor=None,
-        contracts=contracts,
         reserved_refusal_codes=PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
         sibling_control_domains=sibling_control_domains,
     )
@@ -413,8 +411,9 @@ def _refuse_unproven_provider(
             hand_edit=HandEditInstruction(
                 target=f"the {provider.provider_name} package's operations",
                 required_change=(
-                    "Pin accepted Contract versions and declare only refusal codes the "
-                    "provider runtime returns."
+                    "Carry every Contract the operations reach, pinned by digest, serve no "
+                    "workspace. capability, and declare only refusal codes the provider "
+                    "runtime does not reserve."
                 ),
             )
         ),
@@ -443,7 +442,7 @@ def _definition_changes(
 ) -> tuple[Mapping[str, bytes], tuple[str, ...], ProviderBuild]:
     """The paths an install adds: the build's own path. No existing Provider is
     written, so no live definition owes a successor and the install never strands
-    one. Every operation Contract is pinned to the version accepted here."""
+    one. Every operation Contract is pinned to the package's own carried copy."""
 
     tree = instance.immutable_tree_at(accepted_oid)
     candidate = fork_tree(tree)
@@ -455,7 +454,7 @@ def _definition_changes(
         distribution=runtime.distribution,
         local_env=runtime.local_env,
         control_domain=provider.control_domain,
-        operations=document.pinned_operations(tree_contract_digests(tree)),
+        operations=document.pinned_operations(),
     )
     path = provider_path(desired.identity.name)
     current_bytes = tree.get(path)
@@ -519,7 +518,7 @@ def _definition_changes(
                 (desired.provider_name,),
             )
         )
-    _refuse_unproven_provider(desired, tree, siblings)
+    _refuse_unproven_provider(desired, siblings)
     candidate[path] = render_provider(desired)
     changed.append(path)
     return candidate, tuple(sorted(changed)), desired

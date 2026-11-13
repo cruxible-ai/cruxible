@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -12,8 +12,13 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_client.contracts.shapes import Contract
+
+if TYPE_CHECKING:
+    # ``provider_registration`` reaches ``captures``, which imports this module:
+    # the occurrence plan resolves the operation model once ``providers`` loads
+    # (``ProviderExternalOccurrencePlan.model_rebuild`` there).
+    from cruxible_client.contracts.provider_registration import DeclaredOperation
 
 
 class _StrictProviderExecutionModel(BaseModel):
@@ -303,7 +308,7 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
     slot: str
     #: The bound build: the exact accepted Provider build artifact digest.
     provider_artifact_digest: str
-    operation: ProviderOperation
+    operation: DeclaredOperation
     operation_signature_digest: str
     implementation_digest: str
     effect_class: Literal["pure", "external_read", "external_mutation"]
@@ -361,7 +366,7 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
                 raise ValueError(f"external occurrence {label} differs from local binding")
         if self.effect_class != self.operation.effect:
             raise ValueError("external occurrence effect differs from its operation")
-        if not self.operation.pinned:
+        if any(ref.digest is None for ref in self.operation.contract_refs()):
             raise ValueError("an external occurrence binds an operation with exact Contract pins")
         if self.occurrence_kind == "source":
             if (
