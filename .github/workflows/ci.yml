@@ -4,9 +4,9 @@ on:
   push:
     branches: [main, playbill]
   pull_request:
-    # claude/integ-05: a draft PR from a feature branch into the integration
-    # branch runs CI on the branch merged into it, before the merge.
-    branches: [main, claude/integ-05]
+    # rc/0.5.0: a draft PR from a feature branch into the release branch
+    # runs CI on the branch merged into it, before the merge.
+    branches: [main, rc/0.5.0]
 
 env:
   # The cruxible-providers commit the provider-runtime tests run against
