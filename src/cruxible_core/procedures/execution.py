@@ -2649,6 +2649,7 @@ class ProcedureExecutor:
         admission = prepared.admission
         plan = self._use_plan(accepted)
         self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
+        self._verify_extract_rows(plan)
         self.slot_bindings = {item.slot: item for item in plan.slot_bindings}
         # A workspace refusal names the parameter's description from it.
         self.parameter_contract = accepted.procedure.definition.parameter_contract
@@ -4907,7 +4908,31 @@ class ProcedureExecutor:
         state.consumed_captures.add(capture_digest)
         return body
 
-    def _extract_spec(self, node: LayoutExtractNode) -> ExtractNode:
+    def _verify_extract_rows(self, plan: Any) -> None:
+        """Every extract still reads the row it pinned, before any node runs (ruling L1).
+
+        Each extract resolves once against the kind the plan pinned; a layout that
+        no longer offers a pinned row's fields refuses the admission, typed, rather
+        than silently changing what the accepted Procedure extracts.
+        """
+
+        for node in plan.definition.nodes:
+            if not isinstance(node, LayoutExtractNode):
+                continue
+            try:
+                self._extract_spec(node, at_admission=True)
+            except LayoutExtractRefused as exc:
+                raise ProcedureBoundaryRefused(
+                    "pin_binding_mismatch",
+                    exc.message,
+                    details={
+                        "refusal": exc.code,
+                        "node_id": node.node_id,
+                        "repair": "Re-accept the Procedure against the kind's current layout.",
+                    },
+                ) from exc
+
+    def _extract_spec(self, node: LayoutExtractNode, *, at_admission: bool = False) -> ExtractNode:
         """The full spec a stored extract node reads, resolved once per plan.
 
         The kind is the one the admitted plan pinned for the node's capture
@@ -4920,7 +4945,10 @@ class ProcedureExecutor:
             self._extract_spec_of = extract_specs(
                 () if self.plan is None else self.plan.definition.nodes,
                 plan_kind_lookup(self.plan, self.capture_contracts),
+                self.contract_resolver,
             )
+        if at_admission:
+            return self._extract_spec_of(node)
         try:
             return self._extract_spec_of(node)
         except LayoutExtractRefused as exc:

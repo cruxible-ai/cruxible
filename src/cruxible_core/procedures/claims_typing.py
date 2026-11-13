@@ -136,6 +136,7 @@ def validate_claims_templates(
     spec_of = extract_specs(
         definition.nodes,
         lambda ref: lookup(ArtifactIdentity(kind="CaptureContract", name=ref.target.name)),
+        lambda row: lookup(ArtifactIdentity(kind="Contract", name=f"{row.name}/v{row.version}")),
     )
 
     def source(kind: str, name: str) -> Any:

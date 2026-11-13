@@ -160,6 +160,8 @@ def dependency_pins(
         # A slot pins one capability version; the capability pins its Contracts.
         for slot in getattr(definition, "slots", {}).values():
             pins.append(ArtifactRef(role=CAPABILITY_PIN_ROLE, target=slot.capability.identity))
+        # An accepted extract pins the row Contract of the record set it reads
+        # (ruling L1); the kind's layout supplies paths and rules, the row the shape.
         for node in getattr(definition, "nodes", ()):
             row = getattr(node, "row", None) if getattr(node, "kind", None) == "extract" else None
             if row is not None:

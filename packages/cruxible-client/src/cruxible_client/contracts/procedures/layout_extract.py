@@ -38,7 +38,15 @@ from cruxible_client.contracts.procedures.model_base import (
     _StrictProcedureModel,
 )
 from cruxible_client.contracts.refs import Ref
-from cruxible_client.contracts.shapes import KeyPartType, KeyType, StringType, parse_type
+from cruxible_client.contracts.shapes import (
+    Contract,
+    ContractRef,
+    KeyPartType,
+    KeyType,
+    StringType,
+    parse_contract_ref,
+    parse_type,
+)
 
 #: The most header fields one node selects.
 MAX_EXTRACT_HEADER = 64
@@ -48,6 +56,8 @@ EXTRACT_RECORDS_UNKNOWN: Final = "cruxible.procedure.extract_records_unknown"
 EXTRACT_HEADER_UNKNOWN: Final = "cruxible.procedure.extract_header_unknown"
 EXTRACT_KEY_OVERRIDE_INVALID: Final = "cruxible.procedure.extract_key_override_invalid"
 EXTRACT_RECORDS_UNKEYED: Final = "cruxible.procedure.extract_records_unkeyed"
+#: The kind's layout no longer offers the row an accepted extract pinned (ruling L1).
+EXTRACT_ROW_UNAVAILABLE: Final = "cruxible.procedure.extract_row_unavailable"
 #: The existing code for an extract over a Capture list that selects a header or a count (a5).
 EXTRACT_FORMAT_UNSUPPORTED: Final = "cruxible.procedure.extract_format_unsupported"
 
@@ -59,6 +69,7 @@ LayoutExtractRefusalCode = Literal[
     "cruxible.procedure.extract_key_override_invalid",
     "cruxible.procedure.extract_records_unkeyed",
     "cruxible.procedure.extract_format_unsupported",
+    "cruxible.procedure.extract_row_unavailable",
 ]
 
 
@@ -107,7 +118,11 @@ class LayoutExtractNode(_StrictProcedureModel):
     """Read one record set of a Capture through its kind's layout (stored node).
 
     ``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``
-    names a record set; ``header`` lists header fields, sorted.
+    names a record set; ``header`` lists header fields, sorted. ``row`` is the
+    record set's row Contract pin ``{name, version, digest}``, added when the
+    Procedure is accepted (ruling L1; never authored): every later read takes that
+    row and only its fields, so a kind whose row grew does not change what the
+    accepted Procedure extracts.
     """
 
     kind: Literal["extract"] = "extract"
@@ -122,11 +137,18 @@ class LayoutExtractNode(_StrictProcedureModel):
     )
     duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key"
     only_keys: object = Field(default=None, exclude_if=lambda value: value is None)
+    row: ContractRef | None = Field(default=None, exclude_if=lambda value: value is None)
     as_: str = Field(alias="as")
     next: str | None = None
 
     _only_keys = field_validator("only_keys", mode="before")(normalize_canonical)
     _records = field_validator("records")(validate_record_set_name)
+
+    @field_validator("row", mode="before")
+    @classmethod
+    def _row(cls, value: object) -> object:
+        return parse_contract_ref(value) if isinstance(value, str) else value
+
     _header = field_validator("header", mode="before")(_header_names)
     _key = field_validator("key")(_key_overrides)
 
@@ -181,11 +203,50 @@ def _plain_string(rule: ExtractField) -> bool:
     )
 
 
+def _pinned_fields(
+    node: LayoutExtractNode,
+    offered: ContractRef,
+    rules: dict[str, ExtractField],
+    pinned_row: Contract | None,
+) -> dict[str, ExtractField]:
+    """The layout's rules for exactly the pinned row's fields, or the refusal."""
+
+    pinned = node.row
+    assert pinned is not None
+
+    def refuse(reason: str) -> LayoutExtractRefused:
+        return LayoutExtractRefused(
+            EXTRACT_ROW_UNAVAILABLE,
+            f"extract {node.node_id!r} pins row {pinned.spelling}; {reason}; re-accept the "
+            "Procedure against the kind's current layout",
+        )
+
+    if pinned_row is None or (pinned_row.name, pinned_row.version) != (
+        pinned.name,
+        pinned.version,
+    ):
+        raise refuse("that row Contract is not available")
+    if offered.name != pinned.name or offered.version < pinned.version:
+        raise refuse(f"record set {node.records!r} now reads row {offered.spelling}")
+    if (
+        offered.version == pinned.version
+        and offered.digest is not None
+        and pinned.digest is not None
+        and offered.digest != pinned.digest
+    ):
+        raise refuse(f"record set {node.records!r} reads that row at another digest")
+    missing = sorted(set(pinned_row.fields) - set(rules))
+    if missing:
+        raise refuse(f"record set {node.records!r} no longer reads fields {missing}")
+    return {name: rules[name] for name in sorted(pinned_row.fields)}
+
+
 def resolve_layout_extract(
     node: LayoutExtractNode,
     layout: CaptureLayout | None,
     *,
     reads_list: bool = False,
+    pinned_row: Contract | None = None,
 ) -> ExtractNode:
     """The full extract spec ``node`` reads through ``layout``, or :class:`LayoutExtractRefused`.
 
@@ -194,6 +255,11 @@ def resolve_layout_extract(
     and may give a plain-string key part a Subject key type. ``reads_list``: the
     capture field is a ``list<capture<K>>``, whose members' records merge, so
     the node selects no header field and a record set with no count (a5).
+
+    A node that pins its row (``node.row``, ``pinned_row`` the Contract it pins)
+    reads that row and only its fields: the record set's row must be the same
+    Contract at the same or a later version (a layout only grows), with a rule
+    for every pinned field; otherwise it refuses ``extract_row_unavailable``.
     """
 
     if layout is None:
@@ -246,6 +312,10 @@ def resolve_layout_extract(
             f"extract {node.node_id!r} selects only_keys from record set {node.records!r}, "
             "which declares no key",
         )
+    row: ContractRef = record_set.row
+    fields = dict(record_set.fields)
+    if node.row is not None:
+        row, fields = node.row, _pinned_fields(node, record_set.row, fields, pinned_row)
     return ExtractNode.model_validate(
         {
             "kind": "extract",
@@ -258,8 +328,8 @@ def resolve_layout_extract(
             "key": key,
             "duplicates": node.duplicates,
             "only_keys": node.only_keys,
-            "row": record_set.row,
-            "fields": dict(record_set.fields),
+            "row": row,
+            "fields": fields,
             "header": {name: layout.header[name] for name in node.header},
             "as": node.as_,
             "next": node.next,
@@ -274,6 +344,7 @@ __all__ = [
     "EXTRACT_LAYOUT_UNDECLARED",
     "EXTRACT_RECORDS_UNKEYED",
     "EXTRACT_RECORDS_UNKNOWN",
+    "EXTRACT_ROW_UNAVAILABLE",
     "MAX_EXTRACT_HEADER",
     "KeyTypeOverride",
     "LayoutExtractNode",

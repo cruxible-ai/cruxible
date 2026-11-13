@@ -377,7 +377,12 @@ def _identity_procedure(
             )
         },
     )
-    extract = extract.model_copy(update={"records": identity_set})
+    extract = extract.model_copy(
+        update={
+            "records": identity_set,
+            "row": row.ref.model_copy(update={"digest": contract_digest(row).tagged}),
+        }
+    )
     terminal = ClaimsNode.model_validate(
         {
             **terminal.model_dump(mode="python", by_alias=True),

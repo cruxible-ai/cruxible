@@ -174,6 +174,7 @@ def delivery_definition(
                 header=("listed_from",) if dated else (),
                 as_="entries",
                 next=node_id,
+                row=row,
             ),
             ClaimsNode(
                 node_id=node_id,

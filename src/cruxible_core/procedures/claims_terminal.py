@@ -283,7 +283,9 @@ def expand_claims(
     source_cache: dict[str, tuple[tuple[Any, ...], tuple[str, ...], bool]] = {}
     # Each extract's receipt digests its one resolved spec (its kind's layout applied).
     spec_of = extract_specs(
-        nodes.values(), plan_kind_lookup(executor.plan, executor.capture_contracts)
+        nodes.values(),
+        plan_kind_lookup(executor.plan, executor.capture_contracts),
+        executor.contract_resolver,
     )
     extract_digests = {
         n.node_id: _receipt_extract_digest(spec_of(n))

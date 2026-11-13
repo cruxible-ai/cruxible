@@ -238,6 +238,13 @@ def procedure_capture_problem(
                 "cruxible.procedure.extract_format_unsupported",
                 f"extract {extract.node_id!r}: core extracts json and csv, not {decoding.format}",
             )
+        if extract.row is None:
+            # Accepted Procedures pin each extract's row (ruling L1); authoring adds it.
+            return (
+                "cruxible.procedure.extract_row_unpinned",
+                f"extract {extract.node_id!r} pins no row Contract; author the Procedure "
+                "again (authoring pins the row of the record set it names)",
+            )
         # The node names a record set and header fields of its kind's layout; the
         # layout law already holds the CSV shape and the row's field rules.
         try:
@@ -246,6 +253,7 @@ def procedure_capture_problem(
                 getattr(contract, "layout", None),
                 reads_list=extract.capture_field
                 in list_fields.get(extract.capture_alias, frozenset()),
+                pinned_row=None if contract_lookup is None else contract_lookup(extract.row),
             )
         except LayoutExtractRefused as refused:
             return (refused.code, refused.message)

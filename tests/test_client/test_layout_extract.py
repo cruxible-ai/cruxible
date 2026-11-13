@@ -84,12 +84,23 @@ def test_the_node_dumps_only_what_it_states() -> None:
         {"key": {"url": {"type": "string"}}},
         {"key": {"url": {"type": "key_part<acme.page:url>", "at": "link"}}},
         {"fields": {"title": {"at": "title"}}},
-        {"row": "acme.hit@1"},
     ],
 )
 def test_the_node_refuses_what_is_the_kind_s_to_declare(changes: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         _node(**changes)
+
+
+def test_an_accepted_node_carries_its_row_pin() -> None:
+    """Ruling L1: acceptance adds the record set's row pin; the author never writes it."""
+
+    node = _node(header=[], row="acme.hit@1")
+
+    assert node.row is not None and (node.row.name, node.row.version) == ("acme.hit", 1)
+    assert node.model_dump(mode="json", by_alias=True)["row"] == {
+        "name": "acme.hit",
+        "version": 1,
+    }
 
 
 def test_resolution_builds_today_s_full_spec() -> None:
@@ -147,6 +158,7 @@ def test_resolution_codes_are_a_closed_vocabulary() -> None:
         "cruxible.procedure.extract_key_override_invalid",
         "cruxible.procedure.extract_records_unkeyed",
         "cruxible.procedure.extract_format_unsupported",
+        "cruxible.procedure.extract_row_unavailable",
     }
 
 

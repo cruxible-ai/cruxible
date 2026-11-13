@@ -174,7 +174,12 @@ def append_absence(
     if contract is None or contract.decoding is None:
         refuse("claims_absence_invalid: enumeration CaptureKind decoding is unavailable")
     # The witness digests the enumeration's one resolved spec, under the kind it read.
-    extract_spec = _receipt_extract_digest(resolved_extract_spec(extracting, contract))
+    pinned = (
+        None
+        if extracting.row is None or executor.contract_resolver is None
+        else executor.contract_resolver(extracting.row)
+    )
+    extract_spec = _receipt_extract_digest(resolved_extract_spec(extracting, contract, pinned))
     extractor = EXTRACTOR_VERSIONS[contract.decoding.format]
     check = state.extraction_checks.get(extracting.as_)
     by_subject: dict[str, list[dict[str, Any]]] = {}

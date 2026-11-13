@@ -71,6 +71,7 @@ def _rows_extract(*, next_node: str) -> LayoutExtractNode:
         records="rows",
         as_=ROWS_ALIAS,
         next=next_node,
+        row=_row_contract(),
     )
 
 

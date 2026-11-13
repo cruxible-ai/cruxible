@@ -325,6 +325,7 @@ def _fetch_procedure(contract: CaptureContract, *, request: dict[str, object]) -
                 capture=f"$steps.{_ALIAS}.capture",
                 records="record",
                 next="shape",
+                row=_RECORD_ROW_REF,
             ),
             ProjectNode(
                 node_id="shape",

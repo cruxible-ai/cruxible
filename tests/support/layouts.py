@@ -79,8 +79,13 @@ def thin_node(
     duplicates: str = "refuse_key",
     only_keys: object = None,
     next: str | None = None,
+    row: Any = None,
 ) -> LayoutExtractNode:
-    """The stored thin node naming record set ``records`` (and ``header`` fields)."""
+    """The stored thin node naming record set ``records`` (and ``header`` fields).
+
+    An accepted Procedure's node pins its record set's row (``row``: a Contract, a
+    ref or ``{name, version, digest}``), as authoring does (ruling L1).
+    """
 
     data: dict[str, Any] = {
         "kind": "extract",
@@ -95,7 +100,19 @@ def thin_node(
     }
     if only_keys is not None:
         data["only_keys"] = only_keys
+    if row is not None:
+        data["row"] = pinned_row(row)
     return LayoutExtractNode.model_validate(data)
+
+
+def pinned_row(row: Any) -> Any:
+    """A row Contract pin ``{name, version, digest}`` from a Contract (or a ref as is)."""
+
+    from cruxible_client.contracts.shapes import Contract, contract_digest
+
+    if isinstance(row, Contract):
+        return {"name": row.name, "version": row.version, "digest": contract_digest(row).tagged}
+    return _dumped(row)
 
 
 def thin_step(

@@ -1429,6 +1429,9 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 node["only_keys"] = template(step.only_keys, path + ".only_keys")
             details = None if resolve is None else resolve("extract_layout", step)
             if isinstance(details, dict) and details.get("row") is not None:
+                # Acceptance pins the record set's row (ruling L1), as it pins a
+                # slot's capability: later reads take that row and its fields only.
+                node["row"] = details["row"]
                 output = extract_view_fields(
                     ContractRef.model_validate(details["row"]), spec.hard_caps.items or 5000
                 )

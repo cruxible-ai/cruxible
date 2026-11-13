@@ -507,12 +507,14 @@ def proposals_extract(*, next_node: str | None = None) -> Any:
 
     from tests.support.layouts import thin_node
 
+    *_nested, row = fan_out_contracts()
     return thin_node(
         node_id="items",
         capture=f"$steps.{SOURCE_ALIAS}.capture",
         records="proposals",
         as_=PROPOSALS_ALIAS,
         next=next_node,
+        row=row,
     )
 
 
@@ -544,6 +546,7 @@ def severity_from_document(nodes: tuple[Any, ...]) -> tuple[Any, ...]:
         records="document",
         as_=DOCUMENT_ALIAS,
         next=shape.node_id,
+        row=document_contract(),
     )
     return (
         source.model_copy(update={"next": extract.node_id}),

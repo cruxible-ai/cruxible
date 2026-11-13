@@ -114,6 +114,8 @@ class ExtractRefused(ExecutionError):
 
 #: A Procedure's capture reference (a call's ``captures[field]``) to the kind it names.
 KindLookup = Callable[[ArtifactNameRef], Any]
+#: An extract's pinned row (``name@N`` at its digest) to the accepted Contract.
+RowLookup = Callable[[ContractRef], Contract | None]
 
 
 #: The key of a sealed node's one resolution slot (see :func:`extract_spec`).
@@ -129,12 +131,14 @@ class _ResolvedSpecSlot:
         self.entry: tuple[str | None, ExtractNode] | None = None
 
 
-def extract_spec(node: LayoutExtractNode, kind: Any) -> ExtractNode:
+def extract_spec(node: LayoutExtractNode, kind: Any, row: Contract | None = None) -> ExtractNode:
     """The full extract spec the stored ``node`` reads: the one resolution every reader
     goes through (the engine, Claims typing, receipts, absence and delivery).
 
     ``kind`` is the accepted CaptureKind the node's capture field is committed
-    as. A node reads one capture field, so a sealed node (part of a sealed
+    as; ``row`` is the Contract the node's pinned row names (ruling L1): the spec
+    reads that row and only its fields, with paths and rules from ``kind``'s
+    layout. A node reads one capture field, so a sealed node (part of a sealed
     accepted Procedure) remembers exactly one resolution: the spec for the kind
     digest it last read. Runs of an unchanged Procedure over an unchanged kind
     never resolve again; a successor kind replaces the entry, so the memo holds
@@ -148,7 +152,7 @@ def extract_spec(node: LayoutExtractNode, kind: Any) -> ExtractNode:
     entry = slot.entry
     if entry is not None and entry[0] == kind_digest:
         return entry[1]
-    resolved = resolve_layout_extract(node, getattr(kind, "layout", None))
+    resolved = resolve_layout_extract(node, getattr(kind, "layout", None), pinned_row=row)
     # Sealed, so its receipt digest is also computed once.
     seal(resolved)
     # One tuple assignment: a concurrent reader sees the old entry or the new one.
@@ -169,9 +173,10 @@ def extract_capture_ref(
 
 
 def extract_specs(
-    nodes: Iterable[object], kind_of: KindLookup
+    nodes: Iterable[object], kind_of: KindLookup, row_of: RowLookup | None = None
 ) -> Callable[[LayoutExtractNode], ExtractNode]:
-    """Resolve one Procedure's extract nodes against the kinds ``kind_of`` reads.
+    """Resolve one Procedure's extract nodes against the kinds ``kind_of`` reads and the
+    rows they pin (``row_of``).
 
     ``kind_of`` is asked once per node and call. A capture field no call
     commits resolves with no kind, which refuses (``extract_layout_undeclared``).
@@ -181,7 +186,8 @@ def extract_specs(
 
     def spec(node: LayoutExtractNode) -> ExtractNode:
         reference = extract_capture_ref(node, aliases)
-        return extract_spec(node, None if reference is None else kind_of(reference))
+        row = None if node.row is None or row_of is None else row_of(node.row)
+        return extract_spec(node, None if reference is None else kind_of(reference), row)
 
     return spec
 
@@ -1460,6 +1466,7 @@ __all__ = [
     "ExtractRefused",
     "Extractor",
     "KindLookup",
+    "RowLookup",
     "clear_extract_cache",
     "extract_capture_ref",
     "extract_spec",
