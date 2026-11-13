@@ -5435,7 +5435,7 @@
                 "type": "string"
               },
               "effect": {
-                "description": "pure, external_read or external_write; fixed across versions.",
+                "description": "pure, external_read or external_mutation; fixed across versions.",
                 "enum": [
                   "pure",
                   "external_read",

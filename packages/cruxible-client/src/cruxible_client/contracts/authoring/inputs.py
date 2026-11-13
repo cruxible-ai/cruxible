@@ -611,7 +611,7 @@ class CapabilityInput(_StrictInputModel):
         description="What the capability does, led by its result; covered by its digest."
     )
     effect: OperationEffect = Field(
-        description="pure, external_read or external_write; fixed across versions."
+        description="pure, external_read or external_mutation; fixed across versions."
     )
     in_: str = Field(alias="in", description="The request Contract, 'name@N'.")
     out: str = Field(description="The result Contract, 'name@N'.")
