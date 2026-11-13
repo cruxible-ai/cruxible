@@ -217,6 +217,7 @@ from cruxible_core.documents.workspace_file import (
     DirectoryEntryCache,
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
+    WorkspaceReadOverRunBudget,
 )
 from cruxible_core.evidence.source_readers import (
     CaptureAcquisitionReceiptV1,
@@ -2314,6 +2315,28 @@ class _BudgetExceeded(Exception):
         self.node_id = node_id
 
 
+def _run_capture_budget_exceeded(
+    admission: ProcedureRunAdmission,
+    state: _RunState,
+    exc: WorkspaceReadOverRunBudget,
+    *,
+    node_id: str,
+) -> _BudgetExceeded:
+    """The run's byte-budget refusal for a workspace read stopped at the budget.
+
+    ``observed`` is what the run would hold with the bytes read so far (at most
+    one byte past the budget); the rest of the file was never read.
+    """
+
+    limit = admission.budget.max_capture_bytes
+    return _BudgetExceeded(
+        "max_capture_bytes",
+        limit=limit,
+        observed=limit - exc.run_budget_bytes + exc.read_bytes,
+        node_id=node_id,
+    )
+
+
 class _OperationalFailure(Exception):
     def __init__(
         self,
@@ -4115,6 +4138,9 @@ class ProcedureExecutor:
         # Shared across every member below (D-R41): sibling files in the same
         # directory reuse one real-name listing instead of relisting it each.
         directory_cache: DirectoryEntryCache = {}
+        # The run's Capture bytes left before this call: every member read is
+        # charged against it as it lands, so no read, buffer or store passes it.
+        remaining = admission.budget.max_capture_bytes - state.capture_bytes
         for key, relative_path in zip(keys, matches, strict=True):
             into.members[key] = field
 
@@ -4156,10 +4182,16 @@ class ProcedureExecutor:
                     derived_request_digest=derived.request_digest,
                     read_at=self.clock.now(),
                     directory_cache=directory_cache,
+                    run_budget_bytes=remaining,
                 )
+            except WorkspaceReadOverRunBudget as exc:
+                raise _run_capture_budget_exceeded(
+                    admission, state, exc, node_id=node.node_id
+                ) from exc
             except (ValidationError, WorkspaceFileReadRefused) as exc:
                 drop(f"{relative_path!r} cannot be read: {exc}")
                 continue
+            remaining -= read.receipt.byte_length
             self._append_event(
                 admission,
                 records,
@@ -4413,7 +4445,12 @@ class ProcedureExecutor:
                         resolved_max_bytes=workspace_contract.selection_budget.max_bytes,
                         derived_request_digest=derived_request.request_digest,
                         read_at=self.clock.now(),
+                        run_budget_bytes=admission.budget.max_capture_bytes - state.capture_bytes,
                     )
+                except WorkspaceReadOverRunBudget as exc:
+                    raise _run_capture_budget_exceeded(
+                        admission, state, exc, node_id=node.node_id
+                    ) from exc
                 except (ValidationError, WorkspaceFileReadRefused) as exc:
                     raise _workspace_refusal(
                         exc,

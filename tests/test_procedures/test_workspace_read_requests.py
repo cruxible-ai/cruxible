@@ -352,3 +352,131 @@ def test_acceptance_refuses_a_stored_call_landing_under_an_unsupported_kind(
         extra={capture_contract_path(snapshot.identity.name): render_capture_contract(snapshot)},
     )
     assert "cruxible.procedure.workspace_read_kind_unsupported" in _codes(refused)
+
+
+# -- the run's Capture-byte budget holds before any byte is read past it ---------------
+
+
+def _budget_world(tmp_path: Path, *, glob: bool, capture_bytes: int) -> tuple[Any, Path]:
+    from tests.support.operation_world import author_line
+
+    instance = _world(tmp_path)
+    root = tmp_path / "workspace"
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    if glob:
+        read: dict[str, Any] = {
+            "logical_source": "commerce.production.orders",
+            "glob": "data/*.json",
+            "max_files": 10,
+        }
+        output = {"documents": f"list<capture<{KIND}>>{{max_items: 1000}}"}
+        step = CallStep(call="doc", captures={"captures": KIND}, slot="read", input=read)
+        project = ProjectStep(project="out", fields={"documents": "$doc.captures"})
+    else:
+        output = {"document": f"capture<{KIND}>"}
+        step = CallStep(call="doc", captures={"capture": KIND}, slot="read", input=REQUEST)
+        project = ProjectStep(project="out", fields={"document": "$doc.capture"})
+    author_procedure(
+        instance,
+        procedure_spec(
+            reference_text=True,
+            procedure="test.read",
+            input={},
+            output=output,
+            slots={"read": slot("workspace.files@1" if glob else f"{WORKSPACE_FILE}@1")},
+            steps=[step, project],
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=10, capture_bytes=capture_bytes),
+        ),
+    )
+    author_line(instance, name="test.read-line", procedure="test.read", parameters={})
+    return instance, root
+
+
+def _run_counted(instance: Any, root: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    from cruxible_core.documents.workspace_file import WorkspaceFileReader
+    from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from cruxible_core.storage.material_reservations import ReservedCaptureStore
+    from tests.support.operation_world import NOW, actor
+    from tests.test_procedures.test_completeness_transfer import _Clock
+
+    counted: dict[str, list[int]] = {"reads": [], "stores": []}
+    real_read, real_store = WorkspaceFileReader.read, ReservedCaptureStore.store
+
+    def read(self: Any, *args: Any, **kwargs: Any) -> Any:
+        result = real_read(self, *args, **kwargs)
+        counted["reads"].append(result.receipt.byte_length)
+        return result
+
+    def store(self: Any, content: bytes, *args: Any, **kwargs: Any) -> Any:
+        counted["stores"].append(len(content))
+        return real_store(self, content, *args, **kwargs)
+
+    monkeypatch.setattr(WorkspaceFileReader, "read", read)
+    monkeypatch.setattr(ReservedCaptureStore, "store", store)
+    state = service_run_playbill_line(
+        instance,
+        path_identity_digest="test.read-line",
+        request=LineRunRequest(line="test.read-line"),
+        actor_context=actor().model_copy(update={"timestamp": NOW}),
+        caller_rung=2,
+        daemon_clock=_Clock(NOW),
+        provider_runtime_operator=ProviderRuntimeOperator(root.parent / "state"),
+        workspace_file_reader=WorkspaceFileReader(
+            instance_id=instance.descriptor.instance_id,
+            operating_profile="local",
+            attached_roots=(root,),
+            managed_roots=(instance.root,),
+        ),
+    )
+    return state, counted
+
+
+def _budget_refusal(state: Any) -> Any:
+    assert state.status != "succeeded", state
+    terminal = state.terminal
+    assert "max_capture_bytes" in str(terminal.model_dump(mode="json")), terminal
+    return terminal
+
+
+def test_a_glob_stops_reading_at_the_runs_byte_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each file fits its kind (4096 bytes); together they exceed the run's 7000."""
+
+    instance, root = _budget_world(tmp_path, glob=True, capture_bytes=7000)
+    for index in range(6):
+        (root / "data" / f"{index}.json").write_text('{"v": "' + "x" * 2990 + '"}')
+    state, counted = _run_counted(instance, root, monkeypatch)
+    _budget_refusal(state)
+    # Two members fit (6000 of 7000); the third read stopped past the budget,
+    # nothing further was read, and no body was stored for the refused run.
+    assert len(counted["reads"]) == 2 and sum(counted["reads"]) <= 7000
+    assert counted["stores"] == []
+
+
+def test_a_glob_within_the_runs_byte_budget_reads_every_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, root = _budget_world(tmp_path, glob=True, capture_bytes=65536)
+    for index in range(3):
+        (root / "data" / f"{index}.json").write_text('{"v": "' + "x" * 2990 + '"}')
+    state, counted = _run_counted(instance, root, monkeypatch)
+    assert state.status == "succeeded", state.terminal
+    assert len(counted["reads"]) == 3
+
+
+def test_one_file_past_the_runs_byte_budget_is_refused_before_it_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file fits its kind (4096 bytes) but not the run's 2000."""
+
+    instance, root = _budget_world(tmp_path, glob=False, capture_bytes=2000)
+    (root / "data/doc.json").write_text('{"v": "' + "x" * 2990 + '"}')
+    state, counted = _run_counted(instance, root, monkeypatch)
+    _budget_refusal(state)
+    assert counted["reads"] == [] and counted["stores"] == []

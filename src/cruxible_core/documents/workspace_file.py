@@ -70,6 +70,20 @@ class WorkspaceFileReadRefused(Exception):
         super().__init__(message)
 
 
+class WorkspaceReadOverRunBudget(Exception):
+    """A file holds more bytes than the run's remaining Capture-byte budget.
+
+    Raised while reading, once ``read_bytes`` (at most the budget plus one byte)
+    have been read: the rest is never read, and nothing is stored. Not a
+    refusal of the path: the run refuses for its byte budget.
+    """
+
+    def __init__(self, *, run_budget_bytes: int, read_bytes: int) -> None:
+        self.run_budget_bytes = run_budget_bytes
+        self.read_bytes = read_bytes
+        super().__init__("workspace source exceeds the run's remaining Capture-byte budget")
+
+
 def workspace_binding_digest(*, instance_id: str, canonical_root: Path) -> str:
     """Return the only root identity allowed to leave daemon-local configuration."""
 
@@ -604,6 +618,7 @@ class WorkspaceFileReader:
         derived_request_digest: str,
         read_at: datetime,
         directory_cache: DirectoryEntryCache | None = None,
+        run_budget_bytes: int | None = None,
     ) -> WorkspaceFileReadResultV1:
         """Read one file, with every containment and no-follow check strict.
 
@@ -611,6 +626,12 @@ class WorkspaceFileReader:
         directory's entries across sibling reads instead of relisting it per
         file; omitted (the default), every call lists its own directory, as
         before.
+
+        ``run_budget_bytes`` is the run's remaining Capture-byte budget: the read
+        stops one byte past ``min(resolved_max_bytes, run_budget_bytes)``. A file
+        past the kind's budget refuses ``size_budget``; one within it but past the
+        run's raises :class:`WorkspaceReadOverRunBudget`. Either way no more is
+        read and nothing is kept.
 
         Every check that decides what is read runs on a held descriptor:
         each component is opened no-follow from the root's descriptor, and
@@ -691,15 +712,25 @@ class WorkspaceFileReader:
                     "changed_during_read", "workspace source escaped its authorized root"
                 )
             self._check_managed_root(opened_path)
+            limit = (
+                resolved_max_bytes
+                if run_budget_bytes is None
+                else max(0, min(resolved_max_bytes, run_budget_bytes))
+            )
             data = bytearray()
-            while len(data) <= resolved_max_bytes:
-                chunk = os.read(descriptors[-1], min(64 * 1024, resolved_max_bytes + 1 - len(data)))
+            while len(data) <= limit:
+                chunk = os.read(descriptors[-1], min(64 * 1024, limit + 1 - len(data)))
                 if not chunk:
                     break
                 data.extend(chunk)
-            if len(data) > resolved_max_bytes:
+            if len(data) > limit and limit == resolved_max_bytes:
                 raise WorkspaceFileReadRefused(
                     "size_budget", "workspace source exceeds the admitted byte budget"
+                )
+            if len(data) > limit:
+                assert run_budget_bytes is not None
+                raise WorkspaceReadOverRunBudget(
+                    run_budget_bytes=run_budget_bytes, read_bytes=len(data)
                 )
             after = os.stat(actual_leaf, dir_fd=descriptors[-2], follow_symlinks=False)
             resolved = self._fd_path(descriptors[-1])
@@ -787,6 +818,7 @@ class WorkspaceFileReader:
 
 __all__ = [
     "WorkspaceFileReadRefused",
+    "WorkspaceReadOverRunBudget",
     "WorkspaceFileReadResultV1",
     "WorkspaceFileReader",
     "workspace_binding_digest",
