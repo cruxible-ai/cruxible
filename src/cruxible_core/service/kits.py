@@ -1707,6 +1707,7 @@ def _default_implementers(
         SlotCapabilityUnresolved,
         provisional_slot_signatures,
     )
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
     from cruxible_core.providers.operation_index import fitting_operations
 
     if provider.delivery != "index" or not provider.operations:
@@ -1723,7 +1724,9 @@ def _default_implementers(
             for path, content in sorted(contents.items())
             if path.startswith("procedures/")
             for signature in provisional_slot_signatures(
-                parse_procedure(content, path=path).definition.slots, capabilities
+                parse_procedure(content, path=path).definition.slots,
+                capabilities,
+                builtin=builtin_slot_signatures(),
             ).values()
         }
     except SlotCapabilityUnresolved:

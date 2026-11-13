@@ -185,6 +185,9 @@ def _slotted_world(tmp_path, *, landed=False):
         },
         name="slotted-measurement-builds",
     )
+    from tests.support.capabilities import ensure_workspace_file_capability
+
+    ensure_workspace_file_capability(instance)
     first_accepted = AcceptedProvider(
         path=provider_path(first.identity.name),
         provider=first,

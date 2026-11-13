@@ -569,10 +569,9 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     record = validate_contract(
         {"name": "test.web-record", "version": 1, "fields": {"station": "string"}}
     )
-    from tests.support.capabilities import capability_files, tree_capability
+    from tests.support.capabilities import head_tree, missing_capability_files
 
-    installed = get_playbill_manager().get(instance_id)
-    head = installed.tree_at(installed.accepted_coordinate().git_oid)
+    head = head_tree(get_playbill_manager().get(instance_id))
     _accept(
         http,
         instance_id,
@@ -580,14 +579,9 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
         {
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
             contract_path(record.name, record.version): render_contract(record),
-            **capability_files(
-                tree_capability(
-                    head,
-                    "web.fetch",
-                    in_="web.fetch.request@1",
-                    out="web.fetch.result@1",
-                    effect="external_read",
-                )
+            # Unless the instance holds it (base kit).
+            **missing_capability_files(
+                head, ("web.fetch", "web.fetch.request@1", "web.fetch.result@1", "external_read")
             ),
         },
         name="web-capture-contract",
@@ -958,12 +952,16 @@ def _workspace_request() -> dict[str, object]:
 def _author_workspace_line(http, instance_id, reviewer, *, build, name):
     """A Procedure calling one workspace.file slot, and a Line binding it to ``build``."""
 
-    from tests.support.capabilities import capability_files, workspace_file_capability
+    from tests.support.capabilities import (
+        WORKSPACE_FILE_SPEC,
+        head_tree,
+        missing_capability_files,
+    )
 
     line = f"test.{name}-line"
-    members = capability_files(workspace_file_capability())
     instance = get_playbill_manager().get(instance_id)
-    if not set(members) <= set(instance.tree_at(instance.accepted_coordinate().git_oid)):
+    members = missing_capability_files(head_tree(instance), WORKSPACE_FILE_SPEC)
+    if members:
         _accept(http, instance_id, reviewer, members, name="workspace-file-capability")
     _author_line(
         http,

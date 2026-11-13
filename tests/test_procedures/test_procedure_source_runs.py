@@ -114,7 +114,9 @@ from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
 from tests.support.capabilities import (
-    capability_files,
+    WORKSPACE_FILE_SPEC,
+    head_tree,
+    missing_capability_files,
     pinned_slot,
     workspace_file_capability,
 )
@@ -303,7 +305,7 @@ def _procedure(  # noqa: PLR0913
         description="Read one accepted advisory document and shape its severity.",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
-        slots={"read": pinned_slot(workspace_file_capability())},
+        slots={"read": pinned_slot(workspace_file_capability(head_tree(instance)))},
         nodes=(
             CallNode(
                 node_id="read",
@@ -590,8 +592,8 @@ def _world(  # noqa: PLR0913
             accepted_contract
         ),
         **fan_out_members(),
-        # The capability the Procedure's read slot names (its Contracts are genesis).
-        **capability_files(workspace_file_capability()),
+        # The capability the Procedure's read slot names, unless the instance holds it.
+        **missing_capability_files(head_tree(instance), WORKSPACE_FILE_SPEC),
     }
     if accept_procedure:
         members.update(procedure_members(procedure))

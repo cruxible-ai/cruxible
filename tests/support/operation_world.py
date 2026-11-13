@@ -86,11 +86,11 @@ def compute_slot(effect: str = "pure", *, may_truncate: bool = False) -> dict[st
 
 
 def contract_files(*contracts: Contract) -> dict[str, bytes]:
-    """The tree files of ``contracts``; by default the fixture Contracts, the
-    ``test.compute`` capabilities over them, and ``workspace.file@1`` (over the
-    genesis workspace.file Contracts)."""
+    """The tree files of ``contracts``; by default the fixture Contracts and the
+    ``test.compute`` capabilities over them. ``workspace.file@1`` is not here: a
+    world takes it from the instance (:func:`world`)."""
 
-    from tests.support.capabilities import capability_files, workspace_file_capability
+    from tests.support.capabilities import capability_files
 
     if contracts:
         return {contract_path(item.name, item.version): render_contract(item) for item in contracts}
@@ -103,8 +103,7 @@ def contract_files(*contracts: Contract) -> dict[str, bytes]:
             *(
                 compute_capability(effect)
                 for effect in ("pure", "external_read", "external_mutation")
-            ),
-            workspace_file_capability(),
+            )
         ),
     }
 
@@ -391,12 +390,14 @@ def world(tmp_path: Path, *builds: NamedProviderBuild) -> Any:
 
     from tests.core_support._identity_support import accept_tree
     from tests.core_support._support import initialize_local
+    from tests.support.capabilities import ensure_workspace_file_capability
 
     instance, _owner = initialize_local(tmp_path)
     files = contract_files()
     for build in builds or (operation_build(),):
         files.update(build_files(build))
     accept_tree(instance, files, name="operations")
+    ensure_workspace_file_capability(instance)
     return instance
 
 

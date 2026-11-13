@@ -40,7 +40,7 @@ from cruxible_client.contracts.subject_kinds import render_subject_kind, subject
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
-from tests.support.capabilities import accept_head_capabilities
+from tests.support.capabilities import ensure_capabilities
 from tests.support.operation_world import NOW, Invoker, author, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -214,7 +214,7 @@ def osv_world(tmp_path: Path) -> Any:
         },
         name="osv-vocabulary",
     )
-    accept_head_capabilities(instance, *OSV_CAPABILITIES, name="osv-capabilities")
+    ensure_capabilities(instance, *OSV_CAPABILITIES, name="osv-capabilities")
     accept_tree(instance, build_files(_osv_build(require_provider_checkout())), name="osv")
     for index, purl in enumerate((A, B, DISTRO)):
         author(

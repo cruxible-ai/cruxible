@@ -217,14 +217,13 @@ def _procedure_definition(
         selector={"id": 7, "relation": "orders"},
         replayability="exact",
     )
-    from tests.support.capabilities import pinned_slot, workspace_file_capability
-
     return procedure_definition(
         name=PROCEDURE_NAME,
         description="Read the advisory document and propose its severity as a Claim.",
         contract_in=named(contract_in),
         contract_out=named(contract_out),
-        slots={"read": pinned_slot(workspace_file_capability())},
+        # Authoring pins it to the version the instance holds.
+        slots={"read": {"capability": {"name": "workspace.file", "version": 1}}},
         nodes=(
             CallNode(
                 node_id="read",
@@ -331,6 +330,27 @@ def _binding_digest(workspace: Path) -> str:
     )
 
 
+def _workspace_file_members(instance_id: str) -> list[dict[str, Any]]:
+    """The ``workspace.file@1`` authoring member, or none when the instance holds it."""
+
+    from tests.support.capabilities import WORKSPACE_FILE, head_tree, held_capability
+
+    instance = get_playbill_manager().get(instance_id)
+    if held_capability(head_tree(instance), WORKSPACE_FILE) is not None:
+        return []
+    return [
+        {
+            "tag": "cruxible-capability-authoring-payload-v1",
+            "name": WORKSPACE_FILE,
+            "version": 1,
+            "description": "Read one workspace file; core's builtin serves it.",
+            "effect": "pure",
+            "in": {"name": "workspace.file.request", "version": 1},
+            "out": {"name": "workspace.file.result", "version": 1},
+        }
+    ]
+
+
 def _provider_receipts(instance_id: str) -> list[dict[str, Any]]:
     """Every Provider invocation receipt the instance's run journal holds."""
 
@@ -435,16 +455,8 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             name=SUBJECT_KIND, keys=(f"{SUBJECT_KIND}.slug",), uniqueness="unique"
         ).model_dump(mode="json"),
         create_by_key(SUBJECT_KIND, SUBJECT_ID).model_dump(mode="json"),  # type: ignore[attr-defined]
-        # The capability the read slot names, over the genesis workspace.file Contracts.
-        {
-            "tag": "cruxible-capability-authoring-payload-v1",
-            "name": "workspace.file",
-            "version": 1,
-            "description": "Read one workspace file; core's builtin serves it.",
-            "effect": "pure",
-            "in": {"name": "workspace.file.request", "version": 1},
-            "out": {"name": "workspace.file.result", "version": 1},
-        },
+        # The capability the read slot names, unless the instance holds it (base kit).
+        *_workspace_file_members(instance_id),
         lower_authoring_input(_authored(definition)).model_dump(mode="json", by_alias=True),
         {
             "tag": "cruxible-line-authoring-payload-v2",

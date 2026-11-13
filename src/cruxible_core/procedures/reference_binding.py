@@ -238,6 +238,8 @@ def bind_procedure_references(
             else None
         )
 
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+
     # The provisional signature key (line_specs.provisional_slot_signatures, which
     # the binding slice replaces). A replay rebinds the bindings its admission
     # recorded and checked, from recorded pins only, so it derives none.
@@ -247,6 +249,7 @@ def bind_procedure_references(
         else provisional_slot_signatures(
             {name: slot for name, slot in slot_declarations.items() if name in (bindings or {})},
             capability,
+            builtin=builtin_slot_signatures(),
         )
     )
     validate_slot_names(bindings or {}, slot_declarations)

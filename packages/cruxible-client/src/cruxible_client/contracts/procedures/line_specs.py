@@ -379,16 +379,27 @@ class SlotCapabilityUnresolved(ValueError):
 # authoring and acceptance, direct runs, run admission, the kit default-provider
 # check) reaches the slot's signature through this one function.
 def provisional_slot_signatures(
-    slots: Mapping[str, ProcedureSlot], capabilities: CapabilityLookup
+    slots: Mapping[str, ProcedureSlot],
+    capabilities: CapabilityLookup,
+    *,
+    builtin: Mapping[str, OperationSignature],
 ) -> dict[str, OperationSignature]:
     """Each slot's derived signature (its capability's ``in``, ``out`` and ``effect``).
 
+    ``builtin`` maps each capability name core's builtin serves to the builtin
+    operation's own signature: such a slot binds by name (note §7.4.7), so its key
+    is the builtin's whatever Contracts the capability's own version pins (the
+    base kit's ``workspace.file`` request is the authored one, not the handoff).
     Raises :class:`SlotCapabilityUnresolved` naming the slot when its pinned
     capability does not resolve through ``capabilities``.
     """
 
     found: dict[str, OperationSignature] = {}
     for name, slot in slots.items():
+        served = builtin.get(slot.capability.name)
+        if served is not None:
+            found[name] = served
+            continue
         signature = capability_slot_signature(slot, capabilities)
         if signature is None:
             raise SlotCapabilityUnresolved(
@@ -403,11 +414,14 @@ def line_slot_signatures(
     definition: ProcedureDefinition,
     *,
     capabilities: CapabilityLookup,
+    builtin: Mapping[str, OperationSignature],
     child: Mapping[str, ProcedureDefinition] | None = None,
 ) -> dict[str, OperationSignature]:
     """Every slot a Line must bind (:func:`line_slots`), with its derived signature."""
 
-    return provisional_slot_signatures(line_slots(definition, child=child), capabilities)
+    return provisional_slot_signatures(
+        line_slots(definition, child=child), capabilities, builtin=builtin
+    )
 
 
 def line_capture_outputs(

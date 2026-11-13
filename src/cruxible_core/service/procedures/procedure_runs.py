@@ -952,6 +952,7 @@ def _accepted_procedure(
                 provisional_slot_signatures,
             )
             from cruxible_core.capabilities.lookup import capability_in_projection
+            from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
             from cruxible_core.providers.operation_index import resolve_slot_bindings
 
             selected = resolve_slot_bindings(
@@ -959,6 +960,7 @@ def _accepted_procedure(
                 provisional_slot_signatures(
                     dict(procedure.definition.slots),
                     lambda ref: capability_in_projection(projection, ref),
+                    builtin=builtin_slot_signatures(),
                 ),
                 dict(requested_bindings or {}),
             )
@@ -1011,6 +1013,7 @@ def _line_shape_at(
         line_slot_signatures,
     )
     from cruxible_core.capabilities.lookup import capability_in_projection
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
     from cruxible_core.providers.operation_index import line_child_definitions
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -1024,6 +1027,7 @@ def _line_shape_at(
         slots = line_slot_signatures(
             definition,
             capabilities=lambda ref: capability_in_projection(projection, ref),
+            builtin=builtin_slot_signatures(),
             child=children,
         )
     return slots, line_capture_outputs(definition, child=children)

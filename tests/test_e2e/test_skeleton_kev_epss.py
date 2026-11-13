@@ -63,7 +63,7 @@ from cruxible_client.contracts.subject_kinds import render_subject_kind, subject
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
-from tests.support.capabilities import accept_head_capabilities
+from tests.support.capabilities import ensure_capabilities
 from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.mandates import procedure_mandate
 from tests.support.operation_world import (
@@ -498,7 +498,7 @@ def skeleton_world(tmp_path: Path, *, kev_access: str = "open") -> Any:
         _key_type(CATALOG + ".catalog_id", CATALOG),
     )
     accept_tree(instance, members, name="web-contracts")
-    accept_head_capabilities(
+    ensure_capabilities(
         instance,
         ("web.fetch", "web.fetch.request@1", "web.fetch.result@1", "external_read"),
         (
@@ -976,7 +976,7 @@ def derive_capability_name(effect: str = "pure") -> str:
 def derive_world(tmp_path: Path, *, kev_access: str = "open", effect: str = "pure") -> Any:
     instance = skeleton_world(tmp_path, kev_access=kev_access)
     accept_tree(instance, contract_files(DERIVE_REQUEST), name="derive-contracts")
-    accept_head_capabilities(
+    ensure_capabilities(
         instance,
         (derive_capability_name(effect), "test.derive.request@1", "web.fetch.result@1", effect),
         name="derive-capabilities",

@@ -131,6 +131,9 @@ def _converting(spec_function: Callable[..., Any]) -> Callable[..., Any]:
 def capability_members(tree: Mapping[str, bytes]) -> dict[str, bytes]:
     """The capabilities' tree files, pinning the Contracts accepted in ``tree``.
 
+    A capability the world already holds is left as it is held: once the base
+    kit is installed at creation, ``workspace.file``, ``web.fetch`` and
+    ``web.fetch.pages`` come with the bundled bytes and are never authored here.
     A capability whose Contracts the world does not hold is left out: the start
     world installs no SARIF provider, so ``security.sarif.findings`` waits for a
     world that does.
@@ -153,6 +156,8 @@ def capability_members(tree: Mapping[str, bytes]) -> dict[str, bytes]:
 
     files: dict[str, bytes] = {}
     for request, (name, result, effect, description) in sorted(KIT_CAPABILITIES.items()):
+        if capability_path(name, 1) in tree:
+            continue
         if not {contract_path(request, 1), contract_path(result, 1)} <= set(tree):
             continue
         capability = Capability.model_validate(
@@ -173,7 +178,9 @@ def accept_kit_capabilities(instance: Any) -> None:
     from tests.core_support._identity_support import accept_tree
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    accept_tree(instance, capability_members(tree), name="kit-capabilities")
+    members = capability_members(tree)
+    if members:
+        accept_tree(instance, members, name="kit-capabilities")
 
 
 @contextmanager

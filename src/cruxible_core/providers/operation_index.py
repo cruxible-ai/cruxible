@@ -238,10 +238,12 @@ def line_slot_map(
     """
 
     from cruxible_client.contracts.procedures.line_specs import line_slot_signatures
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
 
     return line_slot_signatures(
         definition,
         capabilities=capabilities,
+        builtin=builtin_slot_signatures(),
         child=line_child_definitions(definition, child),
     )
 

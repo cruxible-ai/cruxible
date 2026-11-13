@@ -40,9 +40,9 @@ from tests.support.capabilities import (
     capability,
     capability_lookup,
     pinned_slot,
-    workspace_file_capability,
 )
 from tests.support.operation_world import (
+    VALUE,
     author,
     author_procedure,
     compute_capability,
@@ -84,7 +84,9 @@ def test_a_slot_is_one_capability_and_may_truncate_and_nothing_else() -> None:
 def test_the_slot_signature_is_derived_from_the_capability() -> None:
     pure = compute_capability()
     signatures = provisional_slot_signatures(
-        {"compute": ProcedureSlot.model_validate(pinned_slot(pure))}, capability_lookup(pure)
+        {"compute": ProcedureSlot.model_validate(pinned_slot(pure))},
+        capability_lookup(pure),
+        builtin={},
     )
     assert signatures["compute"].key() == (
         pure.in_.digest,
@@ -93,7 +95,9 @@ def test_the_slot_signature_is_derived_from_the_capability() -> None:
     )
     with pytest.raises(SlotCapabilityUnresolved, match="'compute'.*test.compute@1"):
         provisional_slot_signatures(
-            {"compute": ProcedureSlot.model_validate(pinned_slot(pure))}, capability_lookup()
+            {"compute": ProcedureSlot.model_validate(pinned_slot(pure))},
+            capability_lookup(),
+            builtin={},
         )
 
 
@@ -290,25 +294,49 @@ def test_the_law_refuses_a_slot_whose_capability_is_not_accepted() -> None:
 # -- the builtin ------------------------------------------------------------------------
 
 
-def test_the_builtin_is_recognised_by_capability_name() -> None:
+def _workspace_read() -> Any:
+    """A ``workspace.file@1`` over unrelated Contracts: recognition never reads them."""
+
+    return capability(WORKSPACE_FILE, in_=VALUE, out=VALUE, effect="pure")
+
+
+def test_the_builtin_is_recognised_by_capability_name_not_contract_digests() -> None:
     from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
     from cruxible_core.procedures.declared_inputs import reads_workspace
 
     assert WORKSPACE_FILE in BUILTIN_CAPABILITY_NAMES
-    builtin = ProcedureSlot.model_validate(pinned_slot(workspace_file_capability()))
-    assert reads_workspace(builtin)
-    # The same Contracts under another name are an ordinary slot: recognition is by name.
-    request, result = workspace_file_capability().in_, workspace_file_capability().out
-    lookalike = capability("test.file-lookalike", in_=request, out=result, effect="pure")
+    # Its Contracts are not the builtin's handoff: still the builtin, by name.
+    assert reads_workspace(ProcedureSlot.model_validate(pinned_slot(_workspace_read())))
+    # Another name over the same Contracts is an ordinary slot.
+    lookalike = capability("test.file-lookalike", in_=VALUE, out=VALUE, effect="pure")
     assert not reads_workspace(ProcedureSlot.model_validate(pinned_slot(lookalike)))
     assert not reads_workspace(None)
+
+
+def test_a_builtin_slot_binds_by_name_to_the_builtin_operation() -> None:
+    """Whatever request its capability pins (the base kit's is the authored one),
+    the provisional key of a builtin slot is the builtin operation's own signature."""
+
+    from cruxible_client.contracts.provider_operations import operation_signature_digest
+    from cruxible_client.contracts.workspace_file import is_workspace_file_signature
+    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+
+    read = ProcedureSlot.model_validate(pinned_slot(_workspace_read()))
+    for name in ("workspace.file", "workspace.files"):
+        slot = read.model_copy(
+            update={"capability": read.capability.model_copy(update={"name": name})}
+        )
+        (signature,) = provisional_slot_signatures(
+            {"read": slot}, capability_lookup(), builtin=builtin_slot_signatures()
+        ).values()
+        assert is_workspace_file_signature(operation_signature_digest(signature))
 
 
 def test_a_workspace_read_commits_core_bytes_as_its_one_capture_field() -> None:
     from cruxible_client.contracts.procedures.capture_outputs import procedure_capture_problem
     from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
-    read = workspace_file_capability()
+    read = _workspace_read()
     definition = _one_call(pinned_slot(read), acquires=True, field="document")
 
     def problem(builtins: Any) -> Any:

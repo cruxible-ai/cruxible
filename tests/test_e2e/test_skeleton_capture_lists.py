@@ -24,7 +24,7 @@ import pytest
 
 from cruxible_client.contracts.claim_evidence import CaptureBasis
 from tests.core_support._identity_support import accept_tree
-from tests.support.capabilities import accept_head_capabilities
+from tests.support.capabilities import ensure_capabilities
 from tests.support.operation_world import NOW, Invoker, author_line, author_procedure, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -139,7 +139,7 @@ def pages_world(tmp_path: Path) -> Any:
     accept_tree(
         instance, contract_files(PAGES_REQUEST, PAGES_RESULT, PAGES_DERIVE), name="pages-contracts"
     )
-    accept_head_capabilities(
+    ensure_capabilities(
         instance,
         ("test.pages", "test.pages.request@1", "test.pages.result@1", "external_read"),
         ("test.pages-derive", "test.pages-derive.request@1", "web.fetch.result@1", "pure"),

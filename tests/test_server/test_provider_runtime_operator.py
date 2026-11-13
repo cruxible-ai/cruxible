@@ -329,7 +329,9 @@ def _complete_line_for_admission(
         path=path,
         procedure=accepted_procedure,
         predecessor=None,
-        slots=line_slot_signatures(definition, capabilities=declared_capability_lookup()),
+        slots=line_slot_signatures(
+            definition, capabilities=declared_capability_lookup(), builtin={}
+        ),
         providers={accepted_provider.provider.identity.qualified: accepted_provider},
     )
     assert law.verdict == "accepted", law.diagnostics

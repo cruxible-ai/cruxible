@@ -5,10 +5,16 @@ by ``{in, out, effect}`` now authors the capability with those Contracts and
 effect (:func:`capability`, accepted with :func:`capability_files` or
 :func:`accept_capabilities`) and names it in the slot (:func:`slot`).
 
-The workspace read core's builtin serves is the capability ``workspace.file``
-over the genesis ``workspace.file.request@1 -> workspace.file.result@1`` (pure)
-(:func:`workspace_file_capability`); until the base kit slice lands it is
-authored per test world like any other.
+Base-kit capabilities (``workspace.file``, ``web.fetch``, ``web.fetch.pages``)
+go through one door, :func:`ensure_capabilities`: a capability the instance
+already holds is used as it is held, never re-authored. Once the base kit is
+installed at creation, every new instance holds them with the bundled bytes and
+nothing is authored. Before it, the instance holds none of them and they are
+authored over the Contracts the instance does hold: the wave 0 example bytes
+(``tests/pilot_contract_batch/examples/base``) cannot be accepted there, because
+their ``workspace.file.request``/``.result`` collide with the genesis seeds of the
+same name and version, and their ``web.fetch.result`` differs from the web
+package's. Nothing here authors a base-kit capability in a static file set.
 """
 
 from __future__ import annotations
@@ -117,20 +123,41 @@ def capability_files(*capabilities: Capability) -> dict[str, bytes]:
     }
 
 
-def workspace_file_capability() -> Capability:
-    """``workspace.file@1`` over the genesis workspace.file Contracts (pure)."""
+#: The genesis Contracts ``workspace.file@1`` is authored over before the base kit lands.
+WORKSPACE_FILE_SPEC = (
+    WORKSPACE_FILE,
+    "workspace.file.request@1",
+    "workspace.file.result@1",
+    "pure",
+)
 
-    from cruxible_client.contracts.workspace_file import workspace_file_contracts
 
-    _source, _content, request, result = workspace_file_contracts()
-    assert isinstance(request, Contract) and isinstance(result, Contract)
-    return capability(
-        WORKSPACE_FILE,
-        in_=request,
-        out=result,
-        effect="pure",
-        description="Read one workspace file; core's builtin serves it.",
-    )
+def held_capability(tree: Mapping[str, bytes], name: str, version: int = 1) -> Capability | None:
+    """The capability version ``tree`` holds, or ``None``."""
+
+    from cruxible_client.contracts.capabilities import parse_capability
+
+    path = capability_path(name, version)
+    content = tree.get(path)
+    if content is None:
+        return None
+    found = parse_capability(content, path=path)
+    _DECLARED[found.identity.qualified] = found
+    return found
+
+
+def head_tree(instance: Any) -> dict[str, bytes]:
+    return dict(instance.tree_at(instance.accepted_coordinate().git_oid))
+
+
+def workspace_file_capability(tree: Mapping[str, bytes]) -> Capability:
+    """``workspace.file@1`` as ``tree`` holds it, else as authored over its Contracts."""
+
+    found = held_capability(tree, WORKSPACE_FILE)
+    if found is not None:
+        return found
+    _name, in_, out, effect = WORKSPACE_FILE_SPEC
+    return tree_capability(tree, WORKSPACE_FILE, in_=in_, out=out, effect=effect)
 
 
 def accept_capabilities(
@@ -143,25 +170,40 @@ def accept_capabilities(
     accept_tree(instance, capability_files(*capabilities), name=name)
 
 
-def accept_head_capabilities(
+def missing_capability_files(
+    tree: Mapping[str, bytes], *specs: tuple[str, str, str, str]
+) -> dict[str, bytes]:
+    """The files of each ``(name, in, out, effect)`` capability ``tree`` does not hold yet,
+    authored over the Contracts it holds; a held one is left as it is."""
+
+    return capability_files(
+        *(
+            tree_capability(tree, capability_name, in_=in_, out=out, effect=effect)
+            for capability_name, in_, out, effect in specs
+            if held_capability(tree, capability_name) is None
+        )
+    )
+
+
+def ensure_capabilities(
     instance: Any, *specs: tuple[str, str, str, str], name: str = "capabilities"
 ) -> tuple[Capability, ...]:
-    """Accept one capability per ``(name, in, out, effect)`` over Contracts at the head."""
+    """Each ``(name, in, out, effect)`` capability on the instance: as held, or authored
+    over the Contracts at the head and accepted."""
 
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    found = tuple(
-        tree_capability(tree, capability_name, in_=in_, out=out, effect=effect)
-        for capability_name, in_, out, effect in specs
-    )
-    accept_capabilities(instance, *found, name=name)
-    return found
+    files = missing_capability_files(head_tree(instance), *specs)
+    if files:
+        from tests.core_support._identity_support import accept_tree
+
+        accept_tree(instance, files, name=name)
+    tree = head_tree(instance)
+    return tuple(held_capability(tree, spec[0]) for spec in specs)  # type: ignore[misc]
 
 
-def accept_workspace_file_capability(instance: Any) -> Capability:
-    """Accept ``workspace.file@1`` on an instance whose genesis holds its Contracts."""
+def ensure_workspace_file_capability(instance: Any) -> Capability:
+    """``workspace.file@1`` on the instance: as held (the base kit), or authored."""
 
-    found = workspace_file_capability()
-    accept_capabilities(instance, found, name="workspace-file-capability")
+    (found,) = ensure_capabilities(instance, WORKSPACE_FILE_SPEC, name="workspace-file-capability")
     return found
 
 
@@ -217,9 +259,13 @@ def capability_lookup(*capabilities: Capability) -> Any:
 
 __all__ = [
     "WORKSPACE_FILE",
+    "WORKSPACE_FILE_SPEC",
     "accept_capabilities",
-    "accept_head_capabilities",
-    "accept_workspace_file_capability",
+    "ensure_capabilities",
+    "ensure_workspace_file_capability",
+    "head_tree",
+    "held_capability",
+    "missing_capability_files",
     "capability",
     "capability_files",
     "capability_lookup",
