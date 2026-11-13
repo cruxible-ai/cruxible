@@ -83,7 +83,6 @@ def _proof(client: Any, instance_id: str, ref: str) -> dict[str, Any]:
     return dict(proof)
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_installed_fetch_parent_proposal_and_accepted_derivation(
     installer_http,  # noqa: F811
     installed_web,  # noqa: F811

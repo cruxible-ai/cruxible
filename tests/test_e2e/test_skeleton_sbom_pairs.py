@@ -22,8 +22,6 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.policies import (
@@ -273,7 +271,6 @@ def _settled(state: Any) -> None:
     assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled"), egress
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_an_sbom_import_settles_occurrences_and_retires_by_its_inventory(tmp_path: Path) -> None:
     instance, root = pairs_world(tmp_path)
     _settle_line(instance)

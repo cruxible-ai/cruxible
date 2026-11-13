@@ -13,8 +13,8 @@ nothing is authored. Before it, the instance holds none of them and they are
 authored over the Contracts the instance does hold: the wave 0 example bytes
 (``tests/pilot_contract_batch/examples/base``) cannot be accepted there, because
 their ``workspace.file.request``/``.result`` collide with the genesis seeds of the
-same name and version, and their ``web.fetch.result`` differs from the web
-package's. Nothing here authors a base-kit capability in a static file set.
+same name and version. Nothing here authors a base-kit capability in a static
+file set.
 """
 
 from __future__ import annotations
