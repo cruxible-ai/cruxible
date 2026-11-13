@@ -68,7 +68,7 @@ checkout is read with bytecode writing off.
 | `s4-binding` | a fitting operation binds; three that do not fit get the note's §2.6 messages; binding cost with 1 and 50 other providers | binding (slice 4) | `accept_line` |
 | `s5-swap` | swapping one fitting provider for another keeps the Claims and evidence; receipts record the capability pin and `fit` | binding (slice 4) with Capture-as-field (slice 6) | `run_slot_records` |
 | `s6-thin-extract` | the OSV Procedure with a thin EXTRACT over the kind's layout writes the baseline's Claims in the baseline's time | layout and thin EXTRACT (slice 5) | `adopt_layout_and_thin_extract` |
-| `s7-coverage` | a derive whose layout lacks the kind's record set is refused at binding; nothing retires. A derive whose layout declares it and whose document has it present but empty binds, reads zero records as complete, and retires every title | coverage (slice 7) | `layout_coverage_gap` |
+| `s7-coverage` | a derive whose layout lacks the kind's record set is refused at binding; nothing retires. A derive whose layout declares it and whose document has it present but empty binds, reads zero records as complete, and retires every rank | coverage (slice 7) | `layout_coverage_gap` |
 | `s8-kit-requires` | a kit requiring `base` installs only beside it; `kit remove base` refused under it | kit requires kit (slice 10) | `kit_requires` |
 
 Every helper lives in `surfaces.py` and raises `SurfaceMissing` until its owner

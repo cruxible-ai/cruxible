@@ -4,18 +4,18 @@ Transcript shape::
 
     $ cruxible authoring submit line.json   (search -> pilot-search, results -> pilot-results)
       accepted; results: web.search.results@1, identical
-    $ cruxible line run pilot.search-titles
-      succeeded; 3 pilot.page.title Claims proposed, each citing 1 Capture
+    $ cruxible line run pilot.search-ranks
+      succeeded; 3 pilot.page.rank Claims proposed, each citing 1 Capture
       receipts: results web.search.results@1 fit identical
     $ cruxible proposal activate ...
     $ cruxible authoring submit line.json   (results -> pilot-results-wide)
       accepted; results: web.search.results@1, structural
-    $ cruxible line run pilot.search-titles
+    $ cruxible line run pilot.search-ranks
       succeeded; nothing to propose: same derived Capture, same Claims
       receipts: results web.search.results@1 fit structural
 
-Green when: both runs succeed; after the swap the live title Claims are the
-same (url -> title), the derived Capture the extract read is byte-identical
+Green when: both runs succeed; after the swap the live rank Claims are the
+same (url -> rank), the derived Capture the extract read is byte-identical
 (same digest), and nothing is proposed; each run's receipts record the same
 capability pin, with ``fit: identical`` before the swap and ``structural``
 after (the wide provider's own request accepts one more optional field), and
@@ -48,7 +48,7 @@ def _derived(state: Any) -> tuple[str, ...]:
 def test_swapping_a_fitting_provider_keeps_claims_and_records_the_fit(
     pilot: Scenario, tmp_path: Path
 ) -> None:
-    instance, base = search_world.setup(pilot, tmp_path, search_world.titles_spec())
+    instance, base = search_world.setup(pilot, tmp_path, search_world.ranks_spec())
     search = providers.search_package(base)
     exact = providers.results_package(base)
     wide = providers.wide_results_package(base)
@@ -71,13 +71,13 @@ def test_swapping_a_fitting_provider_keeps_claims_and_records_the_fit(
     first = search_world.run(instance, {"search": search, providers.RESULTS: exact})
     shape = search_world.evidence_shape(instance, first)
     before = surfaces.run_slot_records(instance, first)
-    pilot.got(f"{first.status}; {len(shape)} {search_world.TITLE} Claims proposed")
+    pilot.got(f"{first.status}; {len(shape)} {search_world.RANK} Claims proposed")
     pilot.got(
         f"receipts: results {before['results'].capability.spelling} fit {before['results'].fit}"
     )
     search_world.activate(instance, first)
-    titles = search_world.titles(instance)
-    pilot.show("live titles", titles)
+    ranks = search_world.ranks(instance)
+    pilot.show("live ranks", ranks)
 
     pilot.call("cruxible authoring submit line.json   (results -> pilot-results-wide)")
     second_line = surfaces.accept_line(
@@ -100,15 +100,16 @@ def test_swapping_a_fitting_provider_keeps_claims_and_records_the_fit(
 
     assert first.status == "succeeded", first.terminal
     assert shape == sorted((url, 1) for url in search_world.URLS)
-    assert titles == {
-        hit["link"]: hit["name"] for hit in providers.RECORDED_HITS[search_world.QUERY]
+    assert ranks == {
+        hit["link"]: rank
+        for rank, hit in enumerate(providers.RECORDED_HITS[search_world.QUERY], start=1)
     }
     assert first_line.slots["results"].fit == "identical"
     assert second_line.slots["results"].fit == "structural"
 
     assert second.status == "succeeded", second.terminal
     assert proposal is None
-    assert search_world.titles(instance) == titles
+    assert search_world.ranks(instance) == ranks
     assert _derived(second) == _derived(first)
 
     assert before["results"].capability == after["results"].capability

@@ -5,8 +5,8 @@ Transcript shape::
     $ cruxible list Capability
       ... the base kit's eight
     $ cruxible authoring submit procedure.json   (slot search: {capability: web.search@1})
-      accepted pilot.search-titles; slot search pins web.search@1 sha256:...
-    $ cruxible get Procedure:pilot.search-titles
+      accepted pilot.search-ranks; slot search pins web.search@1 sha256:...
+    $ cruxible get Procedure:pilot.search-ranks
       slots.search = {"capability": {"name": "web.search", "version": 1, "digest": "sha256:..."}}
     $ cruxible authoring submit procedure.json   (slot search: {capability: pilot.no-such@1})
       refused cruxible....: ... pilot.no-such ...

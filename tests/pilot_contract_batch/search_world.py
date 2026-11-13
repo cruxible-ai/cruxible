@@ -1,10 +1,10 @@
-"""The world scenarios 4, 5 and 7 share: the base kit's search pair writing page titles.
+"""The world scenarios 4, 5 and 7 share: the base kit's search pair writing page ranks.
 
 A Procedure reads the instance's pages, asks ``web.search@1`` (a raw fetch,
 verbatim answer) and ``web.search.results@1`` (a pure derive into the base
 kit's ``web.search-results`` kind), extracts the ``results`` record set by name
 (the thin form of note §4.3, overriding the ``url`` key part with this
-instance's Subject key), and writes ``pilot.page.title`` for each page, mirroring
+instance's Subject key), and writes ``pilot.page.rank`` for each page, mirroring
 absence on a complete read.
 
 Everything before the base kit exists is ordinary authoring today (vocabulary,
@@ -25,11 +25,11 @@ from tests.pilot_contract_batch.harness import Scenario
 
 PAGE = "pilot.page"
 URL = PAGE + ".url"
-TITLE = PAGE + ".title"
+RANK = PAGE + ".rank"
 PAGES_QUERY = "pilot.pages"
 PAGE_ROW = "pilot.page-row"
-PROCEDURE = "pilot.search-titles"
-LINE = "pilot.search-titles"
+PROCEDURE = "pilot.search-ranks"
+LINE = "pilot.search-ranks"
 QUERY = "cruxible"
 URLS = tuple(hit["link"] for hit in providers.RECORDED_HITS[QUERY])
 
@@ -100,9 +100,10 @@ def author_vocabulary(pilot: Scenario, instance: Any) -> None:
     from tests.support.procedures import boundary_contract, contract_files
     from tests.test_e2e.test_skeleton_kev_epss import _claim_type, _key_type
 
-    title = _claim_type(
-        TITLE,
-        "string",
+    # The row Contract's rank type exactly (web.search-result@1).
+    rank = _claim_type(
+        RANK,
+        "int{min: 1}",
         allowed_subject_kinds=[PAGE],
         evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
@@ -126,7 +127,7 @@ def author_vocabulary(pilot: Scenario, instance: Any) -> None:
             subject_kind_path(PAGE): render_subject_kind(keyed_subject_kind(PAGE, (URL,))),
             **{
                 claim_type_path(t.predicate): render_claim_type(t)
-                for t in (title, _key_type(URL, PAGE))
+                for t in (rank, _key_type(URL, PAGE))
             },
         },
         name="pilot-vocabulary",
@@ -155,7 +156,7 @@ def author_vocabulary(pilot: Scenario, instance: Any) -> None:
     pilot.call("cruxible authoring submit vocabulary.json")
     pilot.got(
         f"accepted: CaptureKind {providers.SEARCH_RESPONSE_KIND}, SubjectKind {PAGE}, "
-        f"ClaimTypes {URL} and {TITLE}, Query {PAGES_QUERY}, {len(URLS)} pages"
+        f"ClaimTypes {URL} and {RANK}, Query {PAGES_QUERY}, {len(URLS)} pages"
     )
 
 
@@ -201,14 +202,14 @@ def calls_spec(*, results: str = f"{providers.RESULTS}@1") -> dict[str, Any]:
     )
 
 
-def titles_spec() -> dict[str, Any]:
-    """The whole Procedure: read pages, the two calls, a thin extract, the title Claims."""
+def ranks_spec() -> dict[str, Any]:
+    """The whole Procedure: read pages, the two calls, a thin extract, the rank Claims."""
 
     return refs(
         {
             "procedure": PROCEDURE,
             "description": "Ask the search pair about the project and record each watched "
-            "page's title as the results list it.",
+            "page's rank as the results list it.",
             "input": {},
             "output": {},
             "slots": {
@@ -235,11 +236,11 @@ def titles_spec() -> dict[str, Any]:
                     "expect": "$steps.pages.rows",
                     "claims": [
                         {
-                            "type": TITLE,
-                            "value": "$item.fields.title",
+                            "type": RANK,
+                            "value": "$item.fields.rank",
                             "when_absent": "mirror",
-                            "rationale": "The search results title {$item.key.url} "
-                            "{$item.fields.title}.",
+                            "rationale": "The search results rank {$item.key.url} "
+                            "{$item.fields.rank}.",
                         }
                     ],
                 },
@@ -329,8 +330,8 @@ def activate(instance: Any, state: Any) -> None:
     activate_proposal(instance, state)
 
 
-def titles(instance: Any) -> dict[str, str]:
-    """url -> title, from the live ``pilot.page.title`` Claims."""
+def ranks(instance: Any) -> dict[str, int]:
+    """url -> rank, from the live ``pilot.page.rank`` Claims."""
 
     from tests.pilot_contract_batch.security_kit import live_claims
 
@@ -339,13 +340,13 @@ def titles(instance: Any) -> dict[str, str]:
         for claim in live_claims(instance, URL)
     }
     return {
-        urls[claim.statement.subject.artifact_path]: str(claim.statement.object.value)
-        for claim in live_claims(instance, TITLE)
+        urls[claim.statement.subject.artifact_path]: int(claim.statement.object.value)
+        for claim in live_claims(instance, RANK)
     }
 
 
 def evidence_shape(instance: Any, state: Any) -> list[tuple[str, int]]:
-    """Per proposed title Claim: (url, how many Captures back it), sorted."""
+    """Per proposed rank Claim: (url, how many Captures back it), sorted."""
 
     from tests.pilot_contract_batch.security_kit import live_claims
     from tests.test_procedures.test_claims_terminal import candidate_claims
@@ -357,7 +358,7 @@ def evidence_shape(instance: Any, state: Any) -> list[tuple[str, int]]:
     return sorted(
         (urls[claim.statement.subject.artifact_path], len(claim.backing.capture_digests))
         for claim in candidate_claims(instance, state)
-        if claim.statement.predicate == TITLE
+        if claim.statement.predicate == RANK
     )
 
 
