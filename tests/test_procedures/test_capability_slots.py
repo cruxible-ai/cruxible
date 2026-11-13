@@ -353,9 +353,10 @@ def test_a_workspace_read_commits_core_bytes_as_its_one_capture_field() -> None:
             builtin_capabilities=builtins,
         )
 
-    # Recognised by name, the result must be the one capture field core commits.
+    # Recognised by name, the capability must ask for what the builtin reads and
+    # return what it returns; this one's request (test.value) is checked first.
     found = problem(BUILTIN_CAPABILITY_NAMES)
-    assert found is not None and found[0] == "cruxible.procedure.captures_mismatch"
+    assert found is not None and found[0] == "cruxible.procedure.workspace_request_field_unread"
     assert "workspace.file@1" in found[1] and "core's builtin" in found[1]
     # The same slot not recognised is an ordinary call; nothing about core's field.
     ordinary = problem(())

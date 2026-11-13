@@ -132,19 +132,40 @@ def test_a_glob_reads_through_workspace_files_into_its_list_field(tmp_path: Path
     assert refused.value.offending_element == "$.steps[0].input.relative_path"
 
 
-def test_a_request_field_core_does_not_read_is_refused_naming_it(tmp_path: Path) -> None:
-    """An adopter may author workspace.file@2; core serves it by name, so its request
-    may declare only fields the builtin reads."""
+def _version_2(instance: Any, *, request: Any = None, result: Any = None) -> None:
+    """Accept an adopter's ``workspace.file@2`` over ``request`` and/or ``result``."""
 
-    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+    from cruxible_client.contracts.capabilities import capability_digest
+    from cruxible_client.contracts.shapes import contract_path, render_contract
     from tests.core_support._identity_support import accept_tree
     from tests.support.capabilities import head_tree, held_capability
 
-    instance = _world(tmp_path)
-    tree = head_tree(instance)
-    v1 = held_capability(tree, WORKSPACE_FILE)
+    v1 = held_capability(head_tree(instance), WORKSPACE_FILE)
     assert v1 is not None
-    request = Contract.model_validate(
+    v2 = capability(
+        WORKSPACE_FILE,
+        in_=v1.in_ if request is None else request,
+        out=v1.out if result is None else result,
+        effect="pure",
+    ).model_copy(update={"version": 2, "predecessor_digest": capability_digest(v1).tagged})
+    accept_tree(
+        instance,
+        {
+            **{
+                contract_path(item.name, item.version): render_contract(item)
+                for item in (request, result)
+                if item is not None
+            },
+            **capability_files(v2),
+        },
+        name="workspace-file-v2",
+    )
+
+
+def _encoding_request() -> Any:
+    from cruxible_client.contracts.shapes import Contract
+
+    return Contract.model_validate(
         {
             "name": "test.file-request",
             "version": 1,
@@ -155,20 +176,14 @@ def test_a_request_field_core_does_not_read_is_refused_naming_it(tmp_path: Path)
             },
         }
     )
-    v2 = capability(WORKSPACE_FILE, in_=request, out=v1.out, effect="pure").model_copy(
-        update={"version": 2, "predecessor_digest": None}
-    )
-    from cruxible_client.contracts.capabilities import capability_digest
 
-    v2 = v2.model_copy(update={"predecessor_digest": capability_digest(v1).tagged})
-    accept_tree(
-        instance,
-        {
-            contract_path(request.name, request.version): render_contract(request),
-            **capability_files(v2),
-        },
-        name="workspace-file-v2",
-    )
+
+def test_a_request_field_core_does_not_read_is_refused_naming_it(tmp_path: Path) -> None:
+    """An adopter may author workspace.file@2; core serves it by name, so its request
+    may declare only fields the builtin reads."""
+
+    instance = _world(tmp_path)
+    _version_2(instance, request=_encoding_request())
     with pytest.raises(AuthoringLoweringError) as refused:
         author_procedure(instance, _spec(REQUEST, capability_spelling=f"{WORKSPACE_FILE}@2"))
     assert refused.value.code == "cruxible.authoring.workspace_request_field_unread"
@@ -186,3 +201,110 @@ def test_a_kind_core_cannot_derive_a_read_source_from_is_refused(tmp_path: Path)
     assert refused.value.code == "cruxible.authoring.workspace_read_kind_unsupported"
     assert refused.value.offending_element == "$.steps[0].captures.capture"
     assert KIND in str(refused.value)
+
+
+# -- the same checks at acceptance: a stored Procedure (a kit's, raw admission) -------
+
+
+def _submit_raw(instance: Any, edit: Any, *, extra: dict[str, bytes] | None = None) -> Any:
+    """Submit a successor of the stored ``test.read`` artifact, edited by ``edit``.
+
+    A kit install submits its rendered Procedures through the same admission and
+    Procedure law, so this is the path a kit's Procedure takes too.
+    """
+
+    from cruxible_client.contracts.procedures.artifacts import (
+        parse_procedure,
+        procedure_artifact_digest,
+        procedure_path,
+        render_procedure,
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
+    from cruxible_core.proposals.proposals import (
+        AuthenticatedActor,
+        ProposalAdmissionRequest,
+    )
+
+    base = instance.accepted_coordinate()
+    tree = dict(instance.tree_at(base.git_oid))
+    path = procedure_path("test.read")
+    stored = parse_procedure(tree[path], path=path)
+    raw = stored.definition.model_dump(mode="json", by_alias=True)
+    edit(raw)
+    definition = ProcedureDefinition.model_validate(raw)
+    # A successor of the accepted test.read: the stored bytes a kit or a raw
+    # change set would carry.
+    artifact = stored.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "lifecycle": stored.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(stored).tagged}
+            ),
+        }
+    )
+    tree[path] = render_procedure(artifact)
+    tree.update(extra or {})
+    return instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/raw-procedure", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-10-09T11:59:00.000000Z",
+    )
+
+
+def _pin_version_2(instance: Any) -> Any:
+    from cruxible_client.contracts.capabilities import capability_digest
+    from tests.support.capabilities import head_tree, held_capability
+
+    v2 = held_capability(head_tree(instance), WORKSPACE_FILE, 2)
+    assert v2 is not None
+
+    def edit(definition: dict[str, Any]) -> None:
+        definition["slots"]["read"]["capability"] = {
+            "name": WORKSPACE_FILE,
+            "version": 2,
+            "digest": capability_digest(v2).tagged,
+        }
+
+    return edit
+
+
+def _codes(result: Any) -> set[str]:
+    assert result.candidate is None, "the stored Procedure was accepted"
+    return {item.code for item in result.evaluation.diagnostics}
+
+
+def test_acceptance_refuses_a_stored_call_whose_request_declares_an_unread_field(
+    tmp_path: Path,
+) -> None:
+    instance = _world(tmp_path)
+    author_procedure(instance, _spec(REQUEST))
+    _version_2(instance, request=_encoding_request())
+    refused = _submit_raw(instance, _pin_version_2(instance))
+    assert "cruxible.procedure.workspace_request_field_unread" in _codes(refused)
+
+
+def test_acceptance_refuses_a_stored_call_landing_under_an_unsupported_kind(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+    from tests.core_support._light_capture_support import record_contract
+
+    instance = _world(tmp_path)
+    author_procedure(instance, _spec(REQUEST))
+    snapshot = record_contract(name="test.snapshot-v1")
+
+    def edit(definition: dict[str, Any]) -> None:
+        (call,) = (node for node in definition["nodes"] if node["kind"] == "call")
+        call["captures"]["capture"]["target"]["name"] = snapshot.identity.name
+
+    refused = _submit_raw(
+        instance,
+        edit,
+        extra={capture_contract_path(snapshot.identity.name): render_capture_contract(snapshot)},
+    )
+    assert "cruxible.procedure.workspace_read_kind_unsupported" in _codes(refused)

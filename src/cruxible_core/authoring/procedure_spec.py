@@ -20,10 +20,8 @@ from cruxible_client.contracts.procedures.authored import (
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_READ_FIELDS,
-    WorkspaceReadShapeRefused,
     workspace_read_operation,
-    workspace_read_shape,
+    workspace_read_problem,
 )
 from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 from cruxible_core.indexes.evaluated_state import EvaluationRows
@@ -270,6 +268,7 @@ def resolve_procedure_spec(
                     builtin,
                     capability,
                     input_view,
+                    output_view,
                     capture,
                     path=authored_path,
                     captures=step.captures,
@@ -365,6 +364,7 @@ def _check_workspace_read(
     builtin: str,
     capability: Capability,
     request: Contract,
+    result: Contract,
     capture: Any,
     *,
     path: str,
@@ -372,39 +372,32 @@ def _check_workspace_read(
 ) -> None:
     """Refuse a call core's builtin could not serve as authored (section 7.4).
 
-    The builtin is bound by name, whatever version of the capability the slot
-    pins, and what it reads from the request is core's code: a request field it
-    does not read is refused here, naming the field. The read's coordinate and
-    selector are derived from the kind it lands under, so a kind core cannot
-    derive them from is refused too.
+    The same check the Procedure acceptance law makes
+    (:func:`workspace_read_problem`): a request field the builtin does not
+    read, a result field it does not return, or a kind core cannot derive the
+    read's coordinate and selector from, each named.
     """
 
-    read = WORKSPACE_READ_FIELDS[builtin]  # type: ignore[index]
-    unread = sorted(set(request.fields) - read, key=lambda name: name.encode("utf-8"))
-    if unread:
-        raise ProcedureSpecError(
-            "workspace_request_field_unread",
-            path + ".input",
-            f"{capability.ref.spelling}'s request {request.name}@{request.version} declares "
-            f"{', '.join(repr(name) for name in unread)}, which core's builtin {builtin} read "
-            f"does not read; it reads {', '.join(sorted(read))}.",
-            repair=f"Remove {', '.join(unread)} from the request Contract in a new version of "
-            f"{capability.name}, or pin a version whose request declares only fields the "
-            "builtin reads.",
-        )
-    if capture is None:
+    problem = workspace_read_problem(
+        builtin,  # type: ignore[arg-type]
+        capability=capability.ref.spelling,
+        request=request,
+        result=result,
+        capture_kind=capture,
+        capture_field=next(iter(captures), None) if len(captures) == 1 else None,
+    )
+    if problem is None:
         return
-    try:
-        workspace_read_shape(capture)
-    except WorkspaceReadShapeRefused as exc:
-        (field,) = captures
-        raise ProcedureSpecError(
-            "workspace_read_kind_unsupported",
-            f"{path}.captures.{field}",
-            str(exc),
-            repair="Land the read under a CaptureKind with one coordinate and one selector "
-            "schema (an http_response kind).",
-        ) from exc
+    repairs = {
+        "workspace_request_field_unread": "Remove the field from the request Contract in a new "
+        f"version of {capability.name}, or pin a version whose request declares only fields "
+        "the builtin reads.",
+        "workspace_read_kind_unsupported": "Land the read under a CaptureKind with one "
+        "coordinate and one selector schema (an http_response kind).",
+    }
+    raise ProcedureSpecError(
+        problem.code, f"{path}.{problem.element}", problem.message, repair=repairs[problem.code]
+    )
 
 
 def _claims_refusal_path(spec: Any, refusal: Exception) -> str:

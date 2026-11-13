@@ -479,6 +479,78 @@ def workspace_read_shape(contract: CaptureContractAny) -> WorkspaceReadShape:
     )
 
 
+#: The codes of a call core's builtin could not serve as authored, without their
+#: prefix: authoring raises them under ``cruxible.authoring.``, the Procedure
+#: acceptance law under ``cruxible.procedure.``.
+WORKSPACE_REQUEST_FIELD_UNREAD: Final = "workspace_request_field_unread"
+WORKSPACE_READ_KIND_UNSUPPORTED: Final = "workspace_read_kind_unsupported"
+
+
+class WorkspaceReadProblem(_StrictWorkspaceFileModel):
+    """Why core's builtin cannot serve one workspace read call as it is declared.
+
+    ``code`` is unprefixed; ``element`` is where, relative to the call:
+    ``input`` (its request), ``captures`` (its result) or ``captures.<field>``
+    (the kind it lands under).
+    """
+
+    code: Literal[
+        "workspace_request_field_unread",
+        "workspace_read_kind_unsupported",
+    ]
+    message: str
+    element: str
+
+
+def workspace_read_problem(
+    operation: WorkspaceReadOperation,
+    *,
+    capability: str,
+    request: object | None,
+    result: object | None,
+    capture_kind: CaptureContractAny | None,
+    capture_field: str | None,
+) -> WorkspaceReadProblem | None:
+    """The first reason core's builtin cannot serve a call on capability ``capability``.
+
+    The builtin is bound by name, whatever version of the capability a slot
+    pins, and what it reads and returns is core's code (section 7.4): the
+    request may declare only fields the builtin reads, the result must be
+    field for field what the builtin returns (``capture`` for one path,
+    ``captures`` for a glob), and the Capture must land under a kind core can
+    derive the read's coordinate and selector from. ``request`` and ``result``
+    are the capability's Contracts (``None`` when not resolved: not checked).
+    Authoring and the Procedure acceptance law both ask this.
+    """
+
+    from cruxible_client.contracts.shapes import Contract
+
+    if isinstance(request, Contract):
+        read = WORKSPACE_READ_FIELDS[operation]
+        unread = sorted(set(request.fields) - read, key=lambda name: name.encode("utf-8"))
+        if unread:
+            return WorkspaceReadProblem(
+                code=WORKSPACE_REQUEST_FIELD_UNREAD,
+                message=(
+                    f"{capability}'s request {request.name}@{request.version} declares "
+                    f"{', '.join(repr(name) for name in unread)}, which core's builtin "
+                    f"{operation} read does not read; it reads {', '.join(sorted(read))}. "
+                    "Remove the field in a new version of the capability's request."
+                ),
+                element="input",
+            )
+    if capture_kind is not None:
+        try:
+            workspace_read_shape(capture_kind)
+        except WorkspaceReadShapeRefused as exc:
+            return WorkspaceReadProblem(
+                code=WORKSPACE_READ_KIND_UNSUPPORTED,
+                message=str(exc),
+                element="captures" if capture_field is None else f"captures.{capture_field}",
+            )
+    return None
+
+
 class WorkspaceFileSourceRequestV2(_StrictWorkspaceFileModel):
     """One file read as core performs it, before its workspace root is resolved.
 
@@ -792,6 +864,9 @@ __all__ = [
     "WORKSPACE_FILE_REFUSAL_PROVIDER_DECLINED_CONTRACT",
     "WORKSPACE_FILE_RESULT_CONTRACT",
     "WORKSPACE_READ_FIELDS",
+    "WORKSPACE_READ_KIND_UNSUPPORTED",
+    "WORKSPACE_REQUEST_FIELD_UNREAD",
+    "WorkspaceReadProblem",
     "WorkspaceBindingDigestAuthored",
     "WorkspaceFileGlobRequestV1",
     "WorkspaceFilePathClass",
@@ -813,6 +888,7 @@ __all__ = [
     "workspace_file_refusal_contracts",
     "workspace_file_signature_digest",
     "workspace_read_operation",
+    "workspace_read_problem",
     "workspace_read_shape",
     "workspace_read_signature_digest",
 ]

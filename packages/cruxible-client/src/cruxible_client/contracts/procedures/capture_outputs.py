@@ -39,8 +39,8 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.provider_operations import capture_fields, capture_list_fields
 from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, Contract, ContractRef
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILES_OPERATION,
     workspace_read_operation,
+    workspace_read_problem,
 )
 
 ContractLookup = Callable[[ContractRef], Contract | None]
@@ -184,26 +184,30 @@ def procedure_capture_problem(
             if slot is None or slot.capability.name not in builtin_capabilities
             else workspace_read_operation(slot.capability.name)
         )
-        if builtin is not None and out is not None:
+        if builtin is not None:
             # Core reads the workspace bytes itself and returns nothing else: the
-            # out Contract declares exactly the one field core commits them as.
-            wanted = (
-                list_fields[node.as_]
-                if builtin == WORKSPACE_FILES_OPERATION
-                else (frozenset(dict(capture_fields(out))))
+            # request may declare only what it reads, the result is field for
+            # field what it returns, and the kind is one it can derive the read's
+            # source from (the check authoring makes too).
+            request = (
+                None
+                if capability is None or contract_lookup is None
+                else contract_lookup(capability.in_)
             )
-            if len(out.fields) != 1 or set(out.fields) != set(wanted):
-                form = (
-                    "one list<capture<K>> field"
-                    if builtin == WORKSPACE_FILES_OPERATION
-                    else "one capture<K> field"
-                )
+            field = next(iter(node.captures), None) if len(node.captures) == 1 else None
+            kind = None if field is None else capture_lookup(node.captures[field].target.name)
+            problem = workspace_read_problem(
+                builtin,
+                capability=slot.capability.spelling if slot is not None else builtin,
+                request=request,
+                result=out,
+                capture_kind=kind,
+                capture_field=field,
+            )
+            if problem is not None:
                 return (
-                    "cruxible.procedure.captures_mismatch",
-                    f"call {node.node_id!r}: {slot.capability.spelling if slot else builtin} "
-                    f"is served by core's builtin, which returns {form} holding the bytes "
-                    f"core read and nothing else; its out Contract {out.name}@{out.version} "
-                    f"declares {sorted(out.fields)}",
+                    f"cruxible.procedure.{problem.code}",
+                    f"call {node.node_id!r}: {problem.message}",
                 )
         if declared is None:
             pass
