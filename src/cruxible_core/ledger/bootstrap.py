@@ -41,6 +41,13 @@ from cruxible_client.contracts.types import (
     PrincipalRecord,
     TrustRoot,
 )
+from cruxible_core.ledger.genesis_seeds import (
+    GenesisSeedSet,
+    closest_genesis_seed_set,
+    current_genesis_seed_set,
+    held_seed_table,
+    known_genesis_seed_set,
+)
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.ledger.semantic_root import compute_semantic_root
 
@@ -59,6 +66,8 @@ class VerifiedGenesis:
     principals: tuple[PrincipalRecord, ...]
     approval_policy: ApprovalPolicy
     procedure_runtime_policy: ProcedureRuntimePolicy
+    #: The history entry this instance's genesis seeds equal (``ledger/genesis_seeds.py``).
+    seed_set: GenesisSeedSet
 
 
 def bootstrap_root(*, instance_id: str, daemon_public_key: str) -> BootstrapRoot:
@@ -149,58 +158,54 @@ def genesis_tree(
     return tree
 
 
-#: The artifacts every new instance starts with at generation zero: each
-#: ledger-tree path and the SHA-256 of its exact checked-in bytes, which live
-#: under ``seed_artifacts/genesis/<path>``. They are ordinary governed
-#: artifacts from the first generation on. Verification admits exactly this
-#: set: a genesis seeded with anything else refuses (an instance from an earlier
-#: build is moved aside and re-imported fresh, never converted). Definitions
-#: that may change between releases are not seeds: the base kit carries them and
-#: creation installs it as the first change after genesis (``cruxible_core.kits``).
-GENESIS_SEEDS: tuple[tuple[str, str], ...] = (
-    (
-        "claim-types/semantic/alias.json",
-        "072ad267e8c90f817528e15d9d6ccb182852154e7cfda8ca320918064c4ed14a",
-    ),
-    (
-        "claim-types/semantic/distinct_from.json",
-        "db8e0d864ae122bf57fb3cdb891aba33819c7f0029326b7f83d82b17fca69cc6",
-    ),
-    (
-        "providers/cruxible-builtin.json",
-        "8923dca4680ed083b6f6f3062f3c2ed2910ca3ed91d42cfc0d5358d0ddae760c",
-    ),
-    (
-        "triggers/evidence-sweep.json",
-        "473ad17889ae652b598e7aecbba13d624e67d45c0234550632501e8fb6f18e46",
-    ),
-    (
-        "triggers/floor-refresh.json",
-        "0fb93d991ae564c3748f70c021023a3ac50815a23dc21b314586140c8e9e9ba7",
-    ),
-    (
-        "triggers/prediction-anchor-retry.json",
-        "37fc9529405131805d568c39a63f78ed4401583edc1308a9b26589eda850dea4",
-    ),
+#: The genesis seeds creation writes: each ledger-tree path and the SHA-256 of
+#: its exact checked-in bytes, which live under ``seed_artifacts/genesis/<path>``.
+#: They are ordinary governed artifacts from the first generation on. This is the
+#: newest entry of the append-only history in ``ledger/genesis_seeds.py``; open
+#: accepts any entry of that history, so an instance keeps the set it was created
+#: with. Definitions that may change between releases are not seeds: the base kit
+#: carries them and creation installs it as the first change after genesis
+#: (``cruxible_core.kits``).
+GENESIS_SEEDS: tuple[tuple[str, str], ...] = tuple(
+    (seed.path, seed.sha256) for seed in current_genesis_seed_set().seeds
 )
 
 
 def genesis_seed_files() -> dict[str, bytes]:
-    """Read the checked-in genesis seed bytes, refusing any that drifted from the table."""
+    """Read the newest set's checked-in seed bytes, refusing any that drifted from it."""
 
     root = files("cruxible_core.governance.seed_artifacts").joinpath("genesis")
     loaded: dict[str, bytes] = {}
-    for path, digest in GENESIS_SEEDS:
-        content = root.joinpath(*path.split("/")).read_bytes()
-        if hashlib.sha256(content).hexdigest() != digest:
-            raise BootstrapError(f"genesis seed {path} differs from its digest")
-        loaded[path] = content
+    for seed in current_genesis_seed_set().seeds:
+        content = root.joinpath(*seed.path.split("/")).read_bytes()
+        if hashlib.sha256(content).hexdigest() != seed.sha256:
+            raise BootstrapError(f"genesis seed {seed.path} differs from its digest")
+        loaded[seed.path] = content
     return loaded
 
 
-def _is_current_genesis_seeds(seeds: Mapping[str, bytes]) -> bool:
-    return set(seeds) == {path for path, _digest in GENESIS_SEEDS} and all(
-        hashlib.sha256(seeds[path]).hexdigest() == digest for path, digest in GENESIS_SEEDS
+def match_genesis_seed_set(seeds: Mapping[str, bytes]) -> GenesisSeedSet:
+    """The history entry an instance's genesis seeds equal, or a refusal naming the gap.
+
+    One SHA-256 per seed, then one table comparison per known set: open only.
+    """
+
+    held = held_seed_table(seeds)
+    known = known_genesis_seed_set(held)
+    if known is not None:
+        return known
+    closest = closest_genesis_seed_set(held)
+    raise BootstrapError(
+        "genesis seeded artifacts match no known genesis seed set; the closest is set "
+        f"{closest.seed_set.ordinal} ({closest.seed_set.name}), which differs at "
+        f"{closest.first_path} ({closest.first_reason})"
+        + (
+            f" and {closest.differing_paths - 1} more path(s)"
+            if closest.differing_paths > 1
+            else ""
+        )
+        + ". The instance was created by a newer release or an unreleased build: open it "
+        "with that build, or move it aside and re-import it into a fresh instance"
     )
 
 
@@ -269,11 +274,7 @@ def verify_genesis(
     except ProcedureRuntimePolicyFormatError as exc:
         raise BootstrapError("genesis Procedure runtime policy is invalid") from exc
     seeds = {path: content for path, content in tree.items() if _is_genesis_seed_path(path)}
-    if not _is_current_genesis_seeds(seeds):
-        raise BootstrapError(
-            "genesis seeded artifacts differ from this release's genesis seeds; an instance "
-            "from an earlier build is moved aside and re-imported into a fresh instance"
-        )
+    seed_set = match_genesis_seed_set(seeds)
     expected_tree = genesis_tree(
         trust_root.principals,
         approval_policy=approval_policy,
@@ -328,6 +329,7 @@ def verify_genesis(
         principals=tuple(parsed),
         approval_policy=approval_policy,
         procedure_runtime_policy=runtime_policy,
+        seed_set=seed_set,
     )
 
 
@@ -368,6 +370,7 @@ __all__ = [
     "genesis_seed_files",
     "genesis_semantic_root",
     "genesis_tree",
+    "match_genesis_seed_set",
     "prepare_genesis",
     "render_principal",
     "seeded_procedure_runtime_policy",
