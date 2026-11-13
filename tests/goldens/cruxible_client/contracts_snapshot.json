@@ -7533,23 +7533,6 @@
             "title": "Comparison",
             "type": "object"
           },
-          "CompleteWhen": {
-            "additionalProperties": false,
-            "description": "The extract is complete only when the count stated at ``count_at`` is the records read.",
-            "properties": {
-              "count_at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "Count At",
-                "type": "string"
-              }
-            },
-            "required": [
-              "count_at"
-            ],
-            "title": "CompleteWhen",
-            "type": "object"
-          },
           "CompleteWhenResult": {
             "additionalProperties": false,
             "properties": {
@@ -8295,202 +8278,6 @@
               "capture_digest"
             ],
             "title": "ExistingCaptureInput",
-            "type": "object"
-          },
-          "ExtractField": {
-            "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
-            "properties": {
-              "at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "At",
-                "type": "string"
-              },
-              "canonicalize": {
-                "anyOf": [
-                  {
-                    "const": "claim_type",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Canonicalize"
-              },
-              "parse": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "date",
-                      "datetime",
-                      "int",
-                      "decimal",
-                      "bool"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Parse"
-              },
-              "presence": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "required",
-                      "optional"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Presence"
-              },
-              "project": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "utc_date",
-                      "utc_start_of_day"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Project"
-              },
-              "type": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Type"
-              }
-            },
-            "required": [
-              "at"
-            ],
-            "title": "ExtractField",
-            "type": "object"
-          },
-          "ExtractStep": {
-            "additionalProperties": false,
-            "description": "Read one Capture's records, typed: ``capture`` references ``<call>.<capture field>``.\n\n``row`` is the Contract (``name@N``) whose fields the step reads; the rest\nare the extract node's declarations (records, key, fields, header,\ncomplete_when, duplicates, only_keys).",
-            "properties": {
-              "capture": {
-                "$ref": "#/$defs/Ref"
-              },
-              "complete_when": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CompleteWhen"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "duplicates": {
-                "default": "refuse_key",
-                "enum": [
-                  "refuse_run",
-                  "refuse_key",
-                  "first"
-                ],
-                "title": "Duplicates",
-                "type": "string"
-              },
-              "extract": {
-                "pattern": "^[a-z][a-z0-9_]{0,127}$",
-                "title": "Extract",
-                "type": "string"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Fields",
-                "type": "object"
-              },
-              "header": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Header",
-                "type": "object"
-              },
-              "id": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Id"
-              },
-              "key": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Key",
-                "type": "object"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "only_keys": {
-                "$ref": "#/$defs/Template",
-                "default": null
-              },
-              "records": {
-                "title": "Records",
-                "type": "string"
-              },
-              "row": {
-                "title": "Row",
-                "type": "string"
-              }
-            },
-            "required": [
-              "extract",
-              "capture",
-              "records",
-              "row",
-              "fields"
-            ],
-            "title": "ExtractStep",
             "type": "object"
           },
           "FieldResultType": {
@@ -9263,6 +9050,104 @@
               "subject_kind"
             ],
             "title": "KeyType",
+            "type": "object"
+          },
+          "KeyTypeOverride": {
+            "additionalProperties": false,
+            "description": "The one override a node may make: a Subject key type for a plain-string key part.",
+            "properties": {
+              "type": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "KeyTypeOverride",
+            "type": "object"
+          },
+          "LayoutExtractStep": {
+            "additionalProperties": false,
+            "description": "The authored spelling: ``extract: <id>``, ``capture`` references ``<call>.<field>``.",
+            "properties": {
+              "capture": {
+                "$ref": "#/$defs/Ref"
+              },
+              "duplicates": {
+                "default": "refuse_key",
+                "enum": [
+                  "refuse_run",
+                  "refuse_key",
+                  "first"
+                ],
+                "title": "Duplicates",
+                "type": "string"
+              },
+              "extract": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Extract",
+                "type": "string"
+              },
+              "header": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "title": "Header",
+                "type": "array"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "key": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/KeyTypeOverride"
+                },
+                "title": "Key",
+                "type": "object"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "only_keys": {
+                "$ref": "#/$defs/Template",
+                "default": null
+              },
+              "records": {
+                "title": "Records",
+                "type": "string"
+              }
+            },
+            "required": [
+              "extract",
+              "capture",
+              "records"
+            ],
+            "title": "LayoutExtractStep",
             "type": "object"
           },
           "LineAcquisitionRule": {
@@ -10975,7 +10860,7 @@
                       "$ref": "#/$defs/CallStep"
                     },
                     {
-                      "$ref": "#/$defs/ExtractStep"
+                      "$ref": "#/$defs/LayoutExtractStep"
                     },
                     {
                       "$ref": "#/$defs/ProjectStep"
@@ -55719,23 +55604,6 @@
             "title": "Comparison",
             "type": "object"
           },
-          "CompleteWhen": {
-            "additionalProperties": false,
-            "description": "The extract is complete only when the count stated at ``count_at`` is the records read.",
-            "properties": {
-              "count_at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "Count At",
-                "type": "string"
-              }
-            },
-            "required": [
-              "count_at"
-            ],
-            "title": "CompleteWhen",
-            "type": "object"
-          },
           "Contract": {
             "additionalProperties": false,
             "description": "One immutable data shape. A successor version names its predecessor's digest.\n\n``fields`` may be empty: the closed empty record, which accepts only ``{}``\n(an empty selector, a refusal without detail, a parameterless operation).",
@@ -56187,202 +56055,6 @@
               "members"
             ],
             "title": "EnumType",
-            "type": "object"
-          },
-          "ExtractField": {
-            "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
-            "properties": {
-              "at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "At",
-                "type": "string"
-              },
-              "canonicalize": {
-                "anyOf": [
-                  {
-                    "const": "claim_type",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Canonicalize"
-              },
-              "parse": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "date",
-                      "datetime",
-                      "int",
-                      "decimal",
-                      "bool"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Parse"
-              },
-              "presence": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "required",
-                      "optional"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Presence"
-              },
-              "project": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "utc_date",
-                      "utc_start_of_day"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Project"
-              },
-              "type": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Type"
-              }
-            },
-            "required": [
-              "at"
-            ],
-            "title": "ExtractField",
-            "type": "object"
-          },
-          "ExtractNode": {
-            "additionalProperties": false,
-            "description": "Read one Capture's records, typed, with per-field results and a completeness verdict.",
-            "properties": {
-              "as": {
-                "title": "As",
-                "type": "string"
-              },
-              "capture": {
-                "title": "Capture",
-                "type": "string"
-              },
-              "complete_when": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CompleteWhen"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "duplicates": {
-                "default": "refuse_key",
-                "enum": [
-                  "refuse_run",
-                  "refuse_key",
-                  "first"
-                ],
-                "title": "Duplicates",
-                "type": "string"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "maxProperties": 256,
-                "minProperties": 1,
-                "title": "Fields",
-                "type": "object"
-              },
-              "header": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Header",
-                "type": "object"
-              },
-              "key": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Key",
-                "type": "object"
-              },
-              "kind": {
-                "const": "extract",
-                "default": "extract",
-                "title": "Kind",
-                "type": "string"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "only_keys": {
-                "default": null,
-                "title": "Only Keys"
-              },
-              "records": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "Records",
-                "type": "string"
-              },
-              "row": {
-                "$ref": "#/$defs/ContractRef"
-              }
-            },
-            "required": [
-              "node_id",
-              "capture",
-              "records",
-              "row",
-              "fields",
-              "as"
-            ],
-            "title": "ExtractNode",
             "type": "object"
           },
           "FieldResultType": {
@@ -56837,6 +56509,112 @@
             "title": "KeyType",
             "type": "object"
           },
+          "KeyTypeOverride": {
+            "additionalProperties": false,
+            "description": "The one override a node may make: a Subject key type for a plain-string key part.",
+            "properties": {
+              "type": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "KeyTypeOverride",
+            "type": "object"
+          },
+          "LayoutExtractNode": {
+            "additionalProperties": false,
+            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted. ``row`` is the\nrecord set's row Contract pin ``{name, version, digest}``, added when the\nProcedure is accepted (ruling L1; never authored): every later read takes that\nrow and only its fields, so a kind whose row grew does not change what the\naccepted Procedure extracts.",
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "capture": {
+                "title": "Capture",
+                "type": "string"
+              },
+              "duplicates": {
+                "default": "refuse_key",
+                "enum": [
+                  "refuse_run",
+                  "refuse_key",
+                  "first"
+                ],
+                "title": "Duplicates",
+                "type": "string"
+              },
+              "header": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "title": "Header",
+                "type": "array"
+              },
+              "key": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/KeyTypeOverride"
+                },
+                "title": "Key",
+                "type": "object"
+              },
+              "kind": {
+                "const": "extract",
+                "default": "extract",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "only_keys": {
+                "default": null,
+                "title": "Only Keys"
+              },
+              "records": {
+                "title": "Records",
+                "type": "string"
+              },
+              "row": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "node_id",
+              "capture",
+              "records",
+              "as"
+            ],
+            "title": "LayoutExtractNode",
+            "type": "object"
+          },
           "ListType": {
             "additionalProperties": false,
             "properties": {
@@ -57275,7 +57053,7 @@
                       "call": "#/$defs/CallNode",
                       "claims": "#/$defs/ClaimsNode",
                       "emit_capture": "#/$defs/CaptureEgressNode",
-                      "extract": "#/$defs/ExtractNode",
+                      "extract": "#/$defs/LayoutExtractNode",
                       "guard": "#/$defs/GuardNode",
                       "halt": "#/$defs/HaltNode",
                       "invoke": "#/$defs/InvokeNode",
@@ -57299,7 +57077,7 @@
                       "$ref": "#/$defs/CallNode"
                     },
                     {
-                      "$ref": "#/$defs/ExtractNode"
+                      "$ref": "#/$defs/LayoutExtractNode"
                     },
                     {
                       "$ref": "#/$defs/TransformNode"
@@ -85038,23 +84816,6 @@
             "title": "CompilerCoordinate",
             "type": "object"
           },
-          "CompleteWhen": {
-            "additionalProperties": false,
-            "description": "The extract is complete only when the count stated at ``count_at`` is the records read.",
-            "properties": {
-              "count_at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "Count At",
-                "type": "string"
-              }
-            },
-            "required": [
-              "count_at"
-            ],
-            "title": "CompleteWhen",
-            "type": "object"
-          },
           "ContractRef": {
             "additionalProperties": false,
             "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
@@ -85324,202 +85085,6 @@
               "members"
             ],
             "title": "EnumType",
-            "type": "object"
-          },
-          "ExtractField": {
-            "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
-            "properties": {
-              "at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "At",
-                "type": "string"
-              },
-              "canonicalize": {
-                "anyOf": [
-                  {
-                    "const": "claim_type",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Canonicalize"
-              },
-              "parse": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "date",
-                      "datetime",
-                      "int",
-                      "decimal",
-                      "bool"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Parse"
-              },
-              "presence": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "required",
-                      "optional"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Presence"
-              },
-              "project": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "utc_date",
-                      "utc_start_of_day"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Project"
-              },
-              "type": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Type"
-              }
-            },
-            "required": [
-              "at"
-            ],
-            "title": "ExtractField",
-            "type": "object"
-          },
-          "ExtractNode": {
-            "additionalProperties": false,
-            "description": "Read one Capture's records, typed, with per-field results and a completeness verdict.",
-            "properties": {
-              "as": {
-                "title": "As",
-                "type": "string"
-              },
-              "capture": {
-                "title": "Capture",
-                "type": "string"
-              },
-              "complete_when": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CompleteWhen"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "duplicates": {
-                "default": "refuse_key",
-                "enum": [
-                  "refuse_run",
-                  "refuse_key",
-                  "first"
-                ],
-                "title": "Duplicates",
-                "type": "string"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "maxProperties": 256,
-                "minProperties": 1,
-                "title": "Fields",
-                "type": "object"
-              },
-              "header": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Header",
-                "type": "object"
-              },
-              "key": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Key",
-                "type": "object"
-              },
-              "kind": {
-                "const": "extract",
-                "default": "extract",
-                "title": "Kind",
-                "type": "string"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "only_keys": {
-                "default": null,
-                "title": "Only Keys"
-              },
-              "records": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "Records",
-                "type": "string"
-              },
-              "row": {
-                "$ref": "#/$defs/ContractRef"
-              }
-            },
-            "required": [
-              "node_id",
-              "capture",
-              "records",
-              "row",
-              "fields",
-              "as"
-            ],
-            "title": "ExtractNode",
             "type": "object"
           },
           "FieldResultType": {
@@ -86021,6 +85586,112 @@
             "title": "KeyType",
             "type": "object"
           },
+          "KeyTypeOverride": {
+            "additionalProperties": false,
+            "description": "The one override a node may make: a Subject key type for a plain-string key part.",
+            "properties": {
+              "type": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "KeyTypeOverride",
+            "type": "object"
+          },
+          "LayoutExtractNode": {
+            "additionalProperties": false,
+            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted. ``row`` is the\nrecord set's row Contract pin ``{name, version, digest}``, added when the\nProcedure is accepted (ruling L1; never authored): every later read takes that\nrow and only its fields, so a kind whose row grew does not change what the\naccepted Procedure extracts.",
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "capture": {
+                "title": "Capture",
+                "type": "string"
+              },
+              "duplicates": {
+                "default": "refuse_key",
+                "enum": [
+                  "refuse_run",
+                  "refuse_key",
+                  "first"
+                ],
+                "title": "Duplicates",
+                "type": "string"
+              },
+              "header": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "title": "Header",
+                "type": "array"
+              },
+              "key": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/KeyTypeOverride"
+                },
+                "title": "Key",
+                "type": "object"
+              },
+              "kind": {
+                "const": "extract",
+                "default": "extract",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "only_keys": {
+                "default": null,
+                "title": "Only Keys"
+              },
+              "records": {
+                "title": "Records",
+                "type": "string"
+              },
+              "row": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "node_id",
+              "capture",
+              "records",
+              "as"
+            ],
+            "title": "LayoutExtractNode",
+            "type": "object"
+          },
           "ListType": {
             "additionalProperties": false,
             "properties": {
@@ -86459,7 +86130,7 @@
                       "call": "#/$defs/CallNode",
                       "claims": "#/$defs/ClaimsNode",
                       "emit_capture": "#/$defs/CaptureEgressNode",
-                      "extract": "#/$defs/ExtractNode",
+                      "extract": "#/$defs/LayoutExtractNode",
                       "guard": "#/$defs/GuardNode",
                       "halt": "#/$defs/HaltNode",
                       "invoke": "#/$defs/InvokeNode",
@@ -86483,7 +86154,7 @@
                       "$ref": "#/$defs/CallNode"
                     },
                     {
-                      "$ref": "#/$defs/ExtractNode"
+                      "$ref": "#/$defs/LayoutExtractNode"
                     },
                     {
                       "$ref": "#/$defs/TransformNode"
@@ -93839,23 +93510,6 @@
             "title": "CompilerCoordinate",
             "type": "object"
           },
-          "CompleteWhen": {
-            "additionalProperties": false,
-            "description": "The extract is complete only when the count stated at ``count_at`` is the records read.",
-            "properties": {
-              "count_at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "Count At",
-                "type": "string"
-              }
-            },
-            "required": [
-              "count_at"
-            ],
-            "title": "CompleteWhen",
-            "type": "object"
-          },
           "ContractRef": {
             "additionalProperties": false,
             "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
@@ -94125,202 +93779,6 @@
               "members"
             ],
             "title": "EnumType",
-            "type": "object"
-          },
-          "ExtractField": {
-            "additionalProperties": false,
-            "description": "Where one field is read, and how its lexeme becomes a typed value.\n\n``at`` is a JSON Pointer relative to the record (or to the document, for a\nheader field), or a CSV column name. ``parse`` converts a text lexeme\n(``date``, ``datetime``, ``int``, ``decimal``, ``bool``); ``type`` states\nthe field's type where no row Contract does (keys and header fields);\n``canonicalize: claim_type`` matches an enum member case-insensitively.\n``presence`` overrides the row Contract's optionality. ``project`` reshapes\nthe parsed value: ``utc_date`` (``parse: datetime``) keeps its UTC calendar\nday; ``utc_start_of_day`` (``parse: date``) is that day at 00:00 UTC.",
-            "properties": {
-              "at": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "At",
-                "type": "string"
-              },
-              "canonicalize": {
-                "anyOf": [
-                  {
-                    "const": "claim_type",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Canonicalize"
-              },
-              "parse": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "date",
-                      "datetime",
-                      "int",
-                      "decimal",
-                      "bool"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Parse"
-              },
-              "presence": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "required",
-                      "optional"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Presence"
-              },
-              "project": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "utc_date",
-                      "utc_start_of_day"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Project"
-              },
-              "type": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Type"
-              }
-            },
-            "required": [
-              "at"
-            ],
-            "title": "ExtractField",
-            "type": "object"
-          },
-          "ExtractNode": {
-            "additionalProperties": false,
-            "description": "Read one Capture's records, typed, with per-field results and a completeness verdict.",
-            "properties": {
-              "as": {
-                "title": "As",
-                "type": "string"
-              },
-              "capture": {
-                "title": "Capture",
-                "type": "string"
-              },
-              "complete_when": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CompleteWhen"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "duplicates": {
-                "default": "refuse_key",
-                "enum": [
-                  "refuse_run",
-                  "refuse_key",
-                  "first"
-                ],
-                "title": "Duplicates",
-                "type": "string"
-              },
-              "fields": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "maxProperties": 256,
-                "minProperties": 1,
-                "title": "Fields",
-                "type": "object"
-              },
-              "header": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Header",
-                "type": "object"
-              },
-              "key": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/ExtractField"
-                },
-                "title": "Key",
-                "type": "object"
-              },
-              "kind": {
-                "const": "extract",
-                "default": "extract",
-                "title": "Kind",
-                "type": "string"
-              },
-              "next": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Next"
-              },
-              "node_id": {
-                "title": "Node Id",
-                "type": "string"
-              },
-              "only_keys": {
-                "default": null,
-                "title": "Only Keys"
-              },
-              "records": {
-                "maxLength": 512,
-                "minLength": 1,
-                "title": "Records",
-                "type": "string"
-              },
-              "row": {
-                "$ref": "#/$defs/ContractRef"
-              }
-            },
-            "required": [
-              "node_id",
-              "capture",
-              "records",
-              "row",
-              "fields",
-              "as"
-            ],
-            "title": "ExtractNode",
             "type": "object"
           },
           "FieldResultType": {
@@ -94822,6 +94280,112 @@
             "title": "KeyType",
             "type": "object"
           },
+          "KeyTypeOverride": {
+            "additionalProperties": false,
+            "description": "The one override a node may make: a Subject key type for a plain-string key part.",
+            "properties": {
+              "type": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "KeyTypeOverride",
+            "type": "object"
+          },
+          "LayoutExtractNode": {
+            "additionalProperties": false,
+            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted. ``row`` is the\nrecord set's row Contract pin ``{name, version, digest}``, added when the\nProcedure is accepted (ruling L1; never authored): every later read takes that\nrow and only its fields, so a kind whose row grew does not change what the\naccepted Procedure extracts.",
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "capture": {
+                "title": "Capture",
+                "type": "string"
+              },
+              "duplicates": {
+                "default": "refuse_key",
+                "enum": [
+                  "refuse_run",
+                  "refuse_key",
+                  "first"
+                ],
+                "title": "Duplicates",
+                "type": "string"
+              },
+              "header": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "title": "Header",
+                "type": "array"
+              },
+              "key": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/KeyTypeOverride"
+                },
+                "title": "Key",
+                "type": "object"
+              },
+              "kind": {
+                "const": "extract",
+                "default": "extract",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "only_keys": {
+                "default": null,
+                "title": "Only Keys"
+              },
+              "records": {
+                "title": "Records",
+                "type": "string"
+              },
+              "row": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "node_id",
+              "capture",
+              "records",
+              "as"
+            ],
+            "title": "LayoutExtractNode",
+            "type": "object"
+          },
           "ListType": {
             "additionalProperties": false,
             "properties": {
@@ -95260,7 +94824,7 @@
                       "call": "#/$defs/CallNode",
                       "claims": "#/$defs/ClaimsNode",
                       "emit_capture": "#/$defs/CaptureEgressNode",
-                      "extract": "#/$defs/ExtractNode",
+                      "extract": "#/$defs/LayoutExtractNode",
                       "guard": "#/$defs/GuardNode",
                       "halt": "#/$defs/HaltNode",
                       "invoke": "#/$defs/InvokeNode",
@@ -95284,7 +94848,7 @@
                       "$ref": "#/$defs/CallNode"
                     },
                     {
-                      "$ref": "#/$defs/ExtractNode"
+                      "$ref": "#/$defs/LayoutExtractNode"
                     },
                     {
                       "$ref": "#/$defs/TransformNode"

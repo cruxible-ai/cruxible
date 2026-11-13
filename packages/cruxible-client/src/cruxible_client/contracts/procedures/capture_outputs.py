@@ -24,9 +24,13 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.capabilities import CapabilityLookup
 from cruxible_client.contracts.captures import CAPTURE_FIELD, CaptureContractAny
+from cruxible_client.contracts.procedures.layout_extract import (
+    LayoutExtractNode,
+    LayoutExtractRefused,
+    resolve_layout_extract,
+)
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ExtractNode,
     ProcedureDefinition,
 )
 from cruxible_client.contracts.provider_operations import capture_fields, capture_list_fields
@@ -217,7 +221,7 @@ def procedure_capture_problem(
                     f"{capture.target.name!r}, which is not accepted",
                 )
     for extract in definition.nodes:
-        if not isinstance(extract, ExtractNode):
+        if not isinstance(extract, LayoutExtractNode):
             continue
         producer = calls.get(extract.capture_alias)
         reference = None if producer is None else producer.captures.get(extract.capture_field)
@@ -234,32 +238,25 @@ def procedure_capture_problem(
                 "cruxible.procedure.extract_format_unsupported",
                 f"extract {extract.node_id!r}: core extracts json and csv, not {decoding.format}",
             )
-        if extract.capture_field in list_fields.get(extract.capture_alias, frozenset()) and (
-            extract.header or extract.complete_when is not None
-        ):
-            # Records merge across a list's members; no one member's header or
-            # count speaks for the merged whole (D-R37 a5).
+        if extract.row is None:
+            # Accepted Procedures pin each extract's row (ruling L1); authoring adds it.
             return (
-                "cruxible.procedure.extract_format_unsupported",
-                f"extract {extract.node_id!r} reads the Capture list {extract.capture!r}: an "
-                "extract over a list merges its members' records and declares no header "
-                "fields or complete_when",
+                "cruxible.procedure.extract_row_unpinned",
+                f"extract {extract.node_id!r} pins no row Contract; author the Procedure "
+                "again (authoring pins the row of the record set it names)",
             )
-        if decoding.format == "csv" and (extract.header or extract.complete_when is not None):
-            return (
-                "cruxible.procedure.extract_format_unsupported",
-                f"extract {extract.node_id!r}: a CSV is complete when its header is present "
-                "and every row reads; it declares no header fields or complete_when",
+        # The node names a record set and header fields of its kind's layout; the
+        # layout law already holds the CSV shape and the row's field rules.
+        try:
+            resolve_layout_extract(
+                extract,
+                getattr(contract, "layout", None),
+                reads_list=extract.capture_field
+                in list_fields.get(extract.capture_alias, frozenset()),
+                pinned_row=None if contract_lookup is None else contract_lookup(extract.row),
             )
-        row = None if contract_lookup is None else contract_lookup(extract.row)
-        if row is not None:
-            unknown = sorted(set(extract.fields) - set(row.fields))
-            if unknown:
-                return (
-                    "cruxible.procedure.extract_field_unknown",
-                    f"extract {extract.node_id!r} reads fields its row Contract "
-                    f"{extract.row.spelling} does not declare: {unknown}",
-                )
+        except LayoutExtractRefused as refused:
+            return (refused.code, refused.message)
     return None
 
 

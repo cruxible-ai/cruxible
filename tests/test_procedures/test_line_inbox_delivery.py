@@ -10,8 +10,8 @@ import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import procedure_path
-from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.layout_extract import LayoutExtractNode
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.models import (
     CallNode,
@@ -46,22 +46,32 @@ def _row_contract() -> Any:
     return validate_contract({"name": "test.inbox-row", "version": 1, "fields": {"cve": "string"}})
 
 
-def _rows_extract(*, next_node: str) -> ExtractNode:
+def _rows_layout(instance: Any) -> dict[str, bytes]:
+    """The world kind's successor declaring the feed's ``rows`` record set (``/rows/*``)."""
+
     from cruxible_client.contracts.shapes import contract_digest
+    from tests.core_support._light_capture_support import record_contract
+    from tests.support.layouts import grown_kind_members, record_set
 
     row = _row_contract()
-    return ExtractNode(
+    pinned = {"name": row.name, "version": row.version, "digest": contract_digest(row).tagged}
+    return grown_kind_members(
+        instance,
+        record_contract().identity.name,
+        {"rows": record_set(at="/rows/*", row=pinned, fields={"cve": {"at": "cve"}})},
+    )
+
+
+def _rows_extract(*, next_node: str) -> LayoutExtractNode:
+    from tests.support.layouts import thin_node
+
+    return thin_node(
         node_id="rows",
         capture=f"$steps.{SOURCE_ALIAS}.capture",
-        records="/rows/*",
-        row={
-            "name": row.name,
-            "version": row.version,
-            "digest": contract_digest(row).tagged,
-        },
-        fields={"cve": {"at": "cve"}},
+        records="rows",
         as_=ROWS_ALIAS,
         next=next_node,
+        row=_row_contract(),
     )
 
 
@@ -133,6 +143,7 @@ def inbox_world(  # type: ignore[no-untyped-def]
         owner,
         {
             contract_path(row.name, row.version): render_contract(row),
+            **_rows_layout(instance),
             **contract_members(NOTE, SEVERITY, KEYED),
             **procedure_members(with_inbox),
             line_spec_path(line.identity.name): render_line_spec(line),
@@ -526,7 +537,10 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     )
     row = _row_contract()
     _accept_more(
-        instance, owner, {contract_path(row.name, row.version): render_contract(row)}, name="row"
+        instance,
+        owner,
+        {contract_path(row.name, row.version): render_contract(row), **_rows_layout(instance)},
+        name="row",
     )
     plan = Sequence(
         "sdk-inbox",
@@ -550,9 +564,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     rows = plan.extract(
         ROWS_ALIAS,
         capture=source["capture"],
-        records="/rows/*",
-        row=f"{row.name}@{row.version}",
-        fields={"cve": {"at": "cve"}},
+        records="rows",
     )
     project(plan, "result", fields={"severity": source.ref("content", "text")})
     plan.inbox(

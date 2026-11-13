@@ -173,7 +173,7 @@ def test_g18_invalid_status_filter_count_derive_cannot_launder_a_negative(tmp_pa
     # Add the negative type before authoring the Procedure that names it.
     import json
 
-    from tests.test_pilot.support import FIXTURES, KEV_ROW, _watched
+    from tests.test_pilot.support import FIXTURES, KEV_ROW, _watched, pilot_records
     from tests.test_procedures.test_claims_terminal import claims_world
 
     document = json.loads((FIXTURES / "kev-invalid.json").read_bytes())
@@ -200,6 +200,7 @@ def test_g18_invalid_status_filter_count_derive_cannot_launder_a_negative(tmp_pa
         {"entries": [{"id": r["cveID"]} for r in document["vulnerabilities"]]},
         types=(closure, claim_type(KEV + "ransomware_use", "enum[Known, Unknown]")),
         rows=KEV_ROW,
+        records=pilot_records(True),
     )
     (root / "data/kev-invalid.json").write_bytes((FIXTURES / "kev-invalid.json").read_bytes())
     _watched(instance)
@@ -326,7 +327,16 @@ def test_g5_delisting_has_a_mirror_witness(tmp_path: Path) -> None:
         instance.blob_at(admitted.bound_coordinate.git_oid, admitted.procedure_path),
         path=admitted.procedure_path,
     )
-    extracting = next(n for n in procedure.definition.nodes if n.kind == "extract")
+    from cruxible_client.contracts.captures import capture_contract_path, parse_capture_contract
+    from cruxible_core.procedures.extract import extract_spec
+
+    kind_path = capture_contract_path("test.orders-v1")
+    kind = parse_capture_contract(
+        instance.blob_at(admitted.bound_coordinate.git_oid, kind_path), path=kind_path
+    )
+    extracting = extract_spec(
+        next(n for n in procedure.definition.nodes if n.kind == "extract"), kind
+    )
     for claim in retired:
         witness = claim.retirement.absence
         assert witness is not None

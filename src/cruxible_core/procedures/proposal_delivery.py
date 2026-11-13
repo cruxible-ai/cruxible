@@ -241,9 +241,16 @@ def _validate_absence_bindings(
         found = instance.blob_at(admission.bound_coordinate.git_oid, path)
         return None if found is None else parse_capture_contract(found, path=path)
 
+    def row_of(row: Any) -> Any:
+        from cruxible_client.contracts.shapes import contract_path, parse_contract
+
+        path = contract_path(row.name, row.version)
+        found = instance.blob_at(admission.bound_coordinate.git_oid, path)
+        return None if found is None else parse_contract(found, path=path)
+
     extracting: ExtractNode | None
     try:
-        extracting = extract_specs(nodes, kind_of)(
+        extracting = extract_specs(nodes, kind_of, row_of)(
             absence_enumeration(node, {getattr(n, "as_", None): n for n in nodes})
         )
     except (ClaimsTypingRefused, ValueError):

@@ -29,7 +29,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from tests.pilot_contract_batch.harness import RUNS, Scenario, Stopwatch
-from tests.pilot_contract_batch.kit_capabilities import accept_kit_capabilities, converted_kit
+from tests.pilot_contract_batch.kit_capabilities import (
+    accept_kit_capabilities,
+    accept_kit_layouts,
+    converted_kit,
+)
 
 AFFECTED_BY = "security.component.affected_by"
 OSV_STEP_IDS = ("matched", "affected")
@@ -162,8 +166,11 @@ def start_run(
             result = original(instance, payload, name=name)
             if name == "vocabulary":
                 # The pilot's copy of the kit: its slots name capabilities (slots
-                # slice), authored here once every Contract they pin is accepted.
+                # slice), authored here once every Contract they pin is accepted;
+                # its extracted kinds gain their layouts (layout slice) before
+                # any Procedure reads them.
                 accept_kit_capabilities(instance)
+                accept_kit_layouts(instance)
             return result
 
         return wrapper

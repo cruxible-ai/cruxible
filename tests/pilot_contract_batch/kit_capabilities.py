@@ -25,6 +25,26 @@ two are written in the same style.
 | web.fetch.pages.request, external_read | web.fetch.pages | definitions._spec ``fetch`` |
 
 Each result Contract is the request's name with ``.result``.
+
+Since the thin EXTRACT (layout slice) a Procedure stores only the thin node, so
+the pilot also converts the kit's six EXTRACT steps and gives their five kinds
+their layouts, from the kit's own drafts (copied unchanged into
+``examples/security``: ``capture-kinds/*.json`` and ``extracts/*.json``; each
+thin node resolves to the kit's stored node byte for byte):
+
+| Procedure, EXTRACT | Thin node reads | CaptureKind (layout) |
+|---|---|---|
+| security.kev-triage, entries | vulnerabilities + catalog_version | security.kev-catalog |
+| security.epss-triage, scores | scores (a Capture list) | security.epss-scores |
+| security.osv-query, affected | affected + queried | security.osv-matches |
+| security.sbom-import, listed | components + inventory | security.sbom-components |
+| security.sarif-import, found | findings + covered | security.sarif-findings |
+| security.sarif-attention, attention | attention | security.sarif-findings |
+
+A kind's layout is added as its successor right after the kit's vocabulary
+(every row Contract it pins is accepted by then), before any Procedure is
+authored; an EXTRACT step keeps its own ``capture``, ``duplicates`` and
+``only_keys`` and takes ``records``, ``header`` and ``key`` from its thin draft.
 """
 
 from __future__ import annotations
@@ -37,6 +57,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 EXAMPLES = Path(__file__).parent / "examples"
+SECURITY = EXAMPLES / "security"
 
 
 def _example(kit: str, name: str) -> tuple[str, str]:
@@ -118,14 +139,112 @@ def capability_slots(slots: Mapping[str, Any]) -> dict[str, Any]:
     return {name: capability_slot(slot) for name, slot in slots.items()}
 
 
+def kind_layouts() -> dict[str, dict[str, Any]]:
+    """CaptureKind name -> its drafted layout (``examples/security/capture-kinds``)."""
+
+    return {
+        path.stem: json.loads(path.read_text())["layout"]
+        for path in sorted((SECURITY / "capture-kinds").glob("*.json"))
+    }
+
+
+def thin_extracts() -> dict[tuple[str, str], dict[str, Any]]:
+    """``(Procedure, EXTRACT id)`` -> its drafted thin node (``examples/security/extracts``)."""
+
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in sorted((SECURITY / "extracts").glob("*.json")):
+        if path.name.endswith(".resolved.json"):
+            continue
+        node = json.loads(path.read_text())
+        procedure = path.name.removesuffix(f".{node['id']}.json")
+        found[(procedure, node["id"])] = node
+    return found
+
+
+def thin_extract_step(procedure: str, step: Mapping[str, Any]) -> dict[str, Any]:
+    """One kit EXTRACT step in the thin form: the step's own capture and read policy,
+    the record set, header fields and key overrides its thin draft names."""
+
+    thin = thin_extracts()[(procedure, str(step["extract"]))]
+    converted: dict[str, Any] = {
+        "extract": step["extract"],
+        "capture": step["capture"],
+        "records": thin["records"],
+    }
+    for name in ("header", "key"):
+        if thin.get(name):
+            converted[name] = thin[name]
+    for name in ("duplicates", "only_keys", "id", "next"):
+        if name in step:
+            converted[name] = step[name]
+    return converted
+
+
+def thin_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
+    procedure = str(spec.get("procedure", ""))
+    return {
+        **spec,
+        "steps": [
+            thin_extract_step(procedure, step)
+            if isinstance(step, Mapping) and "extract" in step and "row" in step
+            else step
+            for step in spec.get("steps", ())
+        ],
+    }
+
+
 def _converting(spec_function: Callable[..., Any]) -> Callable[..., Any]:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         spec = spec_function(*args, **kwargs)
         if isinstance(spec, dict) and "slots" in spec:
             spec = {**spec, "slots": capability_slots(spec["slots"])}
+        if isinstance(spec, dict) and "steps" in spec:
+            spec = thin_spec(spec)
         return spec
 
     return wrapper
+
+
+def layout_members(instance: Any) -> dict[str, bytes]:
+    """Each kit CaptureKind the instance holds without a layout, succeeded by one with
+    its drafted layout, with any row Contract the drafts add (``security.osv-not-checked``,
+    from ``examples/security/contracts``); a kind whose other rows are not accepted yet
+    waits."""
+
+    from cruxible_client.contracts.captures import capture_contract_path, parse_capture_contract
+    from cruxible_client.contracts.shapes import contract_path
+    from tests.support.layouts import grown_kind_members
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    members: dict[str, bytes] = {}
+    for name, layout in kind_layouts().items():
+        path = capture_contract_path(name)
+        if path not in tree or parse_capture_contract(tree[path], path=path).layout is not None:
+            continue
+        added: dict[str, bytes] = {}
+        missing = False
+        for item in layout["records"].values():
+            row_path = contract_path(item["row"]["name"], item["row"]["version"])
+            if row_path in tree:
+                continue
+            drafted = SECURITY / row_path
+            if drafted.is_file():
+                added[row_path] = drafted.read_bytes()
+            else:
+                missing = True
+        if missing:
+            continue
+        members.update(added)
+        members.update(grown_kind_members(instance, name, layout["records"], layout.get("header")))
+    return members
+
+
+def accept_kit_layouts(instance: Any) -> None:
+    from tests.core_support._identity_support import accept_tree
+
+    members = layout_members(instance)
+    if members:
+        accept_tree(instance, members, name="kit-layouts")
 
 
 def capability_members(tree: Mapping[str, bytes]) -> dict[str, bytes]:
@@ -185,7 +304,8 @@ def accept_kit_capabilities(instance: Any) -> None:
 
 @contextmanager
 def converted_kit(kit: SimpleNamespace) -> Iterator[None]:
-    """The kit's slot sources converted to capability slots while the block runs.
+    """The kit's slot sources converted to capability slots, and its EXTRACT steps to
+    the thin form, while the block runs.
 
     ``inventory._SLOTS`` and ``findings._SLOTS`` are module-level slot tables the
     spec functions read when called; ``definitions._spec`` and ``osv.osv_spec``
@@ -203,6 +323,11 @@ def converted_kit(kit: SimpleNamespace) -> Iterator[None]:
             stack.enter_context(_replaced(module, "_SLOTS", capability_slots(module._SLOTS)))
         stack.enter_context(_replaced(kit.definitions, "_spec", _converting(kit.definitions._spec)))
         stack.enter_context(_replaced(kit.osv, "osv_spec", _converting(kit.osv.osv_spec)))
+        stack.enter_context(
+            _replaced(kit.inventory, "sbom_spec", _converting(kit.inventory.sbom_spec))
+        )
+        for name in ("import_spec", "attention_spec"):
+            stack.enter_context(_replaced(findings, name, _converting(getattr(findings, name))))
         yield
 
 
@@ -219,6 +344,12 @@ def _replaced(target: Any, name: str, value: Any) -> Iterator[None]:
 __all__ = [
     "KIT_CAPABILITIES",
     "accept_kit_capabilities",
+    "accept_kit_layouts",
+    "kind_layouts",
+    "layout_members",
+    "thin_extract_step",
+    "thin_extracts",
+    "thin_spec",
     "capability_members",
     "capability_slot",
     "capability_slots",

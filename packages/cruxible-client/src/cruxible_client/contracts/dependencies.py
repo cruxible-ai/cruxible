@@ -160,6 +160,8 @@ def dependency_pins(
         # A slot pins one capability version; the capability pins its Contracts.
         for slot in getattr(definition, "slots", {}).values():
             pins.append(ArtifactRef(role=CAPABILITY_PIN_ROLE, target=slot.capability.identity))
+        # An accepted extract pins the row Contract of the record set it reads
+        # (ruling L1); the kind's layout supplies paths and rules, the row the shape.
         for node in getattr(definition, "nodes", ()):
             row = getattr(node, "row", None) if getattr(node, "kind", None) == "extract" else None
             if row is not None:
@@ -168,6 +170,15 @@ def dependency_pins(
                         role=CONTRACT_PIN_ROLE, target=contract_identity(row.name, row.version)
                     )
                 )
+    if kind == "CaptureContract":
+        # A kind's layout names the row Contract of each record set; the kind
+        # depends on them (a kit carrying the kind carries its rows).
+        layout = getattr(artifact, "layout", None)
+        for record_set in () if layout is None else layout.records.values():
+            row = record_set.row
+            pins.append(
+                ArtifactRef(role=CONTRACT_PIN_ROLE, target=contract_identity(row.name, row.version))
+            )
     # A Provider build pins no instance Contract: its operations resolve inside
     # the copies it carries (``declares``).
     if getattr(artifact, "identity", None) is not None:

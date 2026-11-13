@@ -41,6 +41,7 @@ from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
 from tests.support.capabilities import ensure_capabilities
+from tests.support.layouts import record_set, with_layout
 from tests.support.operation_world import NOW, Invoker, author, build_files
 from tests.support.procedures import boundary_contract, contract_files, procedure_limits
 from tests.support.procedures import procedure_spec as build_spec
@@ -148,12 +149,14 @@ def _osv_build(checkout: Path) -> Any:
 
 
 def _matches_kind() -> Any:
+    """The derived matches kind, declaring its ``matches`` record set and ``queried`` header."""
+
     from cruxible_client.contracts.capture_contract_inputs import (
         CaptureContractInputRecord,
         lower_capture_contract_input,
     )
 
-    return lower_capture_contract_input(
+    kind = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=MATCHES_KIND,
             shape="http_response",
@@ -163,6 +166,22 @@ def _matches_kind() -> Any:
             decoding=JSON_DECODING,
         ),
         named=True,
+    )
+    return with_layout(
+        kind,
+        {
+            "matches": record_set(
+                at="/matches/*",
+                row=MATCH_ROW.ref.spelling,
+                key={
+                    "purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"},
+                    "advisory": {"at": "cve_id", "type": f"key_part<{VULN}:cve_id>"},
+                },
+                fields={"summary": {"at": "summary"}},
+                count_at="/count",
+            )
+        },
+        {"queried": {"at": "/queried", "type": "list<string{max_len: 256}>{max_items: 100}"}},
     )
 
 
@@ -308,18 +327,9 @@ def _extract_and_claims() -> list[dict[str, Any]]:
         {
             "extract": "matched",
             "capture": "$steps.matches.capture",
-            "records": "/matches/*",
-            "row": MATCH_ROW.ref.spelling,
-            "key": {
-                "purl": {"at": "purl", "type": f"key_part<{COMPONENT}:purl>"},
-                "advisory": {"at": "cve_id", "type": f"key_part<{VULN}:cve_id>"},
-            },
+            "records": "matches",
             "duplicates": "refuse_key",
-            "fields": {"summary": {"at": "summary"}},
-            "header": {
-                "queried": {"at": "/queried", "type": "list<string{max_len: 256}>{max_items: 100}"}
-            },
-            "complete_when": {"count_at": "/count"},
+            "header": ["queried"],
         },
         {
             "id": "write",

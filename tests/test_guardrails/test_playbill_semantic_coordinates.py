@@ -342,16 +342,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:db6f0e64564d6af0084d9c3f8ad37a1aac36377572a700ecf281b7f260986345"
+    expected = "sha256:3cb26c30a35e0a0918253fc93ef98c1cc54b59ebb7429545cb25d5439f8a02bc"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 67,
+            "semantic_revision": 68,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "registration-carried-copies",
+            "revision_name": "layout-extract-nodes",
         },
     )
     assert computed == expected
@@ -396,9 +396,11 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "registration-carried-copies"
-    assert compiler_revision_label(CURRENT_COMPILER) == "registration-carried-copies"
+    assert CURRENT_COMPILER_REVISION == "layout-extract-nodes"
+    assert compiler_revision_label(CURRENT_COMPILER) == "layout-extract-nodes"
     for earlier_digest in (
+        # Revision 67: before a Procedure stored only the thin EXTRACT node (slice 5).
+        "sha256:db6f0e64564d6af0084d9c3f8ad37a1aac36377572a700ecf281b7f260986345",
         # Revision 66: before a provider build carried its declares (registration schema 3).
         "sha256:c58a2438ab707a12b31eeb49c92b0d198e34769b06f812235e1ddb9767c9b035",
         # Revision 65: before a Procedure slot named a capability.
