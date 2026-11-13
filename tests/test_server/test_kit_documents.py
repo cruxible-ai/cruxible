@@ -307,9 +307,11 @@ def test_install_cost_is_linear_in_kit_members(worlds: tuple[_World, _World]) ->
     from cruxible_client.contracts.kits import KitAddRequest, KitBuildRequest
 
     publisher, consumer = worlds
-    # Size 1 installs first, unmeasured: the first write after creation also
-    # carries one copy of the projection creation's base kit add published.
-    sizes = (1, 2, 4, 8)
+    # Sizes 1 and 3 install first, unmeasured: the first writes after creation
+    # also carry one-time work (a copy of the projection creation's base kit add
+    # published, and the first kit beside the base kit), which would otherwise
+    # land on the size-2 install and hide or fake the per-member slope.
+    sizes = (1, 3, 2, 4, 8)
     for size in sizes:
         for index in range(size):
             _document(
@@ -349,6 +351,6 @@ def test_install_cost_is_linear_in_kit_members(worlds: tuple[_World, _World]) ->
         assert result.status == "accepted", result
         counts[size] = statements[0]
     print("item 11 kit install statements", counts)
-    small, middle, large = (counts[size] for size in sizes[1:])
+    small, middle, large = (counts[size] for size in sizes[2:])
     # Linear in members: 4 more Documents cost about twice what 2 more cost.
     assert large - middle <= 2 * (middle - small) * 1.25 + 60, counts
