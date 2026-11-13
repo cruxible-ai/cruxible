@@ -5343,6 +5343,8 @@ def service_recover_provider_invocations(
                     operation_signature_digest=(
                         occurrence.local_execution.operation_signature_digest
                     ),
+                    capability=occurrence.capability,
+                    fit=occurrence.fit,
                     protocol_version=occurrence.local_execution.protocol_version,
                     capture_contracts=occurrence.capture_contracts,
                     input_digest=started.input_digest,

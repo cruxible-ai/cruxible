@@ -177,6 +177,8 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         deployment_digest=deployment_digest,
         operation=local.operation,
         operation_signature_digest=local.operation_signature_digest,
+        capability=occurrence.capability,
+        fit=occurrence.fit,
         protocol_version="2.0",
         capture_contracts={"capture": capture_contract_digest(contract).tagged},
         input_digest=digest("input", "source"),

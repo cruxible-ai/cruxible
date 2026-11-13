@@ -482,8 +482,8 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     ``recorded_at`` fields read EVALUATION INSTANT.
     """
 
-    tag: Literal["playbill-provider-invocation-receipt-v1"] = (
-        "playbill-provider-invocation-receipt-v1"
+    tag: Literal["cruxible-provider-invocation-receipt-v2"] = (
+        "cruxible-provider-invocation-receipt-v2"
     )
     invocation_id: str
     occurrence_path: str
@@ -495,6 +495,10 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     deployment_digest: str
     operation: str
     operation_signature_digest: str
+    #: The slot's capability pin and how the operation fit it at admission, as the
+    #: occurrence recorded them (``fit`` omitted only for core's builtin, bound by name).
+    capability: CapabilityRef
+    fit: FitKind | None = Field(default=None, exclude_if=lambda value: value is None)
     protocol_version: str
     #: The occurrence's capture fields and their CaptureContract digests.
     capture_contracts: dict[str, str] = Field(
@@ -566,6 +570,16 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
         return value
 
     @model_validator(mode="after")
+    def _capability_fit(self) -> ProviderInvocationReceipt:
+        if self.capability.digest is None:
+            raise ValueError("a provider receipt records its slot's exact capability pin")
+        if (self.fit is None) != is_reserved_capability_name(self.capability.name):
+            raise ValueError(
+                "a provider receipt records its fit, except for a capability core's builtin serves"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _outcome_correspondence(self) -> ProviderInvocationReceipt:
         if (self.output is not None) != (self.outcome.status == "ok"):
             raise ValueError("only an ok Provider invocation may carry output")
@@ -574,7 +588,7 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
         return self
 
 
-PROVIDER_INVOCATION_RECEIPT_DOMAIN = "playbill-provider-invocation-receipt-v1"
+PROVIDER_INVOCATION_RECEIPT_DOMAIN = "cruxible-provider-invocation-receipt-v2"
 
 
 def provider_invocation_receipt_digest(receipt: ProviderInvocationReceipt) -> str:

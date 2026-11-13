@@ -49,6 +49,25 @@ def _derived(instance: Any, state: Any) -> tuple[Any, ...]:
     )
 
 
+def _provider_receipts(instance: Any, state: Any) -> dict[str, Any]:
+    """The run's provider invocation receipts, by operation, as journaled."""
+
+    from cruxible_client.contracts.provider_execution import ProviderInvocationCompleted
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.service.procedures.procedure_runs import _records_for_run
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="pilot", can_read_body=True)
+    found: dict[str, Any] = {}
+    for stored in _records_for_run(instance, state.receipt.run_id):
+        if stored.record.event_kind != "provider_invocation_completed":
+            continue
+        payload = read_payload(instance.body_store(), stored.record.payload_digest, access=access)
+        receipt = ProviderInvocationCompleted.model_validate(payload).receipt
+        found[receipt.operation] = receipt
+    return found
+
+
 @pytest.mark.pilot(
     "s5-swap",
     owner=surfaces.SWAP,
@@ -140,6 +159,15 @@ def test_swapping_a_fitting_provider_keeps_claims_and_records_the_fit(
         assert one.production_evidence.operation_signature_digest != (
             other.production_evidence.operation_signature_digest
         )
+
+    # The provider invocation receipts carry the same capability pin and fit.
+    first_receipt = _provider_receipts(instance, first)[providers.RESULTS]
+    second_receipt = _provider_receipts(instance, second)[providers.RESULTS]
+    pin = before["results"].capability
+    for receipt, fit in ((first_receipt, "identical"), (second_receipt, "structural")):
+        assert receipt.capability is not None
+        assert (receipt.capability.name, receipt.capability.version) == (pin.name, pin.version)
+        assert (receipt.capability.digest, receipt.fit) == (pin.digest, fit)
 
     assert before["results"].capability == after["results"].capability
     assert before["results"].capability.spelling == f"{providers.RESULTS}@1"
