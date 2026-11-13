@@ -56458,7 +56458,7 @@
           },
           "LayoutExtractNode": {
             "additionalProperties": false,
-            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted.",
+            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted. ``row`` is the\nrecord set's row Contract pin ``{name, version, digest}``, added when the\nProcedure is accepted (ruling L1; never authored): every later read takes that\nrow and only its fields, so a kind whose row grew does not change what the\naccepted Procedure extracts.",
             "properties": {
               "as": {
                 "title": "As",
@@ -56523,6 +56523,17 @@
               "records": {
                 "title": "Records",
                 "type": "string"
+              },
+              "row": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -85524,7 +85535,7 @@
           },
           "LayoutExtractNode": {
             "additionalProperties": false,
-            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted.",
+            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted. ``row`` is the\nrecord set's row Contract pin ``{name, version, digest}``, added when the\nProcedure is accepted (ruling L1; never authored): every later read takes that\nrow and only its fields, so a kind whose row grew does not change what the\naccepted Procedure extracts.",
             "properties": {
               "as": {
                 "title": "As",
@@ -85589,6 +85600,17 @@
               "records": {
                 "title": "Records",
                 "type": "string"
+              },
+              "row": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -94207,7 +94229,7 @@
           },
           "LayoutExtractNode": {
             "additionalProperties": false,
-            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted.",
+            "description": "Read one record set of a Capture through its kind's layout (stored node).\n\n``capture`` is ``$steps.<alias>.<field>`` as on today's node; ``records``\nnames a record set; ``header`` lists header fields, sorted. ``row`` is the\nrecord set's row Contract pin ``{name, version, digest}``, added when the\nProcedure is accepted (ruling L1; never authored): every later read takes that\nrow and only its fields, so a kind whose row grew does not change what the\naccepted Procedure extracts.",
             "properties": {
               "as": {
                 "title": "As",
@@ -94272,6 +94294,17 @@
               "records": {
                 "title": "Records",
                 "type": "string"
+              },
+              "row": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
