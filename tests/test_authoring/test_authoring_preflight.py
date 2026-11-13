@@ -138,7 +138,7 @@ def _seed_claim_surface(
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
         accepting_admission=AcceptingAdmission.of(proposed.admission),
     )
     publisher = instance.activation_publisher()

@@ -1,40 +1,34 @@
 {
   "fixtures": [
     {
-      "envelope_sha256": "sha256:ca65816bacefe4158cf301d1aef84100d125be360645e505b34ed348277925d8",
-      "fixture_id": "workspace-file-binary-medium",
-      "input_bucket": "content_kind=binary;byte_size=medium"
+      "envelope_sha256": "sha256:049ffa56487e620bbfba1426e88c27e65c3f1d46b95cdb2dac8c48fab8ead0a5",
+      "fixture_id": "workspace-file-binary-medium"
     },
     {
-      "envelope_sha256": "sha256:b62d387df3a4b0d646e63aae5e9048d04c58692b6cea34e0422868c3a72064df",
-      "fixture_id": "workspace-file-binary-small",
-      "input_bucket": "content_kind=binary;byte_size=small"
+      "envelope_sha256": "sha256:d223c12d4248a11d7cb3e811ef5eae49f6a6dcc2543c008468ef2d099bb1a05b",
+      "fixture_id": "workspace-file-binary-small"
     },
     {
-      "envelope_sha256": "sha256:80b28296c93e67de6bb20f169d07c00f586988d964d4918e88f0308ab2fb936c",
-      "fixture_id": "workspace-file-binary-tiny",
-      "input_bucket": "content_kind=binary;byte_size=tiny"
+      "envelope_sha256": "sha256:f8b7992be0b54aa9f665558eedae0bfd6b60534fbd712c779965d28e53bfc3f8",
+      "fixture_id": "workspace-file-binary-tiny"
     },
     {
-      "envelope_sha256": "sha256:baffa20b6b1c4aa50493c5b702ce3c535b218fe0cb858b43173bdbcfe0a231c5",
-      "fixture_id": "workspace-file-text-medium",
-      "input_bucket": "content_kind=text;byte_size=medium"
+      "envelope_sha256": "sha256:5afe58a158717303409412f0403d970e77c92c2083a2ab46f52035466fa915d6",
+      "fixture_id": "workspace-file-text-medium"
     },
     {
-      "envelope_sha256": "sha256:6eff16e2ba9b800b9d79a435ffd77f047c0ebcf98ec56c487b6dc8f0d28260c3",
-      "fixture_id": "workspace-file-text-small",
-      "input_bucket": "content_kind=text;byte_size=small"
+      "envelope_sha256": "sha256:8b33d5bf689dfd22d4ec851401ba7f339fb5a4cdb7ca18f78743f7af3b6962dc",
+      "fixture_id": "workspace-file-text-small"
     },
     {
-      "envelope_sha256": "sha256:480579fd1de4ea72db47c8aff4310557da3079b81e2315cfb9496f79945362fb",
-      "fixture_id": "workspace-file-text-tiny",
-      "input_bucket": "content_kind=text;byte_size=tiny"
+      "envelope_sha256": "sha256:c87cdc0fea245ed3ca8bddf595f25d3fcc6ccc910c4d561d16a65b39ea071ff3",
+      "fixture_id": "workspace-file-text-tiny"
     }
   ],
-  "source": "cruxible-providers db085204aa66a0d23ae347ab808e7bbd5e6dc99e packages/cruxible-provider-workspace 0.2.0",
+  "source": "cruxible core builtin workspace read, revision sha256:04922994e7747b10f7a84726512d7b537d89d37655ca63a926bbb216dfdc25a5 (inputs: cruxible-providers db085204 packages/cruxible-provider-workspace 0.2.0 registration fixtures and vectors)",
   "vectors": [
     {
-      "envelope_sha256": "sha256:365263b67436b94ebdc9ed37c6d2385bfd6a8fe9a2b3efe4a0d400c2a8c07e52",
+      "envelope_sha256": "sha256:96a6f2d91a9587bbdb35308b2eb91c72623e42ad5a5f5d9e62db2ee404e0a55e",
       "id": "text-empty",
       "input": {
         "byte_length": 0,
@@ -44,12 +38,10 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "status": "ok"
     },
     {
-      "envelope_sha256": "sha256:0be50a97a093cb67bc35c80e6145d23d34f97b72ffc9ee0ad3067e11766f5127",
+      "envelope_sha256": "sha256:da5b8ebf16aa475fa03dce66fc78f27d3d7438f64a966bbfc963d3376e62cdc1",
       "id": "text-crlf-lf-cr-mixed",
       "input": {
         "byte_length": 8,
@@ -59,12 +51,10 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "status": "ok"
     },
     {
-      "envelope_sha256": "sha256:46de21a790db8274a5157b0a2a2cf066ed5163e2fb316ee7fb0d0a68cc32898c",
+      "envelope_sha256": "sha256:ed6cb1fa167109d42b4678acf5496efb36c86f66a55dcd081e3a03697930e071",
       "id": "text-lone-cr-tail",
       "input": {
         "byte_length": 2,
@@ -74,12 +64,10 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "status": "ok"
     },
     {
-      "envelope_sha256": "sha256:f0334a00dfb710514517e9417da74b849471dda5a333a8806742517d121d0168",
+      "envelope_sha256": "sha256:e9bf6fbd8282a87b23241b3aa487c2c50acb70e853c5e8501f647ac8b0e6225b",
       "id": "text-bom-only",
       "input": {
         "byte_length": 3,
@@ -89,12 +77,10 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "status": "ok"
     },
     {
-      "envelope_sha256": "sha256:a1f64a32a22cc70c70a6bdce7e6f96a04a30e1576d7b213d2c31ec501162e554",
+      "envelope_sha256": "sha256:355c3a936a65ec0178916ef75f2c12c656174870b9919911cb55006102fe4dc0",
       "id": "text-form-feed-not-a-break",
       "input": {
         "byte_length": 4,
@@ -104,12 +90,10 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "status": "ok"
     },
     {
-      "envelope_sha256": "sha256:4f15f85d73cddf348f4e78e708f5bd8e64249b9b5bed13c24c5bad103c820ecd",
+      "envelope_sha256": "sha256:e9bf6fbd8282a87b23241b3aa487c2c50acb70e853c5e8501f647ac8b0e6225b",
       "id": "binary-nul",
       "input": {
         "byte_length": 3,
@@ -119,12 +103,10 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=binary;byte_size=tiny",
-      "measured_bucket": "content_kind=binary;byte_size=tiny",
       "status": "ok"
     },
     {
-      "envelope_sha256": "sha256:484db0ce4397437273dee971235f075b496ec0f01593f0fe27f2952dc7a41703",
+      "envelope_sha256": "sha256:e9bf6fbd8282a87b23241b3aa487c2c50acb70e853c5e8501f647ac8b0e6225b",
       "id": "binary-invalid-utf8",
       "input": {
         "byte_length": 3,
@@ -134,12 +116,10 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=binary;byte_size=tiny",
-      "measured_bucket": "content_kind=binary;byte_size=tiny",
       "status": "ok"
     },
     {
-      "envelope_sha256": "sha256:e0563961efc4d1e2f40c10b9adaba2701315586bbaf068fe596738b9ba410221",
+      "envelope_sha256": "sha256:1397f0bd4128ae26c8e6af35628fb0e790dbb37b0c2aef2cf7400f2df177bfca",
       "id": "refuse-unknown-field",
       "input": {
         "byte_length": 15,
@@ -150,13 +130,11 @@
         "extra": 1,
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
     {
-      "envelope_sha256": "sha256:0fee92322f30af30a5c5bb9d4994badda9626bbb394d872359e60123c77dd4b6",
+      "envelope_sha256": "sha256:515d912e493e69739457aa323d612c9d65ec9f6eb7e1d6a7e02954e4334e9ad6",
       "id": "refuse-missing-field",
       "input": {
         "byte_length": 15,
@@ -165,8 +143,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -181,8 +157,6 @@
         "content_encoding": "base64",
         "logical_source": ""
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -197,8 +171,6 @@
         "content_encoding": "base64",
         "logical_source": "a\nb"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -213,13 +185,11 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
     {
-      "envelope_sha256": "sha256:4c0ae921bd1e6737c202395028adb5713f26f41832c8d92f45d8bffccc459631",
+      "envelope_sha256": "sha256:c3b8eea1c1d564116e68b240daf9d667cc9123ea1b9406493b9d33748ae31ccc",
       "id": "refuse-digest-trailing-newline",
       "input": {
         "byte_length": 15,
@@ -229,8 +199,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "provider_declined",
       "status": "refused"
     },
@@ -245,8 +213,6 @@
         "content_encoding": "base32",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": null,
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -261,8 +227,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": null,
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -277,8 +241,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -293,8 +255,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -309,8 +269,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": null,
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -325,8 +283,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": null,
       "refusal_code": "invalid_parameter",
       "status": "refused"
     },
@@ -341,13 +297,11 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "mismatched_lengths",
       "status": "refused"
     },
     {
-      "envelope_sha256": "sha256:c922ffa71d94ec80b905b2b90f4da5da01c8c759286ae2352580e5b0d1dd23f4",
+      "envelope_sha256": "sha256:c324ca7d563e046c37b48c05f81f9765ffa95fcf03f945caf6d88f234d050cd4",
       "id": "refuse-digest-mismatch",
       "input": {
         "byte_length": 15,
@@ -357,8 +311,6 @@
         "content_encoding": "base64",
         "logical_source": "parity/source"
       },
-      "input_bucket": "content_kind=text;byte_size=tiny",
-      "measured_bucket": "content_kind=text;byte_size=tiny",
       "refusal_code": "provider_declined",
       "status": "refused"
     }

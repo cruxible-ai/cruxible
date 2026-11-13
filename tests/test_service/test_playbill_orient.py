@@ -484,25 +484,25 @@ def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(o
 def test_orient_counts_and_reads_the_built_in_operation(
     seeded,  # type: ignore[no-untyped-def]
 ) -> None:
-    from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
+    from cruxible_client.contracts.workspace_file import workspace_read_signature_digest
 
     result = service_playbill_orient(seeded, surface="mcp")
-    assert result.artifacts is not None and result.artifacts.operations == 1
+    # The builtin's two reads: one path, and a glob (ruling O2).
+    assert result.artifacts is not None and result.artifacts.operations == 2
     assert 'cruxible_orient(section="operations")' in result.next
     section = service_playbill_orient(seeded, section="operations")
     assert section.operations is not None
-    (workspace,) = section.operations
-    assert (workspace.build, workspace.operation, workspace.effect) == (
-        "Provider:cruxible-builtin",
-        "workspace.file",
-        "pure",
-    )
-    assert (workspace.input, workspace.output) == (
-        "workspace.file.request@1",
-        "workspace.file.result@1",
-    )
-    assert workspace.refusals == ("invalid_parameter", "mismatched_lengths", "provider_declined")
-    assert workspace.signature_digest == workspace_file_signature_digest()
+    workspace, glob = section.operations
+    for row, name, result_contract in (
+        (workspace, "workspace.file", "workspace.file.result@1"),
+        (glob, "workspace.files", "workspace.files.result@1"),
+    ):
+        assert (row.build, row.operation, row.effect) == ("Provider:cruxible-builtin", name, "pure")
+        # In: the handoff core fills with the bytes it read; out: the base kit's result.
+        assert (row.input, row.output) == ("workspace.file.handoff@1", result_contract)
+        assert row.serves == (name,)
+        assert row.refusals == ("invalid_parameter", "mismatched_lengths", "provider_declined")
+        assert row.signature_digest == workspace_read_signature_digest(name)
     assert section.truncated is False and section.next_cursor is None
 
 
@@ -670,10 +670,11 @@ def test_orient_and_get_show_what_each_operation_serves_with_its_source_and_carr
     accept_tree(instance, build_files(build), name="operation-reads")
 
     page = service_playbill_orient(instance, section="operations", surface="mcp")
-    assert page.operations is not None and len(page.operations) == 2
+    assert page.operations is not None and len(page.operations) == 3
     rows = {(row.build, row.operation): row for row in page.operations}
     assert set(rows) == {
         ("Provider:cruxible-builtin", "workspace.file"),
+        ("Provider:cruxible-builtin", "workspace.files"),
         (build.identity.qualified, "demo.parse"),
     }
     parsed = rows[(build.identity.qualified, "demo.parse")]
@@ -720,10 +721,12 @@ def test_orient_and_get_show_what_each_operation_serves_with_its_source_and_carr
 
     builtin = get("Provider:cruxible-builtin").card
     assert isinstance(builtin, GetProviderCard)
-    (row,) = builtin.operations
-    assert (row.operation, row.serves) == ("workspace.file", ("workspace.file", "workspace.files"))
-    assert row.source.path == "src/cruxible_core/providers/builtin_workspace_file.py"
-    assert row.absorbable == ("invalid_parameter", "mismatched_lengths", "provider_declined")
+    one, glob = builtin.operations
+    assert (one.operation, one.serves) == ("workspace.file", ("workspace.file",))
+    assert (glob.operation, glob.serves) == ("workspace.files", ("workspace.files",))
+    for row in (one, glob):
+        assert row.source.path == "src/cruxible_core/providers/builtin_workspace_file.py"
+        assert row.absorbable == ("invalid_parameter", "mismatched_lengths", "provider_declined")
 
 
 def test_a_default_map_listing_fewer_queries_than_it_counts_says_so(  # type: ignore[no-untyped-def]

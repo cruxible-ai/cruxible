@@ -537,16 +537,17 @@ def schema_sql() -> str:
             "CREATE UNIQUE INDEX pins_required_target_unique ON pins(source_identity,target_identity,target_digest) WHERE edge_kind='required_pin'",
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
-            # The signature index: each live build's operations by exact
-            # signature, so fitting a slot is one seek (providers.operation_index).
-            # Maintained at accept: a changed build's rows are replaced.
+            # The capability index: one row per live build operation and capability
+            # name it serves, so binding a slot seeks only that name's rows
+            # (providers.operation_index). Maintained at accept: a changed build's
+            # rows are replaced.
             """CREATE TABLE provider_operations (
             source_identity TEXT NOT NULL REFERENCES providers(identity),
-            operation TEXT NOT NULL, in_digest TEXT NOT NULL, out_digest TEXT NOT NULL,
+            operation TEXT NOT NULL, capability TEXT NOT NULL,
             effect TEXT NOT NULL CHECK(effect IN ('pure','external_read','external_mutation')),
-            PRIMARY KEY(source_identity,operation)
+            PRIMARY KEY(source_identity,operation,capability)
         ) STRICT""",
-            "CREATE INDEX provider_operations_by_signature ON provider_operations(in_digest,out_digest,effect,source_identity,operation)",
+            "CREATE INDEX provider_operations_by_capability ON provider_operations(capability,effect,source_identity,operation)",
             """CREATE TABLE claim_type_names (
             source_identity TEXT NOT NULL REFERENCES claim_types(identity),
             kind TEXT NOT NULL CHECK(kind IN ('predicate','subject_kind')),

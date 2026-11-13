@@ -17,7 +17,9 @@ from tests.core_support._claim_authoring_support import (
     create_subjects,
     service_propose_playbill_claim,
 )
-from tests.core_support._support import initialize_local
+
+# Counts projections and Documents from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.test_claims.test_claims import _subject
 
 

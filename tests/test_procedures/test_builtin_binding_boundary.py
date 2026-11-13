@@ -14,11 +14,13 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.capabilities import capability_pin
 from cruxible_client.contracts.procedures.line_specs import (
     LINE_BINDING_BUILTIN_MISMATCH,
-    SlotSignature,
+    SlotNeed,
     builtin_binding_problem,
     line_binding_problem,
+    operation_spelling,
 )
 from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
 from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
@@ -26,7 +28,7 @@ from cruxible_core.errors import RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     workspace_file_builtin_provider,
 )
-from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+from tests.support.capabilities import capability
 from tests.support.operation_world import operation, operation_build
 from tests.test_procedures.test_b2_operations import SOURCE_LINE, accepted_line, sourced_world
 
@@ -45,7 +47,7 @@ def _imposter() -> Any:
             operation(
                 "demo.read",
                 refusals={"provider_declined": True},
-                signature=("workspace.file.request@1", "workspace.file.result@1"),
+                signature=("workspace.file.handoff@1", "workspace.file.result@1"),
             ),
         ),
     )
@@ -63,7 +65,8 @@ def test_line_acceptance_refuses_an_imposter_for_a_builtin_slot(tmp_path) -> Non
     message = str(refused.value)
     assert LINE_BINDING_BUILTIN_MISMATCH in message or "only core's builtin" in message
     assert "'read'" in message and "workspace.file@1" in message
-    assert f"{imposter.identity.name}#demo.read" in message
+    # Refusals name an operation as <provider>#<operation> (note section 2.6).
+    assert operation_spelling(imposter.identity.name, "demo.read") in message
 
 
 def test_run_admission_refuses_an_imposter_for_a_builtin_slot(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -98,7 +101,7 @@ def test_run_admission_refuses_an_imposter_for_a_builtin_slot(tmp_path) -> None:
 
     assert refused.value.error_code == LINE_BINDING_BUILTIN_MISMATCH
     assert "'read'" in str(refused.value) and "workspace.file@1" in str(refused.value)
-    assert offered.spelling in str(refused.value)
+    assert operation_spelling(offered.build.target.name, offered.operation) in str(refused.value)
     # The Line the world accepted binds the builtin, and still runs past admission.
     assert accepted_line(instance, SOURCE_LINE).bindings["read"].build.target.name == (
         "cruxible-builtin"
@@ -112,17 +115,10 @@ def test_the_builtin_binds_no_slot_naming_another_capability() -> None:
         provider=builtin,
         artifact_digest=provider_digest(builtin).tagged,
     )
-    signature = builtin_slot_signatures()["workspace.file"]
+    served, _glob = builtin.operations
     # A capability of another name pinning exactly the builtin's Contracts.
-    slots = {
-        "x": SlotSignature.model_validate(
-            {
-                **signature.model_dump(by_alias=True),
-                "capability": "demo.file-reader@1",
-                "builtin": False,
-            }
-        )
-    }
+    lookalike = capability("demo.file-reader", in_=served.in_, out=served.out, effect=served.effect)
+    slots = {"x": SlotNeed(pin=capability_pin(lookalike), capability=lookalike)}
     binding = LineBinding(
         build=binding_pin(builtin.identity, accepted.artifact_digest),
         operation="workspace.file",
@@ -131,11 +127,11 @@ def test_the_builtin_binds_no_slot_naming_another_capability() -> None:
         {"x": binding}, slots=slots, providers={builtin.identity.qualified: accepted}
     )
     assert problem is not None and problem[0] == LINE_BINDING_BUILTIN_MISMATCH
-    assert "demo.file-reader@1" in problem[1] and binding.spelling in problem[1]
-    # The same slot over its own builtin capability binds.
-    builtin_slot = slots["x"].model_copy(
-        update={"capability": "workspace.files@1", "builtin": True}
-    )
+    spelled = operation_spelling(binding.build.target.name, binding.operation)
+    assert "demo.file-reader@1" in problem[1] and spelled in problem[1]
+    # The same slot over its own builtin capability binds, by name and unfitted.
+    own = capability("workspace.file", in_=served.in_, out=served.out, effect=served.effect)
+    builtin_slot = SlotNeed(pin=capability_pin(own), capability=own, builtin=True)
     assert (
         line_binding_problem(
             {"x": binding},
@@ -147,7 +143,7 @@ def test_the_builtin_binds_no_slot_naming_another_capability() -> None:
 
 
 def test_the_rule_reads_served_names_not_signatures() -> None:
-    (builtin_operation,) = workspace_file_builtin_provider().operations
+    builtin_operation, _glob = workspace_file_builtin_provider().operations
     (imposter_operation,) = _imposter().operations
     spelled = "x#y"
     assert (

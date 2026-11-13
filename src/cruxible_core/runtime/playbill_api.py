@@ -608,6 +608,20 @@ def playbill_init(
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
         workspace_advertisement=instance.settled_workspace_advertisement(),
+        base_kit=_init_base_kit(instance.base_kit_install),
+    )
+
+
+def _init_base_kit(result: KitChangeResult | None) -> contracts.InitBaseKit | None:
+    """What creation's base kit add did, for the init result."""
+
+    if result is None or result.status not in {"accepted", "proposed"}:
+        return None
+    return contracts.InitBaseKit(
+        kit_id=result.kit_id,
+        version=result.version or "",
+        status="accepted" if result.status == "accepted" else "proposed",
+        proposal_id=None if result.status == "accepted" else result.proposal_id,
     )
 
 

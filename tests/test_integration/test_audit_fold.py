@@ -136,7 +136,8 @@ def test_empty_audit_is_byte_identical_idempotent_and_operational_only(tmp_path:
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
     assert first.coverage.access_permitted
     assert first.rows == ()
-    assert first.audited_through_generation == 0
+    # Generation 1 is creation's base kit.
+    assert first.audited_through_generation == 1
     assert len(completed_audit_runs(instance)) == 1
     assert instance.accepted_coordinate() == accepted_before
     assert consumption_aggregate(instance).artifacts == ()

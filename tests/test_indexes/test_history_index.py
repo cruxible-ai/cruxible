@@ -325,18 +325,19 @@ def test_proposal_trigger_cannot_mutate_history_through_shared_database(tmp_path
 
 
 def test_member_locations_read_exact_evidence_without_history_scan(seeded, monkeypatch):
+    # Generation 1 is creation's base kit; the seeded generations follow it.
     from cruxible_client.contracts.errors import ProjectionIntegrityError
 
     instance = seeded
     with instance.accepted_history_reader() as reader:
         generations = instance.accepted_history()
-        generation = generations[2]
+        generation = generations[3]
         member = generation.record.members[0]
         version = reader.artifact(member.candidate_artifact_digest)
         location = reader.claim_law_evidence(
             version.identity, artifact_digest=version.artifact_digest, path=version.path
         )
-        assert location.sequence == 2
+        assert location.sequence == 3
         assert reader.member_history(version.path) == (location,)
         requested = []
 
@@ -351,7 +352,7 @@ def test_member_locations_read_exact_evidence_without_history_scan(seeded, monke
             load_record=load,
         )
         assert result == generation.record.law_evidence[0]
-        assert requested == [(generation.oid, "changesets/cs-00000000000000000002.json")]
+        assert requested == [(generation.oid, "changesets/cs-00000000000000000003.json")]
         with pytest.raises(ProjectionIntegrityError, match="requested version"):
             reader.claim_law_evidence(version.identity, artifact_digest="wrong", path=version.path)
         with pytest.raises(ProjectionIntegrityError, match="unavailable"):
@@ -360,7 +361,7 @@ def test_member_locations_read_exact_evidence_without_history_scan(seeded, monke
             reader.read_member_record(
                 location,
                 lambda oid, path: instance.blob_at(
-                    generations[3].oid, "changesets/cs-00000000000000000003.json"
+                    generations[4].oid, "changesets/cs-00000000000000000004.json"
                 ),
             )
     checked = instance._accepted_history_index.generations_checked
@@ -386,42 +387,42 @@ def test_unchanged_member_evaluation_gets_its_own_location_and_cutoff(tmp_path, 
     from cruxible_core.proposals.settlement import change_set_digest, render_change_set
 
     source = seeded._recovered
-    original = source.history[2]
+    original = source.history[3]
     member = original.record.members[0]
     with seeded.accepted_history_reader() as reader:
         version = reader.artifact(member.candidate_artifact_digest)
     row = ArtifactEnvelopeRow(
         version.identity, "claim", "test", version.path, version.artifact_digest, None, 1
     )
-    record = original.record.model_copy(update={"sequence": 4})
+    record = original.record.model_copy(update={"sequence": 5})
     record = record.model_copy(update={"changeset_digest": change_set_digest(record).tagged})
     repeat = replace(
         original,
-        sequence=4,
+        sequence=5,
         oid="f" * len(original.oid),
         retained_record=record,
         record_digest=None,
     )
     state = replace(source, history=(*source.history, repeat), head=repeat)
     index = AcceptedHistoryIndex(tmp_path / "working.sqlite3")
-    with index.read(state, lambda n, _prior: [row] if n == 2 else []) as reader:
-        assert [v.occurrence_sequence for v in reader.occurrences(version.identity)] == [2]
-        assert [m.sequence for m in reader.member_history(version.path)] == [2, 4]
+    with index.read(state, lambda n, _prior: [row] if n == 3 else []) as reader:
+        assert [v.occurrence_sequence for v in reader.occurrences(version.identity)] == [3]
+        assert [m.sequence for m in reader.member_history(version.path)] == [3, 5]
         latest = reader.claim_law_evidence(
             version.identity, artifact_digest=version.artifact_digest, path=version.path
         )
-        assert latest.sequence == 4
+        assert latest.sequence == 5
         assert (
             reader.read_member_record(latest, lambda oid, path: render_change_set(record)) == record
         )
     with index.read(
-        state, lambda n, _prior: [row] if n == 2 else [], at=coordinate(original, seeded)
+        state, lambda n, _prior: [row] if n == 3 else [], at=coordinate(original, seeded)
     ) as reader:
         assert (
             reader.claim_law_evidence(
                 version.identity, artifact_digest=version.artifact_digest, path=version.path
             ).sequence
-            == 2
+            == 3
         )
 
 

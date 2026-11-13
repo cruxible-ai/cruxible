@@ -783,6 +783,18 @@ class IsolatedExecutorRegistration(BaseModel):
     capabilities: tuple[str, ...] = ()
 
 
+class InitBaseKit(BaseModel):
+    """The base kit creation installs: ``accepted`` at once, or ``proposed`` under
+    independent approval, with the proposal that awaits a second approver."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kit_id: str
+    version: str
+    status: Literal["accepted", "proposed"]
+    proposal_id: str | None = None
+
+
 class InitResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -794,6 +806,9 @@ class InitResult(BaseModel):
     approval_policy_mode: ApprovalPolicyMode
     workspace_advertisement: WorkspaceAdvertisement
     git_workspace_note: GitWorkspaceNote | None = None
+    #: What creation's base kit add did. ``None`` when this init found the
+    #: instance already created.
+    base_kit: InitBaseKit | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CasObjectResult(BaseModel):

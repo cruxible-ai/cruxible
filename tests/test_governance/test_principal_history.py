@@ -270,7 +270,8 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
         proposed=rotated_owner.principal,
         timestamp="2026-08-12T15:00:00.000000Z",
     )
-    assert instance._recovered.head.sequence == 1
+    # Creation's base kit is generation 1; the rotation is generation 2.
+    assert instance._recovered.head.sequence == 2
     assert instance._recovered.head.principals.require_active("owner") == rotated_owner.principal
 
     recovered_owner = _replacement_key(
@@ -287,11 +288,12 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
         proposed=recovered_owner.principal,
         timestamp="2026-08-12T15:01:00.000000Z",
     )
-    assert instance._recovered.head.sequence == 2
+    assert instance._recovered.head.sequence == 3
     assert instance._recovered.head.principals.require_active("owner") == recovered_owner.principal
     assert instance._recovered.history[0].principals.require_active("owner") == owner.principal
+    assert instance._recovered.history[1].principals.require_active("owner") == owner.principal
     assert (
-        instance._recovered.history[1].principals.require_active("owner") == rotated_owner.principal
+        instance._recovered.history[2].principals.require_active("owner") == rotated_owner.principal
     )
 
     base, tree, document_candidate = _candidate(instance)
@@ -307,7 +309,7 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="recovery"),
             proposal_actor_id="recovery",
-            sequence=3,
+            sequence=instance._recovered.head.sequence + 1,
         )
 
 
@@ -381,7 +383,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
             proposal_actor_id="owner",
-            sequence=3,
+            sequence=instance._recovered.head.sequence + 1,
         )
 
 

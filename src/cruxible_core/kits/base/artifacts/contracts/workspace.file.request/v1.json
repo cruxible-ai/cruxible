@@ -1,0 +1,38 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "Which one file to read from an authorized workspace: relative_path names it. workspace names the authorized root (omitted: the attached workspace, else the only one); revision is the working tree.",
+  "fields": {
+    "logical_source": {
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    },
+    "relative_path": {
+      "type": {
+        "kind": "string",
+        "max_len": 1024,
+        "min_len": 1
+      }
+    },
+    "revision": {
+      "optional": true,
+      "type": {
+        "kind": "enum",
+        "members": [
+          "working"
+        ]
+      }
+    },
+    "workspace": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "max_len": 255,
+        "min_len": 1
+      }
+    }
+  },
+  "name": "workspace.file.request",
+  "version": 1
+}

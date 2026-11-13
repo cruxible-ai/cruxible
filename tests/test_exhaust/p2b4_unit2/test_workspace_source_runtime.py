@@ -28,14 +28,14 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt,
-    WorkspaceFileSourceRequestV2,
+    WorkspaceFileRequest,
     workspace_file_contracts,
     workspace_file_signature_digest,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.producer_receipts import journal_producer_receipt_resolver
-from cruxible_core.governance.seed_artifacts.workspace_file import workspace_file_operation
+from cruxible_core.governance.seed_artifacts.workspace_file import workspace_file_operations
 from cruxible_core.procedures.execution import (
     PreparedProcedureRun,
     ProcedureExecutor,
@@ -87,21 +87,8 @@ class _WorkspaceInvoker:
             "bytes_digest",
         }
         assert base64.b64decode(context.input["bytes"], validate=True) == b"hello\n"
-        output = {
-            "input_bucket": "content_kind=text;byte_size=tiny",
-            "source": {
-                "logical_source": context.input["logical_source"],
-                "commitment_digest": context.input["commitment_digest"],
-                "bytes_digest": context.input["bytes_digest"],
-                "byte_length": context.input["byte_length"],
-            },
-            "content": {
-                "kind": "text",
-                "encoding": "utf-8",
-                "text": "hello\n",
-                "lines": ["hello"],
-            },
-        }
+        # The builtin returns no field of its own: core commits the bytes it read.
+        output: dict[str, object] = {}
         return ProviderDriverOutcomeV1(
             envelope=ProviderRuntimeResultEnvelope(
                 protocol_version="2.0",
@@ -124,13 +111,9 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     root = tmp_path / "workspace"
     root.mkdir()
     # Authored without the binding digest: the daemon resolves the attached root.
-    request = WorkspaceFileSourceRequestV2(
-        logical_source="commerce.production.orders",
-        relative_path=relative_path,
-        coordinate_type="postgres-lsn-v1",
-        coordinate={"lsn": "workspace"},
-        selector_type="relation-primary-key-v1",
-        selector={"id": 7, "relation": "orders"},
+    # The authored request: core derives the coordinate and selector from the kind.
+    request = WorkspaceFileRequest(
+        logical_source="commerce.production.orders", relative_path=relative_path
     )
     from cruxible_core.procedures.reference_binding import (
         BoundAcceptedProcedure,
@@ -163,7 +146,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     # operation signature digest. The executor's slot-matching never refits
     # (ruling C2), so the slot's own binding must carry that same operation,
     # not just the admitted occurrence.
-    workspace_operation = workspace_file_operation()
+    workspace_operation, _glob = workspace_file_operations()
     signature_digest = workspace_file_signature_digest()
     old_binding = accepted.procedure.binding_for(source_node.slot)
     assert old_binding is not None

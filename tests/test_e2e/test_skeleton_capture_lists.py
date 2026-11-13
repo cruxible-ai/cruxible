@@ -89,6 +89,9 @@ def _pages_build(checkout: Path) -> Any:
         declared_operation(
             {
                 "name": name,
+                "serves": [
+                    {"fetch_pages": "test.pages", "derive_pages": "test.pages-derive"}[name]
+                ],
                 "in": request,
                 "out": result,
                 "effect": effect,
@@ -229,7 +232,8 @@ class Pages:
             self.derive_inputs.append(dict(context.input))
             body = view(context.input["sources"], context.input["watched"])
             wire = _wire(body, VIEW_URL, source="test.kev-view")
-            return {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
+            return {"capture": {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}}
 
         return Invoker(output=output, incomplete_captures=self.incomplete_captures)
 

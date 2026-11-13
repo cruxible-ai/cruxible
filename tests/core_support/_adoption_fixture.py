@@ -413,7 +413,8 @@ class _Builder:
         self.approver = approver or client_material(instance.root.parent, instance)
         self.base = instance.accepted_coordinate()
         self.tree = dict(instance.tree_at(self.base.git_oid))
-        self.sequence = 0
+        # Creation accepts the base kit after genesis: continue from the head.
+        self.sequence = instance.accepted_history()[-1].sequence
         self.checkpoint_interval = checkpoint_interval
         self.timings = PhaseTimings()
 

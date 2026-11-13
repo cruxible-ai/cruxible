@@ -33,7 +33,7 @@ from tests.test_procedures import test_procedure_source_runs as fixtures
 
 
 class _Invoker(fixtures._WorkspaceInvoker):
-    """The workspace adapter for the Source read; any plain output for the Call."""
+    """The workspace adapter for the Source read; ``{"value": 2}`` for the Call."""
 
     def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):  # type: ignore[no-untyped-def]
         if isinstance(context.input, dict) and "bytes" in context.input:
@@ -47,7 +47,7 @@ class _Invoker(fixtures._WorkspaceInvoker):
         self.spawn_calls += 1
         return ProviderDriverOutcomeV1(
             envelope=ProviderRuntimeResultEnvelope(
-                protocol_version="2.0", run_id=context.run_id, status="ok", output={}
+                protocol_version="2.0", run_id=context.run_id, status="ok", output={"value": 2}
             ),
             stderr="",
             duration_seconds=0.001,
@@ -59,32 +59,38 @@ class _Invoker(fixtures._WorkspaceInvoker):
 
 
 def _source_then_call(procedure: ProcedureArtifact) -> ProcedureArtifact:
-    """Add a second, Call, node through the same ``read`` slot the Source uses.
+    """Add a second, plain, Call node through its own ``compute`` slot.
 
-    Both nodes bind the same slot (a Line binds every slot once, regardless of
-    how many nodes name it), so no extra Contract pins are needed -- the
-    Call's input/output are exactly the slot's signature. ``fixtures._world``
-    always lowers through ``name_procedure`` now, so this is always the
-    name-referenced (format 7) node set.
+    A ``workspace.file`` slot's result is the Capture core reads, so every call
+    on it acquires; the plain call names the fixture ``test.compute``
+    capability, which a provider build serves. ``fixtures._world`` always
+    lowers through ``name_procedure``, so this is the name-referenced node set.
     """
 
     from cruxible_client.contracts.procedures.models import CallNode
+    from cruxible_client.contracts.procedures.slots import ProcedureSlot
+    from tests.support.capabilities import pinned_slot
+    from tests.support.operation_world import compute_capability
 
     source, shape = procedure.definition.nodes
     call_node = CallNode(
         node_id="records",
-        slot="read",
-        input={},
+        slot="compute",
+        input={"value": 1},
         **{"as": "records"},
         next="shape",
     )
     definition = procedure.definition.model_copy(
         update={
+            "slots": {
+                **procedure.definition.slots,
+                "compute": ProcedureSlot.model_validate(pinned_slot(compute_capability())),
+            },
             "nodes": (
                 source.model_copy(update={"node_id": "export", "next": "records"}),
                 call_node,
                 shape,
-            )
+            ),
         }
     )
     return procedure.model_copy(
@@ -96,9 +102,28 @@ def _source_then_call(procedure: ProcedureArtifact) -> ProcedureArtifact:
 
 
 def _world(tmp_path: Path) -> tuple[Any, Any, Path, Any]:
+    from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
+    from cruxible_client.contracts.providers import provider_digest
+    from tests.support.operation_world import build_files, contract_files, operation_build
+
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
+    build = operation_build()
+    fixtures._accept_more(
+        instance, owner, {**contract_files(), **build_files(build)}, name="compute-provider"
+    )
     both = _source_then_call(procedure)
-    line = fixtures._served_line(instance, both, policy)
+    served = fixtures._served_line(instance, both, policy)
+    line = served.model_copy(
+        update={
+            "bindings": {
+                **served.bindings,
+                "compute": LineBinding(
+                    build=binding_pin(build.identity, provider_digest(build).tagged),
+                    operation="compute",
+                ),
+            }
+        }
+    )
     mandate = fixtures._line_mandate(line, both)
     fixtures._accept_more(
         instance,

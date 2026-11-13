@@ -1,0 +1,124 @@
+{
+  "artifacts": [
+    {
+      "artifact_digest": "sha256:b8452ca24e8b140b7ac4d6fc8e8cc41f3008208d6c6cf4230973aadca4a0eaad",
+      "path": "capabilities/web.fetch.pages/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:6d7c86ec3867da00c8ecfde5113bafabf96e7f2a2baea7fda914cf3ee6fef6a7",
+      "path": "capabilities/web.fetch/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:2afb92060e52c9a1eadd0c3c5df4f08250bae68ed74f0fc7e4adb33671711ca5",
+      "path": "capabilities/web.render.dom/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:c53114cc42bf1aa158acc1e034aa530ac0c519af1074e037c9a01ad911a5fbbe",
+      "path": "capabilities/web.render/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:e157aa76b320d4f1ab6e7692599f8c313947e1bd248bf2d360f11083e7a51f77",
+      "path": "capabilities/web.search.results/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:f659ef25f7d5aeaccb506eea6575a25578857f9303b57fffb1877a73c7bb6256",
+      "path": "capabilities/web.search/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:b751c693fd6e2203ec5d445faac08d08058c5547f2c7d3a9fc073618daf2f0c2",
+      "path": "capabilities/workspace.file/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:9ae7e2ec4204c7b9b418c9b0fa2e7eb76ad6ac9a3d5088f7cfbacf9c24b2b0e4",
+      "path": "capabilities/workspace.files/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:28d0f58bab294facf0f10187eb6771cc6c40eacb96e9f78cef500d0c0b2b9ef0",
+      "path": "capture-contracts/web.search-results.json"
+    },
+    {
+      "artifact_digest": "sha256:67bf0a00b7f614fbe3c0d6579ac0cd4a5690b30bff1cf2a63caa712d0821cb38",
+      "path": "contracts/web.fetch.pages.failure/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:4ef9ca61bfce39d44bcb2ac0a63c98dd05a33e23c015647ebc999f1003a9f535",
+      "path": "contracts/web.fetch.pages.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:106bc80e150787fdcd299bdb17ff777e3bd2b3ca100c729de9dd2ae6fbe97db9",
+      "path": "contracts/web.fetch.pages.result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:2f01ed6821337f937c6c77bba4910e06a10fb65a57232a1119d858fa672ecb3a",
+      "path": "contracts/web.fetch.query_param/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:1f4eefbeef292080ab075e22d068a4e45f6b01170802f2ca470daa2329444137",
+      "path": "contracts/web.fetch.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:0a349322bad1fb456e4363692494b8e8650edf8fe2abbcee25cab700fcf24579",
+      "path": "contracts/web.fetch.result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:b08f4c08439b3e6e479859296d0a29258f21146b7020cb4485ee41e2cd65f1f5",
+      "path": "contracts/web.render.dom.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:fd3476582dc279fcc46a5cfc8d085129e334a389f703369cc0d1fc9f0d0742aa",
+      "path": "contracts/web.render.dom.result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:c0e06e5cbd863213018a8026139238fd3863f579bd1876833ac66646a9f8d6f9",
+      "path": "contracts/web.render.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:98ad590db76fb64359263725031b5bfc17f6adfa339f38466d9b584e6053213a",
+      "path": "contracts/web.render.result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:cc29b9d5bee37d27f19137629219656285d1aa342a125534958bae5bb467bdff",
+      "path": "contracts/web.search-result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:c3755c54c1941b4fee3fbcbff9aa90eabf43ea7d9b77313c20cf1e83fdc6fb9f",
+      "path": "contracts/web.search.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:355c56ebaf382f52488a4c552a658b827a4ac858008e5df0d7b35008b4f8fdf1",
+      "path": "contracts/web.search.result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:9bc90ac7dc6588126a79a8e0febed107cb65004c897e8723c637c8ca7b072b7c",
+      "path": "contracts/web.search.results.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:9fdc95b768e0e175f3d4b58f33482df7b49a7c0b2a53e11e14277b07a931eb8b",
+      "path": "contracts/web.search.results.result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:8b0e608c43148f94b2202b7fd23e4c6a9424f43bce6d82d292a69fe5ea889a18",
+      "path": "contracts/workspace.file.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:e0ebd7475a603ba3942a86e8742d9d2fde6c17157ffd9a6ad04797c0d652edf9",
+      "path": "contracts/workspace.file.result/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:3cc368bbe921ad83c5b151d23fe896f0b9c0e89813209d8c08270057b1044bad",
+      "path": "contracts/workspace.files.request/v1.json"
+    },
+    {
+      "artifact_digest": "sha256:94a02051ca920df020b187f3c1c297a803fe312b944bdbc23e533835a5781531",
+      "path": "contracts/workspace.files.result/v1.json"
+    }
+  ],
+  "kit_id": "base",
+  "owns": [
+    "web.",
+    "workspace."
+  ],
+  "provenance": null,
+  "tag": "playbill-kit-manifest-v1",
+  "version": "1.0.0"
+}

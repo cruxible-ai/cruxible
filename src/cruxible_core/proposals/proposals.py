@@ -2242,7 +2242,12 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             )
         accepted_procedure = pinned
     from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.operation_index import line_capture_output_map, line_slot_map
+    from cruxible_core.providers.operation_index import (
+        line_capture_output_map,
+        line_slot_map,
+        memoized_slot_fitter,
+        tree_capability_side,
+    )
 
     def child(identity: ArtifactIdentity) -> Any:
         accepted = context.resolved.procedures.get(identity.qualified)
@@ -2274,6 +2279,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             if (provider := context.resolved.providers.get(binding.build.target.qualified))
             is not None
         },
+        fitter=memoized_slot_fitter(tree_capability_side(context.candidate_tree)),
         capture_outputs=capture_outputs,
         contracts=_candidate_contract_resolver(context.candidate_tree),
         enum_members=tree_enum_resolver(context.candidate_tree),
@@ -2584,7 +2590,10 @@ def _capability_member(context: _MemberContext) -> _MemberVerdict:
         evaluate_capability_law,
         parse_capability,
     )
-    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+    from cruxible_core.capabilities.artifact import (
+        BUILTIN_CAPABILITY_NAMES,
+        bundled_version_problems,
+    )
 
     capability = parse_capability(context.content, path=context.path)
     problems = evaluate_capability_law(
@@ -2594,7 +2603,7 @@ def _capability_member(context: _MemberContext) -> _MemberVerdict:
         parent_content=context.parent_content,
         content=context.content,
         builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
-    )
+    ) + bundled_version_problems(capability)
     if problems:
         return _MemberVerdict(
             diagnostics=tuple(

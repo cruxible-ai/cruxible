@@ -59,7 +59,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.core_support._light_capture_support import file_contract as capture_contract
 from tests.core_support._subject_kind_support import core_assigned
 from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.evidence_files import remove_later

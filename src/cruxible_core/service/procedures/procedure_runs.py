@@ -271,6 +271,10 @@ from cruxible_core.procedures.terminal_dependencies import (
     CaptureRootCache,
     TerminalItemDependencyManifestV1,
 )
+from cruxible_core.providers.operation_index import (
+    accepted_capability_side,
+    memoized_slot_fitter,
+)
 from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
     translate_provider_budget,
@@ -944,21 +948,26 @@ def _accepted_procedure(
 
         selected = dict(bindings or {})
         if bindings is None:
-            from cruxible_client.contracts.procedures.line_specs import (
-                provisional_slot_signatures,
-            )
+            from cruxible_client.contracts.procedures.line_specs import slot_needs
+            from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
             from cruxible_core.capabilities.lookup import capability_in_projection
-            from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
-            from cruxible_core.providers.operation_index import resolve_slot_bindings
+            from cruxible_core.providers.operation_index import (
+                memoized_slot_fitter,
+                projection_build_reader,
+                projection_capability_side,
+                resolve_slot_bindings,
+            )
 
             selected = resolve_slot_bindings(
                 projection.typed.connection,
-                provisional_slot_signatures(
+                slot_needs(
                     dict(procedure.definition.slots),
-                    lambda ref: capability_in_projection(projection, ref),
-                    builtin=builtin_slot_signatures(),
+                    capabilities=lambda ref: capability_in_projection(projection, ref),
+                    builtin_names=BUILTIN_CAPABILITY_NAMES,
                 ),
                 dict(requested_bindings or {}),
+                fitter=memoized_slot_fitter(projection_capability_side(projection.typed)),
+                builds=projection_build_reader(projection.typed),
             )
         return bind_procedure_references(accepted, lookup=lookup, bindings=selected)
 
@@ -973,7 +982,13 @@ def direct_run_slot_bindings(
     """A direct run's ephemeral bindings for every slot, its invoked children's included."""
 
     from cruxible_core.capabilities.lookup import capability_in_projection
-    from cruxible_core.providers.operation_index import line_slot_map, resolve_slot_bindings
+    from cruxible_core.providers.operation_index import (
+        line_slot_map,
+        memoized_slot_fitter,
+        projection_build_reader,
+        projection_capability_side,
+        resolve_slot_bindings,
+    )
 
     with instance.bind_accepted_projection(coordinate) as projection:
         procedure = projection.typed.source(f"Procedure:{name}")
@@ -992,6 +1007,8 @@ def direct_run_slot_bindings(
                 lambda ref: capability_in_projection(projection, ref),
             ),
             requested,
+            fitter=memoized_slot_fitter(projection_capability_side(projection.typed)),
+            builds=projection_build_reader(projection.typed),
         )
 
 
@@ -1004,10 +1021,10 @@ def _line_shape_at(
 
     from cruxible_client.contracts.procedures.line_specs import (
         line_capture_outputs,
-        line_slot_signatures,
+        line_slot_needs,
     )
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
     from cruxible_core.capabilities.lookup import capability_in_projection
-    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
     from cruxible_core.providers.operation_index import line_child_definitions
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -1018,10 +1035,10 @@ def _line_shape_at(
 
         definition = authored_procedure(accepted).definition
         children = line_child_definitions(definition, child)
-        slots = line_slot_signatures(
+        slots = line_slot_needs(
             definition,
             capabilities=lambda ref: capability_in_projection(projection, ref),
-            builtin=builtin_slot_signatures(),
+            builtin_names=BUILTIN_CAPABILITY_NAMES,
             child=children,
         )
     return slots, line_capture_outputs(definition, child=children)
@@ -1767,6 +1784,8 @@ def _plan_external_occurrences(
             "node_id": node.node_id,
             "repeat_node_id": repeat_node_id,
             "slot": slot,
+            "capability": binding.capability,
+            "fit": binding.fit,
             "provider_artifact_digest": provider.artifact_digest,
             "operation": operation,
             "operation_signature_digest": binding.operation_signature_digest,
@@ -4178,6 +4197,7 @@ def _run_playbill_line(
         predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
         slots=slots,
         providers={item.provider.identity.qualified: item for item in providers.values()},
+        fitter=memoized_slot_fitter(accepted_capability_side(instance, coordinate)),
         capture_outputs=capture_outputs,
         contracts=accepted_contract_resolver(instance, coordinate),
         enum_members=accepted_enum_resolver(instance, coordinate),
@@ -5323,6 +5343,8 @@ def service_recover_provider_invocations(
                     operation_signature_digest=(
                         occurrence.local_execution.operation_signature_digest
                     ),
+                    capability=occurrence.capability,
+                    fit=occurrence.fit,
                     protocol_version=occurrence.local_execution.protocol_version,
                     capture_contracts=occurrence.capture_contracts,
                     input_digest=started.input_digest,

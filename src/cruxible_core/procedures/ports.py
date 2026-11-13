@@ -17,14 +17,16 @@ from cruxible_client.contracts.procedures.acquisition_rules import (
     acquisition_rules_digest,
 )
 from cruxible_client.contracts.provider_execution import ProviderExternalOccurrencePlan
-from cruxible_client.contracts.workspace_file import is_workspace_file_signature
+from cruxible_client.contracts.workspace_file import builtin_workspace_operation
 
 OperationEffect = Literal["pure", "external_read", "external_mutation"]
 #: Core built-in operations the executor serves specially, named by the port so
 #: the executor never compares signatures itself.
-BuiltinOperation = Literal["workspace.file"]
-#: The workspace builtin, recognized by its exact signature in ``bound_operation``.
+BuiltinOperation = Literal["workspace.file", "workspace.files"]
+#: The workspace builtins, recognized by their exact signatures in
+#: ``bound_operation``: one path, or a glob (ruling O2).
 WORKSPACE_FILE_BUILTIN: Final[BuiltinOperation] = "workspace.file"
+WORKSPACE_FILES_BUILTIN: Final[BuiltinOperation] = "workspace.files"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +47,7 @@ class BoundOperation:
 def bound_operation(occurrence: ProviderExternalOccurrencePlan) -> BoundOperation:
     """The admitted occurrence, read as a bound operation.
 
-    Core recognizes its built-in ``workspace.file`` by exact signature.
+    Core recognizes its built-in workspace reads by exact signature.
     """
 
     return BoundOperation(
@@ -57,11 +59,7 @@ def bound_operation(occurrence: ProviderExternalOccurrencePlan) -> BoundOperatio
         out_digest=occurrence.operation.out.digest,
         effect=occurrence.effect_class,
         entrypoint=occurrence.local_execution.entrypoint,
-        builtin=(
-            WORKSPACE_FILE_BUILTIN
-            if is_workspace_file_signature(occurrence.operation_signature_digest)
-            else None
-        ),
+        builtin=builtin_workspace_operation(occurrence.operation_signature_digest),
     )
 
 
@@ -103,5 +101,7 @@ __all__ = [
     "BuiltinOperation",
     "OperationEffect",
     "ResolvedAcquisitionRules",
+    "WORKSPACE_FILES_BUILTIN",
+    "WORKSPACE_FILE_BUILTIN",
     "bound_operation",
 ]

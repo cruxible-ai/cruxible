@@ -105,6 +105,9 @@ def _osv_build(checkout: Path) -> Any:
         declared_operation(
             {
                 "name": name,
+                "serves": [
+                    {"fetch_advisories": "test.osv", "derive_matches": "test.osv-derive"}[name]
+                ],
                 "in": request,
                 "out": result,
                 "effect": effect,
@@ -286,7 +289,8 @@ class Osv:
             self.calls.append("derive")
             body = matches(context.input["sources"], context.input["components"], self.unmatched)
             wire = _wire(body, "https://derive.test/osv-matches", source="test.osv-matches")
-            return {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
+            return {"capture": {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}}
 
         return Invoker(output=output)
 

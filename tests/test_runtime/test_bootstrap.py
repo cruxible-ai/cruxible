@@ -26,7 +26,9 @@ def test_opt_in_initialization_creates_managed_layout_and_exact_genesis(
 
     assert descriptor.tag == "playbill-instance-v1"
     assert descriptor.git_object_format == "sha256"
-    assert descriptor.genesis.git_oid == instance.inspect().head_oid
+    # Genesis is generation 0; creation's base kit add is the head, its child.
+    assert descriptor.genesis.git_oid == instance.accepted_history()[0].oid
+    assert instance._ledger.parent_of(instance.inspect().head_oid) == descriptor.genesis.git_oid
     assert descriptor.genesis.bootstrap_root != "sha256:" + "00" * 32
     assert instance._ledger.parent_of(descriptor.genesis.git_oid) is None
     assert instance._verified_genesis.descriptor.parent_generation_root == (

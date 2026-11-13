@@ -27,6 +27,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
+    MAX_WORKSPACE_GLOB_FILES,
     ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
     WorkspaceFileGlobRequestV1,
@@ -68,6 +69,27 @@ class WorkspaceFileReadRefused(Exception):
             )
         )
         super().__init__(message)
+
+
+#: The most directory entries one glob read examines, across every pattern
+#: component: sixteen times the largest match cap (D-R41). Past it the read
+#: refuses ``glob_scan_budget``, so a glob's namespace work is bounded whatever
+#: the workspace holds.
+MAX_GLOB_SCAN_ENTRIES = 16 * MAX_WORKSPACE_GLOB_FILES
+
+
+class WorkspaceReadOverRunBudget(Exception):
+    """A file holds more bytes than the run's remaining Capture-byte budget.
+
+    Raised while reading, once ``read_bytes`` (at most the budget plus one byte)
+    have been read: the rest is never read, and nothing is stored. Not a
+    refusal of the path: the run refuses for its byte budget.
+    """
+
+    def __init__(self, *, run_budget_bytes: int, read_bytes: int) -> None:
+        self.run_budget_bytes = run_budget_bytes
+        self.read_bytes = read_bytes
+        super().__init__("workspace source exceeds the run's remaining Capture-byte budget")
 
 
 def workspace_binding_digest(*, instance_id: str, canonical_root: Path) -> str:
@@ -215,18 +237,36 @@ class WorkspaceFileReader:
     def expand(self, request: WorkspaceFileGlobRequestV1) -> tuple[str, ...]:
         """The relative paths a glob matches under its workspace, sorted, within its cap.
 
-        One directory listing per directory a pattern component reads, never a
-        tree walk. A match is a candidate only: each is read afterwards as an
-        ordinary ``workspace.file`` read, which applies every containment and
+        One incremental directory scan per directory a pattern component reads,
+        never a tree walk. A match is a candidate only: each is read afterwards
+        as an ordinary one-file read, which applies every containment and
         no-follow check. Hidden entries match only a pattern that starts with
         ``.``, and Git metadata, Cruxible control and key paths and managed
-        roots never match. More matches than ``max_files`` refuses
-        ``glob_over_cap``.
+        roots never match.
+
+        The work is bounded whatever the workspace holds: the scan refuses
+        ``glob_over_cap`` as soon as the matches pass ``max_files``, and
+        ``glob_scan_budget`` once it has examined more than
+        ``MAX_GLOB_SCAN_ENTRIES`` directory entries across every component. A
+        refusal is never a truncated list and never says a file is absent; a
+        result is every match, sorted by its path's bytes.
         """
 
         root = self._resolve_root(request.workspace)
         found: list[str] = [""]
         parts = request.glob.split("/")
+        examined = 0
+
+        def examine() -> None:
+            nonlocal examined
+            examined += 1
+            if examined > MAX_GLOB_SCAN_ENTRIES:
+                raise WorkspaceFileReadRefused(
+                    "glob_scan_budget",
+                    f"the glob examined more than {MAX_GLOB_SCAN_ENTRIES} directory entries; "
+                    "name a narrower pattern or a directory holding fewer entries",
+                )
+
         for position, part in enumerate(parts):
             leaf = position == len(parts) - 1
             pattern = any(character in part for character in "*?[")
@@ -235,41 +275,57 @@ class WorkspaceFileReader:
                 directory = root.joinpath(*prefix.split("/")) if prefix else root
                 if pattern:
                     try:
-                        names = sorted(
-                            name
-                            for name in os.listdir(directory)
-                            if fnmatch.fnmatchcase(name, part)
-                            and (part.startswith(".") or not name.startswith("."))
-                        )
+                        scanner = os.scandir(directory)
                     except (FileNotFoundError, NotADirectoryError):
                         continue
                     except PermissionError as exc:
                         raise WorkspaceFileReadRefused(
                             "unreadable", "a workspace glob directory cannot be listed"
                         ) from exc
+                    with scanner:
+                        for entry in scanner:
+                            examine()
+                            name = entry.name
+                            if not fnmatch.fnmatchcase(name, part) or (
+                                name.startswith(".") and not part.startswith(".")
+                            ):
+                                continue
+                            self._candidate(root, prefix, name, leaf=leaf, into=following)
+                            if leaf and len(following) > request.max_files:
+                                raise WorkspaceFileReadRefused(
+                                    "glob_over_cap",
+                                    f"the glob matches more than its {request.max_files} files",
+                                )
                 else:
-                    names = [part]
-                for name in names:
-                    relative = f"{prefix}/{name}" if prefix else name
-                    try:
-                        self._deny_path(tuple(relative.split("/")))
-                        self._check_managed_root(root.joinpath(*relative.split("/")))
-                        status = os.lstat(root.joinpath(*relative.split("/")))
-                    except (WorkspaceFileReadRefused, FileNotFoundError, NotADirectoryError):
-                        continue
-                    # A directory is never a match; only a directory (never a
-                    # link to one) is walked into. A link or special file that
-                    # matches is a candidate, and its read refuses it.
-                    if stat.S_ISDIR(status.st_mode) != leaf:
-                        following.append(relative)
+                    examine()
+                    self._candidate(root, prefix, part, leaf=leaf, into=following)
+                    if leaf and len(following) > request.max_files:
+                        raise WorkspaceFileReadRefused(
+                            "glob_over_cap",
+                            f"the glob matches more than its {request.max_files} files",
+                        )
             found = following
-        matches = tuple(sorted(found, key=lambda item: item.encode("utf-8")))
-        if len(matches) > request.max_files:
-            raise WorkspaceFileReadRefused(
-                "glob_over_cap",
-                f"the glob matches more than its {request.max_files} files",
-            )
-        return matches
+        return tuple(sorted(found, key=lambda item: item.encode("utf-8")))
+
+    def _candidate(
+        self, root: Path, prefix: str, name: str, *, leaf: bool, into: list[str]
+    ) -> None:
+        """Keep ``prefix/name`` when it is a candidate for this glob component.
+
+        A directory is never a match; only a directory (never a link to one) is
+        walked into. A link or special file that matches is a candidate, and
+        its read refuses it.
+        """
+
+        relative = f"{prefix}/{name}" if prefix else name
+        try:
+            self._deny_path(tuple(relative.split("/")))
+            self._check_managed_root(root.joinpath(*relative.split("/")))
+            status = os.lstat(root.joinpath(*relative.split("/")))
+        except (WorkspaceFileReadRefused, FileNotFoundError, NotADirectoryError):
+            return
+        if stat.S_ISDIR(status.st_mode) != leaf:
+            into.append(relative)
 
     def presence(
         self,
@@ -604,6 +660,7 @@ class WorkspaceFileReader:
         derived_request_digest: str,
         read_at: datetime,
         directory_cache: DirectoryEntryCache | None = None,
+        run_budget_bytes: int | None = None,
     ) -> WorkspaceFileReadResultV1:
         """Read one file, with every containment and no-follow check strict.
 
@@ -611,6 +668,12 @@ class WorkspaceFileReader:
         directory's entries across sibling reads instead of relisting it per
         file; omitted (the default), every call lists its own directory, as
         before.
+
+        ``run_budget_bytes`` is the run's remaining Capture-byte budget: the read
+        stops one byte past ``min(resolved_max_bytes, run_budget_bytes)``. A file
+        past the kind's budget refuses ``size_budget``; one within it but past the
+        run's raises :class:`WorkspaceReadOverRunBudget`. Either way no more is
+        read and nothing is kept.
 
         Every check that decides what is read runs on a held descriptor:
         each component is opened no-follow from the root's descriptor, and
@@ -691,15 +754,25 @@ class WorkspaceFileReader:
                     "changed_during_read", "workspace source escaped its authorized root"
                 )
             self._check_managed_root(opened_path)
+            limit = (
+                resolved_max_bytes
+                if run_budget_bytes is None
+                else max(0, min(resolved_max_bytes, run_budget_bytes))
+            )
             data = bytearray()
-            while len(data) <= resolved_max_bytes:
-                chunk = os.read(descriptors[-1], min(64 * 1024, resolved_max_bytes + 1 - len(data)))
+            while len(data) <= limit:
+                chunk = os.read(descriptors[-1], min(64 * 1024, limit + 1 - len(data)))
                 if not chunk:
                     break
                 data.extend(chunk)
-            if len(data) > resolved_max_bytes:
+            if len(data) > limit and limit == resolved_max_bytes:
                 raise WorkspaceFileReadRefused(
                     "size_budget", "workspace source exceeds the admitted byte budget"
+                )
+            if len(data) > limit:
+                assert run_budget_bytes is not None
+                raise WorkspaceReadOverRunBudget(
+                    run_budget_bytes=run_budget_bytes, read_bytes=len(data)
                 )
             after = os.stat(actual_leaf, dir_fd=descriptors[-2], follow_symlinks=False)
             resolved = self._fd_path(descriptors[-1])
@@ -786,7 +859,9 @@ class WorkspaceFileReader:
 
 
 __all__ = [
+    "MAX_GLOB_SCAN_ENTRIES",
     "WorkspaceFileReadRefused",
+    "WorkspaceReadOverRunBudget",
     "WorkspaceFileReadResultV1",
     "WorkspaceFileReader",
     "workspace_binding_digest",

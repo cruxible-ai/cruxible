@@ -1,0 +1,114 @@
+{
+  "artifact_format": "cruxible-capture-contract-v4",
+  "components": {
+    "commitment_canonicalizer": {
+      "target": {
+        "kind": "Contract",
+        "name": "sha256-bytes-v1"
+      }
+    },
+    "coordinate_grammar": null,
+    "coordinate_schemas": [
+      {
+        "target": {
+          "kind": "Contract",
+          "name": "http-response-v1"
+        }
+      }
+    ],
+    "proof_adapter": null,
+    "provenance_rule": {
+      "target": {
+        "kind": "Contract",
+        "name": "playbill.external.daemon-fetched-v1"
+      }
+    },
+    "replay_policy": {
+      "target": {
+        "kind": "Contract",
+        "name": "playbill.external.retained-selection-replay-v1"
+      }
+    },
+    "selector_schemas": [
+      {
+        "target": {
+          "kind": "Contract",
+          "name": "whole-response-v1"
+        }
+      }
+    ],
+    "source_subject_mapping": {
+      "target": {
+        "kind": "Contract",
+        "name": "playbill.external.record-subject-v1"
+      }
+    }
+  },
+  "decoding": {
+    "encoding": "identity",
+    "format": "json",
+    "limits": {
+      "decoded_bytes": 1048576,
+      "depth": 8,
+      "records": 1000
+    }
+  },
+  "epistemic_grade": "derived",
+  "identity": {
+    "kind": "CaptureContract",
+    "name": "web.search-results"
+  },
+  "layout": {
+    "records": {
+      "results": {
+        "at": "/results/*",
+        "fields": {
+          "rank": {
+            "at": "rank",
+            "parse": "int"
+          },
+          "snippet": {
+            "at": "snippet",
+            "presence": "optional"
+          },
+          "title": {
+            "at": "title"
+          }
+        },
+        "key": {
+          "url": {
+            "at": "url",
+            "type": "string{max_len: 2048}"
+          }
+        },
+        "row": {
+          "digest": "sha256:cc29b9d5bee37d27f19137629219656285d1aa342a125534958bae5bb467bdff",
+          "name": "web.search-result",
+          "version": 1
+        }
+      }
+    }
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "replay": "attested",
+  "retention_erasure_policy": {
+    "body_retention": "required_for_duration",
+    "erasure": "prohibited",
+    "erasure_rule": null,
+    "minimum_retention": {
+      "microseconds": 2592000000000,
+      "tag": "playbill-duration-v1"
+    },
+    "selector_privacy": "direct_allowed"
+  },
+  "selection_budget": {
+    "max_bytes": 16777216,
+    "max_items": 1,
+    "max_rows": 1,
+    "tag": "playbill-capture-selection-budget-v1"
+  },
+  "shape": "http_response"
+}

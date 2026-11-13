@@ -499,9 +499,11 @@ def check_upload_procedure(
 ) -> None:
     """Refuse, before anything is staged, a Procedure that cannot land an upload.
 
-    It must read a ``workspace.file`` Source, and no Capture it lands that way
-    may be ``never_materialize``: an import fires on the retained Capture body,
-    so a contract that forbids keeping it could never import the upload.
+    It must read one file through a ``workspace.file`` call, whose authored
+    request names the path the daemon sets to the staged upload (a
+    ``workspace.files`` glob reads no upload). No Capture it lands that way may
+    be ``never_materialize``: an import fires on the retained Capture body, so a
+    contract that forbids keeping it could never import the upload.
     """
 
     from cruxible_core.runtime.instance import accepted_coordinate_at
@@ -512,13 +514,15 @@ def check_upload_procedure(
 
     coordinate = accepted_coordinate_at(instance, at)
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, bind_references=True)
-    from cruxible_core.procedures.declared_inputs import reads_workspace
+    from cruxible_core.procedures.declared_inputs import reads_one_workspace_file
 
     slots = accepted.procedure.definition.slots
     reads = tuple(
         node
         for node in accepted.procedure.definition.nodes
-        if isinstance(node, CallNode) and node.acquires and reads_workspace(slots.get(node.slot))
+        if isinstance(node, CallNode)
+        and node.acquires
+        and reads_one_workspace_file(slots.get(node.slot))
     )
     if not reads:
         raise CaptureUploadRefused(

@@ -42,7 +42,7 @@ def test_provider_maintenance_batches_every_changed_table(monkeypatch, size):
         for i in range(size)
         for build in ("a", "b")
     ]
-    operations = [(row[0], "compute", "in-digest", "out-digest", "pure") for row in providers]
+    operations = [(row[0], "compute", "test.compute", "pure") for row in providers]
     insert_rows(connection, "providers", providers)
     insert_rows(connection, "provider_operations", operations)
     sources = {row[1]: b"" for row in providers}
@@ -178,7 +178,13 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     accepted = world(tmp_path / "accepted", operation_build())
     author_procedure(accepted, slotted_spec())
     author_line(accepted)
-    tree = dict(accepted.tree_at(accepted.accepted_coordinate().git_oid))
+    # The minimal warm projection below has no Document tables: leave out the
+    # base kit's receipt Document every instance holds from creation.
+    tree = {
+        path: content
+        for path, content in accepted.tree_at(accepted.accepted_coordinate().git_oid).items()
+        if not path.startswith("documents/")
+    }
     path = line_spec_path(LINE)
     prototype = parse_line_spec(tree.pop(path), path=path)
     lines = [

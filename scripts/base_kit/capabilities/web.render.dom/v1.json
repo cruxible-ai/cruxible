@@ -1,0 +1,9 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Loads one page in a browser, which runs the page's scripts and pulls its subresources, and returns the serialized DOM as one Capture.",
+  "effect": "external_read",
+  "in": "web.render.dom.request@1",
+  "name": "web.render.dom",
+  "out": "web.render.dom.result@1",
+  "version": 1
+}

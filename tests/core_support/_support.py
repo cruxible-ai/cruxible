@@ -62,6 +62,7 @@ def build_inputs() -> tuple[str, ...]:
     """
 
     import cruxible_core
+    import cruxible_core.kits.base_kit as base_kit_module
     import cruxible_core.ledger.bootstrap as bootstrap_module
     import cruxible_core.runtime.instance as instance_module
 
@@ -73,6 +74,8 @@ def build_inputs() -> tuple[str, ...]:
         repr(bootstrap_module.GENESIS_SEEDS),
         repr(bootstrap_module.seeded_procedure_runtime_policy()),
         repr(instance_module.initial_authority_matrix()),
+        # Creation installs the bundled base kit after genesis.
+        repr(base_kit_module.BASE_KIT_PIN),
     )
 
 
@@ -104,6 +107,39 @@ def initialize_fresh(
         workspace_roots=(tmp_path / "workspace",),
         git_object_format=object_format,
         timestamp=FIXED_TIMESTAMP,
+    )
+    return instance, owner
+
+
+def initialize_without_base_kit(
+    tmp_path: Path,
+    *,
+    object_format: GitObjectFormat = "sha256",
+    instance_id: str = "inst_playbill_test",
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """A fresh instance whose creation leaves the base kit out.
+
+    For tests of proposal evidence, ledger and kit mechanics that count every
+    proposal, evidence file, Document or generation from genesis, or that
+    install their own kit named ``base``; the bundled base kit plays no part in
+    what they check. Never shared through a world template.
+    """
+
+    managed_root = tmp_path / f"managed-{object_format}"
+    owner = generate_client(
+        tmp_path, managed_root=managed_root, principal_id="owner", roles=("owner",)
+    )
+    reviewer = generate_client(
+        tmp_path, managed_root=managed_root, principal_id="reviewer", roles=("reviewer",)
+    )
+    instance = PlaybillInstance.initialize(
+        managed_root,
+        instance_id=instance_id,
+        client_principals=(owner.principal, reviewer.principal),
+        workspace_roots=(tmp_path / "workspace",),
+        git_object_format=object_format,
+        timestamp=FIXED_TIMESTAMP,
+        install_base_kit=False,
     )
     return instance, owner
 

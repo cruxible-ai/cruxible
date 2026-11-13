@@ -5,7 +5,7 @@
 kind declares no ``results`` record set (it carries the kind's decoding and no
 layout, since a layout declares at least one record set). Bound and run, it
 writes an empty ``results``: a complete read with no records, on which
-``when_absent: mirror`` retires every title (checked on today's engine with
+``when_absent: mirror`` retires every rank (checked on today's engine with
 today's full extract; a document with no ``results`` key at all is read as
 incomplete and retires nothing). Layout coverage refuses it before it can run.
 
@@ -17,39 +17,39 @@ the run reads zero records as a complete read only when the producer's layout
 declares that record set, and the binding check is what refuses a producer that
 does not declare it. So ``pilot-results-empty`` binds (``fit: identical``), its
 run's extract reads 0 records with ``complete: true``, and ``mirror`` proposes
-retiring every title; the proposal, activated, leaves no title live. Core does
+retiring every rank; the proposal, activated, leaves no rank live. Core does
 not look inside the bytes to tell "no results" from "did not produce results"
 (decision 8); the producer's declared layout is its word that the set is there.
 
 Transcript shape::
 
-    ... scenario 5's world: pilot-results bound, one run, 3 titles live
+    ... scenario 5's world: pilot-results bound, one run, 3 ranks live
     $ cruxible provider install pilot-results-thin
     layout coverage of web.search-results by pilot-results-thin: missing record set results
     $ cruxible authoring submit line.json   (results -> pilot-results-thin)
       refused cruxible.line.binding_unfit
       Slot `results` needs web.search.results@1. `pilot-results-thin#web.search.results`
       declares it but does not fit: ... record set results ...
-    $ cruxible get Line:pilot.search-titles      results still -> pilot-results
-    $ cruxible line run pilot.search-titles      succeeded; nothing proposed
-      3 titles live; nothing retired
+    $ cruxible get Line:pilot.search-ranks      results still -> pilot-results
+    $ cruxible line run pilot.search-ranks      succeeded; nothing proposed
+      3 ranks live; nothing retired
     $ cruxible provider install pilot-results-empty
     layout coverage of web.search-results by pilot-results-empty: covered
     $ cruxible authoring submit line.json   (results -> pilot-results-empty)
       accepted; results: web.search.results@1, identical
-    $ cruxible line run pilot.search-titles
+    $ cruxible line run pilot.search-ranks
       succeeded; extract hits read 0 records, complete; proposal <id>
     $ cruxible proposal activate <id>
-      0 titles live; 3 retired
+      0 ranks live; 3 retired
 
 Green when: the coverage check names the missing ``results`` record set; the
 Line acceptance is refused with ``cruxible.line.binding_unfit`` naming the slot,
 the capability, the operation and the record set; the accepted Line still binds
-``pilot-results``; a further run proposes nothing and every title stays live.
+``pilot-results``; a further run proposes nothing and every rank stays live.
 Then, for ``pilot-results-empty``: coverage finds no gap; the Line rebinding
 ``results`` to it is accepted with ``fit: identical``; its run succeeds, its
 extract reads 0 records as a complete read, and it proposes; once that
-proposal is activated no title is live.
+proposal is activated no rank is live.
 """
 
 from __future__ import annotations
@@ -72,7 +72,6 @@ def _extract_read(state: Any) -> tuple[int, bool]:
     return node.summary.records, node.summary.complete
 
 
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.COVERAGE}")
 @pytest.mark.pilot(
     "s7-coverage",
     owner=surfaces.COVERAGE,
@@ -85,7 +84,7 @@ def test_a_derive_missing_a_record_set_is_refused_and_nothing_retires(
     from cruxible_client.contracts.procedures.line_specs import line_spec_path
     from cruxible_core.errors import RequestRefusedError
 
-    instance, base = search_world.setup(pilot, tmp_path, search_world.titles_spec())
+    instance, base = search_world.setup(pilot, tmp_path, search_world.ranks_spec())
     search = providers.search_package(base)
     exact = providers.results_package(base)
     thin = providers.thin_layout_package(base)
@@ -97,9 +96,9 @@ def test_a_derive_missing_a_record_set_is_refused_and_nothing_retires(
     first = search_world.run(instance, {"search": search, providers.RESULTS: exact})
     assert first.status == "succeeded", first.terminal
     search_world.activate(instance, first)
-    titles = search_world.titles(instance)
+    ranks = search_world.ranks(instance)
     pilot.call(f"cruxible line run {search_world.LINE}   (bound to pilot-results)")
-    pilot.got(f"{first.status}; {len(titles)} titles live")
+    pilot.got(f"{first.status}; {len(ranks)} ranks live")
 
     search_world.install(pilot, instance, thin)
     gap = surfaces.layout_coverage_gap(instance, kind=providers.RESULTS_KIND, package=thin)
@@ -122,7 +121,7 @@ def test_a_derive_missing_a_record_set_is_refused_and_nothing_retires(
     again = search_world.run(instance, {"search": search, providers.RESULTS: exact}, minute=1)
     proposal = again.terminal_egress[0].proposal_id
     pilot.got(f"{again.status}; proposal: {proposal or 'none'}")
-    pilot.got(f"{len(search_world.titles(instance))} titles live")
+    pilot.got(f"{len(search_world.ranks(instance))} ranks live")
 
     assert gap is not None and "results" in gap
     assert code == "cruxible.line.binding_unfit"
@@ -132,7 +131,7 @@ def test_a_derive_missing_a_record_set_is_refused_and_nothing_retires(
     assert thin.provider_id not in json.dumps(line.get("bindings", {}))
     assert again.status == "succeeded", again.terminal
     assert proposal is None
-    assert search_world.titles(instance) == titles
+    assert search_world.ranks(instance) == ranks
 
     # The dangerous document from a producer that declares the record set: honoured.
     empty = providers.empty_results_package(base)
@@ -161,8 +160,8 @@ def test_a_derive_missing_a_record_set_is_refused_and_nothing_retires(
     )
     pilot.call(f"cruxible proposal activate {retiring}")
     search_world.activate(instance, emptied)
-    left = search_world.titles(instance)
-    pilot.got(f"{len(left)} titles live; {len(titles) - len(left)} retired")
+    left = search_world.ranks(instance)
+    pilot.got(f"{len(left)} ranks live; {len(ranks) - len(left)} retired")
 
     assert covered is None
     assert slot.capability.spelling == f"{providers.RESULTS}@1"

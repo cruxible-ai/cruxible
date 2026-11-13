@@ -125,11 +125,10 @@ class CaptureFormatError(FormatError):
     """A Capture contract/envelope or its canonical location is invalid."""
 
 
-#: The one capture field of a call that commits a single Capture its out
-#: Contract does not declare: an operation whose whole output is Capture wire,
-#: and the ``workspace.file`` read, whose exact bytes core reads and commits
-#: beside the operation's structured result. The call's ``captures`` names the
-#: accepted CaptureContract they are committed as.
+#: The one capture field of the ``workspace.file`` read, whose exact bytes core
+#: reads and commits beside the operation's structured result; every other
+#: Capture is a ``capture<K>`` field its out Contract declares. The call's
+#: ``captures`` names the accepted CaptureContract they are committed as.
 CAPTURE_FIELD = "capture"
 
 
@@ -2884,6 +2883,8 @@ def provider_capture_receipt_matches_occurrence(
         and receipt.provider_artifact_digest == occurrence.provider_artifact_digest
         and receipt.operation == occurrence.operation.name
         and receipt.operation_signature_digest == occurrence.operation_signature_digest
+        and receipt.capability == occurrence.capability
+        and receipt.fit == occurrence.fit
         and receipt.implementation_digest == occurrence.implementation_digest
         and receipt.materialization_digest == local.materialization_digest
         and receipt.deployment_digest == local.deployment_digest
@@ -2924,10 +2925,10 @@ def validate_provider_external_capture_result(
 ) -> None:
     """Every Source-result validity check independent of the result's byte length.
 
-    ``field`` is the capture field ``result`` was read from (``capture``, the
-    one field of a call whose operation returns its whole output as Capture
-    wire, or of the core-served read): its own pinned CaptureContract, in the
-    occurrence and the receipt, must be ``contract``.
+    ``field`` is the capture field ``result`` was read from (a ``capture<K>``
+    field of the out Contract, or ``capture``, the core-served read's one
+    field): its own pinned CaptureContract, in the occurrence and the receipt,
+    must be ``contract``.
 
     F05b: classifying an over-budget result as a typed ``oversized``
     acquisition outcome must never bypass these -- an invalid result stays
@@ -3024,11 +3025,10 @@ def build_provider_external_capture_v2(
     """Validate one capture field of an acquiring call's result and commit its v2 Capture.
 
     ``result`` carries the field's exact bytes, which are committed byte-exact.
-    ``provider_output`` is the operation's whole output when the receipt
-    digests more than the capture field (a call whose out Contract carries
-    other fields, and the core-served ``workspace.file`` read, whose bytes are
-    the file core read itself and whose output structures them); without it
-    the receipt digests ``result`` itself.
+    ``provider_output`` is the operation's whole output record, which the
+    receipt digests (every Capture is a field of it; for a core-served
+    workspace read, the bytes are the file core read itself and the builtin's
+    output is empty); without it the receipt digests ``result`` itself.
 
     A derived CaptureContract's Capture (a derive call's output) requires
     ``derivation``, the exact inputs it was computed from: the manifest and the
@@ -3061,7 +3061,7 @@ def build_provider_external_capture_v2(
     workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     content = base64.b64decode(result.content_base64, validate=True)
     if workspace_source and provider_output is None:
-        raise CaptureFormatError("a workspace.file Capture is built with its structured output")
+        raise CaptureFormatError("a workspace.file Capture is built with the builtin's output")
     # An external result is the provider's output, checked against its
     # operation Contract, in which optional means an absent key and no value
     # is null: the decoder's defaults (an unstated validity window) are absent
@@ -3074,15 +3074,10 @@ def build_provider_external_capture_v2(
     if output_commitment.output_digest != provider_invocation_output_digest(digested):
         raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
     if workspace_source:
+        # The invocation's input is this read's handoff (its digest is the read
+        # receipt's provider_input_digest, checked above), and the builtin's
+        # output names no field of its own: the bytes are the read's bytes.
         assert source_read_receipt is not None
-        source_echo = digested.get("source") if isinstance(digested, dict) else None
-        if not isinstance(source_echo, dict) or source_echo != {
-            "logical_source": source_read_receipt.logical_source,
-            "commitment_digest": source_read_receipt.derived_request_digest,
-            "bytes_digest": source_read_receipt.bytes_digest,
-            "byte_length": source_read_receipt.byte_length,
-        }:
-            raise CaptureFormatError("workspace.file result mixes source attempts")
         if result.bytes_digest != source_read_receipt.bytes_digest:
             raise CaptureFormatError("workspace.file Capture bytes are not the bytes core read")
     stored = store.store(content)

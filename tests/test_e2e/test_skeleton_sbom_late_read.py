@@ -95,6 +95,7 @@ def _derive_build(checkout: Path) -> Any:
         declared_operation(
             {
                 "name": "sbom_components",
+                "serves": ["test.sbom-derive"],
                 "in": "test.sbom-derive.request@1",
                 "out": "web.fetch.result@1",
                 "effect": "pure",
@@ -162,7 +163,7 @@ def _kind(name: str, *, grade: str = "observed") -> Any:
     kind = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=name,
-            shape="http_response" if grade == "derived" else "database_snapshot",
+            shape="http_response",
             grade=grade,
             replay="attested" if grade == "derived" else "exact",
             max_bytes=1_048_576,
@@ -326,7 +327,8 @@ class Sbom:
             self.calls += 1
             sbom = base64.b64decode(context.input["sbom"]["content_base64"])
             wire = _wire(components(sbom), "https://derive.test/sbom", source="test.sbom-view")
-            return {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
+            return {"capture": {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}}
 
         return Invoker(output=output)
 
@@ -392,10 +394,6 @@ def sbom_spec(*, read_rows: int = 500, shape: str = "subject") -> Any:
                 "input": {
                     "logical_source": SOURCE,
                     "relative_path": SBOM_PATH,
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 1, "relation": "sbom"},
                 },
             },
             {
@@ -593,10 +591,6 @@ def seed_spec(shape: str) -> Any:
                 "input": {
                     "logical_source": "test.seed.file",
                     "relative_path": SEED_PATH,
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 2, "relation": "seed"},
                 },
             },
             {"extract": "members", "capture": "$steps.seed.capture", "records": "members"},

@@ -1,0 +1,32 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One query to the configured search service. The service is run configuration, not a request field; time_range is the service's own recency filter.",
+  "fields": {
+    "language": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "min_len": 1
+      }
+    },
+    "query": {
+      "type": {
+        "kind": "string",
+        "pattern": "^\\s*\\S[\\s\\S]*$"
+      }
+    },
+    "time_range": {
+      "optional": true,
+      "type": {
+        "kind": "enum",
+        "members": [
+          "day",
+          "month",
+          "year"
+        ]
+      }
+    }
+  },
+  "name": "web.search.request",
+  "version": 1
+}

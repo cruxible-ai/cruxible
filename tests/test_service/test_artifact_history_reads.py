@@ -42,7 +42,11 @@ def test_empty_genesis_reads_need_no_history_inventory(tmp_path, monkeypatch):
 
     monkeypatch.setattr(instance, "accepted_history", no_history)
     access = BodyAccessContext(principal_id="reader")
-    assert service_list_playbill_documents(instance, access=access).documents == ()
+    # Only the receipt of creation's base kit.
+    assert [
+        item.envelope["identity"]
+        for item in service_list_playbill_documents(instance, access=access).documents
+    ] == ["document:kit-base"]
     with pytest.raises(DocumentNotFoundError):
         service_get_playbill_document(instance, identity="document:missing", access=access)
     with pytest.raises(SubjectNotFoundError):
@@ -102,7 +106,8 @@ def test_selected_history_preserves_receipts_and_ignores_unrelated_generations(
             timestamp=f"2026-08-20T12:01:{index:02d}.000000Z",
             proposal_name=f"unrelated-{index}",
         )
-    expected_records = tuple(generation.record for generation in instance.accepted_history()[1:3])
+    # Generation 1 is creation's base kit; the two selected changes are 2 and 3.
+    expected_records = tuple(generation.record for generation in instance.accepted_history()[2:4])
     with instance.accepted_history_reader():
         pass
     reads = []
@@ -121,7 +126,7 @@ def test_selected_history_preserves_receipts_and_ignores_unrelated_generations(
     documents = service_playbill_document_history(instance, identity="document:design")
     subjects = service_playbill_subject_history(instance, identity=SUBJECT_IDENTITY)
     for result in (documents, subjects):
-        assert [entry.sequence for entry in result.entries] == [1, 2]
+        assert [entry.sequence for entry in result.entries] == [2, 3]
         assert [entry.coordinate for entry in result.entries] == coordinates
         assert [entry.candidate_digest for entry in result.entries] == [
             record.candidate_digest for record in expected_records
@@ -138,8 +143,8 @@ def test_selected_history_preserves_receipts_and_ignores_unrelated_generations(
     assert Counter(path for _oid, path in reads) == {
         "documents/design.json": 2,
         SUBJECT_PATH: 2,
-        "changesets/cs-00000000000000000001.json": 1,
         "changesets/cs-00000000000000000002.json": 1,
+        "changesets/cs-00000000000000000003.json": 1,
     }
     reads.clear()
     with pytest.raises(DocumentNotFoundError):

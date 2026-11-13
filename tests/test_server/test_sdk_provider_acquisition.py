@@ -116,70 +116,10 @@ def web_provider(
     return name_provider(as_build(build))
 
 
-def _pinned_nested(contract: Contract) -> dict[str, object]:
-    return {
-        "kind": "contract",
-        "contract": {
-            "name": contract.name,
-            "version": contract.version,
-            "digest": contract_digest(contract).tagged,
-        },
-    }
-
-
-# F02: every operation output is checked against its own pinned Contract, so
-# this file's fetch operation declares a Contract mirroring
-# ProviderResultToExternalCapture's own fields exactly (closed), the same way
-# a real external-read provider's operation would.
-_FETCH_HEADERS = Contract.model_validate(
-    {
-        "name": "test.sdk-fetch-headers",
-        "version": 1,
-        "fields": {
-            # cruxible-provider-web's KEPT_HEADERS (coordinate.py): the freshness
-            # headers it keeps from a response, each absent rather than null.
-            "etag": {"type": "string", "optional": True},
-            "last_modified": {"type": "string", "optional": True},
-            "content_length": {"type": "string", "optional": True},
-        },
-    }
-)
-_FETCH_COORDINATE = Contract.model_validate(
-    {
-        "name": "test.sdk-fetch-coordinate",
-        "version": 1,
-        "fields": {
-            # The HTTP coordinate cruxible-provider-web's web.fetch records: how
-            # the bytes were obtained, never inside them.
-            "url": {"type": "string"},
-            "final_url": {"type": "string"},
-            "status": {"type": "int"},
-            "content_type": {"type": "string"},
-            "request_digest": {"type": "string", "optional": True},
-            "source": {"type": "string", "optional": True},
-            # Present only when the origin sent a kept freshness header
-            # (coordinate.py's ``http_coordinate``: an absent key, never null).
-            "headers": {"type": _pinned_nested(_FETCH_HEADERS), "optional": True},
-        },
-    }
-)
-# The whole response: the closed empty record, which accepts only ``{}``.
-_FETCH_SELECTOR = Contract.model_validate(
-    {"name": "test.sdk-fetch-selector", "version": 1, "fields": {}}
-)
-_FETCH_EFFECTIVE = Contract.model_validate(
-    {
-        "name": "test.sdk-fetch-effective",
-        "version": 1,
-        "fields": {
-            "tag": {"type": "string"},
-            "effective_from": {"type": "datetime"},
-            "effective_until": {"type": "datetime"},
-        },
-    }
-)
-
-
+# F02: every operation output is checked against its own pinned Contract. A
+# Capture is a named field of that Contract, never the whole result: the fetch
+# operation returns ``{capture: <wire>}``, as cruxible-provider-web's web.fetch
+# does.
 _FETCH_INPUT = Contract.model_validate(
     {"name": "test.sdk-fetch-input", "version": 1, "fields": {"url": {"type": "string"}}}
 )
@@ -187,37 +127,14 @@ _FETCH_OUTPUT = Contract.model_validate(
     {
         "name": "test.sdk-fetch-output",
         "version": 1,
-        "fields": {
-            "tag": {"type": "string"},
-            "source_identity": {"type": "string"},
-            "coordinate_type": {"type": "string"},
-            "coordinate": {"type": _pinned_nested(_FETCH_COORDINATE)},
-            "selector_type": {"type": "string"},
-            "selector": {"type": _pinned_nested(_FETCH_SELECTOR)},
-            "replayability": {"type": "string"},
-            "content_encoding": {"type": "string"},
-            "content_base64": {"type": "string"},
-            "byte_length": {"type": "int"},
-            "bytes_digest": {"type": "string"},
-            "observed_at": {"type": "datetime"},
-            "source_effective_time": {
-                "type": _pinned_nested(_FETCH_EFFECTIVE),
-                "optional": True,
-            },
-        },
+        "fields": {"capture": {"type": "capture<*>"}},
     }
 )
-_FETCH_CONTRACTS = (
-    _FETCH_INPUT,
-    _FETCH_HEADERS,
-    _FETCH_COORDINATE,
-    _FETCH_SELECTOR,
-    _FETCH_EFFECTIVE,
-    _FETCH_OUTPUT,
-)
+_FETCH_CONTRACTS = (_FETCH_INPUT, _FETCH_OUTPUT)
 _FETCH_OPERATION = declared_operation(
     {
         "name": "fetch",
+        "serves": ["test.sdk-fetch"],
         "in": f"{_FETCH_INPUT.name}@{_FETCH_INPUT.version}",
         "out": f"{_FETCH_OUTPUT.name}@{_FETCH_OUTPUT.version}",
         "effect": "external_read",
@@ -247,7 +164,7 @@ def acquisition_result():
     # The Capture is the origin's body, verbatim; its metadata is the coordinate.
     content = canonical_bytes({"station": "newlyn", "unit": "metres"})
     now = datetime.now(UTC)
-    return ProviderResultToExternalCapture(
+    wire = ProviderResultToExternalCapture(
         source_identity="web.response",
         coordinate_type="http-response-v1",
         coordinate={
@@ -267,6 +184,7 @@ def acquisition_result():
             effective_from=now, effective_until=now + timedelta(microseconds=1)
         ),
     ).model_dump(mode="json")
+    return {"capture": wire}
 
 
 def _fetch_boundaries() -> tuple[object, object]:
@@ -511,7 +429,7 @@ def test_sdk_source_retains_and_reads_acquisition(
         instance.body_store().read(state.source_observations[0].capture_digest, access=access)
     )
     material = instance.body_store().read(envelope.commitment.digest, access=access)
-    assert material == base64.b64decode(output["content_base64"])
+    assert material == base64.b64decode(output["capture"]["content_base64"])
 
 
 @pytest.mark.parametrize(
@@ -550,6 +468,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     operation = declared_operation(
         {
             "name": "invoke",
+            "serves": ["test.sdk-call"],
             "in": f"{call_input.name}@{call_input.version}",
             "out": f"{call_output.name}@{call_output.version}",
             "effect": "external_read",

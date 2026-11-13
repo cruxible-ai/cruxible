@@ -5,8 +5,8 @@ Transcript shape::
     $ cruxible list Capability
       ... the base kit's eight
     $ cruxible authoring submit procedure.json   (slot search: {capability: web.search@1})
-      accepted pilot.search-titles; slot search pins web.search@1 sha256:...
-    $ cruxible get Procedure:pilot.search-titles
+      accepted pilot.search-ranks; slot search pins web.search@1 sha256:...
+    $ cruxible get Procedure:pilot.search-ranks
       slots.search = {"capability": {"name": "web.search", "version": 1, "digest": "sha256:..."}}
     $ cruxible authoring submit procedure.json   (slot search: {capability: pilot.no-such@1})
       refused cruxible....: ... pilot.no-such ...
@@ -38,7 +38,8 @@ def _search_only(capability: str, name: str) -> dict[str, object]:
             "procedure": name,
             "description": "Ask the search capability about the project.",
             "input": {},
-            "output": {},
+            # The call is the last step, so its result is the Procedure's: declare it.
+            "output": {"response": "capture<*>"},
             "slots": {"search": {"capability": capability}},
             "hard_caps": search_world.HARD_CAPS,
             "steps": [search_world.SEARCH_STEP],
@@ -46,9 +47,6 @@ def _search_only(capability: str, name: str) -> dict[str, object]:
     )
 
 
-# The slots slice built ``author_capability_procedure``; the first step, listing the
-# base kit's capabilities, waits for the base kit (slice 9).
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.BASE_KIT}")
 @pytest.mark.pilot(
     "s2-capability-slots",
     owner=surfaces.BASE_KIT,
@@ -91,6 +89,7 @@ def test_a_slot_is_one_capability_pin_and_an_unknown_capability_is_refused(
 
     assert [provider.provider for provider in installed_providers(instance)] == ["cruxible-builtin"]
     assert pins == {"search": listed[providers.SEARCH]}
+    # The accepted Procedure's canonical bytes leave may_truncate out when it is false.
     assert stored == {
         "search": {
             "capability": {
@@ -98,7 +97,6 @@ def test_a_slot_is_one_capability_pin_and_an_unknown_capability_is_refused(
                 "version": 1,
                 "digest": listed[providers.SEARCH].digest,
             },
-            "may_truncate": False,
         }
     }
     assert code.startswith("cruxible.")

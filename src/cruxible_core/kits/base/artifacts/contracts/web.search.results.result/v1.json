@@ -1,0 +1,14 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "The response's results in the shared form: one document in the layout of CaptureKind web.search-results.",
+  "fields": {
+    "results": {
+      "type": {
+        "capture_kind": "web.search-results",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "web.search.results.result",
+  "version": 1
+}

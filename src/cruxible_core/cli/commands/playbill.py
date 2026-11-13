@@ -246,6 +246,7 @@ from cruxible_core.governance.keys import (
     validate_client_principal_key_target,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.kits.base_kit import bundled_kit_reference
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from cruxible_core.server.config import get_runtime_bearer_token, get_server_state_root
 from cruxible_core.service.procedures.procedure_runs import (
@@ -1298,6 +1299,16 @@ def init_playbill(
         return
     click.echo(f"Cruxible initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
+    if result.base_kit is not None:
+        kit = result.base_kit
+        if kit.status == "accepted":
+            click.echo(f"Base kit: {kit.kit_id} {kit.version} installed")
+        else:
+            click.echo(
+                f"Base kit: {kit.kit_id} {kit.version} awaits approval, proposal "
+                f"{kit.proposal_id} (cruxible proposal approve {kit.proposal_id} "
+                "--signer-id ID --key FILE, as a second principal)"
+            )
     click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.failure_code is not None:
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
@@ -2414,7 +2425,8 @@ def add_kit(
 ) -> None:
     """Install or upgrade KIT as one change set; it always proposes.
 
-    KIT is a kit directory, an OCI image layout, or a registry reference such as
+    KIT is ``base`` (the base kit this core bundles: installs or upgrades it, offline),
+    a kit directory, an OCI image layout, or a registry reference such as
     ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``. A definition
     this instance holds differently takes the release's version (the preview
     says what that does: overwrites your edit, re-adds a retired definition,
@@ -2435,7 +2447,8 @@ def add_kit(
     the resume). It previews by default; commit with
     ``--commit --at OID``.
     """
-    bundle, origin = resolve_kit(kit)
+    # ``base`` is the base kit this core bundles, read before any directory or registry.
+    bundle, origin = bundled_kit_reference(kit) or resolve_kit(kit)
     # Checked before the daemon, so a bad template refuses before anything is proposed.
     template = kit_automation_template(bundle)
 

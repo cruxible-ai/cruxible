@@ -93,7 +93,11 @@ def test_http_orient_serves_every_operational_section_and_counts_them(
         answered = client.get(url, params={"section": section})
         assert answered.status_code == 200, answered.text
         assert answered.json()["section"] == section
-        assert answered.json()[section] == []
+        if section == "capture_contracts":
+            # The base kit's one shared kind.
+            assert len(answered.json()[section]) == 1
+        else:
+            assert answered.json()[section] == []
 
     counts = client.get(url).json()["artifacts"]
     assert {"lines", "captures", "capture_contracts", "resolution_contracts", "mandates"} <= set(

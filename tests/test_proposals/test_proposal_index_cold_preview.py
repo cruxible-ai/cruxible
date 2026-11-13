@@ -17,7 +17,9 @@ from cruxible_core.service.kits import build_kit, service_add_kit
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from cruxible_core.storage.preview_fence import previewing
 from tests.core_support._identity_support import accept_tree
-from tests.core_support._support import initialize_local
+
+# Counts proposals, generations and policies from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 from tests.test_proposals.test_proposal_index import _accept_document, _submit
 

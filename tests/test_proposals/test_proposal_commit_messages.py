@@ -18,7 +18,9 @@ from cruxible_core.proposals.proposal_message import (
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-from tests.core_support._support import initialize_local
+
+# Counts proposals, generations and policies from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
 DOCUMENT_PATH = "documents/playbill-design.json"
