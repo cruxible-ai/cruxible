@@ -39,7 +39,14 @@ def _derived(state: Any) -> tuple[str, ...]:
     return tuple(call.summary.capture_digests)
 
 
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.SWAP}")
+# Stops at ``_derived(second) == _derived(first)``: every step before it holds (both
+# Lines accepted, identical then structural; both runs succeed; same ranks; nothing
+# proposed), and the receipts' capability pins and fits hold after it. The derived
+# Captures differ because a Capture's envelope digest covers its provider invocation
+# evidence (build, operation signature, occurrence plan).
+@pytest.mark.xfail(
+    strict=True, raises=AssertionError, reason="owner: binding (needs capture-as-field merged)"
+)
 @pytest.mark.pilot(
     "s5-swap",
     owner=surfaces.SWAP,

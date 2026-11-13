@@ -72,7 +72,6 @@ def _acceptance_seconds(instance: object, label: str) -> list[float]:
     return samples
 
 
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.BINDING}")
 @pytest.mark.pilot(
     "s4-binding",
     owner=surfaces.BINDING,

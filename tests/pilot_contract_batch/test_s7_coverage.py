@@ -72,7 +72,6 @@ def _extract_read(state: Any) -> tuple[int, bool]:
     return node.summary.records, node.summary.complete
 
 
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.COVERAGE}")
 @pytest.mark.pilot(
     "s7-coverage",
     owner=surfaces.COVERAGE,
