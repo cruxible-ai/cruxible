@@ -145,11 +145,35 @@ def test_the_bundle_is_the_pinned_base_kit_with_eight_capabilities() -> None:
         "workspace.file",
         "workspace.files",
     )
-    # Definitions only: capabilities and the Contracts they pin.
+    # Definitions only: capabilities, the Contracts they pin, and the one shared kind.
     assert {item.path.split("/", 1)[0] for item in manifest.artifacts} == {
         "capabilities",
+        "capture-contracts",
         "contracts",
     }
+    assert [
+        item.path for item in manifest.artifacts if item.path.startswith("capture-contracts/")
+    ] == ["capture-contracts/web.search-results.json"]
+
+
+def test_the_shared_kind_carries_the_settled_layout() -> None:
+    """``web.search-results`` holds the wave 0 example's decoding and layout exactly."""
+
+    from cruxible_client.contracts.captures import parse_capture_contract
+
+    path = "capture-contracts/web.search-results.json"
+    kind = parse_capture_contract(bundled_base_kit().contents()[path], path=path)
+    example = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "pilot_contract_batch/examples/base/capture-kinds/web.search-results.json"
+        ).read_bytes()
+    )
+    assert kind.identity.name == example["name"]
+    assert kind.epistemic_grade == "derived"
+    assert kind.decoding is not None and kind.layout is not None
+    assert kind.decoding.model_dump(mode="json") == example["decoding"]
+    assert kind.layout.model_dump(mode="json") == example["layout"]
 
 
 def test_a_drifted_bundle_refuses_to_load(tmp_path: Path) -> None:

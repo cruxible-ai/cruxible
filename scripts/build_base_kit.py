@@ -2,11 +2,15 @@
 """Render the bundled base kit from its authored sources (design note §7.4.2).
 
 Sources live in ``scripts/base_kit/``: ``kit.json`` (kit id, version, owned
-prefixes), and one file per Contract and capability at the kit artifact path it
-renders to (``contracts/<name>/v<N>.json``, ``capabilities/<name>/v<N>.json``).
-A source names the Contracts it nests or pins as ``{name, version}`` (a
-capability's ``in``/``out`` as ``name@N``), without digests: this script pins
-each one to the digest of the Contract it renders, nested ones first.
+prefixes), and one file per Contract, capability and CaptureKind at the kit
+artifact path it renders to (``contracts/<name>/v<N>.json``,
+``capabilities/<name>/v<N>.json``, ``capture-contracts/<name>.json``). A source
+names the Contracts it nests or pins as ``{name, version}`` (a capability's
+``in``/``out`` as ``name@N``, a layout's record-set ``row`` as ``{name,
+version}``), without digests: this script pins each one to the digest of the
+Contract it renders, nested ones first. A CaptureKind source is the ordinary
+CaptureKind authoring input (name, shape, grade, decoding, layout); this script
+lowers it the way authoring does.
 
 It writes the kit directory ``src/cruxible_core/kits/base/`` (``cruxible-kit.json``
 and ``artifacts/``) and ``src/cruxible_core/kits/base_kit_pin.py``, the one
@@ -148,6 +152,8 @@ def render(source: Path = SOURCE) -> tuple[dict[str, bytes], bytes, str]:
         if path != expected:
             raise SystemExit(f"base kit source {path} declares {expected}")
         artifacts[path] = render_capability(capability)
+    for path, payload in _sources(source, "capture-contracts").items():
+        artifacts[path] = _capture_kind(path, payload, contract)
     manifest = KitManifest(
         kit_id=kit["kit_id"],
         version=kit["version"],
@@ -166,6 +172,26 @@ def render(source: Path = SOURCE) -> tuple[dict[str, bytes], bytes, str]:
         content_digest=manifest.content_digest,
     )
     return artifacts, pretty_canonical_bytes(manifest.model_dump(mode="json")), pin_text
+
+
+def _capture_kind(path: str, payload: dict[str, Any], contract: Any) -> bytes:
+    """One CaptureKind, lowered from its authoring input with its layout rows pinned."""
+
+    from cruxible_client.contracts.capture_contract_inputs import (
+        CaptureContractInputRecord,
+        lower_capture_contract_input,
+    )
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+
+    pinned = json.loads(json.dumps(payload))
+    for record_set in (pinned.get("layout") or {}).get("records", {}).values():
+        row = record_set["row"]
+        record_set["row"] = {**row, "digest": contract((str(row["name"]), int(row["version"])))}
+    record = CaptureContractInputRecord.model_validate(pinned)
+    expected = capture_contract_path(record.name)
+    if path != expected:
+        raise SystemExit(f"base kit source {path} declares {expected}")
+    return render_capture_contract(lower_capture_contract_input(record, named=True))
 
 
 def _digest(state: Any, path: str) -> str:

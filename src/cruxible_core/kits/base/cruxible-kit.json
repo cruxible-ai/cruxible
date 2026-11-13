@@ -1,7 +1,7 @@
 {
   "artifacts": [
     {
-      "artifact_digest": "sha256:9cbcf7888ef2f2900fea6bd2b83723e54c167663f2edaafe2c843d982b2c8f3b",
+      "artifact_digest": "sha256:b8452ca24e8b140b7ac4d6fc8e8cc41f3008208d6c6cf4230973aadca4a0eaad",
       "path": "capabilities/web.fetch.pages/v1.json"
     },
     {
@@ -33,6 +33,10 @@
       "path": "capabilities/workspace.files/v1.json"
     },
     {
+      "artifact_digest": "sha256:28d0f58bab294facf0f10187eb6771cc6c40eacb96e9f78cef500d0c0b2b9ef0",
+      "path": "capture-contracts/web.search-results.json"
+    },
+    {
       "artifact_digest": "sha256:67bf0a00b7f614fbe3c0d6579ac0cd4a5690b30bff1cf2a63caa712d0821cb38",
       "path": "contracts/web.fetch.pages.failure/v1.json"
     },
@@ -41,7 +45,7 @@
       "path": "contracts/web.fetch.pages.request/v1.json"
     },
     {
-      "artifact_digest": "sha256:9bffebb513b46b5577e41cb174f7ad855857e22aee048f291fd5cc5d12467bfb",
+      "artifact_digest": "sha256:106bc80e150787fdcd299bdb17ff777e3bd2b3ca100c729de9dd2ae6fbe97db9",
       "path": "contracts/web.fetch.pages.result/v1.json"
     },
     {

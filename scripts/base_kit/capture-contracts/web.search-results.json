@@ -1,0 +1,44 @@
+{
+  "decoding": {
+    "encoding": "identity",
+    "format": "json",
+    "limits": {
+      "decoded_bytes": 1048576,
+      "depth": 8,
+      "records": 1000
+    }
+  },
+  "grade": "derived",
+  "layout": {
+    "records": {
+      "results": {
+        "at": "/results/*",
+        "fields": {
+          "rank": {
+            "at": "rank",
+            "parse": "int"
+          },
+          "snippet": {
+            "at": "snippet",
+            "presence": "optional"
+          },
+          "title": {
+            "at": "title"
+          }
+        },
+        "key": {
+          "url": {
+            "at": "url",
+            "type": "string{max_len: 2048}"
+          }
+        },
+        "row": {
+          "name": "web.search-result",
+          "version": 1
+        }
+      }
+    }
+  },
+  "name": "web.search-results",
+  "shape": "http_response"
+}

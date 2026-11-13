@@ -38,7 +38,8 @@ def _search_only(capability: str, name: str) -> dict[str, object]:
             "procedure": name,
             "description": "Ask the search capability about the project.",
             "input": {},
-            "output": {},
+            # The call is the last step, so its result is the Procedure's: declare it.
+            "output": {"response": "capture<*>"},
             "slots": {"search": {"capability": capability}},
             "hard_caps": search_world.HARD_CAPS,
             "steps": [search_world.SEARCH_STEP],
@@ -46,9 +47,14 @@ def _search_only(capability: str, name: str) -> dict[str, object]:
     )
 
 
-# The slots slice built ``author_capability_procedure``; the first step, listing the
-# base kit's capabilities, waits for the base kit (slice 9).
-@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.BASE_KIT}")
+# Every step runs; the last assertion expects the stored slot to spell
+# ``may_truncate: false``, which the stored ProcedureSlot leaves out when false.
+# Which side moves is the slots slice's call.
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=f"owner: {surfaces.SLOTS} (stored slot omits may_truncate: false)",
+)
 @pytest.mark.pilot(
     "s2-capability-slots",
     owner=surfaces.BASE_KIT,
