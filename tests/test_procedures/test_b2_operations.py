@@ -1201,8 +1201,9 @@ def _fetch_world(
     request_url=None,
 ):  # type: ignore[no-untyped-def]
     """A world whose ``fetch`` slot is an ``external_read`` Source operation
-    with a declared out Contract stricter than the generic Capture wire
-    shape (F02): it accepts only ``replayability: exact``.
+    whose out Contract is its Capture, a named field, beside a declared field
+    stricter than the Capture wire allows (F02): ``replayability`` accepts only
+    ``exact``.
 
     ``request_url``, when given, adds a ``url`` field (declared on the
     request Contract, and named in the authored Source's own request) so a
@@ -1237,17 +1238,10 @@ def _fetch_world(
         {
             "name": "demo.fetch.result",
             "version": 1,
+            # A Capture is a named field of the result Contract, never the result.
             "fields": {
-                "source_identity": {"type": "string"},
-                "coordinate_type": {"type": "string"},
-                "coordinate": {"type": "string"},
-                "selector_type": {"type": "string"},
-                "selector": {"type": "string"},
+                "capture": {"type": "capture<*>"},
                 "replayability": {"type": "enum[exact]"},
-                "content_base64": {"type": "string"},
-                "byte_length": {"type": "int{0..}"},
-                "bytes_digest": {"type": "string"},
-                "observed_at": {"type": "datetime"},
             },
         }
     )
@@ -1356,22 +1350,12 @@ def test_an_external_read_sources_output_is_checked_against_its_operation_contra
     operation's own out Contract, not only the generic Capture-wire shape."""
 
     instance = _fetch_world(tmp_path)
+    good = _fetch_output()
 
     def bad_output(context):  # type: ignore[no-untyped-def]
-        return {
-            "source_identity": "demo.events",
-            "coordinate_type": "database-snapshot-v1",
-            "coordinate": "workspace",
-            "selector_type": "relation-primary-key-v1",
-            "selector": "orders",
-            # Wire-shape valid (Literal["exact", "attested_only"]); the
-            # operation's own out Contract permits only "exact" (F02).
-            "replayability": "attested_only",
-            "content_base64": "e30=",
-            "byte_length": 2,
-            "bytes_digest": "sha256:" + "0" * 64,
-            "observed_at": "2026-10-29T12:00:00Z",
-        }
+        # The Capture is sound; the operation's own out Contract permits only
+        # "exact" in its declared replayability field (F02).
+        return {**good(context), "replayability": "attested_only"}
 
     state, _ = run_line(instance, invoker=Invoker(output=bad_output), name="test.fetched-line")
     assert state.status == "node_refused", state.terminal
@@ -1388,16 +1372,19 @@ def _fetch_output(*, byte_length=2, content_base64="e30=", coordinate_type="data
 
     def output(context):  # type: ignore[no-untyped-def]
         return {
-            "source_identity": "demo.events",
-            "coordinate_type": coordinate_type,
-            "coordinate": "workspace",
-            "selector_type": "relation-primary-key-v1",
-            "selector": "orders",
+            "capture": {
+                "source_identity": "demo.events",
+                "coordinate_type": coordinate_type,
+                "coordinate": "workspace",
+                "selector_type": "relation-primary-key-v1",
+                "selector": "orders",
+                "replayability": "exact",
+                "content_base64": content_base64,
+                "byte_length": byte_length,
+                "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+                "observed_at": "2026-10-29T12:00:00Z",
+            },
             "replayability": "exact",
-            "content_base64": content_base64,
-            "byte_length": byte_length,
-            "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-            "observed_at": "2026-10-29T12:00:00Z",
         }
 
     return output

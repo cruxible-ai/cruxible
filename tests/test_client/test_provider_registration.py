@@ -18,6 +18,7 @@ from cruxible_client.contracts.provider_registration import (
     capability_reserved_message,
     evaluate_declared_operations,
     evaluate_registration_law,
+    spells_capture_wire,
 )
 from cruxible_client.contracts.shapes import Contract, contract_digest, validate_contract
 
@@ -237,7 +238,44 @@ def test_the_law_codes_are_a_closed_vocabulary() -> None:
         "cruxible.provider.declared_contract_unpinned",
         "cruxible.provider.declared_capture_kind_missing",
         "cruxible.provider.declared_unreached",
+        "cruxible.provider.result_is_capture",
     }
+
+
+def test_a_result_contract_that_spells_a_capture_is_refused() -> None:
+    """A Capture is a named field of the result Contract, never the result itself."""
+
+    spelled = validate_contract(
+        {
+            "name": "acme.lookup.result",
+            "version": 1,
+            "fields": {
+                "source_identity": "string",
+                "coordinate_type": "string",
+                "coordinate": "string",
+                "selector_type": "string",
+                "selector": "string",
+                "replayability": "enum[attested_only]",
+                "content_base64": "string",
+                "byte_length": "int{0..}",
+                "bytes_digest": "string",
+                "observed_at": "datetime",
+            },
+        }
+    )
+    assert spells_capture_wire(spelled)
+    assert not spells_capture_wire(RESULT)
+    registration = _registration(
+        declares=_declares(contracts=_sorted(ROW, PARAM, REQUEST, spelled, DECLINED))
+    )
+    problems = [
+        problem
+        for problem in evaluate_registration_law(registration)
+        if problem.code != "cruxible.provider.declared_unreached"  # acme.hits, now unnamed
+    ]
+    assert [problem.code for problem in problems] == ["cruxible.provider.result_is_capture"]
+    assert "acme.lookup.result@1" in problems[0].message
+    assert "capture: capture<*>" in problems[0].message
 
 
 def test_no_operation_serves_a_workspace_capability() -> None:

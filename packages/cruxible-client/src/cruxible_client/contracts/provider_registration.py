@@ -16,8 +16,9 @@ gates on it). The same block is embedded in the provider build artifact.
 
 :func:`evaluate_declared_operations` is the registration law: every reference
 resolves inside ``declares``, the block carries exactly what the operations
-reach, carried layouts are sound, and no operation serves a ``workspace.``
-capability, which only core's builtin serves.
+reach, carried layouts are sound, no operation serves a ``workspace.``
+capability, which only core's builtin serves, and no operation's result
+Contract is itself a Capture: a Capture is always a named ``capture<K>`` field.
 """
 
 from __future__ import annotations
@@ -84,6 +85,7 @@ PROVIDER_DECLARED_CONTRACT_MISMATCH: Final = "cruxible.provider.declared_contrac
 PROVIDER_DECLARED_CONTRACT_UNPINNED: Final = "cruxible.provider.declared_contract_unpinned"
 PROVIDER_DECLARED_CAPTURE_KIND_MISSING: Final = "cruxible.provider.declared_capture_kind_missing"
 PROVIDER_DECLARED_UNREACHED: Final = "cruxible.provider.declared_unreached"
+PROVIDER_RESULT_IS_CAPTURE: Final = "cruxible.provider.result_is_capture"
 
 #: Every code the registration law returns itself (a carried layout's problems keep
 #: their own ``cruxible.capture_kind.*`` codes).
@@ -94,6 +96,7 @@ RegistrationLawCode = Literal[
     "cruxible.provider.declared_contract_unpinned",
     "cruxible.provider.declared_capture_kind_missing",
     "cruxible.provider.declared_unreached",
+    "cruxible.provider.result_is_capture",
 ]
 
 
@@ -445,6 +448,25 @@ class PackageRegistration(_Strict):
 # -- the registration law ------------------------------------------------------------------
 
 
+def spells_capture_wire(contract: Contract) -> bool:
+    """Whether ``contract`` spells core's Capture wire as its own fields.
+
+    That is a result Contract that is itself a Capture: it declares every
+    required field of the wire a provider returns a Capture in
+    (``ProviderResultToExternalCapture``). A Capture is a named ``capture<K>``
+    field of a result Contract instead, and its wire travels in that field.
+    """
+
+    from cruxible_client.contracts.captures import ProviderResultToExternalCapture
+
+    required = {
+        name
+        for name, info in ProviderResultToExternalCapture.model_fields.items()
+        if info.is_required()
+    }
+    return required <= set(contract.fields)
+
+
 def evaluate_declared_operations(
     operations: Sequence[DeclaredOperation], declares: ProviderDeclares
 ) -> tuple[LawProblem, ...]:
@@ -456,8 +478,10 @@ def evaluate_declared_operations(
     digest and they resolve inside ``declares``; every ``capture<K>`` the reached
     Contracts name is a carried CaptureKind, whose layout's rows and field-rule
     types are reached in turn (their Contracts and named kinds, transitively);
-    carried layouts pass the layout law; and ``declares`` carries nothing the
-    operations do not reach. ``built_against`` is a record and is not judged.
+    carried layouts pass the layout law; no operation's ``out`` Contract spells
+    the Capture wire (:func:`spells_capture_wire`); and ``declares`` carries
+    nothing the operations do not reach. ``built_against`` is a record and is
+    not judged.
     """
 
     problems: list[LawProblem] = []
@@ -521,6 +545,17 @@ def evaluate_declared_operations(
 
     for operation in operations:
         pending.extend((ref, f"operation `{operation.name}`") for ref in operation.contract_refs())
+        out = carried.get((operation.out.name, operation.out.version))
+        if out is not None and spells_capture_wire(out):
+            problems.append(
+                LawProblem(
+                    PROVIDER_RESULT_IS_CAPTURE,
+                    f"operation `{operation.name}` returns {operation.out.spelling}, which "
+                    "spells a Capture's wire as its own fields; a Capture is a named field of "
+                    "the result Contract: declare it as `capture: capture<*>` (or "
+                    "capture<K>) and return the Capture in that field.",
+                )
+            )
     while pending:
         ref, owner = pending.popleft()
         found = check(ref, owner=owner)
@@ -600,6 +635,7 @@ __all__ = [
     "PROVIDER_DECLARED_CONTRACT_MISSING",
     "PROVIDER_DECLARED_CONTRACT_UNPINNED",
     "PROVIDER_DECLARED_UNREACHED",
+    "PROVIDER_RESULT_IS_CAPTURE",
     "REGISTRATION_SCHEMA_VERSION",
     "BuiltAgainst",
     "BuiltAgainstCapability",
@@ -614,4 +650,5 @@ __all__ = [
     "capability_reserved_message",
     "evaluate_declared_operations",
     "evaluate_registration_law",
+    "spells_capture_wire",
 ]
