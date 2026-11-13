@@ -1,10 +1,12 @@
 """Capture outputs: which call fields commit Captures, and the laws that pin them.
 
-A call acquires when its slot's capability's out Contract carries ``capture<K>`` fields (or
-when its operation returns its whole output as Capture wire). Each such field
-is one capture output, described by ``{node_path, field, capture_kind,
-acquisition_key}``, and keyed ``<alias>.<field>``: its acquisition rule, its
-plan decision, its journal records and its Capture budget are all its own.
+A call acquires when its slot's capability's out Contract carries ``capture<K>``
+fields: a Capture is always a named field of the result Contract, never the
+whole result (the builtin ``workspace.file`` read commits the bytes core read
+as its one field, ``capture``). Each such field is one capture output,
+described by ``{node_path, field, capture_kind, acquisition_key}``, and keyed
+``<alias>.<field>``: its acquisition rule, its plan decision, its journal
+records and its Capture budget are all its own.
 Admission, trigger binding and execution all read these descriptors. A trigger
 substitutes one of them, named ``<alias>.<field>``, and only from a call with
 exactly one capture field: substituting one field of a call would leave the
@@ -190,19 +192,15 @@ def procedure_capture_problem(
                     f"{sorted(declared)}; name the CaptureContract of each in 'captures'",
                 )
             continue
-        elif not declared:
-            if set(node.captures) != {CAPTURE_FIELD}:
-                return (
-                    "cruxible.procedure.captures_mismatch",
-                    f"call {node.node_id!r}: its operation returns one Capture as its whole "
-                    f"output; its captures name exactly {CAPTURE_FIELD!r}",
-                )
         else:
+            # A Capture is always a named field of the result Contract: an out
+            # Contract with no capture field commits none.
             if set(node.captures) != set(declared):
                 return (
                     "cruxible.procedure.captures_mismatch",
                     f"call {node.node_id!r}: captures {sorted(node.captures)} differ from the "
-                    f"out Contract's capture fields {sorted(declared)}",
+                    f"out Contract's capture fields {sorted(declared)}; a Capture is a named "
+                    "capture<K> field of the result Contract, never the whole result",
                 )
             for field, kind in declared.items():
                 named = node.captures[field].target.name

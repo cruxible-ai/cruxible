@@ -326,7 +326,8 @@ class Sbom:
             self.calls += 1
             sbom = base64.b64decode(context.input["sbom"]["content_base64"])
             wire = _wire(components(sbom), "https://derive.test/sbom", source="test.sbom-view")
-            return {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
+            return {"capture": {**wire, "tag": "playbill-provider-result-to-external-capture-v1"}}
 
         return Invoker(output=output)
 
@@ -501,7 +502,6 @@ APP = "pkg:generic/app@1"
 A, B, C = "pkg:pypi/a@1", "pkg:pypi/b@1", "pkg:pypi/c@1"
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_an_sbom_import_reads_its_own_inventory_late_and_mirrors_by_it(tmp_path: Path) -> None:
     instance, root = sbom_world(tmp_path)
     install(instance, sbom_spec(), line=LINE)
@@ -537,7 +537,6 @@ def test_an_sbom_import_reads_its_own_inventory_late_and_mirrors_by_it(tmp_path:
     assert third.terminal_egress[0].proposal_id is None
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_absence_never_crosses_into_an_inventory_the_late_read_did_not_select(
     tmp_path: Path,
 ) -> None:
@@ -554,7 +553,6 @@ def test_absence_never_crosses_into_an_inventory_the_late_read_did_not_select(
     assert memberships(instance) == {"pkg:generic/other@1": {A, B}, APP: {C}}
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_late_read_over_the_read_ceiling_refuses_the_run(tmp_path: Path) -> None:
     instance, root = sbom_world(tmp_path)
     install(instance, sbom_spec(read_rows=2), line=LINE)
@@ -685,7 +683,6 @@ _UNRELATED = (10, 40)
 
 
 @pytest.mark.parametrize("shape", ["literal", "subject"])
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_a_fixed_sbom_imports_in_constant_work_beside_growing_unrelated_inventories(
     tmp_path: Path, shape: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -187,7 +187,6 @@ from cruxible_client.contracts.provider_execution import (
 from cruxible_client.contracts.provider_operations import (
     OperationItemBudgetExceeded,
     OperationValueRefused,
-    capture_fields,
     capture_list_fields,
     closure_lookup,
     validate_operation_value,
@@ -4315,7 +4314,6 @@ class ProcedureExecutor:
         member_requests: dict[str, str] = {}
         dropped: dict[str, str] = {}
         wires: dict[str, ProviderResultToExternalCapture] = {}
-        whole_wire = False
         output: object = {}
         if glob_request is not None:
             fields, rules, pins, contracts = self._acquire_workspace_glob(
@@ -4452,32 +4450,19 @@ class ProcedureExecutor:
                     )
                 return
             out_contract = closure_lookup(occurrence.contracts)(occurrence.operation.out)
-            # An operation whose out Contract carries no capture<K> field returns
-            # its whole output as Capture wire; the call's value then names only
-            # that Capture.
+            # Every Capture an operation returns is a named capture<K> field of
+            # its out record (or each member of a list<capture<K>> field).
             list_caps = (
                 {}
                 if out_contract is None
                 else {name: cap for name, _kind, cap in capture_list_fields(out_contract)}
             )
-            whole_wire = workspace_request is None and (
-                out_contract is None or not (capture_fields(out_contract) or list_caps)
-            )
-            if whole_wire:
-                output = self._validate_operation_value(
-                    occurrence,
-                    normalize_canonical(output),
-                    direction="out",
-                    admission=admission,
-                    state=state,
-                    node_id=node.node_id,
-                )
             # A list<capture<K>> field is one capture output whose members are each a
             # Capture (D-R37 a1): its member keys ``<field>/<i>`` (index for order
             # only, a2) alias the field's rule, pin and CaptureContract, so every
             # loop below runs over members exactly as over fields.
             requests_seen: set[str] = set()
-            if not whole_wire and workspace_request is None and isinstance(output, dict):
+            if workspace_request is None and isinstance(output, dict):
                 for field in fields:
                     if field not in list_caps:
                         continue
@@ -4529,9 +4514,7 @@ class ProcedureExecutor:
                 if field in members:
                     continue
                 try:
-                    if whole_wire:
-                        wires[field] = ProviderResultToExternalCapture.model_validate(output)
-                    elif workspace_request is None or source_read_receipt is None:
+                    if workspace_request is None or source_read_receipt is None:
                         if not isinstance(output, dict):
                             raise ValueError("an acquiring call's output is a record")
                         wires[field] = ProviderResultToExternalCapture.model_validate(
@@ -4658,7 +4641,7 @@ class ProcedureExecutor:
                     bound_generation=bound_generation,
                     field=members.get(field, field),
                     source_read_receipt=source_reads[field],
-                    provider_output=None if whole_wire else outputs[field],
+                    provider_output=outputs[field],
                     derivation=derivation if field in derived_fields else None,
                 )
                 # D-R37 f1: fetched the moment its builder returns, before
@@ -4674,9 +4657,8 @@ class ProcedureExecutor:
                     details={"node_id": node.node_id, "reason": "Capture conversion failed"},
                 ) from exc
         digests = {field: item.capture_digest for field, item in built.items()}
-        if whole_wire:
-            material: CanonicalValue = normalize_canonical(digests)
-        elif glob_request is not None:
+        material: CanonicalValue
+        if glob_request is not None:
             # A glob's value names only its Captures, in match order.
             material = normalize_canonical(
                 {

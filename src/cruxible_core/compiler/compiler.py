@@ -30,14 +30,14 @@ CURRENT_COMPILER = CompilerCoordinate(
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 68,
+            "semantic_revision": 69,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "layout-extract-nodes",
+            "revision_name": "capture-fields",
         },
     )
 )
 #: Display label only; the digest is the authority.
-CURRENT_COMPILER_REVISION = "layout-extract-nodes"
+CURRENT_COMPILER_REVISION = "capture-fields"
 
 #: The deterministic projection registry the current compiler runs.
 PROJECTION_REGISTRY: ProjectionExtensionRegistry = current_extension_registry()

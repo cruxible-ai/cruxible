@@ -125,11 +125,10 @@ class CaptureFormatError(FormatError):
     """A Capture contract/envelope or its canonical location is invalid."""
 
 
-#: The one capture field of a call that commits a single Capture its out
-#: Contract does not declare: an operation whose whole output is Capture wire,
-#: and the ``workspace.file`` read, whose exact bytes core reads and commits
-#: beside the operation's structured result. The call's ``captures`` names the
-#: accepted CaptureContract they are committed as.
+#: The one capture field of the ``workspace.file`` read, whose exact bytes core
+#: reads and commits beside the operation's structured result; every other
+#: Capture is a ``capture<K>`` field its out Contract declares. The call's
+#: ``captures`` names the accepted CaptureContract they are committed as.
 CAPTURE_FIELD = "capture"
 
 
@@ -2924,10 +2923,10 @@ def validate_provider_external_capture_result(
 ) -> None:
     """Every Source-result validity check independent of the result's byte length.
 
-    ``field`` is the capture field ``result`` was read from (``capture``, the
-    one field of a call whose operation returns its whole output as Capture
-    wire, or of the core-served read): its own pinned CaptureContract, in the
-    occurrence and the receipt, must be ``contract``.
+    ``field`` is the capture field ``result`` was read from (a ``capture<K>``
+    field of the out Contract, or ``capture``, the core-served read's one
+    field): its own pinned CaptureContract, in the occurrence and the receipt,
+    must be ``contract``.
 
     F05b: classifying an over-budget result as a typed ``oversized``
     acquisition outcome must never bypass these -- an invalid result stays
@@ -3024,11 +3023,10 @@ def build_provider_external_capture_v2(
     """Validate one capture field of an acquiring call's result and commit its v2 Capture.
 
     ``result`` carries the field's exact bytes, which are committed byte-exact.
-    ``provider_output`` is the operation's whole output when the receipt
-    digests more than the capture field (a call whose out Contract carries
-    other fields, and the core-served ``workspace.file`` read, whose bytes are
-    the file core read itself and whose output structures them); without it
-    the receipt digests ``result`` itself.
+    ``provider_output`` is the operation's whole output record, which the
+    receipt digests (every Capture is a field of it; for the core-served
+    ``workspace.file`` read, the bytes are the file core read itself and the
+    output structures them); without it the receipt digests ``result`` itself.
 
     A derived CaptureContract's Capture (a derive call's output) requires
     ``derivation``, the exact inputs it was computed from: the manifest and the

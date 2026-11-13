@@ -342,16 +342,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:3cb26c30a35e0a0918253fc93ef98c1cc54b59ebb7429545cb25d5439f8a02bc"
+    expected = "sha256:e9df6fa866da614079eb44319d0b665e26f9e940aae05c3ef01dba1695b893e2"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 68,
+            "semantic_revision": 69,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "layout-extract-nodes",
+            "revision_name": "capture-fields",
         },
     )
     assert computed == expected
@@ -396,9 +396,12 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "layout-extract-nodes"
-    assert compiler_revision_label(CURRENT_COMPILER) == "layout-extract-nodes"
+    assert CURRENT_COMPILER_REVISION == "capture-fields"
+    assert compiler_revision_label(CURRENT_COMPILER) == "capture-fields"
     for earlier_digest in (
+        # Revision 68: before every Capture was a named field of the result Contract
+        # (a whole-wire result and the implicit ``capture`` map were lawful).
+        "sha256:3cb26c30a35e0a0918253fc93ef98c1cc54b59ebb7429545cb25d5439f8a02bc",
         # Revision 67: before a Procedure stored only the thin EXTRACT node (slice 5).
         "sha256:db6f0e64564d6af0084d9c3f8ad37a1aac36377572a700ecf281b7f260986345",
         # Revision 66: before a provider build carried its declares (registration schema 3).

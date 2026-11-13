@@ -439,11 +439,14 @@ def _web_contract_members(wheel: Path) -> dict[str, bytes]:
 
 @pytest.fixture
 def installed_web(installer_http, provider_checkout):
-    """The real web wheel, installed with no Contract accepted, then its carried copies.
+    """The real web wheel, installed, then the carried copies the instance lacks.
 
-    The install pins every operation to the copies the wheel carries; the same
-    copies are accepted afterwards only because the test's Procedures name
-    capabilities over them.
+    The install pins every operation to the copies the wheel carries. The base
+    kit, installed at creation, already holds the shared ones: those copies are
+    byte for byte the base kit's (each one-Capture result is ``{capture:
+    capture<*>}``, a Capture always a named field), so only the rest are
+    accepted afterwards, because the test's Procedures name capabilities over
+    them.
     """
 
     from cruxible_client.contracts.shapes import contract_digest, parse_contract
@@ -466,8 +469,27 @@ def installed_web(installer_http, provider_checkout):
     )
     assert installed.installed and installed.registered, installed
     instance = get_playbill_manager().get(instance_id)
-    assert not set(members) & set(instance.tree_at(instance.accepted_coordinate().git_oid))
-    _accept(http, instance_id, reviewer, members, name="web-contracts")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    held = {path for path in members if path in tree}
+    # Every result Contract is the base kit's own: identical bytes, not a copy that differs.
+    assert {path for path in held if path.endswith(".result/v1.json")} == {
+        f"contracts/{name}.result/v1.json"
+        for name in (
+            "web.fetch",
+            "web.fetch.pages",
+            "web.render",
+            "web.render.dom",
+            "web.search",
+        )
+    }
+    assert all(tree[path] == members[path] for path in held), sorted(held)
+    _accept(
+        http,
+        instance_id,
+        reviewer,
+        {path: content for path, content in members.items() if path not in held},
+        name="web-contracts",
+    )
     digests = {
         path: contract_digest(parse_contract(content, path=path)).tagged
         for path, content in members.items()
@@ -475,7 +497,6 @@ def installed_web(installer_http, provider_checkout):
     return client, installed, digests
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     installer_http, installed_web
 ):
@@ -700,7 +721,6 @@ print(json.dumps({"status": result.status, "output": result.output}))
 """
 
 
-@pytest.mark.xfail(strict=True, reason="owner: capture-as-field")
 def test_installed_web_search_returns_its_result_contract(installer_http, installed_web):
     """search.web's output, from the installed build's code, is exactly its Contract.
 
@@ -737,9 +757,16 @@ def test_installed_web_search_returns_its_result_contract(installer_http, instal
     output = returned["output"]
     result = resolve(_served_operation(instance, installed.build, "search.web").out)
     assert result is not None
-    assert "source_effective_time" not in output
-    assert validate_operation_value(output, result, resolve=resolve) == output
-    decoded = ProviderResultToExternalCapture.model_validate(output)
+    # The Capture is the result's one named field; the Contract types it by its
+    # digest once core commits it, so the operation's own value is checked with
+    # the field naming that digest.
+    (field,) = result.fields
+    decoded = ProviderResultToExternalCapture.model_validate(output[field])
+    assert set(output) == {field}
+    assert "source_effective_time" not in output[field]
+    assert validate_operation_value({field: decoded.bytes_digest}, result, resolve=resolve) == {
+        field: decoded.bytes_digest
+    }
     assert decoded.source_identity == "search.response"
     assert decoded.source_effective_time is None
     # The Capture is the instance's answer, verbatim; no ranking is derived.
