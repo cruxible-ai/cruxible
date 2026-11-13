@@ -41,6 +41,7 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
         "runs",
         "running",
         "runbooks",
+        "capabilities",
         "claims",
     }
     assert body["you"]["actor"] is not None
