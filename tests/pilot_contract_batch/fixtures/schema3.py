@@ -115,21 +115,34 @@ def rebuild(providers: Path, kits: Path, schema3_providers: Path) -> None:
 # -- reading them while the kit gate builds its world ---------------------------------------
 
 
+def _schema(root: Path) -> object:
+    return json.loads((root / "registration.json").read_text()).get("schema_version")
+
+
 @contextmanager
 def schema3_packages(providers: Path, kits: Path) -> Iterator[None]:
-    """While open, the gate's registration reads of the two packages get schema 3.
+    """While open, the gate reads schema-3 registrations of the two packages.
 
-    Each package's source directory is copied into scratch with its committed
-    schema-3 registration in place of the schema-2 one (the manifest is the
-    package's own, so the digest it names holds). The gate's two calls that
-    predate the batch are answered here: a pin by the instance's Contracts
+    A package whose own registration is schema 3 (the web package of a schema-3
+    providers checkout) is read as it is. One still at schema 2 is copied into
+    scratch with its committed schema-3 rebuild in place (the manifest is the
+    package's own, so the digest it names holds).
+
+    The web Contracts the gate accepts on the instance
+    (``web_contracts.members``, which reads a ``contracts/`` folder schema-3
+    packages no longer have) are the ones the registration used for the build
+    carries: one set of copies for both. The gate's two calls that predate the
+    batch are answered too: a pin by the instance's Contracts
     (``tree_contract_digests``, gone from core) and ``pinned_operations``
     taking those digests. An install pins to the carried copies, so both are
     accepted and ignored.
     """
 
+    import web_contracts  # the kit gate's module (its directory is on the path)
+
     import cruxible_core.providers.package_metadata as package_metadata
     import cruxible_core.service.procedures.provider_installation as provider_installation
+    from cruxible_client.contracts.shapes import contract_path, render_contract
     from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 
     class GateDocument(PackageRegistrationDocumentV1):
@@ -138,13 +151,22 @@ def schema3_packages(providers: Path, kits: Path) -> Iterator[None]:
             return super().pinned_operations()
 
     original = package_metadata.read_package_registration
+    original_members = web_contracts.members
     with tempfile.TemporaryDirectory(prefix="pilot-schema3-") as scratch:
         redirected: dict[Path, Path] = {}
         for package, root in ((WEB, web_root(providers)), (OSV, osv_root(kits))):
+            if _schema(root) == 3:
+                continue
             copy = Path(scratch) / package / root.name
             shutil.copytree(root, copy, ignore=shutil.ignore_patterns("__pycache__"))
             (copy / "registration.json").write_bytes(registration_bytes(package))
             redirected[root.resolve()] = copy
+        web = redirected.get(web_root(providers).resolve(), web_root(providers))
+        carried = Path(scratch) / "web-carried"
+        for contract in original(web).declares.contracts:
+            member = carried / contract_path(contract.name, contract.version)
+            member.parent.mkdir(parents=True, exist_ok=True)
+            member.write_bytes(render_contract(contract))
 
         def read(root: Path) -> Any:
             document = original(redirected.get(Path(root).resolve(), Path(root)))
@@ -152,10 +174,12 @@ def schema3_packages(providers: Path, kits: Path) -> Iterator[None]:
 
         package_metadata.read_package_registration = read  # type: ignore[assignment]
         provider_installation.tree_contract_digests = lambda tree: None  # type: ignore[attr-defined]
+        web_contracts.members = lambda checkout: web_contracts.package_members(carried)
         try:
             yield
         finally:
             package_metadata.read_package_registration = original
+            web_contracts.members = original_members
             del provider_installation.tree_contract_digests  # type: ignore[attr-defined]
 
 
