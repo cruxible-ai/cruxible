@@ -3324,7 +3324,7 @@ class _Planner:
         )
         key_claims = [_bare(identity) for identity, predicate in own if predicate in keys]
         if change.because is not None:
-            self.plan.retire_notes.append(f"Retire {named}: {change.because}")
+            self.plan.retire_notes.append(f"Retire {named}: {change.because.strip()}")
         return _Planned(
             index=index,
             op="retire",
@@ -3515,7 +3515,7 @@ class _Planner:
             )
         )
         if change.because is not None:
-            self.plan.retire_notes.append(f"Retire {claim_id}: {change.because}")
+            self.plan.retire_notes.append(f"Retire {claim_id}: {change.because.strip()}")
         return _Planned(
             index=index,
             op="retire",
