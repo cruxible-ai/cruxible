@@ -22,8 +22,6 @@ from typing import Annotated, Final, Literal, TypeAlias
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, field_validator
 
-from cruxible_client.contracts.kits import _kit_id, kit_version_key
-
 #: The most kits one kit may require.
 MAX_KIT_REQUIRES = 16
 
@@ -50,16 +48,24 @@ class KitRequirement(BaseModel):
     @field_validator("kit_id")
     @classmethod
     def _kit_id(cls, value: str) -> str:
+        # ``kits`` declares ``requires`` with this module's types, so it imports
+        # this module: its rules are read when they run, never at import.
+        from cruxible_client.contracts.kits import _kit_id
+
         return _kit_id(value)
 
     @field_validator("min_version")
     @classmethod
     def _min_version(cls, value: str) -> str:
+        from cruxible_client.contracts.kits import kit_version_key
+
         kit_version_key(value)
         return value
 
     def met_by(self, installed_version: str | None) -> bool:
         """Whether a kit installed at ``installed_version`` (``None``: not installed) meets it."""
+
+        from cruxible_client.contracts.kits import kit_version_key
 
         return installed_version is not None and kit_version_key(
             installed_version
@@ -97,6 +103,24 @@ def requires_missing_message(
     )
 
 
+def requires_lowered_message(
+    kit_id: str,
+    version: str,
+    dependent_kit_id: str,
+    dependent_version: str,
+    requirement: KitRequirement,
+) -> str:
+    """``cruxible.kit.requires_missing``: a change would install ``kit_id`` at ``version``,
+    below what an installed kit (``dependent_kit_id``) requires of it."""
+
+    return (
+        f"Kit {kit_id} cannot be changed to {version}: kit {dependent_kit_id} "
+        f"{dependent_version} requires {kit_id} {requirement.min_version} or later. "
+        f"Keep {kit_id} at {requirement.min_version} or later, or remove "
+        f"{dependent_kit_id} first."
+    )
+
+
 def requires_unresolved_message(
     kit_id: str, version: str, required_kit_id: str, definition: str, *, exact: bool
 ) -> str:
@@ -130,6 +154,7 @@ __all__ = [
     "KitRequires",
     "KitRequiresRefusalCode",
     "remove_required_message",
+    "requires_lowered_message",
     "requires_missing_message",
     "requires_unresolved_message",
     "validate_kit_requires",

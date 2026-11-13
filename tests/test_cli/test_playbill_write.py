@@ -145,6 +145,29 @@ def test_a_refused_set_prints_its_code_nearest_names_and_repair_and_exits_1(
     assert "repair: Use one of: blocked, done, ready" in result.output
 
 
+@pytest.mark.parametrize("because", ["x" * 281, "Checked.\nThe second line."])
+@pytest.mark.parametrize("dry_run", [(), ("--dry-run",)], ids=["commit", "dry_run"])
+def test_a_because_no_claim_rationale_can_hold_refuses_before_sending(
+    served: _ServiceClient, tmp_path: Path, because: str, dry_run: tuple[str, ...]
+) -> None:
+    changes = tmp_path / "changes.json"
+    changes.write_text(
+        json.dumps([{"op": "set", "subject": WI1, "field": "status", "value": "done"}]),
+        encoding="utf-8",
+    )
+    for args in (
+        ("set", WI1, "status", "ready", "--because", because),
+        ("add", WI1, "governs", f"{KIND}/wi-2", "--because", because),
+        ("write", str(changes), "--because", because),
+    ):
+        result = _run(*args, *dry_run)
+        assert result.exit_code == 2, (args[0], result.output)
+        assert "cruxible.claim.rationale_invalid" in result.output, result.output
+        assert "one line of at most 280 characters" in result.output, result.output
+        assert "Document section the Claim cites" in result.output, result.output
+    assert served.requests == []
+
+
 def test_dry_run_no_accept_and_at_reach_the_request(served: _ServiceClient) -> None:
     preview = _run("set", WI1, "status", "ready", "--because", "x", "--dry-run", "--json")
     assert preview.exit_code == 0, preview.output

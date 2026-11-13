@@ -303,4 +303,4 @@ def kit_requires(bundle: Any) -> tuple[tuple[str, str], ...]:
     Owner: kit requires kit (slice 10).
     """
 
-    raise SurfaceMissing("kit_requires", KIT_REQUIRES)
+    return tuple((item.kit_id, item.min_version) for item in bundle.manifest.requires)

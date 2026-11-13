@@ -905,11 +905,28 @@ def claim_literal_detail(value: object, field_type: FieldType, problem: str) -> 
     return problem
 
 
+#: A Claim rationale is one line of at most this many characters.
+CLAIM_RATIONALE_MAX = 280
+
+
+def claim_rationale_problems(value: str) -> tuple[str, ...]:
+    """What keeps ``value`` from being a Claim rationale, in words; empty when it is one."""
+
+    problems: list[str] = []
+    if not value.replace("\x00", "").strip():
+        problems.append("no text")
+    if len(value) > CLAIM_RATIONALE_MAX:
+        problems.append(f"{len(value)} characters")
+    if claim_has_line_break(value):
+        problems.append("a line break")
+    return tuple(problems)
+
+
 def claim_rationale(value: str) -> str:
-    if not value.replace("\x00", "").strip() or len(value) > 280 or claim_has_line_break(value):
+    if claim_rationale_problems(value):
         raise ValueError(
             "cruxible.claim.rationale_invalid: rationale must be one line of at most "
-            "280 characters; put prose in a Document section"
+            f"{CLAIM_RATIONALE_MAX} characters; put prose in a Document section"
         )
     return value
 

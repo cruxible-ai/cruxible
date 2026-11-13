@@ -640,6 +640,7 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         "trigger",
         "runbook",
         "contract",
+        "capability",
         "procedure",
     ]
     assert (

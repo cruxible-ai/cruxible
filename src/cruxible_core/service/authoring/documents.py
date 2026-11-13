@@ -793,6 +793,7 @@ def _activate_candidate(
         )
     if candidate.candidate.parent_semantic_root != base.semantic_root:
         raise SettlementIntegrityError("candidate parent root differs from evaluated base")
+    _refuse_unmet_kit_requires(instance, candidate, candidate_tree)
     settle = proposal.admission.settle_submission
     if settle is not None and settle.mode == "delegated":
         if mandate_digest is not None and mandate_digest != settle.mandate_digest:
@@ -877,9 +878,23 @@ def _recompile_for_review(
     repair ``proposal reject``: only the author can make the change again, and
     a rejection with a reason tells them why. Activation keeps ``ProposalStale``.
     """
+    from cruxible_core.service.kits import refuse_unmet_kit_requires_at
     from cruxible_core.service.proposals.proposals import readmit_refused
     from cruxible_core.service.proposals.recompile import lowering_origin, recompile_proposal
 
+    if source.candidate is not None and source.evaluation.evaluated_tree_oid is not None:
+        # A kit change's requirements are rechecked against the head it would land on.
+        tree_oid = source.evaluation.evaluated_tree_oid
+        refuse_unmet_kit_requires_at(
+            instance,
+            (member.path for member in source.candidate.members),
+            lambda: instance.proposal_tree(
+                tree_oid,
+                base_oid=source.evaluation.evaluated_base_oid,
+                proposal_id=source.admission.proposal_id,
+            ),
+            instance.immutable_tree_at(instance.accepted_coordinate().git_oid),
+        )
     try:
         origin = lowering_origin(instance, source)
     except ProposalStale:
@@ -996,6 +1011,18 @@ def _submitted_for_activation(
         # The list would call it stale: accepted state moved past its parent.
         raise ProposalStale(proposal_id)
     return proposal, candidate, submitted.current
+
+
+def _refuse_unmet_kit_requires(
+    instance: PlaybillInstance, candidate: CandidateRecord, candidate_tree: Mapping[str, bytes]
+) -> None:
+    """A kit change accepted later than it was proposed still meets its requirements:
+    looked up by its own changed paths, against the receipts it lands beside."""
+    from cruxible_core.service.kits import refuse_unmet_kit_requires
+
+    refuse_unmet_kit_requires(
+        instance, (member.path for member in candidate.members), candidate_tree
+    )
 
 
 def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecord) -> None:

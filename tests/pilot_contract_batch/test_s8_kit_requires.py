@@ -78,9 +78,49 @@ def _kits(instance: Any) -> list[str]:
     return [kit.kit_id for kit in service_kit_status(instance).kits]
 
 
-@pytest.mark.xfail(
-    strict=True, raises=NotImplementedError, reason=f"owner: {surfaces.KIT_REQUIRES}"
-)
+def _stand_in_base() -> Any:
+    """Kit ``base`` 1.0.0 from the wave 0 example Contracts under ``web.``.
+
+    Stands in for the bundled base kit until it ships (slice 9): the same kit
+    id, version and prefixes, and the Contracts this scenario nests. The
+    example capabilities and kind are left out (this core cannot hold them yet).
+    """
+
+    from cruxible_client.contracts.kits import KitBuildRequest
+    from cruxible_core.service.kits import build_kit
+    from tests.pilot_contract_batch.fixtures.providers import EXAMPLE_BASE_KIT
+
+    root = EXAMPLE_BASE_KIT
+    tree = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted((root / "contracts").glob("web.*/v*.json"))
+    }
+    return build_kit(
+        tree, KitBuildRequest(kit_id="base", version="1.0.0", owns=("web.", "workspace."))
+    )
+
+
+def _instance_with_base(tmp_path: Path) -> Any:
+    """A fresh instance holding kit ``base``: the bundled one once slice 9 installs it
+    at creation, the stand-in until then."""
+
+    instance = search_world.fresh_instance(tmp_path)
+    if "base" not in _kits(instance):
+        assert _add(instance, _stand_in_base()).status == "accepted"
+    return instance
+
+
+def _show_base(pilot: Scenario, instance: Any) -> None:
+    """``cruxible list Capability`` once slice 9 lists them; until then the stand-in."""
+
+    try:
+        search_world.show_capabilities(pilot, instance)
+    except surfaces.SurfaceMissing as missing:
+        pilot.say(f"(stand-in for the base kit until {missing.owner}: kit base 1.0.0)")
+        pilot.call("cruxible kit status --offline")
+        pilot.got(", ".join(_kits(instance)))
+
+
 @pytest.mark.pilot(
     "s8-kit-requires",
     owner=surfaces.KIT_REQUIRES,
@@ -95,8 +135,8 @@ def test_a_kit_requiring_base_installs_only_beside_it_and_holds_it(
     from cruxible_core.service.kits import service_build_kit
     from tests.support.operation_world import author
 
-    publisher = search_world.fresh_instance(tmp_path / "publisher")
-    search_world.show_capabilities(pilot, publisher)
+    publisher = _instance_with_base(tmp_path / "publisher")
+    _show_base(pilot, publisher)
 
     pilot.call(f"cruxible authoring submit {ROW}@1   (hit: web.search-result@1)")
     author(
@@ -130,7 +170,7 @@ def test_a_kit_requiring_base_installs_only_beside_it_and_holds_it(
     pilot.got(f"base definitions in the bundle: {carried or 'none'}")
 
     pilot.say("-- consumer A: base present")
-    consumer_a = search_world.fresh_instance(tmp_path / "consumer-a")
+    consumer_a = _instance_with_base(tmp_path / "consumer-a")
     pilot.call(f"cruxible kit add ./{KIT} --commit")
     added = _add(consumer_a, bundle)
     pilot.got(f"{added.status}")
@@ -142,7 +182,7 @@ def test_a_kit_requiring_base_installs_only_beside_it_and_holds_it(
     pilot.got(", ".join(_kits(consumer_a)))
 
     pilot.say("-- consumer B: base removed first")
-    consumer_b = search_world.fresh_instance(tmp_path / "consumer-b")
+    consumer_b = _instance_with_base(tmp_path / "consumer-b")
     pilot.call("cruxible kit remove base --commit")
     removed = _remove(consumer_b, "base")
     pilot.got(f"{removed.status}")
