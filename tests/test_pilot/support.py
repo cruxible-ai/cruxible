@@ -78,14 +78,7 @@ def _spec(name: str, nodes: list[dict[str, Any]], *, may_truncate: bool = False)
         input={},
         output={},
         params={"logical_source": "string", "relative_path": "string"},
-        slots={
-            "fetch": {
-                "in": "workspace.file.request@1",
-                "out": "workspace.file.result@1",
-                "effect": "pure",
-                "may_truncate": may_truncate,
-            }
-        },
+        slots={"fetch": {"capability": "workspace.file@1", "may_truncate": may_truncate}},
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536, read_rows=500),
         steps=nodes,
     )

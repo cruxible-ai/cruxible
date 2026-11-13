@@ -48,13 +48,13 @@ def _author_user_procedure(world) -> None:
     """The operator's own open-slot Procedure, the same shape the kit ships."""
 
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
-    from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
+    from tests.support.provider_installation import LOCAL_CALL_SLOT
 
     spec = procedure_spec(
         procedure=USER_PROCEDURE,
         params={"n": "int"},
         output={"n": "int"},
-        slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+        slots={"increment": LOCAL_CALL_SLOT},
         steps=[
             CallStep(call="result", slot="increment", input={"n": {"$ref": "param", "path": ["n"]}})
         ],

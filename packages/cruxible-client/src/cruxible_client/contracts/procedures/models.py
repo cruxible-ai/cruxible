@@ -280,32 +280,11 @@ class ProcedureDefinition(_StrictProcedureModel):
                 + (f"; undeclared: {undeclared}" if undeclared else "")
                 + (f"; unused: {unused}" if unused else "")
             )
-        for node in self.nodes:
-            bodies: tuple[object, ...] = (node,)
-            if isinstance(node, RepeatNode):
-                bodies = tuple(body for body in node.body if body.operation == "call")
-            for item in bodies:
-                slot_name = getattr(item, "slot", None)
-                if slot_name is None or slot_name not in self.slots:
-                    continue
-                effect = self.slots[slot_name].effect
-                if isinstance(item, CallNode) and item.acquires:
-                    if effect == "external_mutation":
-                        raise ValueError(
-                            f"call {item.node_id!r}: a call with captures acquires; its slot "
-                            "cannot mutate"
-                        )
-                    if item.effect_policy is not None:
-                        raise ValueError(
-                            f"call {item.node_id!r}: an acquiring call declares no effect policy"
-                        )
-                elif (effect == "external_mutation") != (
-                    getattr(item, "effect_policy", None) is not None
-                ):
-                    raise ValueError(
-                        f"node {getattr(item, 'node_id', '?')!r}: an effect policy is declared "
-                        "exactly when its slot's effect is external_mutation"
-                    )
+        for item in self._slotted_bodies():
+            if isinstance(item, CallNode) and item.acquires and item.effect_policy is not None:
+                raise ValueError(
+                    f"call {item.node_id!r}: an acquiring call declares no effect policy"
+                )
         if any(
             isinstance(node, RepeatNode) and node.max_attempts > self.hard_caps.max_repeat_attempts
             for node in self.nodes
@@ -368,6 +347,46 @@ class ProcedureDefinition(_StrictProcedureModel):
                     if body.operation == "call" and body.slot is not None
                 )
         return tuple(found)
+
+    def _slotted_bodies(self) -> tuple[object, ...]:
+        """Every node or repeat body that names a declared slot, in node order."""
+
+        found: list[object] = []
+        for node in self.nodes:
+            bodies: tuple[object, ...] = (node,)
+            if isinstance(node, RepeatNode):
+                bodies = tuple(body for body in node.body if body.operation == "call")
+            found.extend(item for item in bodies if getattr(item, "slot", None) in self.slots)
+        return tuple(found)
+
+    def slot_effect_problem(self, effects: Mapping[str, str]) -> str | None:
+        """Why a slotted node does not suit its slot's effect, or ``None``.
+
+        ``effects`` holds each slot's effect, read from its capability (the slot
+        names a capability, so the effect is known only where capabilities
+        resolve: the Procedure law and authoring). An acquiring call's slot
+        cannot mutate, and an effect policy is declared exactly when a
+        non-acquiring node's slot is ``external_mutation``.
+        """
+
+        for item in self._slotted_bodies():
+            effect = effects.get(str(getattr(item, "slot", "")))
+            if effect is None:
+                continue
+            if isinstance(item, CallNode) and item.acquires:
+                if effect == "external_mutation":
+                    return (
+                        f"call {item.node_id!r}: a call with captures acquires; its slot "
+                        "cannot mutate"
+                    )
+            elif (effect == "external_mutation") != (
+                getattr(item, "effect_policy", None) is not None
+            ):
+                return (
+                    f"node {getattr(item, 'node_id', '?')!r}: an effect policy is declared "
+                    "exactly when its slot's effect is external_mutation"
+                )
+        return None
 
 
 #: The pin role each dependency field resolves under.

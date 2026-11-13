@@ -4149,8 +4149,8 @@ class Cruxible:
 
         A Sequence builds that same spec (``{kind: procedure, spec}``), the one
         authoring form every surface submits; its preview never runs providers
-        or replaces daemon preflight. A Procedure declares each slot's
-        signature ``{in, out, effect}`` and names no provider: a Line binds
+        or replaces daemon preflight. Each of a Procedure's slots names one
+        capability (``{"capability": "name@N"}``) and no provider: a Line binds
         every slot to one exact build and operation when it is accepted.
 
         Next: ``draft.submit()``, then ``cx.accepted_procedure(name).run(...)`` once

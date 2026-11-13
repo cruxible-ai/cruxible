@@ -1497,7 +1497,7 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
         name="source-landed-capture",
         contract_in=named(_pin("contract-in", "Contract", "provider-input/v1")),
         contract_out=named(_pin("contract-out", "Contract", "provider-output/v1")),
-        slots={"fetch": {"in": "test.value@1", "out": "test.value@1", "effect": "external_read"}},
+        slots={"fetch": {"capability": "test.compute-read@1"}},
         nodes=(source,),
         returns="capture",
         hard_caps=_hard_caps(),

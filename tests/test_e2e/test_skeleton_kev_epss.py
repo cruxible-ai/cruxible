@@ -63,6 +63,7 @@ from cruxible_client.contracts.subject_kinds import render_subject_kind, subject
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
+from tests.support.capabilities import ensure_capabilities
 from tests.support.claim_types import claim_type as build_claim_type
 from tests.support.mandates import procedure_mandate
 from tests.support.operation_world import (
@@ -319,13 +320,7 @@ def _spec(name: str, steps: list[dict[str, Any]]) -> Any:
             "logical_source": 'string{pattern: "^[a-z][a-z0-9_.-]{0,255}$"}',
             "expected_format": "enum[auto, bytes, csv, html, json, text]",
         },
-        slots={
-            "fetch": {
-                "in": "web.fetch.request@1",
-                "out": "web.fetch.result@1",
-                "effect": "external_read",
-            }
-        },
+        slots={"fetch": {"capability": "web.fetch@1"}},
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=1_048_576, read_rows=500),
         steps=steps,
     )
@@ -503,6 +498,18 @@ def skeleton_world(tmp_path: Path, *, kev_access: str = "open") -> Any:
         _key_type(CATALOG + ".catalog_id", CATALOG),
     )
     accept_tree(instance, members, name="web-contracts")
+    ensure_capabilities(
+        instance,
+        ("web.fetch", "web.fetch.request@1", "web.fetch.result@1", "external_read"),
+        (
+            "web.fetch.pages",
+            "web.fetch.pages.request@1",
+            "web.fetch.pages.result@1",
+            "external_read",
+        ),
+        ("workspace.file", "workspace.file.request@1", "workspace.file.result@1", "pure"),
+        name="web-capabilities",
+    )
     accept_tree(instance, build_files(build), name="web-build")
     accept_tree(
         instance,
@@ -960,9 +967,20 @@ def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
     )
 
 
+def derive_capability_name(effect: str = "pure") -> str:
+    """The derive slot's capability: one name per effect (a capability's effect is fixed)."""
+
+    return "test.derive" if effect == "pure" else "test.derive-" + effect.replace("_", "-")
+
+
 def derive_world(tmp_path: Path, *, kev_access: str = "open", effect: str = "pure") -> Any:
     instance = skeleton_world(tmp_path, kev_access=kev_access)
     accept_tree(instance, contract_files(DERIVE_REQUEST), name="derive-contracts")
+    ensure_capabilities(
+        instance,
+        (derive_capability_name(effect), "test.derive.request@1", "web.fetch.result@1", effect),
+        name="derive-capabilities",
+    )
     build = _derive_build(require_provider_checkout(), effect=effect)
     accept_tree(instance, build_files(build), name="derive")
     return instance
@@ -1094,16 +1112,8 @@ def derive_spec(*, chain: bool = False, mix: bool = False, effect: str = "pure")
             "expected_format": "enum[auto, bytes, csv, html, json, text]",
         },
         slots={
-            "fetch": {
-                "in": "web.fetch.request@1",
-                "out": "web.fetch.result@1",
-                "effect": "external_read",
-            },
-            "derive": {
-                "in": "test.derive.request@1",
-                "out": "web.fetch.result@1",
-                "effect": effect,
-            },
+            "fetch": {"capability": "web.fetch@1"},
+            "derive": {"capability": f"{derive_capability_name(effect)}@1"},
         },
         hard_caps=procedure_limits(provider_calls=4, capture_bytes=1_048_576, read_rows=500),
         steps=steps,

@@ -138,7 +138,29 @@ def author_capability_procedure(instance: Any, spec: Mapping[str, Any]) -> dict[
     (slice 2). Reused by scenarios 4, 5 and 7.
     """
 
-    raise SurfaceMissing("author_capability_procedure", SLOTS)
+    import json
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.procedures.artifacts import procedure_path
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+    from cruxible_core.errors import RequestRefusedError
+    from tests.support.operation_world import author
+
+    payload = ProcedureInput.model_validate({"kind": "procedure", **spec})
+    try:
+        author(instance, payload, name=str(spec["procedure"]))
+    except AuthoringLoweringError as exc:
+        raise RequestRefusedError(exc.code, exc.message, repair=exc.repairs) from exc
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    stored = json.loads(tree[procedure_path(str(spec["procedure"]))])["definition"]["slots"]
+    return {
+        slot: CapabilityPin(
+            name=value["capability"]["name"],
+            version=value["capability"]["version"],
+            digest=value["capability"]["digest"],
+        )
+        for slot, value in sorted(stored.items())
+    }
 
 
 # -- scenario 3: registration and install -----------------------------------------------

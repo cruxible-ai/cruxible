@@ -66,20 +66,15 @@
       "returns": "summary",
       "slots": {
         "credential": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:b1ccec59b78bd859e8e9c893d1d0cdc91139cda5bc946de316952a3c3ed25ad5",
+    "definition_digest": "sha256:1fb0540aab6702ed04ce3739dac7eb6aa9c784341114a73eb184f90463d3b8e6",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-acquire"
@@ -238,31 +233,21 @@
       "returns": "summary",
       "slots": {
         "credential": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         },
         "parse": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.credential-state.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.credential-state.result",
+          "capability": {
+            "name": "fixture.security.credential-state",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:2e04ff75a9dd03843523f76572b1b66d9f82a6d8238dddd06681dd7b6489059e",
+    "definition_digest": "sha256:2deb558f280b47fa2d0afdc04cefc4ab82d0926b3330bc0e748bc97a60af567f",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -515,31 +500,21 @@
       "returns": "summary",
       "slots": {
         "decide": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.cve-applicability.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.cve-applicability.result",
+          "capability": {
+            "name": "fixture.security.cve-applicability",
             "version": 1
           }
         },
         "record": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.web.fetch.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.web.fetch.result",
+          "capability": {
+            "name": "fixture.web.fetch",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:896d34e7fe7bb2889c36e00b65e41601557798d654b9aafb37e12cadcfd72ef5",
+    "definition_digest": "sha256:95d5a7b003ff172a3e51080c4b4ea0b6c8436eff2eaa79669df0855177123c56",
     "identity": {
       "kind": "Procedure",
       "name": "security.cve-applicability"
@@ -648,31 +623,21 @@
       "returns": "summary",
       "slots": {
         "epss": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.security.epss-daily.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.epss-daily.result",
+          "capability": {
+            "name": "fixture.security.epss-daily",
             "version": 1
           }
         },
         "parse": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.epss-scores.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.epss-scores.result",
+          "capability": {
+            "name": "fixture.security.epss-scores",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8393277c2d6f2a2780883f77b245a8ef11cbdfe810e0ab5a1e2d98ce03fb835e",
+    "definition_digest": "sha256:b7abeb3e10ba6846f20f04301dc40e923b58f70570fd562969b025790a5f7979",
     "identity": {
       "kind": "Procedure",
       "name": "security.epss-triage"
@@ -745,20 +710,15 @@
       "returns": "summary",
       "slots": {
         "evidence": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:2ecbabc5eb6160d17bf25e343973930abde298ff2d999f41149676a89f0e1a0f",
+    "definition_digest": "sha256:37b9c7a02b612e9919c2b6615b6f2b0da3bea8cd927cad78e93beefe07e723af",
     "identity": {
       "kind": "Procedure",
       "name": "security.evidence-acquire"
@@ -831,20 +791,15 @@
       "returns": "summary",
       "slots": {
         "inventory": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:e5a9b8942d597bae77b71ec79e6a97a3f8472b7a3cb8644e8cad1db5c24a3c91",
+    "definition_digest": "sha256:6942db1400869631fe28766cc57698de9a4e86e061018cab7bf0383536ae2e64",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-acquire"
@@ -1039,31 +994,21 @@
       "returns": "summary",
       "slots": {
         "inventory": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         },
         "parse": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.runtime-inventory.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.runtime-inventory.result",
+          "capability": {
+            "name": "fixture.security.runtime-inventory",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:71bdc2fd1660400bdf39210febb4940515bea8024c3142bf28b6bdc0e767b0e9",
+    "definition_digest": "sha256:f88ff11803f937897db5231b6e148bdbcc26e700eb2add4bdd82f6609cf64d90",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-import"
@@ -1208,31 +1153,21 @@
       "returns": "summary",
       "slots": {
         "catalog": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.web.fetch.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.web.fetch.result",
+          "capability": {
+            "name": "fixture.web.fetch",
             "version": 1
           }
         },
         "match": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.kev-attention.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.kev-attention.result",
+          "capability": {
+            "name": "fixture.security.kev-attention",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8745fff454223bfe7b1798fdcca3399e820a24500624d81983ef5e11bf7e8f1e",
+    "definition_digest": "sha256:c4dee23c4c35473b58fe568603eb1a6d264d9b453f4ca378f46f0e7b57512a95",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-attention"
@@ -1384,31 +1319,21 @@
       "returns": "summary",
       "slots": {
         "catalog": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.web.fetch.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.web.fetch.result",
+          "capability": {
+            "name": "fixture.web.fetch",
             "version": 1
           }
         },
         "parse": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.kev-catalog.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.kev-catalog.result",
+          "capability": {
+            "name": "fixture.security.kev-catalog",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:7b92a17dc4aafe0d51dd94711a23e9a8efb1e4db453dd689acea9aedeb328afa",
+    "definition_digest": "sha256:c62028f1a4f5d698cf4ee1804fc53e537df77fd60a5fb8d94ce11e3219bbd2b6",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-triage"
@@ -1481,20 +1406,15 @@
       "returns": "summary",
       "slots": {
         "log": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:283c1043c41de83ad603e2ff5bbb1fc045bb3e3ba92df74050e2bd6c5f54bd38",
+    "definition_digest": "sha256:3cf02dfb703d1b156bf49f1a39d548ecdec1d084b65868c333a72ab069550339",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-acquire"
@@ -1680,31 +1600,21 @@
       "returns": "summary",
       "slots": {
         "log": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         },
         "parse": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.log-reads.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.log-reads.result",
+          "capability": {
+            "name": "fixture.security.log-reads",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:45947a593ed131b228537767e2f2f1d9e1f10505f215a7e6a474e3ba4d8574d3",
+    "definition_digest": "sha256:9fe80f8798f22f75e607c69596e70801c2aa870ffccc4d63b9222e20fa530ea6",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -1841,31 +1751,21 @@
       "returns": "summary",
       "slots": {
         "parse": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.registry-facts.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.registry-facts.result",
+          "capability": {
+            "name": "fixture.security.registry-facts",
             "version": 1
           }
         },
         "registry": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.security.pypi-release.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.pypi-release.result",
+          "capability": {
+            "name": "fixture.security.pypi-release",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:1713303f1dca59b6cd5c9e8bf2a4bba7b987d77c1de550709684fa8935144214",
+    "definition_digest": "sha256:c058db0da4535a44393e420e9dd3f117788a4fcf90cd24a27af4326ec7fc303a",
     "identity": {
       "kind": "Procedure",
       "name": "security.registry-parse"
@@ -1938,20 +1838,15 @@
       "returns": "summary",
       "slots": {
         "reproduction": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:9b3722466a966df8e1cf91d2fcba0006de4fdb23a6754836377d78f4bce73855",
+    "definition_digest": "sha256:1011177894b7f7db16858c543f322d1a93b349899f8389d25f2ba19c30202cfe",
     "identity": {
       "kind": "Procedure",
       "name": "security.reproduction-acquire"
@@ -2024,20 +1919,15 @@
       "returns": "summary",
       "slots": {
         "sarif": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:4c6962b453830d89ea4570417b7cbdf55ed79f2d2f9403ee4fd3244746f0a984",
+    "definition_digest": "sha256:ac9b2983be48cf47c13e2163fe3d4aa539e8998cafe983a6bb39c65b2e02aa02",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-acquire"
@@ -2110,20 +2000,15 @@
       "returns": "summary",
       "slots": {
         "sbom": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:77f243efc319a4b9d79cef6143770398a45298e125dc328d0279fb2ff57c5a78",
+    "definition_digest": "sha256:6164ea338b3bcd2c8a742c6eaecd3aa783d39713d16fc086130cb8518ae93e20",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-acquire"
@@ -2246,31 +2131,21 @@
       "returns": "summary",
       "slots": {
         "parse": {
-          "effect": "pure",
-          "in": {
-            "name": "fixture.security.cyclonedx-components.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.security.cyclonedx-components.result",
+          "capability": {
+            "name": "fixture.security.cyclonedx-components",
             "version": 1
           }
         },
         "sbom": {
-          "effect": "external_read",
-          "in": {
-            "name": "fixture.workspace.file.request",
-            "version": 1
-          },
-          "out": {
-            "name": "fixture.workspace.file.result",
+          "capability": {
+            "name": "fixture.workspace.file",
             "version": 1
           }
         }
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:34d3f0d89c71f4780143aeb9fab2a95cc7b02356e4ee634ccb512cec6ca38d9b",
+    "definition_digest": "sha256:82bf347ca808b6f3a31585c181f77101e75341a69f246d5a08b00ec1db7e4677",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-import"

@@ -18,17 +18,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import cache
+from types import MappingProxyType
 from typing import Any, Literal
 
+from cruxible_client.contracts.capabilities import CapabilityLookup
 from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.procedures.nodes import CallNode
-from cruxible_client.contracts.provider_operations import operation_signature_digest
+from cruxible_client.contracts.provider_operations import OperationSignature
 from cruxible_client.contracts.shapes import Contract
 from cruxible_client.contracts.workspace_file import (
     WorkspaceFileGlobRequestV1,
-    is_workspace_file_signature,
     is_workspace_glob,
 )
+from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
 _GLOB_DEFAULT_MAX_FILES = WorkspaceFileGlobRequestV1.model_fields["max_files"].default
 
@@ -100,14 +103,56 @@ def parameter_description(contract: Contract | None, name: str | None) -> str | 
     return None if field is None else field.description
 
 
+def reads_workspace(slot: Any) -> bool:
+    """Whether ``slot`` is a workspace read core's builtin serves.
+
+    Provisional recognition: by the slot's capability name, one of the names in
+    ``BUILTIN_CAPABILITY_NAMES``. Glob reads keep today's request handling
+    until the file-read slice moves them to their own capability.
+    """
+
+    return slot is not None and slot.capability.name in BUILTIN_CAPABILITY_NAMES
+
+
+@cache
+def builtin_slot_signatures() -> Mapping[str, OperationSignature]:
+    """Each capability name core's builtin serves -> the builtin operation's signature.
+
+    The provisional slot key (``line_specs.provisional_slot_signatures``) binds
+    such a slot by name to the builtin, whichever Contracts its capability pins.
+    """
+
+    from cruxible_client.contracts.shapes import Contract, contract_digest
+    from cruxible_client.contracts.workspace_file import workspace_file_contracts
+
+    _source, _content, request, result = workspace_file_contracts()
+    assert isinstance(request, Contract) and isinstance(result, Contract)
+    signature = OperationSignature.model_validate(
+        {
+            "in": {
+                "name": request.name,
+                "version": request.version,
+                "digest": contract_digest(request).tagged,
+            },
+            "out": {
+                "name": result.name,
+                "version": result.version,
+                "digest": contract_digest(result).tagged,
+            },
+            "effect": "pure",
+        }
+    )
+    return MappingProxyType({name: signature for name in sorted(BUILTIN_CAPABILITY_NAMES)})
+
+
 def _workspace_call(definition: Any, node: CallNode) -> bool:
-    slot = definition.slots.get(node.slot)
-    return slot is not None and is_workspace_file_signature(operation_signature_digest(slot))
+    return reads_workspace(definition.slots.get(node.slot))
 
 
-def _external_read(definition: Any, node: CallNode) -> bool:
+def _external_read(definition: Any, node: CallNode, capabilities: CapabilityLookup | None) -> bool:
     slot = definition.slots.get(node.slot)
-    return slot is not None and slot.effect == "external_read"
+    capability = None if slot is None or capabilities is None else capabilities(slot.capability)
+    return capability is not None and capability.effect == "external_read"
 
 
 def workspace_location_key(node_input: object) -> str:
@@ -116,8 +161,19 @@ def workspace_location_key(node_input: object) -> str:
     return "glob" if is_workspace_glob(node_input) else "relative_path"
 
 
-def declared_inputs(definition: Any, line: LineSpec | None) -> tuple[DeclaredInput, ...]:
-    """Every external input the Procedure's top-level acquiring calls declare, in node order."""
+def declared_inputs(
+    definition: Any,
+    line: LineSpec | None,
+    *,
+    capabilities: CapabilityLookup | None = None,
+) -> tuple[DeclaredInput, ...]:
+    """Every external input the Procedure's top-level acquiring calls declare, in node order.
+
+    Workspace reads are recognised from the slot alone. A fetch is a call whose
+    slot's capability is ``external_read`` (``capabilities`` resolves it), or
+    whose input names a ``url``; a caller that reads only workspace inputs may
+    leave ``capabilities`` out.
+    """
 
     parameters = effective_parameters(definition, line)
     found: list[DeclaredInput] = []
@@ -165,7 +221,7 @@ def declared_inputs(definition: Any, line: LineSpec | None) -> tuple[DeclaredInp
                 )
             )
             continue
-        if _external_read(definition, node) or "url" in node_input:
+        if _external_read(definition, node, capabilities) or "url" in node_input:
             location, parameter = resolve_input_value(node_input.get("url"), parameters)
             origins: set[str] | None = None
             if line is not None:
@@ -190,7 +246,9 @@ def declared_inputs(definition: Any, line: LineSpec | None) -> tuple[DeclaredInp
 __all__ = [
     "DeclaredInput",
     "DeclaredInputKind",
+    "builtin_slot_signatures",
     "declared_inputs",
+    "reads_workspace",
     "effective_parameters",
     "parameter_description",
     "parameter_reference",

@@ -134,20 +134,23 @@ def line_slot_signature_digest(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
 ) -> str:
-    """Digest the slot signatures this Line binds: ``{slot: {in, out, effect}}``.
+    """Digest the slot interface this Line binds: ``{slot: capability pin}``.
 
-    Only the signatures contribute, never the build or operation bound to them,
-    so a build move keeps one track record while a changed slot starts another.
+    Each slot's exact capability pin (name, version, digest) stands for its
+    interface: the capability pins its request and result Contracts and its
+    effect. Only the pins contribute, never the build or operation bound to
+    them, so a build move keeps one track record while a changed slot starts
+    another.
     """
 
     del accepted_line
     authored = getattr(accepted_procedure, "authored", accepted_procedure.procedure)
     return typed_digest(
         Sha256Value,
-        "cruxible-line-slot-signature-surface-v1",
+        "cruxible-line-slot-capability-surface-v1",
         {
             "slots": {
-                name: dict(zip(("in", "out", "effect"), slot.key(), strict=True))
+                name: slot.capability.model_dump(mode="json")
                 for name, slot in sorted(authored.definition.slots.items())
             }
         },

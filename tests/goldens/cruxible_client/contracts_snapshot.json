@@ -5483,6 +5483,59 @@
             "title": "CapabilityInput",
             "type": "object"
           },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
+            "type": "object"
+          },
+          "CapabilitySlot": {
+            "additionalProperties": false,
+            "description": "One binding point a Procedure declares: the capability version its operation serves.\n\n``may_truncate`` declares that the slot treats its result as possibly\nincomplete; an operation that may truncate binds only such a slot.",
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "capability"
+            ],
+            "title": "CapabilitySlot",
+            "type": "object"
+          },
           "CaptureContractAdmission": {
             "additionalProperties": false,
             "description": "One named contract, optionally restricted to provider-declared sources.",
@@ -10755,39 +10808,6 @@
             "title": "ProcedureRuntimePolicyInput",
             "type": "object"
           },
-          "ProcedureSlot": {
-            "additionalProperties": false,
-            "description": "One binding point a Procedure declares: the signature its operation must serve.",
-            "properties": {
-              "effect": {
-                "enum": [
-                  "pure",
-                  "external_read",
-                  "external_mutation"
-                ],
-                "title": "Effect",
-                "type": "string"
-              },
-              "in": {
-                "$ref": "#/$defs/ContractRef"
-              },
-              "may_truncate": {
-                "default": false,
-                "title": "May Truncate",
-                "type": "boolean"
-              },
-              "out": {
-                "$ref": "#/$defs/ContractRef"
-              }
-            },
-            "required": [
-              "in",
-              "out",
-              "effect"
-            ],
-            "title": "ProcedureSlot",
-            "type": "object"
-          },
           "ProcedureSpec": {
             "additionalProperties": false,
             "properties": {
@@ -10939,7 +10959,7 @@
               },
               "slots": {
                 "additionalProperties": {
-                  "$ref": "#/$defs/ProcedureSlot"
+                  "$ref": "#/$defs/CapabilitySlot"
                 },
                 "description": "Each slot's signature {in: name@N, out: name@N, effect}; a Line binds it.",
                 "title": "Slots",
@@ -55078,6 +55098,59 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
+            "type": "object"
+          },
+          "CapabilitySlot": {
+            "additionalProperties": false,
+            "description": "One binding point a Procedure declares: the capability version its operation serves.\n\n``may_truncate`` declares that the slot treats its result as possibly\nincomplete; an operation that may truncate binds only such a slot.",
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "capability"
+            ],
+            "title": "CapabilitySlot",
+            "type": "object"
+          },
           "CaptureEgressNode": {
             "additionalProperties": false,
             "properties": {
@@ -57220,7 +57293,7 @@
               },
               "slots": {
                 "additionalProperties": {
-                  "$ref": "#/$defs/ProcedureSlot"
+                  "$ref": "#/$defs/CapabilitySlot"
                 },
                 "title": "Slots",
                 "type": "object"
@@ -57627,39 +57700,6 @@
               "runs_on"
             ],
             "title": "ProcedureNodeSupport",
-            "type": "object"
-          },
-          "ProcedureSlot": {
-            "additionalProperties": false,
-            "description": "One binding point a Procedure declares: the signature its operation must serve.",
-            "properties": {
-              "effect": {
-                "enum": [
-                  "pure",
-                  "external_read",
-                  "external_mutation"
-                ],
-                "title": "Effect",
-                "type": "string"
-              },
-              "in": {
-                "$ref": "#/$defs/ContractRef"
-              },
-              "may_truncate": {
-                "default": false,
-                "title": "May Truncate",
-                "type": "boolean"
-              },
-              "out": {
-                "$ref": "#/$defs/ContractRef"
-              }
-            },
-            "required": [
-              "in",
-              "out",
-              "effect"
-            ],
-            "title": "ProcedureSlot",
             "type": "object"
           },
           "ProjectNode": {
@@ -83296,6 +83336,59 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
+            "type": "object"
+          },
+          "CapabilitySlot": {
+            "additionalProperties": false,
+            "description": "One binding point a Procedure declares: the capability version its operation serves.\n\n``may_truncate`` declares that the slot treats its result as possibly\nincomplete; an operation that may truncate binds only such a slot.",
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "capability"
+            ],
+            "title": "CapabilitySlot",
+            "type": "object"
+          },
           "CaptureContractAdmission": {
             "additionalProperties": false,
             "description": "One named contract, optionally restricted to provider-declared sources.",
@@ -86384,7 +86477,7 @@
               },
               "slots": {
                 "additionalProperties": {
-                  "$ref": "#/$defs/ProcedureSlot"
+                  "$ref": "#/$defs/CapabilitySlot"
                 },
                 "title": "Slots",
                 "type": "object"
@@ -86762,39 +86855,6 @@
               }
             },
             "title": "ProcedureMeasurementSituationShape",
-            "type": "object"
-          },
-          "ProcedureSlot": {
-            "additionalProperties": false,
-            "description": "One binding point a Procedure declares: the signature its operation must serve.",
-            "properties": {
-              "effect": {
-                "enum": [
-                  "pure",
-                  "external_read",
-                  "external_mutation"
-                ],
-                "title": "Effect",
-                "type": "string"
-              },
-              "in": {
-                "$ref": "#/$defs/ContractRef"
-              },
-              "may_truncate": {
-                "default": false,
-                "title": "May Truncate",
-                "type": "boolean"
-              },
-              "out": {
-                "$ref": "#/$defs/ContractRef"
-              }
-            },
-            "required": [
-              "in",
-              "out",
-              "effect"
-            ],
-            "title": "ProcedureSlot",
             "type": "object"
           },
           "ProjectNode": {
@@ -92077,6 +92137,59 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
+            "type": "object"
+          },
+          "CapabilitySlot": {
+            "additionalProperties": false,
+            "description": "One binding point a Procedure declares: the capability version its operation serves.\n\n``may_truncate`` declares that the slot treats its result as possibly\nincomplete; an operation that may truncate binds only such a slot.",
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
+              "may_truncate": {
+                "default": false,
+                "title": "May Truncate",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "capability"
+            ],
+            "title": "CapabilitySlot",
+            "type": "object"
+          },
           "CaptureContractAdmission": {
             "additionalProperties": false,
             "description": "One named contract, optionally restricted to provider-declared sources.",
@@ -95165,7 +95278,7 @@
               },
               "slots": {
                 "additionalProperties": {
-                  "$ref": "#/$defs/ProcedureSlot"
+                  "$ref": "#/$defs/CapabilitySlot"
                 },
                 "title": "Slots",
                 "type": "object"
@@ -95543,39 +95656,6 @@
               }
             },
             "title": "ProcedureMeasurementSituationShape",
-            "type": "object"
-          },
-          "ProcedureSlot": {
-            "additionalProperties": false,
-            "description": "One binding point a Procedure declares: the signature its operation must serve.",
-            "properties": {
-              "effect": {
-                "enum": [
-                  "pure",
-                  "external_read",
-                  "external_mutation"
-                ],
-                "title": "Effect",
-                "type": "string"
-              },
-              "in": {
-                "$ref": "#/$defs/ContractRef"
-              },
-              "may_truncate": {
-                "default": false,
-                "title": "May Truncate",
-                "type": "boolean"
-              },
-              "out": {
-                "$ref": "#/$defs/ContractRef"
-              }
-            },
-            "required": [
-              "in",
-              "out",
-              "effect"
-            ],
-            "title": "ProcedureSlot",
             "type": "object"
           },
           "ProjectNode": {

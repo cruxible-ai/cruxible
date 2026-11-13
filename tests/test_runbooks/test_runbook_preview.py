@@ -201,8 +201,9 @@ def test_the_preview_composes_what_each_step_can_do(tmp_path: Path) -> None:
 
     settle = _step(preview, 2)
     (call,) = settle.calls
-    assert (call.slot, call.signature_in, call.effect) == (
+    assert (call.slot, call.capability, call.signature_in, call.effect) == (
         "fetch",
+        "workspace.file@1",
         "workspace.file.request@1",
         "pure",
     )
@@ -301,6 +302,7 @@ def test_the_preview_never_executes_or_reads_state(
     assert instance.accepted_coordinate() == base
     read_kinds = {key.split(":", 2)[1] for key in work if key.startswith("source:")}
     assert read_kinds <= {
+        "Capability",
         "Runbook",
         "Line",
         "Procedure",
@@ -692,9 +694,7 @@ def _fetch_definition(name: str) -> Any:
         name,
         slots={
             "fetch": {
-                "in": {"name": "web.fetch.request", "version": 1, "digest": "sha256:" + "1" * 64},
-                "out": {"name": "web.fetch.result", "version": 1, "digest": "sha256:" + "2" * 64},
-                "effect": "external_read",
+                "capability": {"name": "web.fetch", "version": 1, "digest": "sha256:" + "1" * 64}
             }
         },
         nodes=(

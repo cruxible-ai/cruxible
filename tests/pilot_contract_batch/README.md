@@ -63,7 +63,7 @@ checkout is read with bytecode writing off.
 |---|---|---|---|
 | `baseline` | security kit installed into a fresh instance, `security.start` run offline; OSV `matched`/`affected` as authored today; `affected_by` Claims written; costs | none: passes today | none |
 | `s1-base-kit` | a new instance knows the base kit's eight capabilities (file reading is `workspace.file` and `workspace.files`) and no providers; init opened no socket | base kit (slice 9) | `list_capabilities` |
-| `s2-capability-slots` | a slot naming a capability is stored as one pin; an unknown capability is refused at authoring | slots in authoring (slice 2) | `author_capability_procedure` |
+| `s2-capability-slots` | a slot naming a capability is stored as one pin; an unknown capability is refused at authoring | base kit (slice 9) for its first step; slots in authoring (slice 2) built its helper | `author_capability_procedure` (done) |
 | `s3-provider-install` | a provider installs with no kit present and lists what it serves, with descriptions and sources | registration and install (slice 3) | `install_provider_package` |
 | `s4-binding` | a fitting operation binds; three that do not fit get the note's §2.6 messages; binding cost with 1 and 50 other providers | binding (slice 4) | `accept_line` |
 | `s5-swap` | swapping one fitting provider for another keeps the Claims and evidence; receipts record the capability pin and `fit` | binding (slice 4) with Capture-as-field (slice 6) | `run_slot_records` |
