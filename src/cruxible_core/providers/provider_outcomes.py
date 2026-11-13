@@ -25,7 +25,7 @@ from typing import Any
 
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.provider_execution import ProviderInvocationOutcome
-from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_RUNTIME_HARNESS_REFUSAL_CODES,
     PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
@@ -148,7 +148,7 @@ def map_provider_refusal(
 
 
 def map_operation_refusal(
-    operation: ProviderOperation,
+    operation: DeclaredOperation,
     code: str,
     *,
     message: str,
@@ -202,7 +202,7 @@ def map_operation_refusal(
 def map_provider_envelope(
     envelope: ProviderRuntimeResultEnvelope,
     *,
-    operation: ProviderOperation,
+    operation: DeclaredOperation,
     check_detail: RefusalDetailCheck,
 ) -> ProviderInvocationOutcome:
     if envelope.status == "ok":
@@ -234,7 +234,7 @@ def map_provider_envelope(
 
 
 def operation_refusal_is_declared(
-    operation: ProviderOperation, outcome: ProviderInvocationOutcome
+    operation: DeclaredOperation, outcome: ProviderInvocationOutcome
 ) -> bool:
     """Whether ``outcome`` is a refusal ``operation`` declares, recognised as such."""
 
@@ -246,7 +246,7 @@ def operation_refusal_is_declared(
 
 
 def provider_refusal_is_absorbable(
-    operation: ProviderOperation, outcome: ProviderInvocationOutcome
+    operation: DeclaredOperation, outcome: ProviderInvocationOutcome
 ) -> bool:
     """A declared refusal ``operation`` declares absorbable: "this input is unavailable"."""
 

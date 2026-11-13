@@ -48,7 +48,6 @@ from cruxible_client.contracts.procedures.results import procedure_acquisition_p
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlan
 from cruxible_client.contracts.provider_operations import (
     LineBinding,
-    ProviderOperation,
     binding_pin,
     operation_signature_digest,
 )
@@ -67,7 +66,6 @@ from cruxible_client.contracts.providers import (
 )
 from cruxible_client.contracts.shapes import (
     Contract,
-    contract_digest,
     contract_path,
     render_contract,
 )
@@ -83,7 +81,6 @@ from cruxible_core.procedures.reference_binding import (
     authored_procedure,
     bind_procedure_references,
 )
-from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_local_runtime import (
     LocalProviderDeploymentV1,
     ProviderSpawnDeadline,
@@ -113,6 +110,7 @@ from tests.support.capabilities import (
     pinned_slot,
     signature_capability,
 )
+from tests.support.declared_operations import declared_operation, registration_document
 from tests.support.invocation_ids import unique_invocation_id
 from tests.support.lines import line_budgets, line_spec
 from tests.support.mandates import procedure_mandate
@@ -195,13 +193,6 @@ _OPERATION_OUTPUT = Contract.model_validate(
 )
 
 
-def _served_operation_digests(ref: object) -> str | None:
-    for contract in (_OPERATION_INPUT, _OPERATION_OUTPUT):
-        if (ref.name, ref.version) == (contract.name, contract.version):  # type: ignore[attr-defined]
-            return contract_digest(contract).tagged
-    return None
-
-
 def _served_provider_build(*, provider_id: str = "served-provider") -> NamedProviderBuild:
     """A fresh build serving ``compute`` at the fake interpreter's exact wire shape."""
 
@@ -217,7 +208,7 @@ def _served_provider_build(*, provider_id: str = "served-provider") -> NamedProv
             ),
         ),
     )
-    operation = ProviderOperation.model_validate(
+    operation = declared_operation(
         {
             "name": "compute",
             "in": f"{_OPERATION_INPUT.name}@{_OPERATION_INPUT.version}",
@@ -226,9 +217,7 @@ def _served_provider_build(*, provider_id: str = "served-provider") -> NamedProv
             "entrypoint": "demo.runtime:Provider",
         }
     )
-    document = PackageRegistrationDocumentV1(
-        schema_version=2, manifest=manifest, operations=(operation,)
-    )
+    document = registration_document(manifest, (operation,), (_OPERATION_INPUT, _OPERATION_OUTPUT))
     return document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=provider_id,
@@ -241,7 +230,7 @@ def _served_provider_build(*, provider_id: str = "served-provider") -> NamedProv
             materialization_digests={"linux-cp311+engine": "sha256:" + "0" * 64},
         ),
         control_domain=provider_id,
-        operations=document.pinned_operations(_served_operation_digests),
+        operations=document.pinned_operations(),
     )
 
 

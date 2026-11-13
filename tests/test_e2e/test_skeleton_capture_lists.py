@@ -44,11 +44,11 @@ from tests.test_e2e.test_skeleton_kev_epss import (
     WATCH_ROW,
     WATCHED,
     _by,
-    _contract_digest_in,
     _cve,
     _envelope,
     _manifest,
     _summaries,
+    _web_contracts,
     activate,
     kev_records,
     pinned_extract_digest,
@@ -76,7 +76,6 @@ VIEW_URL = "https://derive.test/kev-pages-view"
 def _pages_build(checkout: Path) -> Any:
     """A core test-double provider: a paged fetch and a pure derive over its pages."""
 
-    from cruxible_client.contracts.provider_operations import ProviderOperation
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
         ProviderImplementationManifest,
@@ -84,16 +83,10 @@ def _pages_build(checkout: Path) -> Any:
         ProviderLocalEnvBackendPin,
         ProviderRuntimeManifest,
     )
-    from cruxible_client.contracts.shapes import contract_digest
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from tests.support.declared_operations import declared_operation, registration_document
 
-    digests = {
-        (item.ref.name, item.ref.version): contract_digest(item).tagged
-        for item in (PAGES_REQUEST, PAGES_RESULT, PAGES_DERIVE)
-    }
-    digests[("web.fetch.result", 1)] = _contract_digest_in(checkout, "web.fetch.result")
     served = tuple(
-        ProviderOperation.model_validate(
+        declared_operation(
             {
                 "name": name,
                 "in": request,
@@ -118,7 +111,11 @@ def _pages_build(checkout: Path) -> Any:
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+    document = registration_document(
+        manifest,
+        served,
+        (PAGES_REQUEST, PAGES_RESULT, PAGES_DERIVE, WATCH_ROW, *_web_contracts(checkout)),
+    )
     return document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=PAGES_PROVIDER,
@@ -131,7 +128,7 @@ def _pages_build(checkout: Path) -> Any:
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain=PAGES_PROVIDER,
-        operations=document.pinned_operations(lambda ref: digests.get((ref.name, ref.version))),
+        operations=document.pinned_operations(),
     )
 
 

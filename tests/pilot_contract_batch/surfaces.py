@@ -176,7 +176,85 @@ def install_provider_package(instance: Any, package: Any) -> InstalledProvider:
     Owner: registration and install (slice 3). Reused by scenarios 4, 5 and 7.
     """
 
-    raise SurfaceMissing("install_provider_package", REGISTRATION)
+    import hashlib
+    import json
+
+    from cruxible_client.contracts.get_reads import GetProviderCard, GetRequest
+    from cruxible_client.contracts.provider_registration import PackageRegistration
+    from cruxible_client.contracts.providers import (
+        ProviderLocalDistributionPin,
+        ProviderLocalEnvBackendPin,
+        ProviderRuntimeManifest,
+        provider_path,
+        render_provider,
+    )
+    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.service.procedures.provider_installation import (
+        _refuse_unproven_provider,
+    )
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.core_support._identity_support import accept_tree
+
+    # What the wheel carries, read the way ``package_metadata`` reads it: the
+    # registration (core's schema-3 model) and the manifest it names by digest.
+    registration = PackageRegistration.model_validate(package.registration)
+    manifest_bytes = package.manifest_bytes
+    if "sha256:" + hashlib.sha256(manifest_bytes).hexdigest() != registration.manifest.digest:
+        raise ValueError("the registration names another manifest")
+    document = PackageRegistrationDocumentV1(
+        schema_version=3,
+        manifest=ProviderRuntimeManifest.model_validate(json.loads(manifest_bytes)),
+        operations=registration.operations,
+        declares=registration.declares,
+        runtime_requirements=registration.runtime_requirements,
+    )
+    # The pins a wheel and lock would give; this pilot has neither, so stand-ins
+    # derived from the registration bytes name one build per package.
+    wheel = hashlib.sha256(json.dumps(package.registration, sort_keys=True).encode()).hexdigest()
+    build = document.provider_definition(
+        distribution=ProviderLocalDistributionPin(
+            name=package.provider_id,
+            version=package.version,
+            filename=f"{package.provider_id.replace('-', '_')}-{package.version}-py3-none-any.whl",
+            sha256="sha256:" + wheel,
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + hashlib.sha256(b"lock:" + wheel.encode()).hexdigest(),
+            materialization_digests={
+                "pilot": "sha256:" + hashlib.sha256(b"env:" + wheel.encode()).hexdigest()
+            },
+        ),
+        control_domain=package.provider_id,
+        operations=document.pinned_operations(),
+    )
+    # The install's own law (no instance Contract is read), then the ordinary
+    # proposal and acceptance of the one build path.
+    _refuse_unproven_provider(build, frozenset())
+    accept_tree(
+        instance,
+        {provider_path(build.identity.name): render_provider(build)},
+        name=f"install-{package.provider_id}",
+    )
+    card = service_playbill_get(
+        instance,
+        request=GetRequest(ref=build.identity.qualified),
+        access=BodyAccessContext(principal_id="pilot", can_read_body=False),
+    ).card
+    assert isinstance(card, GetProviderCard)
+    return InstalledProvider(
+        provider_id=card.provider,
+        build=build.identity.qualified,
+        operations=tuple(
+            ListedOperation(
+                name=row.operation,
+                description=row.description,
+                source=row.source.model_dump(mode="json"),
+                serves=row.serves,
+            )
+            for row in card.operations
+        ),
+    )
 
 
 # -- scenario 4: binding ----------------------------------------------------------------

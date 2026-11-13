@@ -248,7 +248,7 @@
     "unsupported_backend",
     "unsupported_protocol"
   ],
-  "runtime_version": "0.4.0",
+  "runtime_version": "0.5.0",
   "schemas": {
     "Budgets": {
       "additionalProperties": false,
@@ -284,7 +284,7 @@
     },
     "ContractRef": {
       "additionalProperties": false,
-      "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+      "description": "A pin to one Contract version.\n\nOperations write ``name@N``; the install pins each to the digest of the copy\nthe package carries. A carried Contract pins every nested Contract by digest.",
       "properties": {
         "digest": {
           "anyOf": [
@@ -369,7 +369,7 @@
       "$defs": {
         "ContractRef": {
           "additionalProperties": false,
-          "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+          "description": "A pin to one Contract version.\n\nOperations write ``name@N``; the install pins each to the digest of the copy\nthe package carries. A carried Contract pins every nested Contract by digest.",
           "properties": {
             "digest": {
               "anyOf": [
@@ -422,9 +422,171 @@
     },
     "PackageRegistration": {
       "$defs": {
+        "BuiltAgainstCapability": {
+          "additionalProperties": false,
+          "description": "One capability version the package's copies were made from.",
+          "properties": {
+            "digest": {
+              "title": "Digest",
+              "type": "string"
+            },
+            "kind": {
+              "const": "Capability",
+              "default": "Capability",
+              "title": "Kind",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "version": {
+              "maximum": 999999999,
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "digest"
+          ],
+          "title": "BuiltAgainstCapability",
+          "type": "object"
+        },
+        "BuiltAgainstCaptureKind": {
+          "additionalProperties": false,
+          "description": "One CaptureKind a carried copy was made from, by the digest of its declared copy.",
+          "properties": {
+            "digest": {
+              "title": "Digest",
+              "type": "string"
+            },
+            "kind": {
+              "const": "CaptureKind",
+              "default": "CaptureKind",
+              "title": "Kind",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "digest"
+          ],
+          "title": "BuiltAgainstCaptureKind",
+          "type": "object"
+        },
+        "CarriedCaptureKind": {
+          "additionalProperties": false,
+          "description": "A CaptureKind the operations name: its name, decoding and layout, as core declares them.\n\nA raw kind may carry neither (the operation names it without promising a\ndocument shape). A layout needs a JSON or CSV decoding.",
+          "properties": {
+            "decoding": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decoding"
+            },
+            "layout": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Layout"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "title": "CarriedCaptureKind",
+          "type": "object"
+        },
+        "CarriedContract": {
+          "additionalProperties": false,
+          "description": "One Contract the package carries, as a full ``cruxible-contract-v1`` document.\n\nThe runtime reads its identity and the Contracts and kinds its field types\nname; core judges the rest (types, refinements, digests).",
+          "properties": {
+            "artifact_format": {
+              "const": "cruxible-contract-v1",
+              "default": "cruxible-contract-v1",
+              "title": "Artifact Format",
+              "type": "string"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "fields": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "maxProperties": 256,
+              "title": "Fields",
+              "type": "object"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "predecessor_digest": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Predecessor Digest"
+            },
+            "version": {
+              "maximum": 999999999,
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "fields"
+          ],
+          "title": "CarriedContract",
+          "type": "object"
+        },
         "ContractRef": {
           "additionalProperties": false,
-          "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+          "description": "A pin to one Contract version.\n\nOperations write ``name@N``; the install pins each to the digest of the copy\nthe package carries. A carried Contract pins every nested Contract by digest.",
           "properties": {
             "digest": {
               "anyOf": [
@@ -456,54 +618,6 @@
           "title": "ContractRef",
           "type": "object"
         },
-        "EnumeratedField": {
-          "additionalProperties": false,
-          "properties": {
-            "at": {
-              "maxLength": 512,
-              "minLength": 1,
-              "title": "At",
-              "type": "string"
-            }
-          },
-          "required": [
-            "at"
-          ],
-          "title": "EnumeratedField",
-          "type": "object"
-        },
-        "OperationEnumeration": {
-          "additionalProperties": false,
-          "description": "What a provider-parsed operation enumerates. Declared and recorded, not verified.",
-          "properties": {
-            "capture": {
-              "title": "Capture",
-              "type": "string"
-            },
-            "fields": {
-              "additionalProperties": {
-                "$ref": "#/$defs/EnumeratedField"
-              },
-              "maxProperties": 256,
-              "minProperties": 1,
-              "title": "Fields",
-              "type": "object"
-            },
-            "selector": {
-              "maxLength": 512,
-              "minLength": 1,
-              "title": "Selector",
-              "type": "string"
-            }
-          },
-          "required": [
-            "capture",
-            "selector",
-            "fields"
-          ],
-          "title": "OperationEnumeration",
-          "type": "object"
-        },
         "OperationRefusal": {
           "additionalProperties": false,
           "description": "One typed refusal an operation may return: its detail Contract.\n\n``absorbable`` declares that the refusal means \"this input is unavailable\",\nwhich a Line acquisition rule may absorb instead of failing the run.",
@@ -523,10 +637,108 @@
           "title": "OperationRefusal",
           "type": "object"
         },
+        "OperationSource": {
+          "additionalProperties": false,
+          "description": "Where an operation's code is.\n\n``path`` is relative to the root of ``repository`` (or, for a local build\nwith no repository, to the provider's project directory). ``revision`` is\nthe full commit id the build was made from, and needs ``repository``.",
+          "properties": {
+            "path": {
+              "maxLength": 512,
+              "title": "Path",
+              "type": "string"
+            },
+            "repository": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repository"
+            },
+            "revision": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Revision"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "title": "OperationSource",
+          "type": "object"
+        },
+        "ProviderDeclares": {
+          "additionalProperties": false,
+          "description": "The shapes a package carries for its operations; never installed as instance state.\n\n``contracts`` are sorted by name then version, ``capture_kinds`` by name,\n``built_against`` by kind, name, then version; each is listed once.",
+          "properties": {
+            "built_against": {
+              "default": [],
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "Capability": "#/$defs/BuiltAgainstCapability",
+                    "CaptureKind": "#/$defs/BuiltAgainstCaptureKind"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/BuiltAgainstCapability"
+                  },
+                  {
+                    "$ref": "#/$defs/BuiltAgainstCaptureKind"
+                  }
+                ]
+              },
+              "maxItems": 512,
+              "title": "Built Against",
+              "type": "array"
+            },
+            "capture_kinds": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/CarriedCaptureKind"
+              },
+              "maxItems": 256,
+              "title": "Capture Kinds",
+              "type": "array"
+            },
+            "contracts": {
+              "items": {
+                "$ref": "#/$defs/CarriedContract"
+              },
+              "maxItems": 1024,
+              "minItems": 1,
+              "title": "Contracts",
+              "type": "array"
+            }
+          },
+          "required": [
+            "contracts"
+          ],
+          "title": "ProviderDeclares",
+          "type": "object"
+        },
         "ProviderOperation": {
           "additionalProperties": false,
-          "description": "One operation a provider package serves.",
+          "description": "One operation a provider package serves (registration schema 3).\n\n``serves`` lists capability names, sorted and once each, at most sixteen,\nnone under ``workspace.``: fit is checked against whichever version a slot\npins. ``may_truncate``: the operation may return a truncated listing, so it\nbinds only a slot that declares ``may_truncate`` too.",
           "properties": {
+            "description": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "title": "Description",
+              "type": "string"
+            },
             "effect": {
               "enum": [
                 "pure",
@@ -540,19 +752,13 @@
               "title": "Entrypoint",
               "type": "string"
             },
-            "enumerates": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/OperationEnumeration"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null
-            },
             "in": {
               "$ref": "#/$defs/ContractRef"
+            },
+            "may_truncate": {
+              "default": false,
+              "title": "May Truncate",
+              "type": "boolean"
             },
             "name": {
               "title": "Name",
@@ -567,10 +773,25 @@
               },
               "title": "Refusals",
               "type": "object"
+            },
+            "serves": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "title": "Serves",
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/OperationSource"
             }
           },
           "required": [
             "name",
+            "description",
+            "source",
+            "serves",
             "in",
             "out",
             "effect",
@@ -581,12 +802,14 @@
         },
         "ResourceRef": {
           "additionalProperties": false,
+          "description": "A package file the registration names, by package-relative path and sha256.",
           "properties": {
             "digest": {
               "title": "Digest",
               "type": "string"
             },
             "path": {
+              "maxLength": 512,
               "title": "Path",
               "type": "string"
             }
@@ -603,6 +826,8 @@
           "description": "Something an implementation's environment needs beyond its lock.\n\nKeyed by the manifest implementation it belongs to: its ``entrypoint``.",
           "properties": {
             "description": {
+              "maxLength": 2048,
+              "minLength": 1,
               "title": "Description",
               "type": "string"
             },
@@ -619,6 +844,8 @@
               "type": "string"
             },
             "name": {
+              "maxLength": 256,
+              "minLength": 1,
               "title": "Name",
               "type": "string"
             },
@@ -646,8 +873,11 @@
         }
       },
       "additionalProperties": false,
-      "description": "``registration.json``, schema 2.",
+      "description": "``registration.json``, schema 3, exactly as a package ships it.\n\n``manifest`` names the package's runtime manifest by path and digest;\n``operations`` are sorted by name, once each; ``declares`` carries every\nshape they reach and nothing else.",
       "properties": {
+        "declares": {
+          "$ref": "#/$defs/ProviderDeclares"
+        },
         "manifest": {
           "$ref": "#/$defs/ResourceRef"
         },
@@ -655,6 +885,7 @@
           "items": {
             "$ref": "#/$defs/ProviderOperation"
           },
+          "maxItems": 256,
           "minItems": 1,
           "title": "Operations",
           "type": "array"
@@ -668,7 +899,7 @@
           "type": "array"
         },
         "schema_version": {
-          "const": 2,
+          "const": 3,
           "title": "Schema Version",
           "type": "integer"
         }
@@ -676,7 +907,8 @@
       "required": [
         "schema_version",
         "manifest",
-        "operations"
+        "operations",
+        "declares"
       ],
       "title": "PackageRegistration",
       "type": "object"
@@ -847,7 +1079,7 @@
       "$defs": {
         "ContractRef": {
           "additionalProperties": false,
-          "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+          "description": "A pin to one Contract version.\n\nOperations write ``name@N``; the install pins each to the digest of the copy\nthe package carries. A carried Contract pins every nested Contract by digest.",
           "properties": {
             "digest": {
               "anyOf": [
@@ -879,54 +1111,6 @@
           "title": "ContractRef",
           "type": "object"
         },
-        "EnumeratedField": {
-          "additionalProperties": false,
-          "properties": {
-            "at": {
-              "maxLength": 512,
-              "minLength": 1,
-              "title": "At",
-              "type": "string"
-            }
-          },
-          "required": [
-            "at"
-          ],
-          "title": "EnumeratedField",
-          "type": "object"
-        },
-        "OperationEnumeration": {
-          "additionalProperties": false,
-          "description": "What a provider-parsed operation enumerates. Declared and recorded, not verified.",
-          "properties": {
-            "capture": {
-              "title": "Capture",
-              "type": "string"
-            },
-            "fields": {
-              "additionalProperties": {
-                "$ref": "#/$defs/EnumeratedField"
-              },
-              "maxProperties": 256,
-              "minProperties": 1,
-              "title": "Fields",
-              "type": "object"
-            },
-            "selector": {
-              "maxLength": 512,
-              "minLength": 1,
-              "title": "Selector",
-              "type": "string"
-            }
-          },
-          "required": [
-            "capture",
-            "selector",
-            "fields"
-          ],
-          "title": "OperationEnumeration",
-          "type": "object"
-        },
         "OperationRefusal": {
           "additionalProperties": false,
           "description": "One typed refusal an operation may return: its detail Contract.\n\n``absorbable`` declares that the refusal means \"this input is unavailable\",\nwhich a Line acquisition rule may absorb instead of failing the run.",
@@ -945,11 +1129,57 @@
           ],
           "title": "OperationRefusal",
           "type": "object"
+        },
+        "OperationSource": {
+          "additionalProperties": false,
+          "description": "Where an operation's code is.\n\n``path`` is relative to the root of ``repository`` (or, for a local build\nwith no repository, to the provider's project directory). ``revision`` is\nthe full commit id the build was made from, and needs ``repository``.",
+          "properties": {
+            "path": {
+              "maxLength": 512,
+              "title": "Path",
+              "type": "string"
+            },
+            "repository": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repository"
+            },
+            "revision": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Revision"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "title": "OperationSource",
+          "type": "object"
         }
       },
       "additionalProperties": false,
-      "description": "One operation a provider package serves.",
+      "description": "One operation a provider package serves (registration schema 3).\n\n``serves`` lists capability names, sorted and once each, at most sixteen,\nnone under ``workspace.``: fit is checked against whichever version a slot\npins. ``may_truncate``: the operation may return a truncated listing, so it\nbinds only a slot that declares ``may_truncate`` too.",
       "properties": {
+        "description": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
         "effect": {
           "enum": [
             "pure",
@@ -963,19 +1193,13 @@
           "title": "Entrypoint",
           "type": "string"
         },
-        "enumerates": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/OperationEnumeration"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "in": {
           "$ref": "#/$defs/ContractRef"
+        },
+        "may_truncate": {
+          "default": false,
+          "title": "May Truncate",
+          "type": "boolean"
         },
         "name": {
           "title": "Name",
@@ -990,10 +1214,25 @@
           },
           "title": "Refusals",
           "type": "object"
+        },
+        "serves": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Serves",
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/OperationSource"
         }
       },
       "required": [
         "name",
+        "description",
+        "source",
+        "serves",
         "in",
         "out",
         "effect",
@@ -1368,6 +1607,8 @@
       "description": "Something an implementation's environment needs beyond its lock.\n\nKeyed by the manifest implementation it belongs to: its ``entrypoint``.",
       "properties": {
         "description": {
+          "maxLength": 2048,
+          "minLength": 1,
           "title": "Description",
           "type": "string"
         },
@@ -1384,6 +1625,8 @@
           "type": "string"
         },
         "name": {
+          "maxLength": 256,
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },

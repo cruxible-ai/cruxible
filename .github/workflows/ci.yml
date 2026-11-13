@@ -15,7 +15,7 @@ env:
   # end-to-end skeleton (tests/test_e2e) runs its web.fetch. D-R37 providers
   # template: runtime 0.4.0, web 0.5.0, noop 0.4.0, docs/quant/workspace 0.3.1
   # (branch claude/providers-template).
-  CRUXIBLE_PROVIDERS_COMMIT: f8d90c9f4d31e3619d970b3e6f96f171648368b3
+  CRUXIBLE_PROVIDERS_COMMIT: 40e8a84ddddc2a43e00ae0a20ca4ec24f5a9f91f
   # The CLI starts a local daemon when a command needs one and none answers;
   # CI never wants that (tests/conftest.py turns it off for pytest too).
   CRUXIBLE_NO_AUTOSTART: "1"

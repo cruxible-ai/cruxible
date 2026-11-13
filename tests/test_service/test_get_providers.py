@@ -67,9 +67,10 @@ def test_provider_inventory_names_exact_paths_proof_and_history(tmp_path: Path, 
         listed.package,
         listed.version,
     )
-    # The card's operations are full signatures ("name: in@N -> out@N (effect)");
-    # the inventory row's are bare names.
-    assert tuple(item.partition(":")[0] for item in card.operations) == listed.operations
+    # The card's operations are typed rows (name, signature, what each serves, its
+    # source); the inventory row's are bare names.
+    assert tuple(item.operation for item in card.operations) == listed.operations
+    assert all(item.build == first.identity.qualified for item in card.operations)
     proof = _get(instance, refs[0], detail="proof").proof
     assert proof["envelope"] == first.model_dump(mode="json")
     assert proof["artifact_digest"] == provider_digest(first).tagged

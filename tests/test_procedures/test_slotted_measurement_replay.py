@@ -105,7 +105,6 @@ def _workspace_file_providers():
     """Two further builds serving the exact ``workspace.file`` signature, so
     the "fetch" slot is ambiguous too, alongside the genesis built-in."""
 
-    from cruxible_client.contracts.provider_operations import ProviderOperation
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
         ProviderImplementationManifest,
@@ -113,20 +112,10 @@ def _workspace_file_providers():
         ProviderLocalEnvBackendPin,
         ProviderRuntimeManifest,
     )
-    from cruxible_client.contracts.shapes import contract_digest
     from cruxible_client.contracts.workspace_file import workspace_file_contracts
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from tests.support.declared_operations import declared_operation, registration_document
 
-    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
-    contracts = (wf_request, wf_result)
-
-    def digests(ref):
-        for item in contracts:
-            if (ref.name, ref.version) == (item.name, item.version):
-                return contract_digest(item).tagged
-        return None
-
-    operation = ProviderOperation.model_validate(
+    operation = declared_operation(
         {
             "name": "fetch",
             "in": "workspace.file.request@1",
@@ -149,9 +138,7 @@ def _workspace_file_providers():
                 ),
             ),
         )
-        document = PackageRegistrationDocumentV1(
-            schema_version=2, manifest=manifest, operations=(operation,)
-        )
+        document = registration_document(manifest, (operation,), workspace_file_contracts())
         built = document.provider_definition(
             distribution=ProviderLocalDistributionPin(
                 name=provider_id,
@@ -164,7 +151,7 @@ def _workspace_file_providers():
                 materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
             ),
             control_domain=provider_id,
-            operations=document.pinned_operations(digests),
+            operations=document.pinned_operations(),
         )
         return built
 

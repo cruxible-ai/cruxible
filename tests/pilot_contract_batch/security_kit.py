@@ -185,10 +185,16 @@ def start_run(
 
         return wrapper
 
+    from tests.pilot_contract_batch.fixtures.schema3 import schema3_packages
+    from tests.support.provider_checkout import require_provider_checkout
+
     gate = kit.start_gate
     sbom = (kit.root / "examples/sboms/log4j-demo-app.cdx.json").read_bytes()
     with (
         converted_kit(kit),
+        # The kit's providers ship registration schema 2; the pilot installs
+        # their schema-3 rebuilds (fixtures/schema3.py).
+        schema3_packages(require_provider_checkout(), kit.root.parents[1]),
         _patched(core_support, "initialize_local", timed_open),
         _patched(gate, "kit_world", timed_kit),
         _patched(gate, "submit", timed_submit),

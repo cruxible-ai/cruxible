@@ -56,7 +56,6 @@ PROVIDER_IDS = (
     "cruxible-provider-noop",
     "cruxible-provider-quant",
     "cruxible-provider-web",
-    "cruxible-provider-workspace",
 )
 OPERATIONS = (
     "calc.calibrate",

@@ -561,9 +561,12 @@ def test_initialization_installs_no_provider_and_writes_no_candidate(
     instance = get_playbill_manager().get("inst_unseeded")
     assert instance.proposal_evidence().list_admissions() == ()
     assert instance.accepted_history()[-1].sequence == 0
-    assert "providers/cruxible-provider-workspace.json" not in instance.tree_at(
-        instance.accepted_coordinate().git_oid
-    )
+    # File reading is the seeded built-in's; no provider package is installed.
+    assert [
+        path
+        for path in instance.tree_at(instance.accepted_coordinate().git_oid)
+        if path.startswith("providers/")
+    ] == ["providers/cruxible-builtin.json"]
 
     retry = playbill_api.playbill_init(
         "inst_unseeded",

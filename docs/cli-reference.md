@@ -883,11 +883,13 @@ proposals. An instance can publish nowhere initially; `cruxible ledger set-mirro
 adds a destination later. See [ledger](#ledger) for URL syntax.
 
 Initialization creates governed state only, and needs no provider checkout or
-executable environment. A new instance starts with `workspace.file` built in: its
-ProviderInterface and the `cruxible-builtin` Provider are part of the first
-generation, so a Procedure can pin and run a workspace Source with no install.
-(`cruxible-provider-workspace` is not published; instances that installed it
-before keep it.) Install other provider packages with `cruxible provider install`.
+executable environment. A new instance starts with file reading built in: the
+`cruxible-builtin` Provider, which serves `workspace.file` and `workspace.files`
+and carries its own Contracts, is part of the first generation, so a Procedure
+can read a workspace file with no install. No provider package may serve a
+`workspace.` capability. Install other provider packages with
+`cruxible provider install`; a package carries the shapes its operations use,
+so it installs with no kit present.
 
 ## capture
 

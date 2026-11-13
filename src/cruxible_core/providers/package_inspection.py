@@ -25,10 +25,7 @@ from cruxible_core.providers.package_materialization import (
     toolchain,
 )
 from cruxible_core.providers.package_metadata import read_wheel_registration
-from cruxible_core.providers.package_registration import (
-    ContractDigests,
-    PackageRegistrationDocumentV1,
-)
+from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 
 _REPAIR = RepairOperation(operation="cruxible.kit.build")
 
@@ -46,24 +43,21 @@ class InspectedProviderPackage:
     pin_key: str | None
     materialization: str | None
     #: The package's registration, metadata-only (no code runs to read it): its
-    #: full typed operations (name, in/out Contract refs, effect), which
+    #: full typed operations and the shapes it carries, which
     #: ``provider`` only names. The kit-build template check (D-R48 fix round
     #: 2, R2) uses it to seed the throwaway instance with exactly the Provider
     #: build and operations a bundled package registers -- never a publisher-
     #: local definition.
     document: PackageRegistrationDocumentV1
 
-    def build_artifact(
-        self, *, control_domain: str, contracts: ContractDigests
-    ) -> tuple[str, bytes] | None:
+    def build_artifact(self, *, control_domain: str) -> tuple[str, bytes] | None:
         """This bundled package's Provider artifact (path, bytes), or None.
 
         None for an index default without a resolved dependency closure
         (``pin_key``/``materialization``): there is no one build to seed, as a
         real adopter without a serving build installs from the index instead.
-        Operations are pinned against ``contracts`` (the Contract versions
-        resolvable where this is seeded), exactly as a real install pins them
-        against the consumer's accepted Contracts.
+        Operations are pinned to the package's own carried Contract copies,
+        exactly as a real install pins them.
         """
 
         if self.pin_key is None or self.materialization is None:
@@ -89,7 +83,7 @@ class InspectedProviderPackage:
             distribution=distribution,
             local_env=local_env,
             control_domain=control_domain,
-            operations=self.document.pinned_operations(contracts),
+            operations=self.document.pinned_operations(),
         )
         return provider_path(build.identity.name), render_provider(build)
 

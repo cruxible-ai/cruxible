@@ -42,10 +42,8 @@ from cruxible_client.contracts.provider_execution import (
     VerifiedProviderBinding,
     provider_secret_binding_identity_digest,
 )
-from cruxible_client.contracts.provider_operations import (
-    ProviderOperation,
-    operation_signature_digest,
-)
+from cruxible_client.contracts.provider_operations import operation_signature_digest
+from cruxible_client.contracts.provider_registration import DeclaredOperation
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     Provider,
@@ -709,7 +707,7 @@ class LocalProviderExecutionDriver:
     def bind(
         self,
         accepted_provider: AcceptedProvider,
-        operation: ProviderOperation,
+        operation: DeclaredOperation,
         implementation_digest: str,
         deployment: LocalProviderDeploymentV1,
     ) -> BoundLocalProviderV1:
@@ -876,7 +874,7 @@ class LocalProviderExecutionDriver:
     @staticmethod
     def _bound_result(
         accepted_provider: AcceptedProvider,
-        operation: ProviderOperation,
+        operation: DeclaredOperation,
         implementation_digest: str,
         deployment: LocalProviderDeploymentV1,
         *,

@@ -97,7 +97,6 @@ def _closure_instance(
     from cruxible_core.governance.keys import generate_client_principal_key
     from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-    from cruxible_core.service.procedures.provider_installation import tree_contract_digests
 
     scratch = Path(tempfile.mkdtemp(prefix="cruxible-kit-template-check-"))
     try:
@@ -115,9 +114,8 @@ def _closure_instance(
         )
         base = instance.accepted_coordinate()
         candidate_tree = {**instance.tree_at(base.git_oid), **closure}
-        contracts = tree_contract_digests(candidate_tree)
         for package in providers:
-            built = package.build_artifact(control_domain=_CONTROL_DOMAIN, contracts=contracts)
+            built = package.build_artifact(control_domain=_CONTROL_DOMAIN)
             if built is not None:
                 path, content = built
                 candidate_tree[path] = content

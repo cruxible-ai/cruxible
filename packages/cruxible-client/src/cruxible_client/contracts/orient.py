@@ -46,6 +46,7 @@ from cruxible_client.contracts.operational_reads import (
 from cruxible_client.contracts.policy_rows import PolicyInForce
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.provider_registration import OperationSource
 from cruxible_client.contracts.types import PrincipalRecord
 
 OrientSection: TypeAlias = Literal[
@@ -368,19 +369,28 @@ class OrientProcedure(_StrictOrientModel):
 class OrientOperation(_StrictOrientModel):
     """One operation a live provider build serves: what a Line can bind a slot to.
 
-    ``input`` and ``output`` name its Contracts (``name@N``); a slot whose
-    signature is ``{in: input, out: output, effect}`` fits it. ``build`` is the
-    exact build (``Provider:<name>/<build key>``); a Line binding names it as
-    ``<build>#<operation>``. ``refusals`` lists the typed refusal codes it may
-    return. ``get("Provider:<build>")`` reads the whole build.
+    ``description`` is the provider's own words for it; ``serves`` names the
+    capabilities it declares; ``source`` is where its code is (``path`` in
+    ``repository`` at ``revision``, when the build names them). ``input`` and
+    ``output`` name its own Contracts (``name@N``), copies the build carries.
+    ``build`` is the exact build (``Provider:<name>/<build key>``); a Line
+    binding names it as ``<build>#<operation>``. ``refusals`` lists the typed
+    refusal codes it may return, and ``absorbable`` those a Line rule with
+    ``on_unavailable: omit`` may absorb. ``may_truncate``: it may return a
+    truncated listing. ``get("Provider:<build>")`` reads the whole build.
     """
 
     build: str
     operation: str
+    description: str
+    serves: tuple[str, ...]
+    source: OperationSource
     input: str
     output: str
     effect: Literal["pure", "external_read", "external_mutation"]
+    may_truncate: bool = Field(default=False, exclude_if=lambda value: value is False)
     refusals: tuple[str, ...] = ()
+    absorbable: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     signature_digest: str
 
 

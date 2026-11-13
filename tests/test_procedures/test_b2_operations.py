@@ -976,29 +976,30 @@ def test_a_typed_refusal_detail_outside_its_contract_is_refused(tmp_path):
 
 
 @pytest.mark.parametrize("on_unavailable", ["omit", "refuse"])
-def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(tmp_path, on_unavailable):
-    from tests.support.operation_world import operation
+def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(
+    tmp_path, on_unavailable, monkeypatch
+):
+    """A workspace Source binds only core's builtin (ruling B1); the builtin's own
+    absorbable ``provider_declined`` is absorbed under ``omit`` only."""
 
-    fetcher = operation_build(
-        provider_id="fetcher",
-        operations=(
-            operation(
-                "workspace.file",
-                refusals={"provider_declined": True},
-                signature=("workspace.file.request@1", "workspace.file.result@1"),
-            ),
-        ),
-    )
+    from cruxible_core.providers import builtin_runtime
+
     instance, root = sourced_world(
         tmp_path,
         acquisition={"doc.capture": {"max_age": "P1D", "on_unavailable": on_unavailable}},
-        bindings={"read": fetcher.identity.name},
-        builds=(fetcher,),
     )
-    assert accepted_line(instance, SOURCE_LINE).bindings["read"].build.target == fetcher.identity
-    invoker = Invoker(refusal=("provider_declined", {"reason": "not today"}))
-    state = run_sourced(instance, root, operator=Operator(invoker))
-    assert len(invoker.contexts) == 1
+    assert accepted_line(instance, SOURCE_LINE).bindings["read"].build.target.name == (
+        "cruxible-builtin"
+    )
+    # The builtin declines this read (its size guard's refusal, as it returns it).
+    monkeypatch.setattr(
+        builtin_runtime,
+        "_guarded_call",
+        lambda adapter, context: builtin_runtime._envelope(
+            context, "provider_declined", "not today", byte_length=2, max_bytes=1
+        ),
+    )
+    state = run_sourced(instance, root)
     if on_unavailable == "refuse":
         assert state.status == "node_refused"
         assert (state.terminal.code, state.terminal.detail_code, state.terminal.node_id) == (
@@ -1044,12 +1045,11 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
     )
     from cruxible_client.contracts.shapes import (
         Contract,
-        contract_digest,
         contract_path,
         render_contract,
     )
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
     from tests.core_support._identity_support import accept_tree
+    from tests.support.declared_operations import registration_document
 
     severity_value = Contract.model_validate(
         {
@@ -1079,13 +1079,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
-
-    def digests(ref):  # type: ignore[no-untyped-def]
-        for contract in (VALUE, REFUSAL, severity_value):
-            if (ref.name, ref.version) == (contract.name, contract.version):
-                return contract_digest(contract).tagged
-        return None
+    document = registration_document(manifest, served, (VALUE, REFUSAL, severity_value))
 
     build = document.provider_definition(
         distribution=ProviderLocalDistributionPin(
@@ -1099,7 +1093,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain="demo-provider",
-        operations=document.pinned_operations(digests),
+        operations=document.pinned_operations(),
     )
     # The severity Contract and ClaimType must be accepted before the build
     # that pins them: the install law resolves every operation Contract pin
@@ -1223,14 +1217,13 @@ def _fetch_world(
     )
     from cruxible_client.contracts.shapes import (
         Contract,
-        contract_digest,
         contract_path,
         render_contract,
     )
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
     from tests.core_support._identity_support import accept_tree
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
+    from tests.support.declared_operations import registration_document
 
     request_fields = {"query": {"type": "string"}}
     if request_url is not None:
@@ -1278,13 +1271,9 @@ def _fetch_world(
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
-
-    def digests(ref):  # type: ignore[no-untyped-def]
-        for item in (VALUE, REFUSAL, fetch_request, fetch_result):
-            if (ref.name, ref.version) == (item.name, item.version):
-                return contract_digest(item).tagged
-        return None
+    document = registration_document(
+        manifest, served, (VALUE, REFUSAL, fetch_request, fetch_result)
+    )
 
     build = document.provider_definition(
         distribution=ProviderLocalDistributionPin(
@@ -1298,7 +1287,7 @@ def _fetch_world(
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain="fetcher",
-        operations=document.pinned_operations(digests),
+        operations=document.pinned_operations(),
     )
     # The request/result Contracts and CaptureContract must be accepted
     # before the build that pins them; see test_an_accepted_enum_of_...

@@ -48,8 +48,8 @@ from tests.support.provider_checkout import require_provider_checkout
 from tests.test_e2e.test_skeleton_capture_lists import _wire, install
 from tests.test_e2e.test_skeleton_kev_epss import (
     _claim_type,
-    _contract_digest_in,
     _key_type,
+    _web_contracts,
     activate,
     proposed,
     skeleton_world,
@@ -82,7 +82,6 @@ DERIVE_REQUEST = boundary_contract("test.sbom-derive.request", {"sbom": "capture
 def _derive_build(checkout: Path) -> Any:
     """A core test-double provider: one pure derive over the SBOM file."""
 
-    from cruxible_client.contracts.provider_operations import ProviderOperation
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
         ProviderImplementationManifest,
@@ -90,15 +89,10 @@ def _derive_build(checkout: Path) -> Any:
         ProviderLocalEnvBackendPin,
         ProviderRuntimeManifest,
     )
-    from cruxible_client.contracts.shapes import contract_digest
-    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from tests.support.declared_operations import declared_operation, registration_document
 
-    digests = {
-        ("test.sbom-derive.request", 1): contract_digest(DERIVE_REQUEST).tagged,
-        ("web.fetch.result", 1): _contract_digest_in(checkout, "web.fetch.result"),
-    }
     served = (
-        ProviderOperation.model_validate(
+        declared_operation(
             {
                 "name": "sbom_components",
                 "in": "test.sbom-derive.request@1",
@@ -119,7 +113,7 @@ def _derive_build(checkout: Path) -> Any:
             ),
         ),
     )
-    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+    document = registration_document(manifest, served, (DERIVE_REQUEST, *_web_contracts(checkout)))
     return document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=PROVIDER,
@@ -132,7 +126,7 @@ def _derive_build(checkout: Path) -> Any:
             materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
         ),
         control_domain=PROVIDER,
-        operations=document.pinned_operations(lambda ref: digests.get((ref.name, ref.version))),
+        operations=document.pinned_operations(),
     )
 
 

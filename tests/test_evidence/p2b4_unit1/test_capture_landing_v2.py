@@ -75,10 +75,11 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
 
     assert isinstance(first, CaptureLandingEventV1)
     assert isinstance(second, CaptureLandingEvent)
+    # The event commits to the bound operation as stored: the value moves with the operation model.
     assert first.idempotency_key == (
-        "dc57c23b7c7a90bd8163b0aea4b5c9689a2a0be9b072bd8df5481be297122ee9"
+        "b80e4cddf853b6122ac1f0c9c075bacdf454d32a8ec05fe076b186238020e2a2"
     )
-    assert first.event_id == "c5048dd3e2a59b9b65438f843c1f8fe18bc60f07b6c88962283abd0966edc095"
+    assert first.event_id == "df63e743fb7f5462ff3ca5953f94162531f7b8c7a60afc4406e6480a5dc68a92"
     assert first.partition_id == second.partition_id
     assert second.sequence == 1
     assert second.previous_event_digest == first.event_id

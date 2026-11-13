@@ -36,8 +36,21 @@ from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo, sealed_
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
-from cruxible_client.contracts.provider_operations import ProviderOperation, validate_operations
+from cruxible_client.contracts.provider_execution import ProviderExternalOccurrencePlan
+from cruxible_client.contracts.provider_operations import validate_operations
+from cruxible_client.contracts.provider_registration import (
+    PROVIDER_CAPABILITY_RESERVED,
+    DeclaredOperation,
+    ProviderDeclares,
+    evaluate_declared_operations,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
+
+# The occurrence plan names the operation model, which it cannot import itself
+# (``provider_registration`` reaches ``captures``, which imports it).
+ProviderExternalOccurrencePlan.model_rebuild(
+    _types_namespace={"DeclaredOperation": DeclaredOperation}
+)
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _BUILD_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -655,11 +668,17 @@ class ProviderV2(ProviderV1):
     artifact_format: Literal["playbill-provider-v2"] = "playbill-provider-v2"  # type: ignore[assignment]
     runtime_artifact: ProviderRuntimeArtifactPayloadV1
     implementations: tuple[ProviderImplementationRecord, ...]
-    #: What this build serves: typed operations, sorted by name. Each names a
-    #: manifest entrypoint; a Line binds a Procedure slot to one of them.
-    operations: tuple[ProviderOperation, ...] = Field(
+    #: What this build serves: typed operations (registration schema 3), sorted
+    #: by name. Each names a manifest entrypoint and the capability names it
+    #: serves; a Line binds a Procedure slot to one of them. Every Contract an
+    #: operation names is pinned to the digest of the copy in ``declares``.
+    operations: tuple[DeclaredOperation, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    #: The shapes the operations accept and return, carried by the build: never
+    #: installed as instance Contracts or CaptureKinds. Present exactly when the
+    #: build declares operations.
+    declares: ProviderDeclares | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _operations = field_validator("operations")(validate_operations)
 
@@ -706,6 +725,10 @@ class ProviderV2(ProviderV1):
         expected = provider_expected_implementation_records(payload)
         if self.implementations != expected:
             raise ValueError("implementation_digest_mismatch: implementation table diverges")
+        if bool(self.operations) != (self.declares is not None):
+            raise ValueError(
+                "declares_mismatch: a Provider carries declares exactly when it declares operations"
+            )
         entrypoints = {item.entrypoint for item in payload.manifest.implementations}
         for operation in self.operations:
             if operation.entrypoint not in entrypoints:
@@ -1012,6 +1035,9 @@ def _build_runtime(provider: ProviderBuild, *, by_name: bool = False) -> dict[st
         "runtime_artifact": provider.runtime_artifact.model_dump(mode="json"),
         "implementations": [item.model_dump(mode="json") for item in provider.implementations],
         "operations": [item.model_dump(mode="json") for item in provider.operations],
+        "declares": None
+        if provider.declares is None
+        else provider.declares.model_dump(mode="json"),
     }
     del by_name
     return result
@@ -1022,15 +1048,16 @@ def evaluate_provider_law(
     *,
     path: str,
     predecessor: AcceptedProvider | None,
-    contracts: Mapping[tuple[str, int], str] | None = None,
     reserved_refusal_codes: frozenset[str] = frozenset(),
     sibling_control_domains: frozenset[str] = frozenset(),
     by_name: bool = False,
+    serves_reserved: bool = False,
 ) -> ProviderLawResult:
     """Identity, path, succession and the operation law.
 
-    ``contracts`` maps each accepted Contract ``(name, version)`` to its
-    digest: every operation pin must resolve to it exactly.
+    The operation law reads only what the build carries (``declares``); it
+    never consults the instance's Contracts. ``serves_reserved`` admits a
+    ``workspace.`` capability: true only for core's own builtin Provider.
     ``reserved_refusal_codes`` are the provider runtime's own codes: an
     operation declares its own refusals, never one of these.
     ``sibling_control_domains`` are the control domains of the other builds of
@@ -1106,7 +1133,9 @@ def evaluate_provider_law(
         )
     if isinstance(provider, ProviderV2):
         problem = operation_law_problem(
-            provider, contracts=contracts or {}, reserved_refusal_codes=reserved_refusal_codes
+            provider,
+            reserved_refusal_codes=reserved_refusal_codes,
+            serves_reserved=serves_reserved,
         )
         if problem is not None:
             return _law_refusal(problem[0], problem[1], path=path)
@@ -1121,32 +1150,40 @@ def evaluate_provider_law(
 def operation_law_problem(
     provider: ProviderV2,
     *,
-    contracts: Mapping[tuple[str, int], str],
     reserved_refusal_codes: frozenset[str] = frozenset(),
+    serves_reserved: bool = False,
 ) -> tuple[str, str] | None:
     """The install law for one build's operations: ``(code, message)`` or ``None``.
 
-    Every pin resolves to the exact accepted Contract; names are unique (the
-    model enforces it); every refusal code has a Contract and none is one the
-    provider runtime reserves; and every entrypoint is one the manifest exports.
-    An operation's ``effect`` is the one declaration of whether it mutates the
-    world.
+    Every Contract an operation names is pinned by digest, and the registration
+    law holds over the carried copies (:func:`evaluate_declared_operations`:
+    each pin resolves inside ``declares`` at its digest, carried Contracts pin
+    their nested Contracts by digest, every named CaptureKind is carried,
+    nothing unreached is carried, and no operation serves a ``workspace.``
+    capability unless ``serves_reserved``). Names are unique (the model
+    enforces it); no refusal code is one the provider runtime reserves; and
+    every entrypoint is one the manifest exports. An operation's ``effect`` is
+    the one declaration of whether it mutates the world. Cost: linear in the
+    build's operations and carried shapes; the instance is never read.
     """
 
+    if not provider.operations:
+        return None
+    for operation in provider.operations:
+        unpinned = next((ref for ref in operation.contract_refs() if ref.digest is None), None)
+        if unpinned is not None:
+            return (
+                "cruxible.provider.operation_contract_unpinned",
+                f"Operation {operation.name!r} names {unpinned.spelling} without its digest; "
+                "a build pins every operation Contract to its carried copy.",
+            )
+    assert provider.declares is not None  # the model pairs operations with declares
+    for problem in evaluate_declared_operations(provider.operations, provider.declares):
+        if serves_reserved and problem.code == PROVIDER_CAPABILITY_RESERVED:
+            continue
+        return (problem.code, problem.message)
     entrypoints = {item.entrypoint for item in provider.runtime_artifact.manifest.implementations}
     for operation in provider.operations:
-        for ref in operation.contract_refs():
-            accepted = contracts.get((ref.name, ref.version))
-            if accepted is None:
-                return (
-                    "cruxible.provider.operation_contract_unresolved",
-                    f"Operation {operation.name!r} pins {ref.spelling}, which is not accepted.",
-                )
-            if ref.digest != accepted:
-                return (
-                    "cruxible.provider.operation_contract_unresolved",
-                    f"Operation {operation.name!r} must pin {ref.spelling} at {accepted}.",
-                )
         reserved = sorted(set(operation.refusals) & reserved_refusal_codes)
         if reserved:
             return (

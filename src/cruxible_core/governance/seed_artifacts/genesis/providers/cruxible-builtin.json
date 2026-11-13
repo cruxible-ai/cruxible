@@ -2,6 +2,330 @@
   "artifact_format": "playbill-provider-v3",
   "capture_contract_digests": [],
   "control_domain": "cruxible-builtin",
+  "declares": {
+    "contracts": [
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "A workspace file as text (utf-8) or as base64 bytes.",
+        "fields": {
+          "bom": {
+            "optional": true,
+            "type": {
+              "kind": "bool"
+            }
+          },
+          "byte_length": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "character_count": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "encoding": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "base64",
+                "utf-8"
+              ]
+            }
+          },
+          "kind": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "bytes",
+                "text"
+              ]
+            }
+          },
+          "line_count": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "lines": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 1000000
+            }
+          },
+          "newline": {
+            "optional": true,
+            "type": {
+              "kind": "enum",
+              "members": [
+                "cr",
+                "crlf",
+                "lf",
+                "mixed",
+                "none"
+              ]
+            }
+          },
+          "text": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "trailing_newline": {
+            "optional": true,
+            "type": {
+              "kind": "bool"
+            }
+          }
+        },
+        "name": "workspace.file.content",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Detail of an invalid_parameter refusal: the offending field(s).",
+        "fields": {
+          "content_encoding": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "declared": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          },
+          "field": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "missing": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          },
+          "supported": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          },
+          "unknown": {
+            "optional": true,
+            "type": {
+              "item": {
+                "kind": "string"
+              },
+              "kind": "list",
+              "max_items": 16
+            }
+          }
+        },
+        "name": "workspace.file.refusal.invalid_parameter",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Detail of a mismatched_lengths refusal: declared vs decoded byte length.",
+        "fields": {
+          "declared": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "decoded": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          }
+        },
+        "name": "workspace.file.refusal.mismatched_lengths",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Detail of a provider_declined refusal: a digest or size guard.",
+        "fields": {
+          "byte_length": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "computed": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "declared": {
+            "optional": true,
+            "type": {
+              "kind": "string"
+            }
+          },
+          "max_bytes": {
+            "optional": true,
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          }
+        },
+        "name": "workspace.file.refusal.provider_declined",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Bytes the daemon read, handed to the structuring operation.",
+        "fields": {
+          "byte_length": {
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "commitment_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "content_encoding": {
+            "type": {
+              "kind": "enum",
+              "members": [
+                "base64"
+              ]
+            }
+          },
+          "logical_source": {
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          }
+        },
+        "name": "workspace.file.request",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "One structured workspace file.",
+        "fields": {
+          "content": {
+            "type": {
+              "contract": {
+                "digest": "sha256:7ed18a800e8b9b98477894082c999e2c4a5a76cd5f83022a7d2de7b31a26470d",
+                "name": "workspace.file.content",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          },
+          "input_bucket": {
+            "type": {
+              "kind": "string"
+            }
+          },
+          "source": {
+            "type": {
+              "contract": {
+                "digest": "sha256:fd19582a84b74e3e3de3be164672781ef1c02ea7bcdf2786f5b66b6d94b51db3",
+                "name": "workspace.file.source",
+                "version": 1
+              },
+              "kind": "contract"
+            }
+          }
+        },
+        "name": "workspace.file.result",
+        "version": 1
+      },
+      {
+        "artifact_format": "cruxible-contract-v1",
+        "description": "Which supplied bytes a workspace.file result structured.",
+        "fields": {
+          "byte_length": {
+            "type": {
+              "kind": "int",
+              "min": 0
+            }
+          },
+          "bytes_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "commitment_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "logical_source": {
+            "type": {
+              "kind": "string",
+              "min_len": 1
+            }
+          }
+        },
+        "name": "workspace.file.source",
+        "version": 1
+      }
+    ]
+  },
   "identity": {
     "kind": "Provider",
     "name": "cruxible-builtin"
@@ -30,6 +354,7 @@
   },
   "operations": [
     {
+      "description": "Reads a workspace file (or the files a glob names) in the daemon's own process and returns each as a Capture of its exact bytes. Core's built-in; no other provider may serve a workspace. capability.",
       "effect": "pure",
       "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
       "in": {
@@ -68,6 +393,14 @@
             "version": 1
           }
         }
+      },
+      "serves": [
+        "workspace.file",
+        "workspace.files"
+      ],
+      "source": {
+        "path": "src/cruxible_core/providers/builtin_workspace_file.py",
+        "repository": "https://github.com/cruxible-ai/cruxible"
       }
     }
   ],
