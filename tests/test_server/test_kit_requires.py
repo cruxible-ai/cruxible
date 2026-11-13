@@ -316,9 +316,10 @@ def test_remove_refuses_a_required_kit_and_status_shows_requirements(
             )
         assert lowered.value.error_code == "cruxible.kit.requires_missing"
         assert str(lowered.value).endswith(
-            "This change installs kit base 0.9.0. Kit acme 0.1.0 requires kit base 1.0.0 or "
-            "later; this instance holds base 0.9.0. Upgrade it first: cruxible kit add base."
+            "Kit base cannot be changed to 0.9.0: kit acme 0.1.0 requires base 1.0.0 or "
+            "later. Keep base at 1.0.0 or later, or remove acme first."
         )
+        assert lowered.value.repair.arguments == {"kit_id": "acme"}  # type: ignore[attr-defined]
     # An upgrade is never refused by a requirement.
     assert _add(consumer, _base("1.1.0")).status == "accepted"
     [ahead] = {kit.kit_id: kit for kit in service_kit_status(consumer).kits}["acme"].requires
@@ -471,9 +472,10 @@ def test_a_pending_downgrade_is_refused_at_approval_once_a_dependent_needs_more(
         approved = _approval(world, lowered.proposal_id)
         assert approved.status_code == 400, approved.text
         assert "cruxible.kit.requires_missing" in approved.text
-        assert "This change installs kit base 0.9.0. Kit acme 0.1.0 requires kit base 1.0.0" in (
-            approved.text
-        )
+        assert (
+            "Kit base cannot be changed to 0.9.0: kit acme 0.1.0 requires base 1.0.0 or later. "
+            "Keep base at 1.0.0 or later, or remove acme first."
+        ) in approved.text
         versions = {kit.kit_id: kit.version for kit in service_kit_status(consumer).kits}
         assert versions == {"base": "1.0.0", "acme": "0.1.0"}
     finally:

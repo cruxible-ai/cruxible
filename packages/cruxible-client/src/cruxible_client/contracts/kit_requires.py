@@ -103,6 +103,24 @@ def requires_missing_message(
     )
 
 
+def requires_lowered_message(
+    kit_id: str,
+    version: str,
+    dependent_kit_id: str,
+    dependent_version: str,
+    requirement: KitRequirement,
+) -> str:
+    """``cruxible.kit.requires_missing``: a change would install ``kit_id`` at ``version``,
+    below what an installed kit (``dependent_kit_id``) requires of it."""
+
+    return (
+        f"Kit {kit_id} cannot be changed to {version}: kit {dependent_kit_id} "
+        f"{dependent_version} requires {kit_id} {requirement.min_version} or later. "
+        f"Keep {kit_id} at {requirement.min_version} or later, or remove "
+        f"{dependent_kit_id} first."
+    )
+
+
 def requires_unresolved_message(
     kit_id: str, version: str, required_kit_id: str, definition: str, *, exact: bool
 ) -> str:
@@ -136,6 +154,7 @@ __all__ = [
     "KitRequires",
     "KitRequiresRefusalCode",
     "remove_required_message",
+    "requires_lowered_message",
     "requires_missing_message",
     "requires_unresolved_message",
     "validate_kit_requires",

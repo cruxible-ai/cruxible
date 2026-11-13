@@ -45,6 +45,7 @@ from cruxible_client.contracts.kit_requires import (
     KIT_REQUIRES_UNRESOLVED,
     KitRequirement,
     remove_required_message,
+    requires_lowered_message,
     requires_missing_message,
     requires_unresolved_message,
 )
@@ -2994,9 +2995,12 @@ def _refuse_lowering_below_dependents(
             if requirement.kit_id == kit_id and not requirement.met_by(version):
                 raise RequestRefusedError(
                     KIT_REQUIRES_MISSING,
-                    f"This change installs kit {kit_id} {version}. "
-                    + requires_missing_message(other.kit_id, other.version, requirement, version),
-                    repair=RepairOperation(operation="cruxible.kit.add", arguments={"kit": kit_id}),
+                    requires_lowered_message(
+                        kit_id, version, other.kit_id, other.version, requirement
+                    ),
+                    repair=RepairOperation(
+                        operation="cruxible.kit.remove", arguments={"kit_id": other.kit_id}
+                    ),
                 )
 
 
