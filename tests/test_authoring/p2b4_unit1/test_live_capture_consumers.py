@@ -44,7 +44,7 @@ from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
-from tests.core_support._light_capture_support import file_contract as capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import generate_client
 from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_existing_capture import _activate

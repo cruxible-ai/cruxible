@@ -267,11 +267,11 @@ def test_trigger_fed_runs_inherit_their_admitted_captures_restriction(
         TriggerFire,
         service_run_playbill_line,
     )
-    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._light_capture_support import file_contract
     from tests.test_procedures import test_procedure_source_runs as fixtures
     from tests.test_procedures import test_trigger_fed_proposals as fed
 
-    sealed = partial(record_contract, body_access="restricted")
+    sealed = partial(file_contract, body_access="restricted")
     with monkeypatch.context() as patch:
         patch.setattr(fixtures, "capture_contract", sealed)
         patch.setattr(fed, "capture_contract", sealed)
@@ -745,7 +745,7 @@ def _two_kind_world(tmp_path: Path) -> Any:
         ClaimEvidenceAdmissionPolicy,
         ClaimEvidenceAdmissionRule,
     )
-    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._light_capture_support import file_contract
     from tests.test_pilot import support
     from tests.test_procedures import test_claims_terminal as terminal
 
@@ -763,7 +763,7 @@ def _two_kind_world(tmp_path: Path) -> Any:
     original = terminal.claim_type
     accept = terminal.accept_tree
     open_kind = terminal.entries_layout(
-        record_contract(name="test.open-v1"), support.KEV_ROW, support.pilot_records(True)
+        file_contract(name="test.open-v1"), support.KEV_ROW, support.pilot_records(True)
     )
 
     def with_open_kind(instance: Any, updates: dict[str, bytes], *, name: str) -> None:

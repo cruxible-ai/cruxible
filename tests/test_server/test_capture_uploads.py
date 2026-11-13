@@ -528,7 +528,10 @@ def _contracts() -> tuple[Any, Any]:
     from tests.support.procedures import boundary_contract
 
     return (
-        boundary_contract(f"{PROCEDURE}.input", {"relative_path": "string"}),
+        # Typed to fit workspace.file@1's request, which the read is typed against.
+        boundary_contract(
+            f"{PROCEDURE}.input", {"relative_path": "string{min_len: 1, max_len: 1024}"}
+        ),
         boundary_contract(
             f"{PROCEDURE}.output", {"document": f"capture<{capture_contract().identity.name}>"}
         ),
