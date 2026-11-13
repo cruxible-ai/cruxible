@@ -44,7 +44,6 @@ from cruxible_client.contracts.capability_fit import (
 from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.procedures.line_specs import (
     BindingSide,
-    CaptureKindLookup,
     SlotFitter,
     SlotNeed,
     declared_kind,
@@ -182,13 +181,16 @@ def tree_build_reader(tree: Mapping[str, bytes]) -> BuildReader:
 
 @dataclass(frozen=True)
 class CapabilitySide:
-    """Where a slot's capability side resolves, with a cheap digest per CaptureKind.
+    """Where a slot's capability side resolves, with a cheap digest of each thing read.
 
-    ``kind_digest`` keys the fit memo: it changes whenever the kind's declaration does.
+    ``kind_digest`` (a CaptureKind by name) and ``contract_digest`` (a Contract by
+    name and version) key the fit memo: each changes whenever those bytes do, so
+    a memo entry never outlives, or crosses to another instance than, what it read.
     """
 
     side: BindingSide
     kind_digest: Callable[[str], str | None]
+    contract_digest: Callable[[str, int], str | None]
 
 
 def tree_capability_side(tree: Mapping[str, bytes]) -> CapabilitySide:
@@ -196,7 +198,7 @@ def tree_capability_side(tree: Mapping[str, bytes]) -> CapabilitySide:
 
     from cruxible_client.contracts.canonical import file_digest
     from cruxible_client.contracts.captures import capture_contract_path, parse_capture_contract
-    from cruxible_client.contracts.shapes import tree_contract_resolver
+    from cruxible_client.contracts.shapes import contract_path, tree_contract_resolver
 
     kinds: dict[str, Any] = {}
 
@@ -215,7 +217,13 @@ def tree_capability_side(tree: Mapping[str, bytes]) -> CapabilitySide:
         content = tree.get(capture_contract_path(name))
         return None if content is None else file_digest(content).tagged
 
-    return CapabilitySide(BindingSide(tree_contract_resolver(tree), capture_kinds), kind_digest)
+    def contract_digest(name: str, version: int) -> str | None:
+        content = tree.get(contract_path(name, version))
+        return None if content is None else file_digest(content).tagged
+
+    return CapabilitySide(
+        BindingSide(tree_contract_resolver(tree), capture_kinds), kind_digest, contract_digest
+    )
 
 
 def projection_capability_side(typed: Any) -> CapabilitySide:
@@ -248,7 +256,11 @@ def projection_capability_side(typed: Any) -> CapabilitySide:
         row = typed.envelope(f"CaptureContract:{name}")
         return None if row is None else str(row.artifact_digest)
 
-    return CapabilitySide(BindingSide(contract, capture_kinds), kind_digest)
+    def envelope_digest(name: str, version: int) -> str | None:
+        row = typed.envelope(contract_identity(name, version).qualified)
+        return None if row is None else str(row.artifact_digest)
+
+    return CapabilitySide(BindingSide(contract, capture_kinds), kind_digest, envelope_digest)
 
 
 def accepted_capability_side(instance: Any, coordinate: Any) -> CapabilitySide:
@@ -270,45 +282,53 @@ def accepted_capability_side(instance: Any, coordinate: Any) -> CapabilitySide:
         with instance.bind_accepted_projection(coordinate) as projection:
             return projection_capability_side(projection.typed).kind_digest(name)
 
-    return CapabilitySide(BindingSide(contract, capture_kinds), kind_digest)
+    def contract_digest(name: str, version: int) -> str | None:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            return projection_capability_side(projection.typed).contract_digest(name, version)
+
+    return CapabilitySide(BindingSide(contract, capture_kinds), kind_digest, contract_digest)
 
 
 # -- the fit memo --------------------------------------------------------------------------
 
 
+#: One thing a fit read on the capability side, with the digest it had: a CaptureKind
+#: ``("kind", name, digest)`` or a Contract named without a digest pin
+#: ``("contract", name, version, digest)``. A Contract pinned by digest is fixed
+#: by its pin and needs no entry.
+_Read = tuple[str, str, str | None] | tuple[str, str, int, str | None]
+
+
+#: How many variants (instances holding different bytes under one name) one key keeps.
+_FIT_VARIANTS = 4
+
+
 class _FitMemo:
-    """Fits by (capability digest, truncation, build digest, operation), each valid while
-    the instance kinds it consulted keep the digests it saw."""
+    """Fits by (capability pin, truncation, build digest, operation), each valid while
+    everything it read without a digest pin keeps the digest it had. One key keeps a
+    few variants, so instances that differ in what they read do not evict each other."""
 
     def __init__(self, capacity: int) -> None:
         self._entries: OrderedDict[
-            tuple[object, ...], tuple[tuple[tuple[str, str | None], ...], BindingFit]
+            tuple[object, ...], list[tuple[tuple[_Read, ...], BindingFit]]
         ] = OrderedDict()
         self._capacity = capacity
         self._lock = threading.Lock()
 
-    def get(
-        self, key: tuple[object, ...], kind_digest: Callable[[str], str | None]
-    ) -> BindingFit | None:
+    def get(self, key: tuple[object, ...], side: CapabilitySide) -> BindingFit | None:
         with self._lock:
-            entry = self._entries.get(key)
-            if entry is not None:
+            variants = list(self._entries.get(key, ()))
+            if variants:
                 self._entries.move_to_end(key)
-        if entry is None:
-            return None
-        kinds, fit = entry
-        if all(kind_digest(name) == digest for name, digest in kinds):
-            return fit
+        for reads, fit in variants:
+            if all(_still(read, side) for read in reads):
+                return fit
         return None
 
-    def put(
-        self,
-        key: tuple[object, ...],
-        kinds: tuple[tuple[str, str | None], ...],
-        fit: BindingFit,
-    ) -> None:
+    def put(self, key: tuple[object, ...], reads: tuple[_Read, ...], fit: BindingFit) -> None:
         with self._lock:
-            self._entries[key] = (kinds, fit)
+            variants = [item for item in self._entries.get(key, ()) if item[0] != reads]
+            self._entries[key] = [(reads, fit), *variants][:_FIT_VARIANTS]
             self._entries.move_to_end(key)
             while len(self._entries) > self._capacity:
                 self._entries.popitem(last=False)
@@ -318,16 +338,29 @@ class _FitMemo:
             self._entries.clear()
 
 
+def _still(read: _Read, side: CapabilitySide) -> bool:
+    if read[0] == "kind":
+        _, name, digest = read
+        return side.kind_digest(str(name)) == digest
+    _, name, version, digest = read  # type: ignore[misc]
+    return side.contract_digest(str(name), int(version)) == digest
+
+
 _FITS = _FitMemo(capacity=4096)
 
 
 def memoized_slot_fitter(capability_side: CapabilitySide) -> SlotFitter:
     """A fitter over one capability side, memoized per process.
 
-    The key is the slot's capability digest (which fixes its Contracts), its
+    The key is the slot's capability pin (whose digest fixes its Contracts), its
     ``may_truncate``, the build digest (which fixes the operation and its carried
-    copies) and the operation; an entry holds while every instance CaptureKind
-    the fit consulted keeps its digest. A hit costs one digest read per such kind.
+    copies) and the operation. An entry holds while every CaptureKind the fit
+    consulted, and every Contract it resolved by name and version alone (a
+    layout's row named without a digest), keeps the digest it had: the entry
+    commits to every byte the fit read, so it is never shared between two
+    instances holding different bytes under one name. A hit costs one digest
+    read per kind consulted plus one per such undigested Contract (for each
+    variant of the key it checks, at most four).
     """
 
     def fit(
@@ -346,26 +379,30 @@ def memoized_slot_fitter(capability_side: CapabilitySide) -> SlotFitter:
             build_digest,
             operation.name,
         )
-        found = _FITS.get(key, capability_side.kind_digest)
+        found = _FITS.get(key, capability_side)
         if found is not None:
             return found
-        consulted: dict[str, None] = {}
-        inner: CaptureKindLookup = capability_side.side.capture_kinds
+        kinds: dict[str, None] = {}
+        contracts: dict[tuple[str, int], None] = {}
+        side = capability_side.side
 
-        def recording(name: str) -> Any:
-            consulted[name] = None
-            return inner(name)
+        def kind_read(name: str) -> Any:
+            kinds[name] = None
+            return side.capture_kinds(name)
+
+        def contract_read(ref: Any) -> Any:
+            if ref.digest is None:
+                contracts[(ref.name, ref.version)] = None
+            return side.contracts(ref)
 
         BINDING_WORK["fits"] += 1
-        result = slot_fit(
-            need,
-            operation,
-            provider.declares,
-            BindingSide(capability_side.side.contracts, recording),
+        result = slot_fit(need, operation, provider.declares, BindingSide(contract_read, kind_read))
+        reads: list[_Read] = [("kind", name, capability_side.kind_digest(name)) for name in kinds]
+        reads.extend(
+            ("contract", name, version, capability_side.contract_digest(name, version))
+            for name, version in contracts
         )
-        _FITS.put(
-            key, tuple((name, capability_side.kind_digest(name)) for name in consulted), result
-        )
+        _FITS.put(key, tuple(reads), result)
         return result
 
     return fit

@@ -444,7 +444,11 @@ def lookup_slot_fitter(lookup: ReferenceLookup) -> SlotFitter:
         selected = lookup(ArtifactIdentity(kind="CaptureContract", name=name))
         return None if selected is None else selected[1]
 
-    return memoized_slot_fitter(CapabilitySide(BindingSide(contract, kind), kind_digest))
+    def digest_of(name: str, version: int) -> str | None:
+        selected = lookup(contract_identity(name, version))
+        return None if selected is None else selected[1]
+
+    return memoized_slot_fitter(CapabilitySide(BindingSide(contract, kind), kind_digest, digest_of))
 
 
 def replay_procedure_references(

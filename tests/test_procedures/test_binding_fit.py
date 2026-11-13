@@ -610,3 +610,105 @@ def test_a_default_provider_is_skipped_only_when_another_operation_fits(tmp_path
         with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
             found = _default_implementers(projection.typed.connection, tree, default(), contents)
         assert found == expected
+
+
+# -- the fit memo never crosses instances ---------------------------------------------------
+
+
+def test_the_fit_memo_commits_to_an_undigested_row_each_instance_resolves() -> None:
+    """Two instances in one process hold the same kind (its row named ``acme.hit@1``
+    without a digest) but different ``acme.hit@1`` rows: the memo keeps their fits
+    apart, and a hit costs one digest read per kind plus one per such row."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+    from cruxible_client.contracts.shapes import contract_path, render_contract
+    from cruxible_core.providers import operation_index
+    from cruxible_core.providers.operation_index import (
+        BINDING_WORK,
+        CapabilitySide,
+        memoized_slot_fitter,
+        tree_capability_side,
+    )
+    from tests.core_support._light_capture_support import http_contract
+
+    unpinned = _kind("hits").model_copy(deep=True)
+    layout = unpinned.layout.model_copy(
+        update={
+            "records": {
+                "hits": unpinned.layout.records["hits"].model_copy(
+                    update={
+                        "row": unpinned.layout.records["hits"].row.model_copy(
+                            update={"digest": None}
+                        )
+                    }
+                )
+            }
+        }
+    )
+    copy = unpinned.model_copy(update={"layout": layout})
+    stored = http_contract(name=KIND, decoding=JSON).model_copy(update={"layout": layout})
+    wider_row = validate_contract(
+        {
+            "name": "acme.hit",
+            "version": 1,
+            "fields": {"title": "string{max_len: 64}", "rank": "int", "url": "string"},
+        }
+    )
+
+    def tree(row: Contract) -> dict[str, bytes]:
+        return {
+            capture_contract_path(KIND): render_capture_contract(stored),
+            **{
+                contract_path(item.name, item.version): render_contract(item)
+                for item in (ANY_IN, KIND_OUT, row)
+            },
+        }
+
+    declared = declared_operation(
+        {
+            "name": "derive",
+            "serves": ["acme.derive"],
+            "in": _pin(ANY_IN),
+            "out": _pin(KIND_OUT),
+            "effect": "pure",
+            "entrypoint": "acme.derive:Derive",
+        }
+    )
+    declares = carried_declares((declared,), (ANY_IN, KIND_OUT), capture_kinds=(copy,))
+    declares = declares.model_copy(update={"contracts": (*declares.contracts, ROW)})
+    build = SimpleNamespace(declares=declares)
+    need = _need(ANY_IN, KIND_OUT)
+    operation_index._FITS.clear()  # noqa: SLF001
+
+    same = memoized_slot_fitter(tree_capability_side(tree(ROW)))
+    other = memoized_slot_fitter(tree_capability_side(tree(wider_row)))
+    digest = "sha256:" + "b" * 64
+    assert same("derive", need, build, digest, declared) == Fits(fit="identical")
+
+    # A hit reads one digest per kind and one per undigested row, nothing else.
+    held = tree_capability_side(tree(ROW))
+    reads: list[object] = []
+    counted = CapabilitySide(
+        held.side,
+        lambda name: reads.append(("kind", name)) or held.kind_digest(name),
+        lambda name, version: (
+            reads.append(("contract", name, version)) or held.contract_digest(name, version)
+        ),
+    )
+    fits = BINDING_WORK["fits"]
+    assert memoized_slot_fitter(counted)("derive", need, build, digest, declared) == Fits(
+        fit="identical"
+    )
+    assert BINDING_WORK["fits"] == fits
+    assert reads == [("kind", KIND), ("contract", "acme.hit", 1)]
+
+    # The other instance's row differs under the same name: its own fit, not the cache's.
+    verdict = other("derive", need, build, digest, declared)
+    assert isinstance(verdict, Unfit) and verdict.path.endswith("row.url")
+    assert BINDING_WORK["fits"] == fits + 1
+    # Both variants stay: neither instance evicts the other.
+    assert same("derive", need, build, digest, declared) == Fits(fit="identical")
+    assert isinstance(other("derive", need, build, digest, declared), Unfit)
+    assert BINDING_WORK["fits"] == fits + 1
