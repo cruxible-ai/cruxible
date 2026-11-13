@@ -413,3 +413,66 @@ def test_malformed_policy_is_a_typed_refusal_and_does_not_poison_inventory(
     assert len(matching) == 1
     assert matching[0].status == "settled"
     assert matching[0].terminal_reason == "refused"
+
+
+def _past_genesis(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """An instance with one accepted generation after genesis."""
+    instance, _owner = initialize_local(tmp_path)
+    first = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
+                ProcedureRuntimePolicy(provider_output_bytes_cap=2_097_152)
+            ),
+        },
+        name="first-generation",
+    )
+    assert _activate(instance, first, tmp_path=tmp_path).status == "accepted"
+    instance.refresh()
+    return instance
+
+
+@pytest.mark.parametrize(
+    ("path", "code"),
+    [
+        (APPROVAL_POLICY_PATH, "cruxible.approval_policy.format_invalid"),
+        (PROCEDURE_RUNTIME_POLICY_PATH, "cruxible.procedure_runtime_policy.format_invalid"),
+        ("principals/owner.json", "cruxible.principal.format_invalid"),
+    ],
+)
+def test_malformed_singleton_is_a_typed_refusal_after_genesis(
+    tmp_path: Path, path: str, code: str
+) -> None:
+    instance = _past_genesis(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert path in tree
+    refused = _submit_tree(
+        instance,
+        {**tree, path: b"not canonical bytes\n"},
+        name="malformed-after-genesis",
+    )
+
+    assert refused.candidate is None
+    assert tuple(item.code for item in refused.evaluation.diagnostics) == (code,)
+
+
+def test_malformed_policy_bundled_with_an_artifact_is_refused_after_genesis(
+    tmp_path: Path,
+) -> None:
+    instance = _past_genesis(tmp_path)
+    body = instance.store_document_body(b"# Bundled\n")
+    refused = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            APPROVAL_POLICY_PATH: b"not canonical bytes\n",
+            DOCUMENT_PATH: render_document(_shell(body.digest)),
+        },
+        name="malformed-policy-bundled",
+    )
+
+    assert refused.candidate is None
+    assert tuple(item.code for item in refused.evaluation.diagnostics) == (
+        "cruxible.proposal.unregistered_semantic_kind",
+    )
