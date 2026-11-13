@@ -162,6 +162,83 @@ def test_a_because_no_change_set_rationale_can_hold_is_a_422(
         assert "because" in " ".join(response.json()["errors"]), response.json()
 
 
+TOO_LONG = "cruxible.write.rationale_too_long"
+LIMIT = 4096
+
+
+def _assert_too_long(response: Any, status: int) -> None:
+    assert response.status_code == status, response.text
+    refusal = response.json()
+    assert refusal["error_code"] == TOO_LONG, refusal
+    assert f"at most {LIMIT} characters" in refusal["message"], refusal["message"]
+    assert refusal["repair"]["hand_edit"]["target"] == f"refusal/{TOO_LONG}"
+    assert "Document section" in refusal["repair"]["hand_edit"]["required_change"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["commit", "dry_run"])
+def test_a_retire_because_over_the_change_set_limit_is_a_typed_422(
+    served: tuple[TestClient, str, str], dry_run: bool
+) -> None:
+    client, base, claim = served
+    over = client.post(
+        f"{base}/retire", json={"target": claim, "because": "x" * (LIMIT + 1), "dry_run": dry_run}
+    )
+    _assert_too_long(over, 422)
+    # Trimmed first, as the planner joins it: surrounding space does not count.
+    at_limit = client.post(
+        f"{base}/retire",
+        json={"target": claim, "because": f"  {'x' * LIMIT}\n", "dry_run": dry_run},
+    )
+    assert at_limit.status_code == 200, at_limit.text
+    assert at_limit.json()["status"] == ("would_accept" if dry_run else "accepted")
+
+
+def test_retire_notes_over_the_limit_together_are_a_typed_refusal(
+    served: tuple[TestClient, str, str],
+) -> None:
+    """Each note fits; the joined change-set rationale does not, by exactly one character."""
+
+    client, base, _claim = served
+    labels = client.post(
+        f"{base}/write",
+        json={
+            "because": "Labelled.",
+            "subject": WI1,
+            "changes": [{"op": "add", "field": "labels", "value": v} for v in ("a", "b", "c")],
+        },
+    )
+    assert labels.status_code == 200 and labels.json()["status"] == "accepted", labels.text
+    claims = [item["claim"] for item in labels.json()["changes"]]
+    main = "Cleanup."
+    # The planner's rationale: main, then "Retire CLAIM: because" per note, blank-line joined.
+    fixed = len(main) + sum(len(f"\n\nRetire {claim}: ") for claim in claims)
+    room = LIMIT - fixed
+    sizes = [room // 3, room // 3, room - 2 * (room // 3)]
+    assert all(size < LIMIT // 2 for size in sizes)
+
+    def retire(extra: int, *, dry_run: bool) -> Any:
+        return client.post(
+            f"{base}/write",
+            json={
+                "because": main,
+                "dry_run": dry_run,
+                "changes": [
+                    {"op": "retire", "target": claim, "because": "y" * (size + (extra and i == 0))}
+                    for i, (claim, size) in enumerate(zip(claims, sizes, strict=True))
+                ],
+            },
+        )
+
+    _assert_too_long(retire(1, dry_run=True), 400)
+    _assert_too_long(retire(1, dry_run=False), 400)
+    at_limit = retire(0, dry_run=True)
+    assert at_limit.status_code == 200 and at_limit.json()["status"] == "would_accept", (
+        at_limit.text
+    )
+    committed = retire(0, dry_run=False)
+    assert committed.status_code == 200 and committed.json()["status"] == "accepted", committed.text
+
+
 def test_a_retire_because_with_surrounding_space_writes(
     served: tuple[TestClient, str, str],
 ) -> None:

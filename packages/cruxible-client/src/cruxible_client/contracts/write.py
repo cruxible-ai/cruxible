@@ -51,6 +51,7 @@ from cruxible_client.contracts.captures import FOREIGN_SOURCE_MAX_BYTES
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.doc_sections import SectionPath, section_digest
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
+from cruxible_client.contracts.proposal_models import CHANGE_SET_RATIONALE_MAX_LENGTH
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.shapes import CLAIM_RATIONALE_MAX, claim_rationale_problems
 from cruxible_client.contracts.subject_kinds import SubjectKeyValue, key_value_problem
@@ -634,18 +635,53 @@ RATIONALE_REPAIR = (
     "longer reasoning in a Document section the Claim cites as its evidence (in a write "
     "file: a docs op with an id, then evidence {kind: section, ref: ID})."
 )
+#: The refusal of a change set's rationale (``because`` and its retire notes) over its limit.
+RATIONALE_TOO_LONG = "cruxible.write.rationale_too_long"
+#: Its repair.
+RATIONALE_TOO_LONG_REPAIR = (
+    f"Shorten because and any retire because to at most {CHANGE_SET_RATIONALE_MAX_LENGTH} "
+    "characters together, and put the longer account in a Document section."
+)
 #: The typed refusals a write request model raises, each with its repair. The
 #: daemon answers one as a 422 carrying the code, before any work.
-WRITE_REQUEST_REFUSAL_REPAIRS: Mapping[str, str] = {RATIONALE_INVALID: RATIONALE_REPAIR}
+WRITE_REQUEST_REFUSAL_REPAIRS: Mapping[str, str] = {
+    RATIONALE_INVALID: RATIONALE_REPAIR,
+    RATIONALE_TOO_LONG: RATIONALE_TOO_LONG_REPAIR,
+}
+
+
+def change_set_rationale(because: str, retire_notes: tuple[str, ...] = ()) -> str:
+    """The change set's rationale: ``because`` trimmed, then each retire note.
+
+    The one join the planner lowers with, so the request check measures the
+    text the change set will carry.
+    """
+
+    return "\n\n".join((because.strip(), *retire_notes))
+
+
+def change_set_rationale_too_long(rationale: str) -> str | None:
+    """The refusal message when ``rationale`` exceeds the change set's limit."""
+
+    if len(rationale) <= CHANGE_SET_RATIONALE_MAX_LENGTH:
+        return None
+    return (
+        f"{RATIONALE_TOO_LONG}: because and its retire notes form the change set's "
+        f"rationale, which holds at most {CHANGE_SET_RATIONALE_MAX_LENGTH} characters; "
+        f"this one has {len(rationale)}. {RATIONALE_TOO_LONG_REPAIR}"
+    )
 
 
 def change_set_because(value: str) -> str:
-    """``because`` (trimmed) is the change set's rationale: text, and no NUL."""
+    """``because`` (trimmed) is the change set's rationale: text, no NUL, within its limit."""
 
     if not value.strip():
         raise ValueError("because must hold text, not only whitespace")
     if "\x00" in value:
         raise ValueError("because must not contain a NUL byte")
+    # Retire notes the daemon resolves can only lengthen it; it refuses those itself.
+    if (message := change_set_rationale_too_long(change_set_rationale(value))) is not None:
+        raise PydanticCustomError(RATIONALE_TOO_LONG, "{message}", {"message": message})
     return value
 
 
