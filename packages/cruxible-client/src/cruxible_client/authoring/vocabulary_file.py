@@ -532,13 +532,31 @@ def render_vocabulary_file(accepted: AcceptedVocabulary, *, instance_id: str) ->
         ),
         "kinds:" if by_kind else "kinds: {}",
     ]
+    # Every field's entry first, so one refusal names every definition that
+    # cannot be written faithfully, not only the first.
+    kind_entries = {
+        kind: _subject_kind_entry(kind, declared, set(by_kind[kind]))
+        for kind, declared in accepted.subject_kinds.items()
+    }
+    entries: dict[str, dict[str, object]] = {}
+    unwritable: list[str] = []
+    for claim_type in accepted.claim_types.values():
+        kind, _, name = claim_type.predicate.rpartition(".")
+        key_names = kind_entries[kind][1] if kind in kind_entries else ()
+        try:
+            entries[claim_type.predicate] = _field_entry(claim_type, key=name in key_names)
+        except VocabularyExportRefused:
+            unwritable.append(f"ClaimType:{claim_type.predicate}")
+    if unwritable:
+        names = sorted(unwritable, key=lambda item: item.encode("utf-8"))
+        raise VocabularyExportRefused(
+            f"{len(names)} definition(s) do not lower back from their own input form, so export "
+            f"would change what they mean: {', '.join(names)}; read each with `cruxible get "
+            "<ref> --detail proof`"
+        )
     for kind in sorted(by_kind, key=lambda item: item.encode("utf-8")):
         fields = by_kind[kind]
-        declared = accepted.subject_kinds.get(kind)
-        props: dict[str, object] = {}
-        key_fields: tuple[str, ...] = ()
-        if declared is not None:
-            props, key_fields = _subject_kind_entry(kind, declared, set(fields))
+        props, key_fields = kind_entries.get(kind, ({}, ()))
         kit = accepted.kits.get(f"SubjectKind:{kind}")
         if kit is not None:
             lines.append(f"  # kit: {kit}")
@@ -552,7 +570,7 @@ def render_vocabulary_file(accepted: AcceptedVocabulary, *, instance_id: str) ->
         ordered = [*key_fields, *sorted(set(fields) - set(key_fields))]
         for name in ordered:
             claim_type = fields[name]
-            entry = _field_entry(claim_type, key=name in key_fields)
+            entry = entries[claim_type.predicate]
             kit = accepted.kits.get(f"ClaimType:{claim_type.predicate}")
             if kit is not None:
                 lines.append(f"      # kit: {kit}")

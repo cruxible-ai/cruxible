@@ -541,6 +541,60 @@ def test_retired_true_retires_a_field_and_its_claims(world) -> None:  # type: ig
     assert "title:" not in _file(workspace).read_text(encoding="utf-8")
 
 
+def test_a_field_with_an_inverse_is_added_edited_and_retired_through_the_file(world) -> None:  # type: ignore[no-untyped-def]
+    """Walkthrough S16: a ClaimType with an inverse exports and plans like any other."""
+
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"].update(
+            affects={
+                "link": "dev.item",
+                "many": True,
+                "description": "Items it affects.",
+                "inverse": {"key": {"kind": "object"}, "evidence_rules": ["self"]},
+            }
+        ),
+    )
+    assert cx.vocabulary.apply(rationale="Affects, with absence.").status == "landed"
+    cx.refresh()
+    assert _accepted(cx, "dev.item.affects").inverse is not None
+
+    # Export writes it and an unedited file plans nothing.
+    assert cx.vocabulary.export().status == "written"
+    plan = cx.vocabulary.plan()
+    assert plan.changes == (), plan.changes
+
+    # An edit to the field keeps its inverse.
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"]["affects"].update(
+            description="Items it changes."
+        ),
+    )
+    assert [(entry.definition, entry.action) for entry in cx.vocabulary.plan().changes] == [
+        ("ClaimType:dev.item.affects", "replace")
+    ]
+    assert cx.vocabulary.apply().status == "landed"
+    cx.refresh()
+    edited = _accepted(cx, "dev.item.affects")
+    assert edited.description == "Items it changes." and edited.inverse is not None
+
+    # And it retires.
+    assert cx.vocabulary.export().status == "written"
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"]["affects"].update(retired=True),
+    )
+    assert [(entry.definition, entry.action) for entry in cx.vocabulary.plan().changes] == [
+        ("ClaimType:dev.item.affects", "retire")
+    ]
+    assert cx.vocabulary.apply().status == "landed"
+    cx.refresh()
+    assert "dev.item.affects" not in set(cx.world().predicates)
+
+
 def test_an_applied_subject_kind_retirement_lets_export_replace_the_file(world) -> None:  # type: ignore[no-untyped-def]
     _http, _instance_id, workspace, cx = world
     cx.vocabulary.export()

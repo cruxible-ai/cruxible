@@ -177,9 +177,11 @@ class ClaimInverseInput(_StrictClaimTypeInputModel):
     every object SubjectKind) for a many-valued one. ``evidence_rules`` are ids
     of the type's own evidence rules, in any order; only a Capture one of them
     admits establishes a none. ``stale_after`` takes ``P7D`` (absent: the type's
-    evidence freshness applies).
+    evidence freshness applies). ``tag`` may be left out; it is accepted so a
+    stored ClaimType's own inverse is also its input form.
     """
 
+    tag: Literal["cruxible-claim-inverse-v1"] = "cruxible-claim-inverse-v1"
     key: ClaimInverseKey
     evidence_rules: tuple[str, ...] = Field(min_length=1)
     stale_after: ClaimDurationInput | None = None

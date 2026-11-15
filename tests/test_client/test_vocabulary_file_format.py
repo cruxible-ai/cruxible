@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from cruxible_client.authoring.vocabulary_file import (
@@ -15,6 +18,8 @@ from cruxible_client.contracts.claim_type_inputs import (
     lower_claim_type_input,
 )
 from cruxible_client.contracts.claim_types import (
+    ClaimFreshnessDuration,
+    ClaimType,
     claim_type_digest,
     claim_type_path,
     render_claim_type,
@@ -298,3 +303,99 @@ def test_export_writes_shorthand_and_full_form_and_reads_back_to_each_digest() -
         kind, _, name = claim_type.predicate.rpartition(".")
         lowered = lower_entry(claim_type.predicate, parsed.kinds[kind].fields[name], None)
         assert claim_type_digest(lowered) == claim_type_digest(claim_type), claim_type.predicate
+
+
+_KIT_FIXTURE = Path(__file__).parents[1] / "fixtures" / "security_kit_vocabulary.json"
+
+
+def _kit_vocabulary() -> AcceptedVocabulary:
+    data = json.loads(_KIT_FIXTURE.read_text(encoding="utf-8"))
+    types = [ClaimType.model_validate(item) for item in data["claim_types"]]
+    kinds = [SubjectKind.model_validate(item) for item in data["subject_kinds"]]
+    return AcceptedVocabulary(
+        coordinate=COORDINATE,
+        claim_types={item.predicate: item for item in types},
+        subject_kinds={item.subject_kind: item for item in kinds},
+    )
+
+
+def test_every_shape_the_security_kit_uses_exports_and_lowers_back() -> None:
+    accepted = _kit_vocabulary()
+    shapes = {
+        "inverse": "security.component.affected_by",
+        "enum with meanings": "security.app_exposure.verdict",
+        "requires complete input": "security.finding.verification",
+        "decimal": "security.vulnerability.epss_score",
+        "date": "security.vulnerability.kev_date_added",
+    }
+    assert accepted.claim_types["security.vulnerability.listed_in"].inverse is not None
+    for predicate in shapes.values():
+        assert predicate in accepted.claim_types
+
+    rendered = render_vocabulary_file(accepted, instance_id="inst_x")
+
+    parsed = load_vocabulary_file(rendered)
+    assert parsed.kinds["security.component"].fields["purl"].key is True
+    assert parsed.kinds["security.exposure"].fields["component"].link == "security.component"
+    for claim_type in accepted.claim_types.values():
+        kind, _, name = claim_type.predicate.rpartition(".")
+        entry = parsed.kinds[kind].fields[name]
+        # As a new definition, and as an unchanged edit over the accepted one.
+        lowered = lower_entry(claim_type.predicate, entry, None)
+        assert claim_type_digest(lowered) == claim_type_digest(claim_type), claim_type.predicate
+        edited = lower_entry(claim_type.predicate, entry, claim_type)
+        assert edited.model_copy(update={"lifecycle": claim_type.lifecycle}) == claim_type
+
+
+def test_an_inverse_with_its_own_horizon_and_meaning_exports_and_lowers_back() -> None:
+    accepted = _kit_vocabulary()
+    base = accepted.claim_types["security.component.affected_by"]
+    assert base.inverse is not None
+    varied = base.model_copy(
+        update={
+            "inverse": base.inverse.model_copy(
+                update={
+                    "stale_after": ClaimFreshnessDuration(microseconds=7 * 86_400_000_000),
+                    "description": "No vulnerability affects this exact version.",
+                }
+            )
+        }
+    )
+    vocabulary = AcceptedVocabulary(
+        coordinate=COORDINATE,
+        claim_types={varied.predicate: varied},
+        subject_kinds={},
+    )
+
+    parsed = load_vocabulary_file(render_vocabulary_file(vocabulary, instance_id="inst_x"))
+
+    entry = parsed.kinds["security.component"].fields["affected_by"]
+    assert entry.stated["inverse"]["stale_after"] == "PT604800S"
+    assert claim_type_digest(lower_entry(varied.predicate, entry, None)) == claim_type_digest(
+        varied
+    )
+
+
+def test_export_refusal_names_every_definition_that_cannot_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.authoring import vocabulary_file
+
+    accepted = _kit_vocabulary()
+    broken = {"security.finding.locus", "security.catalog.catalog_id"}
+    real = vocabulary_file._minimal_input
+
+    def minimal(claim_type: ClaimType) -> dict[str, object]:
+        if claim_type.predicate in broken:
+            raise vocabulary_file.VocabularyExportRefused("cannot")
+        return real(claim_type)
+
+    monkeypatch.setattr(vocabulary_file, "_minimal_input", minimal)
+
+    with pytest.raises(vocabulary_file.VocabularyExportRefused) as refused:
+        render_vocabulary_file(accepted, instance_id="inst_x")
+
+    message = str(refused.value)
+    assert "2 definition(s)" in message
+    for predicate in broken:
+        assert f"ClaimType:{predicate}" in message

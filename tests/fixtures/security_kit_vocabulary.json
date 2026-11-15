@@ -1,0 +1,1849 @@
+{
+ "claim_types": [
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.component"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "description": "The component's package URL with its version (qualifiers dropped); the component's key.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.component.purl"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.component.purl",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "string",
+    "max_len": 256
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.component"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [],
+   "cardinality": "many",
+   "default_role": "observation",
+   "description": "A vulnerability OSV lists for the component's exact purl@version (OSV's own version matching). None of V is an agent's package-level not_affected judgment (normative, own words), which OSV cannot override.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "security.osv-matches"
+        }
+       }
+      ],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "osv",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     },
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.component.affected_by"
+   },
+   "inverse": {
+    "description": null,
+    "evidence_rules": [
+     "self"
+    ],
+    "key": {
+     "kind": "object"
+    },
+    "stale_after": null,
+    "tag": "cruxible-claim-inverse-v1"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative",
+    "observation"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.component.affected_by",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "many",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "all",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "subject",
+    "subject_kinds": [
+     "security.vulnerability"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.vulnerability"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "description": "The CVE identifier; the vulnerability's key.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.vulnerability.cve_id"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.vulnerability.cve_id",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "string",
+    "max_len": 32,
+    "pattern": "^CVE-[0-9]{4}-[0-9]{4,}$"
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.vulnerability"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [],
+   "cardinality": "many",
+   "default_role": "observation",
+   "description": "A catalog that lists the vulnerability, from the catalog's own retained document; none of a catalog means a complete read of it did not list it.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "security.kev-catalog"
+        }
+       }
+      ],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "kev-catalog",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "captured",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.vulnerability.listed_in"
+   },
+   "inverse": {
+    "description": null,
+    "evidence_rules": [
+     "kev-catalog"
+    ],
+    "key": {
+     "kind": "object"
+    },
+    "stale_after": null,
+    "tag": "cruxible-claim-inverse-v1"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "observation"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.vulnerability.listed_in",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "many",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "all",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "subject",
+    "subject_kinds": [
+     "security.catalog"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.vulnerability"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [],
+   "cardinality": "one",
+   "default_role": "observation",
+   "description": "FIRST's EPSS probability of exploitation in the next 30 days (epss).",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "security.epss-scores"
+        }
+       }
+      ],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "epss-api",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "captured",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.vulnerability.epss_score"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "observation"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.vulnerability.epss_score",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "decimal",
+    "max": "1",
+    "min": "0"
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.vulnerability"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [],
+   "cardinality": "one",
+   "default_role": "observation",
+   "description": "The date CISA added the vulnerability to the KEV catalog (dateAdded).",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "security.kev-catalog"
+        }
+       }
+      ],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "kev-catalog",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "captured",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.vulnerability.kev_date_added"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "observation"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.vulnerability.kev_date_added",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "date"
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.vulnerability"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "default_role": "observation",
+   "description": "Whether KEV reports known ransomware campaign use (knownRansomwareCampaignUse).",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "security.kev-catalog"
+        }
+       }
+      ],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "kev-catalog",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "captured",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.vulnerability.kev_ransomware_use"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "observation"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.vulnerability.kev_ransomware_use",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "enum",
+    "members": [
+     "Known",
+     "Unknown"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.catalog"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "description": "The catalog's short id, e.g. cisa-kev; the catalog's key.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.catalog.catalog_id"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.catalog.catalog_id",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "string",
+    "max_len": 64,
+    "pattern": "^[a-z][a-z0-9-]{0,63}$"
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.exposure"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [],
+   "cardinality": "one",
+   "description": "The component (package release) judged; a key part.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.exposure.component"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.exposure.component",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "subject",
+    "subject_kinds": [
+     "security.component"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.exposure"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [],
+   "cardinality": "one",
+   "description": "The vulnerability judged; a key part.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.exposure.vulnerability"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.exposure.vulnerability",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "subject",
+    "subject_kinds": [
+     "security.vulnerability"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.exposure"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "default_role": "normative",
+   "description": "The VEX justification of an agent's package-level not_affected judgment, stated with affected_by none of the vulnerability on the component: the vulnerable code is not in this package release, for every inventory.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contract_families": [
+       "workspace_file"
+      ],
+      "capture_contracts": [],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "file",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     },
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.exposure.justification"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.exposure.justification",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "enum",
+    "members": [
+     "vulnerable_code_not_present"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.app_exposure"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "default_role": "normative",
+   "description": "An agent's verdict on this inventory's exposure. affected stands alone, with no justification, and cites the reachability evidence (the code that reaches the vulnerable function). not_affected goes with a justification, which alone also means not_affected. A verdict of affected beside a justification is no judgment: the pair stays in the worklists. Never settled by a Mandate.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contract_families": [
+       "workspace_file"
+      ],
+      "capture_contracts": [],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "file",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     },
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.app_exposure.verdict"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [
+    {
+     "description": "The vulnerable code is reachable here: remediate or escalate. No justification.",
+     "member": "affected"
+    },
+    {
+     "description": "Not reachable here, for the reason the pair's justification states.",
+     "member": "not_affected"
+    }
+   ],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.app_exposure.verdict",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "enum",
+    "members": [
+     "affected",
+     "not_affected"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.finding"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "description": "The repository as host/owner/repo, casefolded; with weakness and locus, the finding's key.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.finding.repo"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.finding.repo",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "string",
+    "max_len": 256,
+    "pattern": "^[a-z0-9.-]+/[^/\\s]+/[^/\\s]+$"
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.finding"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "description": "CWE-<n>, the smallest CWE the reporting rule names, else RULE:<tool>/<ruleId>; with repo and locus, the finding's key.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.finding.weakness"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.finding.weakness",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "string",
+    "max_len": 256,
+    "pattern": "^(CWE-[0-9]{1,6}|RULE:\\S{1,240})$"
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.finding"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "description": "Where in the code: <path>#<locator>, the first tier that applies (symbol, snippet:<12 hex>, line-hash:<the tool's>). Never a line number; with repo and weakness, the finding's key.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.finding.locus"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.finding.locus",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "string",
+    "max_len": 256
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.finding"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "one",
+   "default_role": "observation",
+   "description": "present when a scan reports the finding; fixed when a full scan of the rules that reported it no longer does. fixed needs complete input.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "security.sarif-findings"
+        }
+       }
+      ],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "sarif",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "captured",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.finding.verification"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "observation"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.finding.verification",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [
+    "fixed"
+   ],
+   "resolution_policy": {
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "enum",
+    "members": [
+     "present",
+     "fixed"
+    ]
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.finding"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [
+    "nfc",
+    "trim"
+   ],
+   "cardinality": "many",
+   "default_role": "observation",
+   "description": "A finder that reported the finding: a tool (semgrep, codeql) from a SARIF scan, or audit for an audit agent citing the code.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contract_families": [
+       "workspace_file"
+      ],
+      "capture_contracts": [],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "file",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     },
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "security.sarif-findings"
+        }
+       }
+      ],
+      "claim_roles": [
+       "observation"
+      ],
+      "rule_id": "sarif",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "captured",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.finding.reported_by"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "observation"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.finding.reported_by",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "many",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "all",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "string",
+    "max_len": 64,
+    "pattern": "^[0-9a-z][0-9a-z._-]{0,63}$"
+   }
+  },
+  {
+   "admission_policy": {
+    "corroboration_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1"
+   },
+   "allowed_subject_kinds": [
+    "security.finding"
+   ],
+   "artifact_format": "cruxible-claim-type-v11",
+   "canonical_form": [],
+   "cardinality": "many",
+   "default_role": "normative",
+   "description": "A codebase fact this judgment was made in light of. Core does not act on it: when the fact changes, run the resting_on Query for it. Never settled by a Mandate.",
+   "evidence_admission_policy": {
+    "rules": [
+     {
+      "admission": "direct",
+      "attestation_requirement": "none",
+      "capture_contracts": [
+       {
+        "logical_sources": [],
+        "role": "capture-contract",
+        "target": {
+         "kind": "CaptureContract",
+         "name": "playbill.coordinator-self-source-v1"
+        }
+       }
+      ],
+      "claim_roles": [
+       "normative"
+      ],
+      "rule_id": "self",
+      "subject_binding": "exact_claim_subject",
+      "tag": "cruxible-claim-evidence-admission-rule-v4"
+     }
+    ],
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
+   },
+   "evidence_requirement": "self",
+   "identity": {
+    "kind": "ClaimType",
+    "name": "security.finding.rests_on"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   },
+   "member_descriptions": [],
+   "permitted_roles": [
+    "normative"
+   ],
+   "pins": [],
+   "precedence": {
+    "revisable_by_procedures": [
+     "environment_binding",
+     "observation",
+     "derivation"
+    ],
+    "roles": [
+     "normative",
+     "environment_binding",
+     "observation",
+     "derivation"
+    ]
+   },
+   "predicate": "security.finding.rests_on",
+   "referent_sensitivity": "identity",
+   "requires_complete_input": [],
+   "resolution_policy": {
+    "cardinality": "many",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+     "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "all",
+    "tag": "playbill-claim-resolution-policy-v1"
+   },
+   "revision_evidence": "replace",
+   "value": {
+    "kind": "subject",
+    "subject_kinds": [
+     "security.code_fact"
+    ]
+   }
+  }
+ ],
+ "source": "kits/security/artifacts at kits ac73b69: one ClaimType per shape the kit uses (inverse, enum with and without meanings, subject links one and many, decimal, date, many strings, requires_complete_input, keys with a normalizer)",
+ "subject_kinds": [
+  {
+   "artifact_format": "cruxible-subject-kind-v2",
+   "description": "One package release, named by its purl@version (R1, R12).",
+   "identity": {
+    "kind": "SubjectKind",
+    "name": "security.component"
+   },
+   "identity_rule": {
+    "parts": [
+     {
+      "claim_type": "security.component.purl",
+      "normalizer": {
+       "identity": "package",
+       "normalizer": "purl-type",
+       "version": 1
+      }
+     }
+    ],
+    "rule": "keys",
+    "uniqueness": "unique"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   }
+  },
+  {
+   "artifact_format": "cruxible-subject-kind-v2",
+   "description": "A CVE, named by its id.",
+   "identity": {
+    "kind": "SubjectKind",
+    "name": "security.vulnerability"
+   },
+   "identity_rule": {
+    "parts": [
+     {
+      "claim_type": "security.vulnerability.cve_id",
+      "normalizer": {
+       "normalizer": "none",
+       "version": 1
+      }
+     }
+    ],
+    "rule": "keys",
+    "uniqueness": "unique"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   }
+  },
+  {
+   "artifact_format": "cruxible-subject-kind-v2",
+   "description": "A published vulnerability catalog (e.g. cisa-kev), named by its id.",
+   "identity": {
+    "kind": "SubjectKind",
+    "name": "security.catalog"
+   },
+   "identity_rule": {
+    "parts": [
+     {
+      "claim_type": "security.catalog.catalog_id",
+      "normalizer": {
+       "normalizer": "none",
+       "version": 1
+      }
+     }
+    ],
+    "rule": "keys",
+    "uniqueness": "unique"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   }
+  },
+  {
+   "artifact_format": "cruxible-subject-kind-v2",
+   "description": "A (component, vulnerability) pair an agent judged at package level, keyed by its ends.",
+   "identity": {
+    "kind": "SubjectKind",
+    "name": "security.exposure"
+   },
+   "identity_rule": {
+    "parts": [
+     {
+      "claim_type": "security.exposure.component",
+      "normalizer": {
+       "normalizer": "none",
+       "version": 1
+      }
+     },
+     {
+      "claim_type": "security.exposure.vulnerability",
+      "normalizer": {
+       "normalizer": "none",
+       "version": 1
+      }
+     }
+    ],
+    "rule": "keys",
+    "uniqueness": "unique"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   }
+  },
+  {
+   "artifact_format": "cruxible-subject-kind-v2",
+   "description": "One weakness of one kind at one place in one repository's code.",
+   "identity": {
+    "kind": "SubjectKind",
+    "name": "security.finding"
+   },
+   "identity_rule": {
+    "parts": [
+     {
+      "claim_type": "security.finding.repo",
+      "normalizer": {
+       "normalizer": "none",
+       "version": 1
+      }
+     },
+     {
+      "claim_type": "security.finding.weakness",
+      "normalizer": {
+       "normalizer": "none",
+       "version": 1
+      }
+     },
+     {
+      "claim_type": "security.finding.locus",
+      "normalizer": {
+       "normalizer": "none",
+       "version": 1
+      }
+     }
+    ],
+    "rule": "keys",
+    "uniqueness": "unique"
+   },
+   "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+   }
+  }
+ ]
+}
