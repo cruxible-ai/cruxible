@@ -693,7 +693,7 @@ def render_review_summary(review: ProposalReviewSummary, *, command: str | None 
     if review.withheld is not None:
         lines.append(
             "Withheld: a proposed Claim cites a Capture this reader may not read; "
-            "proposed values and cited text are left out"
+            "proposed values, definition fields and cited text are left out"
         )
     if review.prior_refusal_member_count:
         lines.append(

@@ -828,3 +828,70 @@ def test_a_versioned_definition_reads_as_its_name_and_version(tmp_path, kind, he
             connection.execute("SELECT data FROM review_definitions").fetchone()[0]
         )
     assert (definition["kind"], definition["name"]) == (heading, "web.fetch/v1")
+
+
+def test_withholding_covers_definition_fields_on_every_surface():
+    """C14 (review P1): a Runbook description can copy a restricted Capture's text, so a
+    withheld summary drops each definition's fields and keeps kind, name and action."""
+
+    from cruxible_client.contracts.text_display import render_review_summary
+    from cruxible_core.service.proposals.summary import withhold_summary_values
+
+    secret = "private note copied from the restricted capture"
+    summary = ProposalReviewSummary.model_validate(
+        {
+            "proposal_id": "sha256:" + "a" * 64,
+            "candidate_digest": "sha256:" + "b" * 64,
+            "settlement_base": {
+                "git_oid": "0" * 40,
+                "semantic_root": "sha256:" + "1" * 64,
+                "generation_root": "sha256:" + "2" * 64,
+                "compiler_digest": "sha256:" + "3" * 64,
+            },
+            "counts": {"created": 1, "revised": 1},
+            "subject_kinds": {},
+            "subject_kind_count": 0,
+            "required_tier": "governed_write",
+            "activation_policy": "snapshot",
+            "approval_requirements": [],
+            "findings": [],
+            "finding_count": 0,
+            "groups": [],
+            "group_count": 0,
+            "definitions": [
+                {
+                    "kind": "Runbook",
+                    "name": "acme.daily",
+                    "action": "created",
+                    "detail": {"kind": "runbook", "description": secret, "steps": ["Line:a"]},
+                },
+                {
+                    "kind": "Trigger",
+                    "name": "acme.nightly",
+                    "action": "revised",
+                    "changed": [
+                        {"field": "note", "before": {"value": "old"}, "after": {"value": secret}}
+                    ],
+                },
+            ],
+            "definition_count": 2,
+        }
+    )
+    reader = BodyAccessContext(principal_id="reader", can_read_body=True)
+    # A build that records no cited Captures withholds (fail closed): the same branch
+    # a restricted citation takes, without needing an instance.
+    withheld = withhold_summary_values(None, summary, None, reader)
+    assert withheld.withheld is not None
+    assert [(d.kind, d.name, d.action) for d in withheld.definitions] == [
+        ("Runbook", "acme.daily", "created"),
+        ("Trigger", "acme.nightly", "revised"),
+    ]
+    assert all(d.detail is None and d.changed == () for d in withheld.definitions)
+    text = render_review_summary(withheld)
+    for served in (withheld.model_dump_json(), str(withheld), text):
+        assert secret not in served
+    assert "  Runbook acme.daily: created" in text
+    assert "definition fields" in text
+    # A reader with the key still sees them.
+    keyed = BodyAccessContext(principal_id="key", can_read_body=True, can_read_restricted=True)
+    assert secret in str(withhold_summary_values(None, summary, None, keyed))

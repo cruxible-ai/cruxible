@@ -747,8 +747,9 @@ def withhold_summary_values(
     """A summary without candidate values extracted from restricted Captures (C14).
 
     When a candidate Claim cites a Capture withheld from the reader, every
-    proposed (``after``) value, shared candidate field, finding and item
-    reason goes; accepted (``before``) values, counts, groups, digests and the
+    proposed (``after``) value, shared candidate field, proposed definition
+    field, finding and item reason goes (a definition keeps its kind, name and
+    action); accepted (``before``) values, counts, groups, digests and the
     candidate digest a signer signs stay. A build without its cited Captures
     withholds (fail closed).
     """
@@ -787,6 +788,18 @@ def withhold_summary_values(
         )
         for group in summary.groups
     )
+    # A proposed definition's fields can copy restricted text too (a Runbook
+    # description): it keeps its kind, name and action, like a withheld change
+    # keeps its op, Subject and field.
+    definitions = tuple(
+        item.model_copy(update={"detail": None, "changed": ()}) for item in summary.definitions
+    )
     return summary.model_copy(
-        update={"groups": groups, "findings": (), "item_reasons": (), "withheld": notice}
+        update={
+            "groups": groups,
+            "definitions": definitions,
+            "findings": (),
+            "item_reasons": (),
+            "withheld": notice,
+        }
     )
