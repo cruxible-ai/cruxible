@@ -64,8 +64,8 @@ from tests.test_scale.test_per_change_cost import SLACK as _PER_CHANGE_SLACK
 
 #: The worlds are seeded through Line runs (about 15 per world): allow the build its time.
 #: The first case builds them inside its timeout: 1,100-1,350 s on CI's 3.11/3.12 runners.
-#: Under the CI job's 45 minutes and its faulthandler backstop (2,400 s, ci.yml), so a
-#: stall fails here with every thread's stack, taken safely under the GIL.
+#: Under the CI job's 45 minutes, so a stall fails here with every thread's stack (or,
+#: one that holds the GIL, with tests/support/hang_dump.py's 60 s later).
 pytestmark = pytest.mark.timeout(2100)
 
 SMALL, LARGE = (

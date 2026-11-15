@@ -91,14 +91,15 @@ jobs:
         run: uv run python scripts/build_base_kit.py --check
 
       # pytest-timeout fails a stalled test with every thread's stack (900 s, or a
-      # module's own mark, which must stay under the job's 45 minutes). The
-      # faulthandler dump is only the backstop for a stall that holds the GIL, so it
-      # fires after every mark: its watchdog reads running threads' frames without
-      # the GIL and can crash the worker. At 1200 s it fired inside
-      # test_pair_procedure_cost's world build (routinely 1,100-1,350 s on 3.11/3.12)
-      # and once killed the worker mid-dump.
+      # module's own mark, which must stay under the job's 45 minutes). A stall
+      # that holds the GIL keeps its timer from firing; tests/support/hang_dump.py
+      # then dumps every thread 60 s past the test's own timeout and ends the
+      # worker, so the shard reports it instead of being cancelled. No
+      # faulthandler_timeout: a fixed one fired inside long legitimate tests
+      # (test_pair_procedure_cost) and once crashed a worker mid-dump, and one
+      # past every mark could never fire before the job timeout.
       - name: Test
-        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread -o faulthandler_timeout=2400
+        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread
 
       - name: Upload per-file test seconds
         if: always()

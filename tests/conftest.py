@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tests.core_support._world_templates import TEMPLATES, WORLD_STATS_ENV
+from tests.support.hang_dump import HangDumpPlugin
 from tests.support.provider_checkout import (  # noqa: F401 - shared fixtures
     provider_checkout,
     provider_runtime,
@@ -85,6 +86,8 @@ def world_templates(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
 def pytest_configure(config: pytest.Config) -> None:
     # CI shards (CRUXIBLE_TEST_SHARD=i/N); without the variable it deselects nothing.
     config.pluginmanager.register(ShardPlugin(config), "cruxible-test-shards")
+    # A test past its own timeout that pytest-timeout could not stop: stack and exit.
+    config.pluginmanager.register(HangDumpPlugin(), "cruxible-hang-dump")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
