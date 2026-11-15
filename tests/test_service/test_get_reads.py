@@ -20,6 +20,7 @@ from cruxible_client.contracts.get_reads import (
     GetResult,
     GetSubjectCard,
 )
+from cruxible_client.contracts.public_names import public_name
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
@@ -1271,3 +1272,19 @@ def test_a_claim_history_says_what_each_revision_did_and_why(
     monkeypatch.setattr(index, "rows", lambda *_args, **_kwargs: [])
     bare = _get(instance, fields_world["status"], detail="history").history
     assert bare is not None and all(item.reason is None for item in bare.revisions)
+
+
+def test_a_built_in_name_as_printed_is_gettable_and_next_prints_it(
+    world: dict[str, Any],
+) -> None:
+    """Walkthrough S8: the card prints one spelling, and that spelling resolves."""
+
+    instance = world["instance"]
+    shown = public_name(_CONTRACT_NAME)
+    assert shown != _CONTRACT_NAME and shown.startswith("CaptureContract:cruxible.")
+    # The public spelling reads the stored artifact; typed JSON keeps the stored name.
+    assert _get(instance, shown).ref == _get(instance, _CONTRACT_NAME).ref == _CONTRACT_NAME
+    card = _get(instance, f"ClaimType:{PREDICATE}", surface="cli").card
+    assert card is not None
+    steps = " ".join(card.next)
+    assert f"cruxible get {shown}" in steps and "playbill." not in steps

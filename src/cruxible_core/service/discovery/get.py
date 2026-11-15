@@ -131,6 +131,7 @@ from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.public_names import public_name, stored_name
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
@@ -464,7 +465,8 @@ def resolve_get_ref(
     named without being verified (C14).
     """
 
-    value = ref.strip()
+    # A built-in name as it is printed (``cruxible.``) reads the stored artifact.
+    value = stored_name(ref.strip())
     if not value:
         raise _not_found("artifact", ref, (), surface=surface)
     if value.startswith("sha256:"):
@@ -1073,8 +1075,9 @@ def _render_get(
     window: str | None = None,
     at: ClientCoordinate | None = None,
 ) -> str:
-    """One ``get`` call spelled for the caller's surface (R07)."""
+    """One ``get`` call spelled for the caller's surface (R07), built-in names as printed."""
 
+    ref = public_name(ref)
     if surface == "cli":
         rendered = f"cruxible get {shlex.quote(ref)}"
         if detail:
