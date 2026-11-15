@@ -14,17 +14,18 @@ Transcript shape::
     $ cruxible kit add ./pilot-dependent --commit        accepted
     $ cruxible kit remove base --commit
       refused: ... pilot-dependent requires it
-    -- consumer B: base removed first
-    $ cruxible kit remove base --commit                  accepted (nothing requires it)
-    $ cruxible kit add ./pilot-dependent --commit
-      refused cruxible.kit.requires_missing: ... base ... cruxible kit add base
+    -- consumer B: removing the bundled base kit first
+    $ cruxible kit remove base --commit
+      refused cruxible.kit.base_required: the base kit stays installed ...
+    $ cruxible kit add ./pilot-dependent --commit        accepted
 
 Green when: the bundle requires exactly ``(base, 1.0.0)`` and carries no base
-definition; the add is accepted where base is installed and refused with
-``cruxible.kit.requires_missing`` (naming ``base`` and the repair
-``cruxible kit add base``) where it is not; removing base while the dependent is
-installed is refused with a message naming ``pilot-dependent``, and base stays
-installed.
+definition; the add is accepted where base is installed; removing base while the
+dependent is installed is refused with a message naming ``pilot-dependent``, and
+base stays installed; removing the bundled base kit with nothing requiring it is
+refused ``cruxible.kit.base_required`` (a definition it retired could not be
+added back). ``cruxible.kit.requires_missing`` where a required kit was never
+installed is covered by tests/test_server/test_kit_requires.py.
 """
 
 from __future__ import annotations
@@ -146,25 +147,24 @@ def test_a_kit_requiring_base_installs_only_beside_it_and_holds_it(
     pilot.call("cruxible kit status --offline")
     pilot.got(", ".join(_kits(consumer_a)))
 
-    pilot.say("-- consumer B: base removed first")
+    pilot.say("-- consumer B: removing the bundled base kit first is refused")
     consumer_b = _instance_with_base(tmp_path / "consumer-b")
     pilot.call("cruxible kit remove base --commit")
-    removed = _remove(consumer_b, "base")
-    pilot.got(f"{removed.status}")
+    with pytest.raises(RequestRefusedError) as kept:
+        _remove(consumer_b, "base")
+    kept_code, _kept_message = search_world.show_refusal(pilot, kept.value)
     pilot.call(f"cruxible kit add ./{KIT} --commit")
-    with pytest.raises(RequestRefusedError) as missing:
-        _add(consumer_b, bundle)
-    missing_code, missing_message = search_world.show_refusal(pilot, missing.value)
+    beside = _add(consumer_b, bundle)
+    pilot.got(f"{beside.status}")
 
     assert requires == (("base", "1.0.0"),)
     assert carried == []
     assert added.status == "accepted", added
     assert KIT in held_message
     assert set(_kits(consumer_a)) == {"base", KIT}
-    assert removed.status == "accepted", removed
-    assert missing_code == "cruxible.kit.requires_missing"
-    assert "base" in missing_message
-    assert "cruxible kit add base" in missing_message or "cruxible kit add base" in str(
-        missing.value.repair
-    )
-    assert KIT not in _kits(consumer_b)
+    # A retired base definition could never be added back, so base stays installed;
+    # requires_missing (which names `cruxible kit add base`) is covered where the
+    # required kit was never installed (tests/test_server/test_kit_requires.py).
+    assert kept_code == "cruxible.kit.base_required"
+    assert beside.status == "accepted", beside
+    assert set(_kits(consumer_b)) == {"base", KIT}

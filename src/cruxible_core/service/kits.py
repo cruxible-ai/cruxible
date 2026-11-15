@@ -2006,6 +2006,17 @@ KIT_PREVIEW_AWAITING_INSTALL = (
 )
 
 
+#: The bundled base kit (its id and the source its receipt records): never removed,
+#: see ``_remove_kit``.
+BASE_KIT_ID = "base"
+BASE_KIT_SOURCE = "bundled"
+KIT_BASE_REQUIRED = "cruxible.kit.base_required"
+KIT_BASE_REQUIRED_REPAIR = (
+    "Leave the base kit installed; to stop using one of its definitions, retire that "
+    "definition in an authored change (cruxible authoring submit)."
+)
+
+
 def _required_receipts(
     manifest: KitManifest, receipts: tuple[KitReceipt, ...]
 ) -> dict[str, KitReceipt]:
@@ -2813,6 +2824,20 @@ def _remove_kit(
             remove_required_message(request.kit_id, dependents),
             repair=RepairOperation(
                 operation="cruxible.kit.remove", arguments={"kit_id": dependents[0]}
+            ),
+        )
+    if request.kit_id == BASE_KIT_ID and receipt.source == BASE_KIT_SOURCE:
+        # Its retired definitions could never come back: a retired kind is never
+        # revived, so a later `kit add base` would refuse.
+        raise RequestRefusedError(
+            KIT_BASE_REQUIRED,
+            "the base kit stays installed: it holds the capabilities and Contracts that "
+            "workspace reads and web fetches name, and a definition it retired could not "
+            f"be added back. {KIT_BASE_REQUIRED_REPAIR}",
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target="kit:base", required_change=KIT_BASE_REQUIRED_REPAIR
+                )
             ),
         )
     diff = _Diff()
