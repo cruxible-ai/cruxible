@@ -221,7 +221,12 @@ def _catalogue_cited(
 ) -> WriteOutcome:
     """Catalogue each cited workspace file the catalog did not name, once admitted.
 
-    By the code ``files add`` uses, under the name the write sent. A dry run
+    By the code ``files add`` uses (one locked read-modify-write of the
+    catalog), under the name the write sent, which its citation carries. A name
+    another file took meanwhile is never overwritten and never swapped for a
+    free one (the citation would name the wrong file): the entry is refused and
+    the outcome says written=false with the repair. The same file catalogued
+    under that name by a concurrent write counts as catalogued. A dry run
     reports the files it would catalogue and writes nothing; a refused write
     catalogues nothing.
     """
@@ -243,15 +248,33 @@ def _catalogue_cited(
         if written:
             try:
                 catalog_file(workspace, name=state.source_id, path=state.path)
-            except (FileCatalogEditError, OSError):
-                # The write landed; only the catalog entry is missing.
-                added = False
-                missed.append(f"cruxible files add {state.source_id} {shlex.quote(relative)}")
+            except (FileCatalogEditError, OSError) as exc:
+                taken = isinstance(exc, FileCatalogEditError) and exc.reason == "entry_exists"
+                if taken and _catalogued_as(workspace, state.path, state.source_id):
+                    pass  # a concurrent write catalogued this same file under this name
+                else:
+                    # The write landed; only the catalog entry is missing.
+                    added = False
+                    missed.append(
+                        f"{state.source_id} is catalogued for another file; catalogue "
+                        f"{relative} under another name (cruxible files add NAME "
+                        f"{shlex.quote(relative)}) and re-cite it"
+                        if taken
+                        else f"cruxible files add {state.source_id} {shlex.quote(relative)}"
+                    )
         catalogued.append(CataloguedFile(file=relative, name=state.source_id, written=added))
     update: dict[str, object] = {"catalogued": tuple(catalogued)}
     if missed:
         update["next"] = "; ".join(filter(None, [outcome.next, *missed]))
     return outcome.model_copy(update=update)
+
+
+def _catalogued_as(workspace: Path, path: Path, name: str) -> bool:
+    try:
+        entries = workspace_files(workspace).entries_for_path(path)
+    except (ValueError, OSError):
+        return False
+    return any(entry.name == name for entry in entries)
 
 
 def write_workspace(

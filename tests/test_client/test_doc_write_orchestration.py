@@ -441,3 +441,114 @@ def test_a_parent_swapped_for_a_symlink_after_the_check_is_never_read(
         )
     assert caught.value.error_code == "cruxible.doc.protected_path"
     assert "SECRET" not in str(caught.value)
+
+
+def test_derived_catalog_names_never_share_a_name_for_two_paths(tmp_path: Path) -> None:
+    """Review P2(a): flattening that cannot be read back takes a digest."""
+
+    from cruxible_client.authoring.files import default_catalog_name
+
+    def name(relative: str) -> str:
+        return default_catalog_name(tmp_path, tmp_path / relative)
+
+    # Names a workspace already has stay as they were.
+    assert name("notes.md") == "doc-notes.md"
+    assert name("app/forms.py") == "doc-app-forms.py"
+    paths = ["a/b.py", "a-b.py", "A/b.py", "a b.py", "a/b/c.py", "a-b/c.py", "x" * 130 + ".md"]
+    names = [name(item) for item in paths]
+    assert len(set(names)) == len(paths), names
+    assert names[0] == "doc-a-b.py" and names[1].startswith("doc-a-b.py-")
+    assert all(len(item) <= 128 for item in names)
+
+
+def _cite(relative: str, anchor: str) -> WriteRequest:
+    from cruxible_client.contracts.write import FileEvidence, SetChange
+
+    return WriteRequest(
+        because="x",
+        changes=(
+            SetChange(
+                subject="dev.item/a",
+                field="status",
+                value="x",
+                evidence=FileEvidence(file=f"{relative}#{anchor}"),
+            ),
+        ),
+    )
+
+
+def test_concurrent_catalog_edits_take_turns_and_never_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review P2(b): both snapshots are taken before either write, without the lock."""
+
+    import threading
+    import time
+
+    from cruxible_client.authoring import files
+
+    for relative in ("a/b.py", "c.py", "d.py"):
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text("x = 1\n")
+    real_write = files._write_portable
+
+    def slow_write(path, entries):  # type: ignore[no-untyped-def]
+        time.sleep(0.3)
+        real_write(path, entries)
+
+    monkeypatch.setattr(files, "_write_portable", slow_write)
+    errors: list[Exception] = []
+
+    def add(name: str, relative: str) -> None:
+        try:
+            files.catalog_file(tmp_path, name=name, path=tmp_path / relative)
+        except files.FileCatalogEditError as exc:
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=add, args=("one", "a/b.py")),
+        threading.Thread(target=add, args=("two", "c.py")),
+        threading.Thread(target=add, args=("two", "d.py")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    entries = yaml.safe_load((tmp_path / ".cruxible" / "files.yaml").read_text())["entries"]
+    by_name = {item["name"]: item["locator"] for item in entries}
+    assert set(by_name) == {"one", "two"} and by_name["one"] == "a/b.py"
+    # The second "two" refused instead of replacing the first.
+    assert [exc.reason for exc in errors] == ["entry_exists"]
+    assert by_name["two"] in {"c.py", "d.py"}
+
+
+def test_a_name_taken_after_admission_is_refused_not_overwritten(tmp_path: Path) -> None:
+    from cruxible_client.authoring.files import catalog_file
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "b.py").write_text("def f():\n    pass\n")
+    (tmp_path / "other.py").write_text("y = 2\n")
+
+    def taken_meanwhile(observed: WriteRequest) -> WriteOutcome:
+        # Another writer catalogues a different file under the same name.
+        catalog_file(tmp_path, name="doc-a-b.py", path=tmp_path / "other.py")
+        return _answer()
+
+    outcome = write_workspace(_cite("a/b.py", "def f"), workspace=tmp_path, submit=taken_meanwhile)
+
+    (item,) = outcome.catalogued
+    assert (item.name, item.written) == ("doc-a-b.py", False)
+    assert outcome.next is not None and "catalogued for another file" in outcome.next
+    entries = yaml.safe_load((tmp_path / ".cruxible" / "files.yaml").read_text())["entries"]
+    assert entries == [{"name": "doc-a-b.py", "locator": "other.py"}]
+
+    # The same file catalogued under the name by a concurrent write counts as done.
+    (tmp_path / "c.py").write_text("z = 3\n")
+
+    def same_meanwhile(observed: WriteRequest) -> WriteOutcome:
+        catalog_file(tmp_path, name="doc-c.py", path=tmp_path / "c.py")
+        return _answer()
+
+    again = write_workspace(_cite("c.py", "z = 3"), workspace=tmp_path, submit=same_meanwhile)
+    assert [(item.name, item.written) for item in again.catalogued] == [("doc-c.py", True)]

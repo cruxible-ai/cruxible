@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal, Protocol
@@ -28,6 +30,11 @@ from cruxible_client.contracts.file_catalog import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.errors import DataValidationError
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not POSIX
+    fcntl = None  # type: ignore[assignment]
 
 
 class WorkspaceFileError(DataValidationError):
@@ -240,11 +247,45 @@ def default_catalog_name(root: Path, path: Path) -> str:
     """The catalog name a workspace file takes when none is given: ``doc-`` and its path.
 
     A notes file a write creates, a workspace file a write cites, and ``files
-    add`` without NAME all name the file this way.
+    add`` without NAME all name the file this way. The path is lowercased and
+    each ``/`` (and any other character a name cannot hold) becomes ``-``; when
+    that cannot be read back to the one path (the path held a ``-``, a capital,
+    such a character, or was cut to length), the name ends with ``-`` and 12 hex
+    of the path's sha256, so two paths never share a name (``a/b.py`` is
+    ``doc-a-b.py``; ``a-b.py`` is ``doc-a-b.py-<hex>``). A file already in the
+    catalog keeps the name it has.
     """
 
-    relative = path.relative_to(root).as_posix().lower()
-    return "doc-" + re.sub(r"[^a-z0-9_.-]+", "-", relative).strip("-.")[:120]
+    relative = path.relative_to(root).as_posix()
+    flat = re.sub(r"[^a-z0-9_.-]+", "-", relative.lower()).strip("-.")
+    if len(flat) <= 120 and flat.replace("-", "/") == relative:
+        return "doc-" + flat
+    digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12]
+    return f"doc-{flat[:110]}-{digest}"
+
+
+@contextmanager
+def _catalog_lock(root: Path) -> Iterator[None]:
+    """Hold ``.cruxible/files.yaml.lock`` for one catalog read-modify-write.
+
+    Two processes editing the catalog (two writes cataloguing files they cite,
+    or ``files add`` beside one) take turns, so neither replaces the catalog
+    from a snapshot taken before the other's edit.
+    """
+
+    if fcntl is None:  # pragma: no cover - no advisory locks on this platform
+        yield
+        return
+    lock_path = workspace_path(root, "files.yaml.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o644
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)  # closing releases the lock
 
 
 def add_catalog_entry(
@@ -265,6 +306,13 @@ def add_catalog_entry(
     """
 
     root = root.expanduser().resolve()
+    with _catalog_lock(root):
+        return _add_catalog_entry(root, name=name, path=path, fields=fields, replace=replace)
+
+
+def _add_catalog_entry(
+    root: Path, *, name: str, path: Path, fields: Mapping[str, object], replace: bool
+) -> FileCatalogEdit:
     catalog_path = _portable_catalog_path(root)
     entries = _read_portable(catalog_path)
     locator = _workspace_locator(root, path)
@@ -351,6 +399,11 @@ def remove_catalog_entry(root: Path, *, name: str) -> FileCatalogEdit:
     """Remove NAME from the workspace's portable catalog; the last entry removes the file."""
 
     root = root.expanduser().resolve()
+    with _catalog_lock(root):
+        return _remove_catalog_entry(root, name=name)
+
+
+def _remove_catalog_entry(root: Path, *, name: str) -> FileCatalogEdit:
     catalog_path = _portable_catalog_path(root)
     entries = _read_portable(catalog_path)
     kept = tuple(
