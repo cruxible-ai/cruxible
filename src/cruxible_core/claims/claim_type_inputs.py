@@ -508,6 +508,10 @@ def claim_type_input_defaults(
 #: What a lint warning means, for surfaces that print more than its code.
 CLAIM_TYPE_LINT_TEXT: dict[str, str] = {
     "cruxible.claim_type.description_missing": "state what one value of this field means",
+    "cruxible.claim_type.evidence_policy_admits_no_accepted_contract": (
+        "no evidence rule admits a contract this instance holds, so every value written "
+        "lands uncovered: add the own-words rule (the replacement names it) or a source rule"
+    ),
     "cruxible.claim_type.subject_kind_undeclared": (
         "the inferred Subject kind has no live SubjectKind: declare it in this change set "
         "or state allowed_subject_kinds"
@@ -543,6 +547,9 @@ class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
     contract_identity: str | None = None
     contract_digest: str | None = None
     replacement_rule_fragment: dict[str, object]
+    #: The definition warned about (``ClaimType:<predicate>``,
+    #: ``SubjectKind:<name>``) when one lint covers several: a change set's.
+    artifact: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ClaimTypeProposalLintV1(_StrictClaimTypeInputModel):
@@ -832,38 +839,38 @@ def lint_description(description: str | None) -> tuple[ClaimTypeLintWarningV1, .
     )
 
 
-def lint_claim_type_input(
+def accepted_capture_contracts(
+    instance: PlaybillInstance, *, coordinate: AcceptedProjectionCoordinate
+) -> dict[str, str]:
+    """Every accepted CaptureContract at ``coordinate``: digest to qualified identity."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        return {
+            row.artifact_digest: row.identity
+            for row in projection.typed.envelopes(kind="capture-contract")
+        }
+
+
+def _lint_reads(
     instance: PlaybillInstance,
     value: ClaimTypeInputRecord | ClaimType,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    anticipated_source_ids: tuple[str, ...] = (),
-    declared_subject_kinds: frozenset[str] = frozenset(),
-) -> ClaimTypeProposalLintV1:
-    accepted_contracts: dict[str, str] = {}
-    source_ids = set(anticipated_source_ids)
-    if isinstance(value, ClaimTypeInputRecord):
-        source_ids.update(value.anticipated_source_ids)
-    # The first own-words write installs the coordinator self-source contract
-    # (Flow-A binding derives these exact deterministic bytes), so a rule naming
-    # it resolves on a fresh instance too. The dormant direct-self-asserted
-    # constant has no production producer or acceptor, so it is not resolvable.
-    resolvable_contracts: dict[str, str] = {
-        capture_contract_digest(
-            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-        ).tagged: COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.qualified
-    }
-    for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
-        contract = foreign_source_capture_contract(source_id)
-        resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    inventory: dict[str, str] | None,
+    declared_subject_kinds: frozenset[str],
+) -> tuple[ClaimTypeInputRecord | ClaimType, str | None, str | None]:
+    """What the lint reads at the coordinate: the effective type, its description
+    and an undeclared inferred kind; fills ``inventory`` when one is passed."""
+
     effective = value
     description = value.description
     undeclared_kind: str | None = None
     with instance.bind_accepted_projection(coordinate) as projection:
-        accepted_contracts.update(
-            (row.artifact_digest, row.identity)
-            for row in projection.typed.envelopes(kind="capture-contract")
-        )
+        if inventory is not None:
+            inventory.update(
+                (row.artifact_digest, row.identity)
+                for row in projection.typed.envelopes(kind="capture-contract")
+            )
         if isinstance(value, ClaimTypeInputRecord):
             # Lint what lowering writes: the defaults, or the predecessor's
             # values an edit keeps. One read: this predicate's accepted type.
@@ -887,6 +894,57 @@ def lint_claim_type_input(
                 )
             except (FormatError, ValidationError):
                 effective = value
+    return effective, description, undeclared_kind
+
+
+def lint_claim_type_input(
+    instance: PlaybillInstance,
+    value: ClaimTypeInputRecord | ClaimType,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    anticipated_source_ids: tuple[str, ...] = (),
+    declared_subject_kinds: frozenset[str] = frozenset(),
+    key_predicates: frozenset[str] = frozenset(),
+    accepted_contracts: Mapping[str, str] | None = None,
+) -> ClaimTypeProposalLintV1:
+    """Advisory warnings for one authored ClaimType, read at one coordinate.
+
+    ``key_predicates`` names the key ClaimTypes the same change set declares:
+    a key's Claims are covered by their Subject's creation, so a key with no
+    evidence rules is a deliberate shape and does not warn.
+    ``accepted_contracts`` (digest to identity, from
+    :func:`accepted_capture_contracts`) lets a caller linting several members
+    read the contract inventory once; a whole ClaimType then reads nothing.
+    """
+
+    inventory: dict[str, str] = {} if accepted_contracts is None else dict(accepted_contracts)
+    source_ids = set(anticipated_source_ids)
+    if isinstance(value, ClaimTypeInputRecord):
+        source_ids.update(value.anticipated_source_ids)
+    # The first own-words write installs the coordinator self-source contract
+    # (Flow-A binding derives these exact deterministic bytes), so a rule naming
+    # it resolves on a fresh instance too. The dormant direct-self-asserted
+    # constant has no production producer or acceptor, so it is not resolvable.
+    resolvable_contracts: dict[str, str] = {
+        capture_contract_digest(
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        ).tagged: COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.qualified
+    }
+    for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
+        contract = foreign_source_capture_contract(source_id)
+        resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    effective = value
+    description = value.description
+    undeclared_kind: str | None = None
+    if accepted_contracts is None or isinstance(value, ClaimTypeInputRecord):
+        effective, description, undeclared_kind = _lint_reads(
+            instance,
+            value,
+            coordinate=coordinate,
+            inventory=inventory if accepted_contracts is None else None,
+            declared_subject_kinds=declared_subject_kinds,
+        )
+    accepted_contracts = inventory
     resolvable_contracts.update(accepted_contracts)
 
     if isinstance(effective, ClaimTypeInputRecord):
@@ -953,7 +1011,24 @@ def lint_claim_type_input(
                         },
                     )
                 )
-    if (
+    authorable = _admitted_roles(tuple(roles))
+    if not rules:
+        # No rule at all: every write in an authorable role lands uncovered,
+        # whatever evidence it cites. The repair is the rule the short form
+        # (`claim-type propose`, `changes.field`) gives a new field by default.
+        # A key's Claims are covered by their Subject's creation instead.
+        if authorable and value.predicate not in key_predicates:
+            warnings.append(
+                ClaimTypeLintWarningV1(
+                    code="cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                    field_path="$.evidence_admission_policy.rules",
+                    contract_identity=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.qualified,
+                    replacement_rule_fragment={
+                        "rules": _default_evidence_policy(tuple(roles), "self", ())["rules"]
+                    },
+                )
+            )
+    elif (
         not admitted.intersection(resolvable_contracts)
         and not admitted_identities.intersection(resolvable_identities)
         and not admitted_family_shapes

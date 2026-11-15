@@ -1301,6 +1301,9 @@ class ClaimTypeLintWarning(BaseModel):
     contract_digest: str | None = None
     #: The rule fragment that would resolve the warning, as authored input.
     replacement_rule_fragment: dict[str, Any]
+    #: The definition warned about (``ClaimType:<predicate>``,
+    #: ``SubjectKind:<name>``) when one lint covers several: a change set's.
+    artifact: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ClaimTypeProposalLint(BaseModel):

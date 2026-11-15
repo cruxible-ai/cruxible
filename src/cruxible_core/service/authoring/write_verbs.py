@@ -4480,7 +4480,26 @@ def service_playbill_write(
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
             outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
+    if outcome.hint is None and _all_uncovered(outcome):
+        outcome = outcome.model_copy(update={"hint": ALL_UNCOVERED_HINT})
     return outcome
+
+
+#: The outcome's hint when every value a write lands is uncovered: the usual
+#: cause is a field whose evidence rules admit nothing the write can cite.
+ALL_UNCOVERED_HINT = (
+    "Every value this write landed is uncovered: no evidence rule of the fields admits "
+    "the evidence given, so no value counts as supported. If a field has no rules, give "
+    "it the own-words rule (the default for a field defined with the short form); "
+    "otherwise cite evidence a rule admits. The warnings name each value."
+)
+
+
+def _all_uncovered(outcome: WriteOutcome) -> bool:
+    """Whether the write landed values and every one reads ``uncovered``. O(changes)."""
+
+    verdicts = [item.verdict for item in outcome.changes if item.verdict is not None]
+    return not outcome.refused and bool(verdicts) and all(item == "uncovered" for item in verdicts)
 
 
 def _service_write(

@@ -535,9 +535,9 @@ def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(
         if w.code == "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     )
     assert warning.field_path == "$.evidence_admission_policy.rules"
-    assert warning.replacement_rule_fragment["capture_contract_digests"] == [
-        warning.contract_digest
-    ]
+    # No rule at all: the repair is the own-words rule the short form defaults to.
+    assert warning.contract_identity == "CaptureContract:playbill.coordinator-self-source-v1"
+    assert [rule["rule_id"] for rule in warning.replacement_rule_fragment["rules"]] == ["self"]
 
 
 def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
@@ -704,7 +704,19 @@ def test_subject_kind_and_claim_type_description_lints_reach_preflight(tmp_path:
             assert served.lint is None
         else:
             assert served.lint is not None
-            assert [warning.code for warning in served.lint.warnings] == [
-                "cruxible.claim_type.description_missing"
+            # One warning per definition, each naming the definition it is about.
+            assert [
+                (warning.artifact, warning.code, warning.field_path)
+                for warning in served.lint.warnings
+            ] == [
+                (
+                    "ClaimType:catalog.part.name",
+                    "cruxible.claim_type.description_missing",
+                    "$.description",
+                ),
+                (
+                    "SubjectKind:catalog.part",
+                    "cruxible.claim_type.description_missing",
+                    "$.description",
+                ),
             ]
-            assert served.lint.warnings[0].field_path == "$.description"
