@@ -462,11 +462,51 @@ def resolve_get_ref(
     """Resolve every reference form an agent sees to exactly one thing, or refuse.
 
     ``access`` is the reader's: a Capture prefix candidate withheld from it is
-    named without being verified (C14).
+    named without being verified (C14). A ref resolves as written first; only
+    when nothing has that name is a built-in name's printed (``cruxible.``)
+    spelling read as its stored one, so an artifact literally named that way
+    is never shadowed and the extra lookup happens on a miss only.
     """
 
-    # A built-in name as it is printed (``cruxible.``) reads the stored artifact.
-    value = stored_name(ref.strip())
+    value = ref.strip()
+    try:
+        return _resolve_get_ref_as_written(
+            instance,
+            coordinate,
+            value,
+            ref=ref,
+            surface=surface,
+            subject_suggestions=subject_suggestions,
+            access=access,
+        )
+    except ReadRefusalError as exc:
+        stored = stored_name(value)
+        if exc.error_code != "cruxible.get.ref_not_found" or stored == value:
+            raise
+        try:
+            return _resolve_get_ref_as_written(
+                instance,
+                coordinate,
+                stored,
+                ref=ref,
+                surface=surface,
+                subject_suggestions=subject_suggestions,
+                access=access,
+            )
+        except ReadRefusalError:
+            raise exc from None
+
+
+def _resolve_get_ref_as_written(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    value: str,
+    *,
+    ref: str,
+    surface: ReadSurface,
+    subject_suggestions: bool,
+    access: BodyAccessContext | None,
+) -> ResolvedRef:
     if not value:
         raise _not_found("artifact", ref, (), surface=surface)
     if value.startswith("sha256:"):

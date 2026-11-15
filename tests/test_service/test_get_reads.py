@@ -20,7 +20,7 @@ from cruxible_client.contracts.get_reads import (
     GetResult,
     GetSubjectCard,
 )
-from cruxible_client.contracts.public_names import public_name
+from cruxible_client.contracts.public_names import public_name, stored_name
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
@@ -1288,3 +1288,35 @@ def test_a_built_in_name_as_printed_is_gettable_and_next_prints_it(
     assert card is not None
     steps = " ".join(card.next)
     assert f"cruxible get {shown}" in steps and "playbill." not in steps
+
+
+def test_a_literal_cruxible_name_is_read_as_written_not_as_a_built_in(tmp_path: Path) -> None:
+    """Review: the printed spelling of a built-in is a fallback, never a shadow."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+    from tests.test_claims.test_identity_evidence_rules import (
+        IDENTITY,
+        ORIGINAL,
+        _v6_type,
+        _World,
+    )
+
+    world = _World(tmp_path)
+    world.seed(_v6_type())
+    public = public_name(IDENTITY.qualified)
+    literal_name = public.partition(":")[2]
+    assert literal_name.startswith("cruxible.foreign-source.")
+    # An adopter's CaptureContract literally named with the public spelling.
+    literal = ORIGINAL.model_copy(
+        update={"identity": ArtifactIdentity(kind="CaptureContract", name=literal_name)}
+    )
+    tree = world.tree()
+    tree[capture_contract_path(literal_name)] = render_capture_contract(literal)
+    world.accept(tree, name="literal-contract")
+    instance = world.instance
+
+    assert _get(instance, public).ref == public
+    assert _get(instance, IDENTITY.qualified).ref == IDENTITY.qualified
+    # A Contract (not a CaptureContract) of that spelling is not a built-in name.
+    assert stored_name(f"Contract:{literal_name}") == f"Contract:{literal_name}"
