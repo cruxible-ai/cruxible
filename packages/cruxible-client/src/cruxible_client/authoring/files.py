@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -228,6 +229,17 @@ def _workspace_locator(root: Path, path: Path) -> str:
     if not resolved.is_file():
         raise FileCatalogEditError("path_not_a_file", f"{path} is not a regular file")
     return resolved.relative_to(root).as_posix()
+
+
+def default_catalog_name(root: Path, path: Path) -> str:
+    """The catalog name a workspace file takes when none is given: ``doc-`` and its path.
+
+    A notes file a write creates, a workspace file a write cites, and ``files
+    add`` without NAME all name the file this way.
+    """
+
+    relative = path.relative_to(root).as_posix().lower()
+    return "doc-" + re.sub(r"[^a-z0-9_.-]+", "-", relative).strip("-.")[:120]
 
 
 def add_catalog_entry(

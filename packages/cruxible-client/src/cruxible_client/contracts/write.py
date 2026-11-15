@@ -1141,6 +1141,14 @@ class DocOutcome(_StrictWriteModel):
     next: str | None = None
 
 
+class CataloguedFile(_StrictWriteModel):
+    """A workspace file this write cited and catalogued, as ``files add`` would."""
+
+    file: str = Field(min_length=1, description="Its path from the workspace root.")
+    name: str = Field(min_length=1, description="The catalog name it was added under.")
+    written: bool = Field(description="False on a dry run: it would be catalogued.")
+
+
 class DocConfirmationOutcome(_StrictWriteModel):
     """One landed edit's history confirmation; no refusal means it was recorded."""
 
@@ -1162,6 +1170,7 @@ class WriteOutcome(_StrictWriteModel):
     status: WriteStatus
     changes: tuple[ChangeOutcome, ...] = ()
     docs: tuple[DocOutcome, ...] = Field(default=(), exclude_if=_omit_empty)
+    catalogued: tuple[CataloguedFile, ...] = Field(default=(), exclude_if=_omit_empty)
     doc_confirmations: tuple[DocConfirmationOutcome, ...] = Field(
         default=(), exclude_if=_omit_empty
     )
@@ -1222,6 +1231,7 @@ __all__ = [
     "ApprovalNeeded",
     "ApprovalReason",
     "CaptureEvidence",
+    "CataloguedFile",
     "Change",
     "ChangeOutcome",
     "ContractEvidence",

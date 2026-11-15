@@ -408,6 +408,9 @@ def write_outcome_lines(outcome: WriteOutcome) -> list[tuple[str, bool]]:
         )
         if doc.refusal:
             out(f"{doc.refusal.code}: {doc.refusal.message}. {doc.refusal.repair}", err=True)
+    for item in outcome.catalogued:
+        done = "catalogued" if item.written else "would catalogue"
+        out(f"  file {item.file}: {done} as {item.name}")
     for change in outcome.changes:
         target = " ".join(part for part in (change.subject, change.field) if part)
         if change.op == "create":

@@ -7,15 +7,20 @@ parsing/indexing is cached by revision; nothing inventories instance Claims.
 from __future__ import annotations
 
 import base64
-import re
 import shlex
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from cruxible_client._safe_files import read_regular_file
-from cruxible_client.authoring.files import FileCatalogEditError, add_catalog_entry
+from cruxible_client.authoring.files import (
+    FileCatalogEditError,
+    add_catalog_entry,
+    catalog_file,
+    default_catalog_name,
+)
 from cruxible_client.authoring.page_writes import PageWriteError, replace_page_file
+from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import (
     FileSelector,
     source_content_for_observation,
@@ -43,6 +48,7 @@ from cruxible_client.contracts.write import (
     AboutChange,
     AddChange,
     AppendSection,
+    CataloguedFile,
     Change,
     CreateChange,
     DocEditObservation,
@@ -63,7 +69,13 @@ def _path(workspace: Path, file: str) -> Path:
     if not candidate.is_absolute():
         candidate = workspace / candidate
     resolved = candidate.resolve()
-    if not resolved.is_relative_to(workspace) or any(
+    if not resolved.is_relative_to(workspace) or resolved == workspace:
+        raise DocSectionError(
+            "path_outside_workspace",
+            f"{file} is outside the workspace",
+            repair=f"Name a file inside the workspace ({workspace}), by its path from there",
+        )
+    if any(
         part.casefold() in {".cruxible", ".git"} for part in (*candidate.parts, *resolved.parts)
     ):
         raise DocSectionError(
@@ -145,6 +157,8 @@ class _File:
     edits: list[SectionEdit] = field(default_factory=list)
     record_indices: list[int] = field(default_factory=list)
     citations: dict[tuple[str, ...], bytes] = field(default_factory=dict)
+    #: Cited, not catalogued and not edited: the write catalogues it once admitted.
+    catalogue: bool = False
 
 
 def _observe_about(
@@ -189,6 +203,44 @@ def _observe_about(
     )
 
 
+def _catalogue_cited(
+    request: WriteRequest, outcome: WriteOutcome, workspace: Path, states: Iterable[_File]
+) -> WriteOutcome:
+    """Catalogue each cited workspace file the catalog did not name, once admitted.
+
+    By the code ``files add`` uses, under the name the write sent. A dry run
+    reports the files it would catalogue and writes nothing; a refused write
+    catalogues nothing.
+    """
+
+    cited = [state for state in states if state.catalogue and not state.ops]
+    if not cited:
+        return outcome
+    if outcome.status in ("accepted", "awaiting_approval") and not request.dry_run:
+        written = True
+    elif outcome.status in ("would_accept", "would_await_approval"):
+        written = False
+    else:
+        return outcome
+    catalogued: list[CataloguedFile] = []
+    missed: list[str] = []
+    for state in cited:
+        relative = state.path.relative_to(workspace).as_posix()
+        added = written
+        if written:
+            try:
+                catalog_file(workspace, name=state.source_id, path=state.path)
+            except (FileCatalogEditError, OSError):
+                # The write landed; only the catalog entry is missing.
+                added = False
+                missed.append(f"cruxible files add {state.source_id} {shlex.quote(relative)}")
+        catalogued.append(CataloguedFile(file=relative, name=state.source_id, written=added))
+    update: dict[str, object] = {"catalogued": tuple(catalogued)}
+    if missed:
+        update["next"] = "; ".join(filter(None, [outcome.next, *missed]))
+    return outcome.model_copy(update=update)
+
+
 def write_workspace(
     request: WriteRequest,
     *,
@@ -216,7 +268,9 @@ def write_workspace(
     ):
         catalog = workspace_files(workspace)
 
-    def load(file: str, *, name: str | None = None, editing: bool = False) -> _File:
+    def load(
+        file: str, *, name: str | None = None, editing: bool = False, citing: bool = False
+    ) -> _File:
         path = _path(workspace, file)
         if path in files:
             return files[path]
@@ -226,23 +280,25 @@ def write_workspace(
                 "catalog_ambiguous", "The file has multiple catalog names; choose one binding."
             )
         entry = matches[0] if matches else None
-        if entry is None and not editing:
+        if entry is None and not editing and not citing:
             raise DocSectionError(
-                "file_uncatalogued", "Catalogue the file before citing its existing sections."
+                "file_uncatalogued",
+                "Catalogue the file before linking its existing sections.",
+                repair="Cite it as evidence in a write first: a cited workspace file is "
+                "catalogued by the write",
             )
-        source_id = (
-            entry.name
-            if entry
-            else name
-            or "doc-"
-            + re.sub(r"[^a-z0-9_.-]+", "-", path.relative_to(workspace).as_posix().lower()).strip(
-                "-."
-            )[:120]
-        )
+        source_id = entry.name if entry else name or default_catalog_name(workspace, path)
         if entry is None and catalog is not None:
             if source_id in catalog._by_name:
                 raise DocSectionError(
-                    "catalog_name_exists", "Choose a distinct name for the new file."
+                    "catalog_name_exists",
+                    f"Another file is already catalogued as {source_id}.",
+                    repair=(
+                        f"Catalogue {file} under another name first (cruxible files add "
+                        f"NAME {shlex.quote(file)}), then cite it"
+                        if citing and not editing
+                        else "Choose a distinct name for the new file"
+                    ),
                 )
         if any(f.source_id == source_id and f.path != path for f in files.values()):
             raise DocSectionError(
@@ -250,6 +306,7 @@ def write_workspace(
             )
         content = _read(path)
         state = _File(path, source_id, content, content, entry)
+        state.catalogue = entry is None and not editing
         files[path] = state
         return state
 
@@ -318,12 +375,13 @@ def write_workspace(
             if isinstance(change, SetChange | AddChange | CreateChange) and isinstance(
                 evidence, SectionEvidence | FileEvidence
             ):
-                state = load(
-                    evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
-                )
+                cited = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
+                state = load(cited, citing=True)
                 if state.current is None:
                     raise DocSectionError(
-                        "file_missing", "Read or create the Markdown file before citing it."
+                        "file_missing",
+                        f"No file {cited} in the workspace.",
+                        repair="Cite a file that exists, by its path from the workspace root",
                     )
                 selector = FileSelector(state.path, state.source_id, state.current)
                 if isinstance(evidence, SectionEvidence):
@@ -346,9 +404,16 @@ def write_workspace(
                         }
                     )
                 else:
-                    evidence = evidence.model_copy(
-                        update={"observation": selector.anchor(evidence.anchor).observation()}
-                    )
+                    try:
+                        selection = selector.anchor(evidence.anchor)
+                    except SourceSelectionError as exc:
+                        raise DocSectionError(
+                            "anchor_not_unique",
+                            f"{evidence.anchor!r} in {cited}: {exc}",
+                            repair="Quote text that occurs exactly once in the file "
+                            "(a longer phrase, or a whole line)",
+                        ) from exc
+                    evidence = evidence.model_copy(update={"observation": selection.observation()})
                 change = change.model_copy(update={"evidence": evidence})
             changes.append(change)
     except (ValueError, OSError) as exc:
@@ -367,6 +432,7 @@ def write_workspace(
         }
     )
     outcome = submit(observed)
+    outcome = _catalogue_cited(request, outcome, workspace, files.values())
     if not records:
         return outcome
     outcomes = [

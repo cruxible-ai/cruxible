@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from cruxible_client.authoring.selectors import workspace_files
+from cruxible_client.contracts.errors import WriteRefusalError
+from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.contracts.write import (
     AddChange,
     CaptureEvidence,
@@ -30,8 +32,26 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
 
     if not isinstance(evidence, FileEvidence | SectionEvidence) or evidence.observation is not None:
         return evidence
+    cited = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
+    path = Path(cited) if Path(cited).is_absolute() else workspace / cited
+    catalogs = (workspace_path(workspace, "files.yaml"), workspace / "files.yaml")
+    catalogued = any(item.is_file() for item in catalogs)
+    if path.is_file() and (
+        not catalogued or not workspace_files(workspace).entries_for_path(path.resolve())
+    ):
+        # One verb sends no file of its own; a write catalogues what it cites.
+        raise WriteRefusalError(
+            "cruxible.doc.file_uncatalogued",
+            f"{cited} is not in the workspace's file catalog",
+            repair_line=(
+                "Cite it through write (cruxible write, cruxible_write, or "
+                "cx.changes(because=...)), which catalogues it, or catalogue it first: "
+                f"cruxible files add {cited}"
+            ),
+        )
+    files = workspace_files(workspace)
     if isinstance(evidence, SectionEvidence):
-        selection = workspace_files(workspace).select(evidence.file).section(*evidence.section)
+        selection = files.select(evidence.file).section(*evidence.section)
         return evidence.model_copy(
             update={
                 "observation": selection.observation(),
@@ -39,7 +59,7 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
                 "own_words": evidence.own_words or False,
             }
         )
-    selection = workspace_files(workspace).select(evidence.path).anchor(evidence.anchor)
+    selection = files.select(evidence.path).anchor(evidence.anchor)
     return evidence.model_copy(update={"observation": selection.observation()})
 
 
