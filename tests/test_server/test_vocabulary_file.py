@@ -337,6 +337,10 @@ def test_apply_refuses_a_field_someone_changed_since_the_export(world) -> None: 
     assert diagnostic.code == "cruxible.authoring.claim_type_succession_invalid"
     assert "does not pin the current ClaimType" in diagnostic.message
     assert _accepted(cx, "dev.item.state").description == "Theirs."
+    # The refusal names the moved definition and the repair in the SDK's calls.
+    assert refused.moved == ("ClaimType:dev.item.state",)
+    assert refused.next is not None and "cx.vocabulary.export(force=True)" in refused.next
+    assert "Changed since the file's export: ClaimType:dev.item.state" in str(refused)
 
     # A field nobody touched since the export still applies at the moved head.
     cx.vocabulary.export(force=True)
@@ -371,6 +375,7 @@ def test_apply_refuses_a_subject_kind_someone_changed_since_the_export(world) ->
     assert refused.frontier is not None
     (diagnostic,) = refused.frontier.diagnostics
     assert diagnostic.code == "cruxible.authoring.subject_kind_predecessor_moved"
+    assert refused.moved == ("SubjectKind:dev.item",)
     described = cx.get("SubjectKind:dev.item").value
     assert described.description == "Theirs."
     # The unapplied edit is protected; re-exported (forced) and merged, it lands.

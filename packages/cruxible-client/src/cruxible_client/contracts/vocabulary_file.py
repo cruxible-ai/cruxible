@@ -488,6 +488,9 @@ class VocabularyApplyResult(_StrictResultModel):
     frontier: DiagnosticFrontier | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: A refused apply: the definitions the file edits that changed in accepted
+    #: state since its export.
+    moved: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     next: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     def __str__(self) -> str:

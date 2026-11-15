@@ -2328,7 +2328,13 @@ def handle_playbill_vocabulary_apply(
     path = None if file is None else resolve_workspace_path(file, root=root, kind="file")
     return _daemon_call(
         lambda client: vocabulary_apply_for(
-            client, instance_id, workspace=root, path=path, rationale=rationale, accept=accept
+            client,
+            instance_id,
+            workspace=root,
+            path=path,
+            rationale=rationale,
+            accept=accept,
+            surface="mcp",
         ),
         operation_name="cruxible_vocabulary_apply",
     )

@@ -581,6 +581,8 @@ def render_vocabulary_apply(result: VocabularyApplyResult) -> str:
         lines.append("Nothing to apply.")
     elif result.status == "refused":
         lines.append("Refused: nothing was submitted.")
+        if result.moved:
+            lines.append(f"Changed since the file's export: {', '.join(result.moved)}")
     elif result.outcome is not None:
         lines.append(str(result.outcome))
     if result.next:

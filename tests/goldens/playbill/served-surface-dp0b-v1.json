@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-15:vocabulary-file-050",
-    "surface_digest": "sha256:b9443ad29dae1b61850df6334d7fe64d03b89442a6024abeae4fb8985b1b4e19"
+    "surface_digest": "sha256:9a4561a497ef2a0422a611053987d7be515b378695c390075bfff74ddaf09360"
   },
   "surface": {
     "cli_leaves": [
@@ -3014,7 +3014,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_apply",
         "input_schema_digest": "sha256:923365bb0eeb3d4aaa411f9faa7a60e7809fc4a77be910b14a6c59d2263fc873",
         "name": "cruxible_vocabulary_apply",
-        "output_schema_digest": "sha256:3b6c094ddf503d97d29513b8a14c38f1987be227e8bbd1823645279cf68fc078",
+        "output_schema_digest": "sha256:217c1884f1a60a8416c2cba452c840e35b62063a6dd4034797b8cfbd9c43e2b0",
         "permission": "GOVERNED_WRITE"
       },
       {
