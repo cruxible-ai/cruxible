@@ -158,8 +158,8 @@ PROCEDURE_RUNTIME_POLICY_LAW = _artifact_law_coordinate(
 # creation, a revision that keeps its statement may replace a citation with one
 # of the text it rests on now (same role, origin and CaptureContract; own words
 # once located by a second Capture collapse into one located own-words Capture
-# of the same file), and a ``none`` type's origin-only evidence needs no current replay. An attributed
-# retirement: it may name the Subject version it was accepted about while that
+# of the same file), and a ``none`` type's origin-only evidence needs no current
+# replay. An attributed retirement: it may name the Subject version it was accepted about while that
 # Subject is retired or succeeded, and keeps the retired ClaimType shape
 # exemption. Capture-contract pins are provenance throughout.
 CLAIM_LAW = _artifact_law_coordinate(
