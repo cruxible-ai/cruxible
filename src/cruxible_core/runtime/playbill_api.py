@@ -127,6 +127,7 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeMigrationRequest,
+    ClaimTypeMigrationResult,
     service_migrate_claim_type,
 )
 from cruxible_core.coverage.adapter import WorkingSourceObservation
@@ -608,6 +609,20 @@ def playbill_init(
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
         workspace_advertisement=instance.settled_workspace_advertisement(),
+        base_kit=_init_base_kit(instance.base_kit_install),
+    )
+
+
+def _init_base_kit(result: KitChangeResult | None) -> contracts.InitBaseKit | None:
+    """What creation's base kit add did, for the init result."""
+
+    if result is None or result.status not in {"accepted", "proposed"}:
+        return None
+    return contracts.InitBaseKit(
+        kit_id=result.kit_id,
+        version=result.version or "",
+        status="accepted" if result.status == "accepted" else "proposed",
+        proposal_id=None if result.status == "accepted" else result.proposal_id,
     )
 
 
@@ -1696,11 +1711,21 @@ def playbill_migrate_claim_type(
     request: ClaimTypeMigrationRequest,
 ) -> contracts.ClaimTypeMigrationResponse:
     check_permission("cruxible_propose", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
     result = service_migrate_claim_type(
-        get_playbill_manager().get(instance_id),
+        instance,
         request=request,
         actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
     )
+    if isinstance(result, ClaimTypeMigrationResult):
+        # Lands like a change set or a propose route when policy allows.
+        result = result.model_copy(
+            update={
+                "proposal": _land_direct(
+                    instance_id, instance, result.proposal, accept=request.accept
+                )
+            }
+        )
     return _CLAIM_TYPE_MIGRATION_RESPONSE.validate_python(result.model_dump(mode="json"))
 
 

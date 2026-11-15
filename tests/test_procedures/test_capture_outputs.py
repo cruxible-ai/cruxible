@@ -103,7 +103,10 @@ def _paired_world(
     )
     served = (
         operation(
-            "pair", effect="external_read", signature=("demo.pair.request@1", "demo.pair.result@1")
+            "pair",
+            effect="external_read",
+            signature=("demo.pair.request@1", "demo.pair.result@1"),
+            serves=("demo.pair",),
         ),
     )
     manifest = ProviderRuntimeManifest(

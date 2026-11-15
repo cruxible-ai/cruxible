@@ -8,7 +8,9 @@ from cruxible_client.contracts import ProposalList
 from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
-from tests.core_support._support import initialize_local
+
+# These tests count every proposal and evidence file from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.support.evidence_files import remove_later
 from tests.test_proposals.test_grouped_proposal_notes import _submit
 

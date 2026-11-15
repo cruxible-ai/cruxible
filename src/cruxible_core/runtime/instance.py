@@ -56,7 +56,7 @@ from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
 )
-from cruxible_client.contracts.temporal import format_datetime, utc_now
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_client.contracts.types import (
     Decommission,
     Descriptor,
@@ -208,6 +208,7 @@ from cruxible_core.storage.preview_fence import is_previewing, refuse_write_whil
 from cruxible_core.storage.read_positions import unpositioned_operation
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts.kits import KitChangeResult
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
     from cruxible_core.proposals.refusal_index import RefusalIndex
@@ -389,6 +390,9 @@ class PlaybillInstance:
         #: What rebuildable and raw operational state is kept (projection
         #: generations, raw-receipt days). Tests replace it here.
         self.retention: RetentionSettings = DEFAULT_RETENTION
+        #: What creation's base kit add did (accepted, or proposed under
+        #: independent approval), when this open ran it; ``None`` otherwise.
+        self.base_kit_install: KitChangeResult | None = None
         # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
@@ -577,8 +581,14 @@ class PlaybillInstance:
         require_independent_approval: bool = False,
         timestamp: str | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+        install_base_kit: bool = True,
     ) -> "PlaybillInstance":
-        """Create and reopen one managed instance from explicit bootstrap inputs."""
+        """Create and reopen one managed instance from explicit bootstrap inputs.
+
+        ``install_base_kit`` False leaves the bundled base kit out: only for a
+        throwaway instance that must hold exactly the definitions it is given
+        (the kit build's automation template check).
+        """
 
         if not root.is_absolute():
             raise BootstrapError("managed Cruxible root must be absolute")
@@ -664,6 +674,23 @@ class PlaybillInstance:
                     generation_root=verified.generation_root.tagged,
                 ),
             )
+            # Straight after genesis the base kit lands through the ordinary kit
+            # add, as the creating owner (the first active ordinary principal).
+            # The step is recorded before the descriptor makes the root openable,
+            # and the open below runs it, so an open after a process death
+            # between here and the add finishes it. Under independent approval
+            # it stops at proposed, like any kit add.
+            from cruxible_core.kits.base_kit import record_pending_base_kit
+
+            owner = next(
+                record.principal_id
+                for record in client_principals
+                if record.kind == "ordinary" and record.status == "active"
+            )
+            genesis_time = parse_datetime(commit_timestamp)
+            assert genesis_time is not None
+            if install_base_kit:
+                record_pending_base_kit(managed_root, actor_id=owner, at=genesis_time)
             _exclusive_write(
                 managed_root / DESCRIPTOR_FILE,
                 canonical_bytes(descriptor.model_dump(mode="json")) + b"\n",
@@ -811,6 +838,11 @@ class PlaybillInstance:
             promotion_verifier,
         )
         if not is_previewing():
+            # Creation's base kit add, when its record says it has not finished
+            # (one failed file open otherwise).
+            from cruxible_core.kits.base_kit import resume_pending_base_kit
+
+            instance.base_kit_install = resume_pending_base_kit(instance)
             instance._housekeeping("projection_eviction", instance.evict_projection_pieces)
         if (
             descriptor.mirror_url is not None

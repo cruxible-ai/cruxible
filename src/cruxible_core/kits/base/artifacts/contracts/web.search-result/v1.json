@@ -1,0 +1,27 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One search result: its title, its rank in the response (1 is first) and the snippet the service showed, if any. Its key is the result's URL.",
+  "fields": {
+    "rank": {
+      "type": {
+        "kind": "int",
+        "min": 1
+      }
+    },
+    "snippet": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "max_len": 4096
+      }
+    },
+    "title": {
+      "type": {
+        "kind": "string",
+        "max_len": 1024
+      }
+    }
+  },
+  "name": "web.search-result",
+  "version": 1
+}

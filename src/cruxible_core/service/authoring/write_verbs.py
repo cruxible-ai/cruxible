@@ -67,6 +67,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SubjectAuthoringPayload,
     SubjectCreationAuthoringPayload,
+    WorkingSelectionObservation,
     authoring_member_identity,
 )
 from cruxible_client.contracts.builtin_claim_types import admits_object_subject
@@ -141,6 +142,7 @@ from cruxible_client.contracts.subject_kinds import (
     SubjectKind,
     key_predicate,
     parse_subject_kind,
+    render_key_part,
     subject_kind_path,
 )
 from cruxible_client.contracts.subjects import (
@@ -1265,6 +1267,7 @@ class _Planner:
         *,
         create_new: bool,
         single_text: str | None = None,
+        backing: Mapping[str, Any] | None = None,
     ) -> SubjectCreationAuthoringPayload:
         """A creation whose id core assigns at submission, distinct from every other one.
 
@@ -1287,7 +1290,11 @@ class _Planner:
         )
         rationale = self.request.because
         payload = SubjectCreationAuthoringPayload(
-            subject_kind=kind, key=parts, rationale=rationale, create_new=create_new
+            subject_kind=kind,
+            key=parts,
+            rationale=rationale,
+            create_new=create_new,
+            **(backing or {}),
         )
         # The members already planned, kept as they are planned: one set
         # lookup per creation, never a re-digest of every earlier one.
@@ -1324,6 +1331,7 @@ class _Planner:
             )
         kind = change.subject_kind
         declared = self._creatable_kind(kind, index=index, path=f"{prefix}.subject_kind")
+        backing = self.creation_backing(change, index=index)
         bound: _Bound
         if declared.minted:
             if change.key is not None or change.create_new:
@@ -1334,9 +1342,9 @@ class _Planner:
                     repair="Leave key and create_new out",
                     field_path=f"{prefix}.key",
                 )
-            bound = self._new_creation(index, label, kind, (), create_new=False)
+            bound = self._new_creation(index, label, kind, (), create_new=False, backing=backing)
         else:
-            bound = self._keyed_creation(index, change, declared)
+            bound = self._keyed_creation(index, change, declared, backing=backing)
         self.plan.labels[label] = bound
         if bound.member is not None:
             self.plan.creation_changes.setdefault(bound.member, index)
@@ -1347,7 +1355,14 @@ class _Planner:
             pending_subject=label if bound.path is None else None,
         )
 
-    def _keyed_creation(self, index: int, change: CreateChange, declared: SubjectKind) -> _Bound:
+    def _keyed_creation(
+        self,
+        index: int,
+        change: CreateChange,
+        declared: SubjectKind,
+        *,
+        backing: Mapping[str, Any] | None = None,
+    ) -> _Bound:
         prefix = f"changes[{index}]"
         label = change.label
         kind = change.subject_kind
@@ -1375,7 +1390,7 @@ class _Planner:
                     member=planned_pair.member,
                     key=key,
                 )
-            return self._new_creation(index, label, kind, key, create_new=False)
+            return self._new_creation(index, label, kind, key, create_new=False, backing=backing)
         with self.identity_view() as view:
             resolution = view.resolve_creation(
                 kind, final, single_text=single, create_new=change.create_new
@@ -1425,7 +1440,13 @@ class _Planner:
                 key=key,
             )
         return self._new_creation(
-            index, label, kind, key, create_new=change.create_new, single_text=single
+            index,
+            label,
+            kind,
+            key,
+            create_new=change.create_new,
+            single_text=single,
+            backing=backing,
         )
 
     def _new_creation(
@@ -1437,11 +1458,12 @@ class _Planner:
         *,
         create_new: bool,
         single_text: str | None = None,
+        backing: Mapping[str, Any] | None = None,
     ) -> _Bound:
         """Keep the member reference; lowering assigns ids over the complete change set."""
 
         payload = self._pending_creation(
-            label, kind, key, create_new=create_new, single_text=single_text
+            label, kind, key, create_new=create_new, single_text=single_text, backing=backing
         )
         self.plan.pending[label] = payload
         member = payload.member_identity
@@ -1883,6 +1905,86 @@ class _Planner:
 
     # -- evidence ----------------------------------------------------------------
 
+    def creation_backing(self, change: CreateChange, *, index: int) -> dict[str, Any]:
+        """What a create's key Claims cite, and their role: the creation member's fields.
+
+        Evidence reads as a set's does -- a section this write appends is the
+        author's own words, an existing section or file is a working selection, a
+        Capture is cited by handle or digest -- but no evidence requirement
+        applies: the creation covers its key Claims (lowering), so a key Claim
+        never refuses for what it cites. Contract evidence names a Capture by the
+        Subject it is about, which a new Subject is not yet, so it refuses.
+        """
+
+        backing: dict[str, Any] = {} if change.role is None else {"role": change.role}
+        evidence = change.evidence
+        path = f"changes[{index}].evidence"
+        if evidence is None:
+            return backing
+        if isinstance(evidence, ContractEvidence):
+            raise _refuse(
+                "cruxible.write.create_contract_evidence",
+                "contract evidence finds a Capture by the Subject it is about, and this "
+                "Subject does not exist until the write lands",
+                change=index,
+                repair="Cite the Capture by its handle (--capture CAP-...), or a section or file",
+                field_path=f"{path}.contract",
+            )
+        if isinstance(evidence, CaptureEvidence):
+            digest = (
+                evidence.capture
+                if evidence.capture.startswith("sha256:")
+                else self.capture_by_handle(evidence.capture, index=index, path=f"{path}.capture")
+            )
+            return {
+                **backing,
+                "source": ExistingCaptureCitationSource(capture_digest=digest),
+                "citation_role": "evidence",
+            }
+        if isinstance(evidence, SelfEvidence):
+            body = evidence.self.encode("utf-8")
+            return {
+                **backing,
+                "source": SelfSourceBody(content_base64=base64.b64encode(body).decode("ascii")),
+            }
+        observation = self._observed(evidence, index=index)
+        if isinstance(evidence, SectionEvidence) and evidence.own_words:
+            # Located own words, as a set's: one Capture sourced at the section.
+            return {
+                **backing,
+                "source": SelfSourceBody(content_base64=observation.selected_content_base64),
+                "located_at": observation,
+            }
+        return {**backing, "source": observation, "citation_role": "evidence"}
+
+    def _observed(
+        self, evidence: FileEvidence | SectionEvidence, *, index: int
+    ) -> WorkingSelectionObservation:
+        """The writer's observation of file or section evidence, or the refusal naming it."""
+
+        if evidence.observation is not None:
+            return evidence.observation
+        path = f"changes[{index}].evidence"
+        if isinstance(evidence, FileEvidence):
+            raise _refuse(
+                "cruxible.write.file_evidence_unobserved",
+                f"file evidence {evidence.file!r} was not read on the writer's side; "
+                "the daemon never reads workspace files",
+                change=index,
+                repair=(
+                    "Pass it through the CLI (--evidence-file), the SDK or the MCP "
+                    "adapter, which read the file and send what they observed"
+                ),
+                field_path=path,
+            )
+        raise _refuse(
+            "cruxible.write.section_evidence_unobserved",
+            "Section evidence must be read by the writer's adapter.",
+            change=index,
+            field_path=path,
+            repair="Use write through the CLI, MCP or SDK beside the workspace",
+        )
+
     def source(
         self,
         info: PredicateInfo,
@@ -1900,30 +2002,11 @@ class _Planner:
         if capture is not None:
             return ExistingCaptureCitationSource(capture_digest=capture), "evidence"
         if isinstance(evidence, FileEvidence):
-            if evidence.observation is None:
-                raise _refuse(
-                    "cruxible.write.file_evidence_unobserved",
-                    f"file evidence {evidence.file!r} was not read on the writer's side; "
-                    "the daemon never reads workspace files",
-                    change=index,
-                    repair=(
-                        "Pass it through the CLI (--evidence-file), the SDK or the MCP "
-                        "adapter, which read the file and send what they observed"
-                    ),
-                    field_path=path,
-                )
-            return evidence.observation, "evidence"
+            return self._observed(evidence, index=index), "evidence"
         if isinstance(evidence, SectionEvidence):
-            if evidence.observation is None:
-                raise _refuse(
-                    "cruxible.write.section_evidence_unobserved",
-                    "Section evidence must be read by the writer's adapter.",
-                    change=index,
-                    field_path=path,
-                    repair="Use write through the CLI, MCP or SDK beside the workspace",
-                )
+            observation = self._observed(evidence, index=index)
             if not evidence.own_words:
-                return evidence.observation, "evidence"
+                return observation, "evidence"
             if requires_captured_evidence(info.claim_type):
                 raise _refuse(
                     "cruxible.write.evidence_required",
@@ -1932,7 +2015,7 @@ class _Planner:
                     field_path=path,
                     repair="Cite a produced Capture under a ClaimType-admitted contract",
                 )
-            return SelfSourceBody(content_base64=evidence.observation.selected_content_base64), None
+            return SelfSourceBody(content_base64=observation.selected_content_base64), None
         text = evidence.self if isinstance(evidence, SelfEvidence) else self.request.because
         body = text.encode("utf-8")
         if requires_captured_evidence(info.claim_type):
@@ -2786,10 +2869,11 @@ class _Planner:
         Core reads the statement, so the author never restates it. The named
         citation (by default the Claim's one citation of the evidence's file;
         for a re-bind expanded from ``from_capture``, its citation of that
-        Capture) is replaced by the new text's: a section that is a located copy
-        also replaces its paired own-words citation (the same bytes). Claim law
-        v2 revision 10 admits the result as a revision of the same Claim. Cost:
-        this Claim and its citations.
+        Capture) is replaced by the new text's: located own words are replaced
+        by one new located own-words citation, and an older pair's located copy
+        takes its own-words half with it (the same bytes). Claim law v4
+        (revision 3 for a pair's collapse) admits the result as a revision of
+        the same Claim. Cost: this Claim and its citations.
         """
 
         prefix = f"changes[{index}]"
@@ -2858,12 +2942,22 @@ class _Planner:
             ]
         else:
             # The Claim's one citation of that file: a file anchor replaces an
-            # evidence citation, a section a located copy or a section citation.
+            # evidence citation, a section a section citation or the Claim's own
+            # words located there (one located own-words Capture, or the located
+            # copy of an older pair).
             named = [
                 item
                 for item in citations
-                if item.origin == "independent"
-                and (isinstance(evidence, SectionEvidence) or item.role == "evidence")
+                if (
+                    (item.origin == "independent" and item.role == "evidence")
+                    or (
+                        isinstance(evidence, SectionEvidence)
+                        and (
+                            item.origin == "independent"
+                            or (item.origin, item.role) == ("self_source", "copy")
+                        )
+                    )
+                )
                 and self._citation_source(item.capture_digest) == file_source
             ]
         shown = tuple(item.citation_id.partition(":")[2][:12] for item in citations)
@@ -2908,7 +3002,9 @@ class _Planner:
         subject = subject_path_value.removeprefix("subjects/").removesuffix(".json")
         kind = subject.partition("/")[0]
         field_name = self.field_name(info, kind)
-        own_words = replaced.role == "copy" and replaced.origin == "independent"
+        # Own words: one located own-words citation, or the located copy of an
+        # older pair whose own-words half moves with it.
+        own_words = replaced.role == "copy"
         replaces = {replaced.citation_id}
         source: Any
         citation_role: Literal["evidence", "copy"] | None
@@ -2926,8 +3022,9 @@ class _Planner:
             source = ExistingCaptureCitationSource(capture_digest=fresh)
             citation_role = "evidence"
         elif own_words:
-            # A located copy rests on the writer's own words, which cite the
-            # same bytes: both move to the section's text now.
+            # Own words move to the section's text now. A located copy of an
+            # older pair rests on the writer's own words, which cite the same
+            # bytes: both are replaced by the one new citation.
             if not isinstance(evidence, SectionEvidence):
                 raise _refuse(
                     "cruxible.write.rebind_needs_section",
@@ -2945,14 +3042,15 @@ class _Planner:
                     repair="Cite a Capture under a contract the field admits",
                     field_path=f"{prefix}.evidence",
                 )
-            content = self._content_of(replaced.capture_digest)
-            replaces.update(
-                item.citation_id
-                for item in citations
-                if item.origin == "self_source"
-                and content is not None
-                and self._content_of(item.capture_digest) == content
-            )
+            if replaced.origin == "independent":
+                content = self._content_of(replaced.capture_digest)
+                replaces.update(
+                    item.citation_id
+                    for item in citations
+                    if item.origin == "self_source"
+                    and content is not None
+                    and self._content_of(item.capture_digest) == content
+                )
             assert isinstance(evidence, SectionEvidence) and evidence.observation is not None
             source = SelfSourceBody(content_base64=evidence.observation.selected_content_base64)
             values["located_at"] = evidence.observation
@@ -4405,6 +4503,40 @@ def _coordinator(
     )
 
 
+def _prefixed_id_hint(request: WriteRequest, outcome: WriteOutcome) -> str | None:
+    """Why a created Subject's id is not its key as typed, when the rendering prefixed it.
+
+    A Subject id begins with a letter (the Subject grammar every ledger path,
+    reference and digest is spelled in), so a key whose readable rendering does
+    not gets an ``x`` in front, and one with nothing readable is ``x-`` and 8 hex
+    of its key digest. Only the creates of this write are read.
+    """
+
+    if len(outcome.changes) != len(request.changes):
+        return None
+    lines: list[str] = []
+    for change, done in zip(request.changes, outcome.changes, strict=True):
+        if not isinstance(change, CreateChange) or done.resolved != "created" or not done.subject:
+            continue
+        first = change.key[0].value if isinstance(change.key, tuple) else change.key
+        if first is None or isinstance(first, CreatedSubject):
+            continue
+        rendered = render_key_part(first)
+        if rendered and "a" <= rendered[0] <= "z":
+            continue
+        typed = json.dumps(first) if not isinstance(first, str) else first
+        why = (
+            "has no readable character, so its id is x- and 8 hex of the key digest"
+            if not rendered.strip("-")
+            else "does not start with a letter, and a Subject id does, so its id starts with x"
+        )
+        lines.append(
+            f"{done.subject}: the key {typed!r} {why}; the key still names it "
+            f"({change.subject_kind}/{typed} in a write, or w.<kind>[{typed!r}])."
+        )
+    return " ".join(lines) or None
+
+
 @timed_operation("write")
 @unpositioned_operation
 @projection_request
@@ -4477,10 +4609,37 @@ def service_playbill_write(
                     ),
                 }
             )
+        if not outcome.refused:
+            spelled = _prefixed_id_hint(request, outcome)
+            if spelled is not None:
+                outcome = outcome.model_copy(
+                    update={
+                        "hint": spelled if outcome.hint is None else f"{outcome.hint} {spelled}"
+                    }
+                )
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
             outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
+    if outcome.hint is None and _all_uncovered(outcome):
+        outcome = outcome.model_copy(update={"hint": ALL_UNCOVERED_HINT})
     return outcome
+
+
+#: The outcome's hint when every value a write lands is uncovered: the usual
+#: cause is a field whose evidence rules admit nothing the write can cite.
+ALL_UNCOVERED_HINT = (
+    "Every value this write landed is uncovered: no evidence rule of the fields admits "
+    "the evidence given, so no value counts as supported. If a field has no rules, give "
+    "it the own-words rule (the default for a field defined with the short form); "
+    "otherwise cite evidence a rule admits. The warnings name each value."
+)
+
+
+def _all_uncovered(outcome: WriteOutcome) -> bool:
+    """Whether the write landed values and every one reads ``uncovered``. O(changes)."""
+
+    verdicts = [item.verdict for item in outcome.changes if item.verdict is not None]
+    return not outcome.refused and bool(verdicts) and all(item == "uncovered" for item in verdicts)
 
 
 def _service_write(

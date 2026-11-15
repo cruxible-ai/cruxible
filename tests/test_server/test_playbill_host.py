@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from inspect import iscoroutinefunction
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -547,6 +548,14 @@ def _init_owner(tmp_path: Path, instance_id: str, custody: str) -> GeneratedKeyM
     )
 
 
+def _base_kit_only(admissions: tuple[Any, ...]) -> bool:
+    """Exactly one admission: creation's base kit add (no provider proposal)."""
+
+    return [item.target_ref.rpartition("/")[2].startswith("kit-base-") for item in admissions] == [
+        True
+    ]
+
+
 def test_initialization_installs_no_provider_and_writes_no_candidate(
     host_client: TestClient,
     tmp_path: Path,
@@ -559,8 +568,9 @@ def test_initialization_installs_no_provider_and_writes_no_candidate(
     )
 
     instance = get_playbill_manager().get("inst_unseeded")
-    assert instance.proposal_evidence().list_admissions() == ()
-    assert instance.accepted_history()[-1].sequence == 0
+    # The only proposal is creation's base kit add, accepted as generation 1.
+    assert _base_kit_only(instance.proposal_evidence().list_admissions())
+    assert instance.accepted_history()[-1].sequence == 1
     # File reading is the seeded built-in's; no provider package is installed.
     assert [
         path
@@ -573,7 +583,7 @@ def test_initialization_installs_no_provider_and_writes_no_candidate(
         principals=(owner.principal,),
     )
     assert retry == first
-    assert instance.proposal_evidence().list_admissions() == ()
+    assert _base_kit_only(instance.proposal_evidence().list_admissions())
 
 
 def test_independent_approval_init_creates_no_provider_proposal(
@@ -612,7 +622,8 @@ def test_independent_approval_init_creates_no_provider_proposal(
     assert retry.status_code == 200, retry.text
     assert retry.json() == accepted.json()
     instance = get_playbill_manager().get(governed_id)
-    assert instance.proposal_evidence().list_admissions() == ()
+    # The only proposal is the base kit add, awaiting a second approver.
+    assert _base_kit_only(instance.proposal_evidence().list_admissions())
     assert instance.inspect().approval_policy_mode == "independent_approval_required"
 
 
@@ -1153,7 +1164,7 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
     assert retry.json() == accepted.json()
     assert accepted.json()["approval_policy_mode"] == "independent_approval_required"
     instance = get_playbill_manager().get(governed_id)
-    assert len(instance.proposal_evidence().list_admissions()) == 0
+    assert _base_kit_only(instance.proposal_evidence().list_admissions())
     assert instance.inspect().approval_policy_mode == "independent_approval_required"
     assert instance._verified_genesis.approval_policy.mode == "independent_approval_required"
 

@@ -1,9 +1,9 @@
-"""``workspace.file`` over a glob (D-R41): one Capture per matched file, as a Capture list.
+"""``workspace.files`` (D-R41, ruling O2): one Capture per matched file, as a Capture list.
 
-The call names ``glob`` instead of ``relative_path``. The daemon lists the
-matches, sorted by their real names, and reads each as an ordinary
-``workspace.file`` read; the call's capture field holds their Captures in that
-order, and an extract over it merges their records, each citing its own file.
+The call names ``glob`` and the slot the ``workspace.files`` capability. The
+daemon lists the matches, sorted by their real names, and reads each as an
+ordinary one-file read; the call's ``captures`` list field holds their Captures
+in that order, and an extract over it merges their records, each citing its own file.
 Past ``max_files`` the read refuses. A file that fails to read is dropped and
 the list is incomplete. A file the glob no longer matches retires nothing: an
 extract straight over a glob never judges absence.
@@ -51,27 +51,23 @@ def glob_spec(*, glob: str = "inventories/*.json", max_files: int = 100) -> Any:
         reference_text=True,
         input={},
         output={},
-        slots={"read": {"capability": "workspace.file@1"}},
+        slots={"read": {"capability": "workspace.files@1"}},
         hard_caps=procedure_limits(provider_calls=64, capture_bytes=4_194_304, read_rows=500),
         steps=[
             {"read": "held", "query": EVERY},
             {
                 "call": "files",
                 "slot": "read",
-                "captures": {"capture": SBOM_KIND},
+                "captures": {"captures": SBOM_KIND},
                 "input": {
                     "logical_source": "test.inventory.files",
                     "glob": glob,
                     "max_files": max_files,
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 3, "relation": "inventory"},
                 },
             },
             {
                 "extract": "members",
-                "capture": "$steps.files.capture",
+                "capture": "$steps.files.captures",
                 "records": "members",
                 "duplicates": "refuse_key",
             },

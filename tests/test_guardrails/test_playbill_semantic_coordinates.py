@@ -187,8 +187,8 @@ LAW_COORDINATES: tuple[
         CLAIM_ACCEPTANCE_LAW,
         "playbill.claim.v4",
         "playbill-claim-v4",
-        2,
-        "sha256:690ecc226bcaf24f35c6f786b986c176359625dcd2b35b1a229edc7205afacf7",
+        3,
+        "sha256:9072ba3941668c4be7ae6a8811fcd1a59effcb58667c75351011aebb9d48db67",
     ),
     (
         PROVIDER_ACCEPTANCE_LAW,
@@ -342,16 +342,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:3cb26c30a35e0a0918253fc93ef98c1cc54b59ebb7429545cb25d5439f8a02bc"
+    expected = "sha256:f537406e1e88e7a0d5ebd1950156c03723dff0569fe29a1a7fa41585c8823680"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 68,
+            "semantic_revision": 72,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "layout-extract-nodes",
+            "revision_name": "one-capture-per-citation",
         },
     )
     assert computed == expected
@@ -396,9 +396,21 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "layout-extract-nodes"
-    assert compiler_revision_label(CURRENT_COMPILER) == "layout-extract-nodes"
+    assert CURRENT_COMPILER_REVISION == "one-capture-per-citation"
+    assert compiler_revision_label(CURRENT_COMPILER) == "one-capture-per-citation"
     for earlier_digest in (
+        # Revision 71: before located own words were one Capture (a coordinator
+        # self-source plus a second working-selection Capture locating it).
+        "sha256:5741d2d917c92dc1068bc1ee7552f2a7a2a97b43f6030eebb81ab1566a0db1fa",
+        # Revision 70: before a workspace read was typed against its capability's
+        # request (the stored input carried core's coordinate and selector defaults).
+        "sha256:35597e841a464f0c744e0887296c2213b89d68223cc67529760f408b88ad3878",
+        # Revision 69: before a Line bound each slot by capability and fit (a slot
+        # bound by the exact signature its capability derived).
+        "sha256:e9df6fa866da614079eb44319d0b665e26f9e940aae05c3ef01dba1695b893e2",
+        # Revision 68: before every Capture was a named field of the result Contract
+        # (a whole-wire result and the implicit ``capture`` map were lawful).
+        "sha256:3cb26c30a35e0a0918253fc93ef98c1cc54b59ebb7429545cb25d5439f8a02bc",
         # Revision 67: before a Procedure stored only the thin EXTRACT node (slice 5).
         "sha256:db6f0e64564d6af0084d9c3f8ad37a1aac36377572a700ecf281b7f260986345",
         # Revision 66: before a provider build carried its declares (registration schema 3).

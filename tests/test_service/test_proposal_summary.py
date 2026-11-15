@@ -29,7 +29,7 @@ def _review(instance, proposal_id, **options):
 
 
 def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_path, monkeypatch):
-    original_contract = claims.record_contract
+    original_contract = claims.file_contract
 
     def roomy():
         contract = original_contract()
@@ -41,7 +41,7 @@ def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_pat
             }
         )
 
-    monkeypatch.setattr(claims, "record_contract", roomy)
+    monkeypatch.setattr(claims, "file_contract", roomy)
     instance, root = claims.claims_world(
         tmp_path, {"entries": [{"id": "watched", "status": "open"}]}
     )

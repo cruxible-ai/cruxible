@@ -57,7 +57,10 @@
         "cruxible.claim_type.inverse_on_enum_or_boolean",
         "cruxible.claim_type.stale_eligible_never_current",
         "cruxible.claim_type.description_missing",
-        "cruxible.claim_type.subject_kind_undeclared"
+        "cruxible.claim_type.subject_kind_undeclared",
+        "cruxible.claim_type.field_restates_ledger",
+        "cruxible.claim_type.string_holds_prose",
+        "cruxible.claim_type.enum_members_name_things"
       ]
     },
     "FloorExportPart": {
@@ -7291,6 +7294,24 @@
                 "const": "claim_type_succession",
                 "title": "Kind",
                 "type": "string"
+              },
+              "retire_dependents": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "was-rescinded",
+                      "was-wrong",
+                      "superseded"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Retire every live Claim of the closure dependents does not name, with this reason, and carry the rest; what retiring a ClaimType (a retired successor) owes its dependents.",
+                "title": "Retire Dependents"
               },
               "successor": {
                 "$ref": "#/$defs/ClaimType"
@@ -15229,6 +15250,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -15239,7 +15272,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -16570,6 +16606,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -16580,7 +16628,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -22387,6 +22438,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -22397,7 +22460,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -22742,6 +22808,26 @@
     },
     "ClaimTypeLintWarning": {
       "fields": {
+        "artifact": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact"
+          }
+        },
         "code": {
           "has_default": false,
           "has_default_factory": false,
@@ -22757,7 +22843,10 @@
               "cruxible.claim_type.inverse_on_enum_or_boolean",
               "cruxible.claim_type.stale_eligible_never_current",
               "cruxible.claim_type.description_missing",
-              "cruxible.claim_type.subject_kind_undeclared"
+              "cruxible.claim_type.subject_kind_undeclared",
+              "cruxible.claim_type.field_restates_ledger",
+              "cruxible.claim_type.string_holds_prose",
+              "cruxible.claim_type.enum_members_name_things"
             ],
             "title": "Code",
             "type": "string"
@@ -22849,6 +22938,18 @@
         "additionalProperties": false,
         "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
         "properties": {
+          "artifact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact"
+          },
           "code": {
             "enum": [
               "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -22859,7 +22960,10 @@
               "cruxible.claim_type.inverse_on_enum_or_boolean",
               "cruxible.claim_type.stale_eligible_never_current",
               "cruxible.claim_type.description_missing",
-              "cruxible.claim_type.subject_kind_undeclared"
+              "cruxible.claim_type.subject_kind_undeclared",
+              "cruxible.claim_type.field_restates_ledger",
+              "cruxible.claim_type.string_holds_prose",
+              "cruxible.claim_type.enum_members_name_things"
             ],
             "title": "Code",
             "type": "string"
@@ -23065,6 +23169,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -23075,7 +23191,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -23505,6 +23624,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -23515,7 +23646,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -23984,6 +24118,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -23994,7 +24140,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -27108,7 +27257,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "What the daemon executed for one authored v2 request: the root it resolved.\n\n``workspace`` is the logical name of the root the daemon read under (the\nauthored name, or the one it defaulted to), and ``workspace_binding_digest``\nthat root's binding to this instance. This, not the authored request, is the\nderived Source request a read receipt names, so provenance is unchanged: a\nmoved instance records a different binding.",
+        "description": "What the daemon executed for one file read: the root it resolved.\n\n``workspace`` is the logical name of the root the daemon read under (the\nauthored name, or the one it defaulted to), and ``workspace_binding_digest``\nthat root's binding to this instance. This, not the authored request, is the\nderived Source request a read receipt names, so provenance is unchanged: a\nmoved instance records a different binding.",
         "properties": {
           "coordinate": {
             "title": "Coordinate"
@@ -34562,6 +34711,110 @@
         "run_id"
       ]
     },
+    "InitBaseKit": {
+      "fields": {
+        "kit_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kit_id",
+          "required": true,
+          "schema": {
+            "title": "Kit Id",
+            "type": "string"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted",
+              "proposed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "version": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": true,
+          "schema": {
+            "title": "Version",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The base kit creation installs: ``accepted`` at once, or ``proposed`` under\nindependent approval, with the proposal that awaits a second approver.",
+        "properties": {
+          "kit_id": {
+            "title": "Kit Id",
+            "type": "string"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "proposed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kit_id",
+          "version",
+          "status"
+        ],
+        "title": "InitBaseKit",
+        "type": "object"
+      },
+      "required_fields": [
+        "kit_id",
+        "status",
+        "version"
+      ]
+    },
     "InitResult": {
       "fields": {
         "approval_policy_mode": {
@@ -34576,6 +34829,25 @@
             ],
             "title": "Approval Policy Mode",
             "type": "string"
+          }
+        },
+        "base_kit": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "base_kit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InitBaseKit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "coordinate": {
@@ -34725,6 +34997,47 @@
             "title": "GitWorkspaceNote",
             "type": "object"
           },
+          "InitBaseKit": {
+            "additionalProperties": false,
+            "description": "The base kit creation installs: ``accepted`` at once, or ``proposed`` under\nindependent approval, with the proposal that awaits a second approver.",
+            "properties": {
+              "kit_id": {
+                "title": "Kit Id",
+                "type": "string"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "proposed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kit_id",
+              "version",
+              "status"
+            ],
+            "title": "InitBaseKit",
+            "type": "object"
+          },
           "WorkspaceAdvertisement": {
             "additionalProperties": false,
             "properties": {
@@ -34810,6 +35123,17 @@
             ],
             "title": "Approval Policy Mode",
             "type": "string"
+          },
+          "base_kit": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InitBaseKit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
@@ -47467,6 +47791,18 @@
             "additionalProperties": false,
             "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created. ``ends``\nlists a pair kind's Subject-valued key parts, in key order: a pair kind is\nkeyed by its ends. ``kit`` is the installed kit that owns the SubjectKind,\nabsent when no kit owns it.",
             "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
               "ends": {
                 "default": [],
                 "items": {
@@ -62281,6 +62617,40 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
+            "type": "object"
+          },
           "HandEditInstruction": {
             "additionalProperties": false,
             "properties": {
@@ -63380,8 +63750,11 @@
           },
           "ProcedureProviderBinding": {
             "additionalProperties": false,
-            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time.",
+            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time. ``capability`` is the slot's capability\npin and ``fit`` how the operation fit it at admission; ``fit`` is omitted\nonly for a capability core's builtin serves (bound by name).",
             "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
               "effect_class": {
                 "enum": [
                   "pure",
@@ -63390,6 +63763,22 @@
                 ],
                 "title": "Effect Class",
                 "type": "string"
+              },
+              "fit": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "identical",
+                      "structural"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fit"
               },
               "implementation_digest": {
                 "title": "Implementation Digest",
@@ -63423,8 +63812,8 @@
                 "type": "string"
               },
               "tag": {
-                "const": "cruxible-procedure-provider-binding-v4",
-                "default": "cruxible-procedure-provider-binding-v4",
+                "const": "cruxible-procedure-provider-binding-v5",
+                "default": "cruxible-procedure-provider-binding-v5",
                 "title": "Tag",
                 "type": "string"
               }
@@ -63432,6 +63821,7 @@
             "required": [
               "node_id",
               "slot",
+              "capability",
               "operation",
               "operation_signature_digest",
               "provider_artifact_digest",
@@ -65095,6 +65485,40 @@
               "microseconds"
             ],
             "title": "CanonicalDuration",
+            "type": "object"
+          },
+          "CapabilityRef": {
+            "additionalProperties": false,
+            "description": "A pin to one capability version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "CapabilityRef",
             "type": "object"
           },
           "ClaimVersionReference": {
@@ -67426,8 +67850,11 @@
           },
           "ProcedureProviderBinding": {
             "additionalProperties": false,
-            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time.",
+            "description": "What one slotted node binds at admission: its slot's exact build and operation.\n\nThe binding is the Line's (or, for a direct run, the request's ephemeral\nspec), never chosen at run time. ``capability`` is the slot's capability\npin and ``fit`` how the operation fit it at admission; ``fit`` is omitted\nonly for a capability core's builtin serves (bound by name).",
             "properties": {
+              "capability": {
+                "$ref": "#/$defs/CapabilityRef"
+              },
               "effect_class": {
                 "enum": [
                   "pure",
@@ -67436,6 +67863,22 @@
                 ],
                 "title": "Effect Class",
                 "type": "string"
+              },
+              "fit": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "identical",
+                      "structural"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fit"
               },
               "implementation_digest": {
                 "title": "Implementation Digest",
@@ -67469,8 +67912,8 @@
                 "type": "string"
               },
               "tag": {
-                "const": "cruxible-procedure-provider-binding-v4",
-                "default": "cruxible-procedure-provider-binding-v4",
+                "const": "cruxible-procedure-provider-binding-v5",
+                "default": "cruxible-procedure-provider-binding-v5",
                 "title": "Tag",
                 "type": "string"
               }
@@ -67478,6 +67921,7 @@
             "required": [
               "node_id",
               "slot",
+              "capability",
               "operation",
               "operation_signature_digest",
               "provider_artifact_digest",
@@ -73246,6 +73690,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -73256,7 +73712,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -74754,6 +75213,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -74764,7 +75235,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -107555,20 +108029,6 @@
             "type": "string"
           }
         },
-        "tag": {
-          "default": "playbill-workspace-file-source-request-v2",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-workspace-file-source-request-v2",
-            "default": "playbill-workspace-file-source-request-v2",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
         "workspace": {
           "default": null,
           "default_json_serializable": true,
@@ -107592,7 +108052,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "The authored ``workspace.file`` Source request: intent only, no transport.\n\n``workspace`` names an authorized root logically -- the last component of\nits path -- or is omitted: the instance's attached workspace, else its only\nauthorized root. The daemon resolves the root and records its binding\ndigest on the executed request, the read receipt and the Capture; an author\nnever supplies it.",
+        "description": "One file read as core performs it, before its workspace root is resolved.\n\nBuilt by core from the authored :class:`WorkspaceFileRequest` and the\n:class:`WorkspaceReadShape` of the kind the read lands under; never authored\nand never stored. The daemon resolves the root and records its binding\ndigest on the executed request, the read receipt and the Capture.",
         "properties": {
           "coordinate": {
             "title": "Coordinate"
@@ -107623,12 +108083,6 @@
           },
           "selector_type": {
             "title": "Selector Type",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-workspace-file-source-request-v2",
-            "default": "playbill-workspace-file-source-request-v2",
-            "title": "Tag",
             "type": "string"
           },
           "workspace": {

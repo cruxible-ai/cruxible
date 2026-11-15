@@ -44,7 +44,23 @@ def _save_pending(root: Path, token: str, pending) -> None:
 
 
 def test_located_own_words_adds_copy_and_retries_without_generation(tmp_path: Path) -> None:
+    """Located own words are one Capture: the own words, sourced at their file.
+
+    No second Capture locates them; the file's contract is still installed (no
+    pin), and writing the same words again where they stand is a no-op.
+    """
+
+    from cruxible_client.contracts.captures import (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+        FOREIGN_SOURCE_COORDINATE_TYPE,
+        capture_contract_path,
+        foreign_source_capture_contract,
+        parse_capture_envelope,
+    )
+    from cruxible_client.contracts.source_references import ExternalSourceReference
+
     instance, _ = seed_write_surface(tmp_path)
+    observation = _observation()
     request = WriteRequest(
         because="Recorded in prose",
         changes=(
@@ -53,7 +69,7 @@ def test_located_own_words_adds_copy_and_retries_without_generation(tmp_path: Pa
                 field="status",
                 value="ready",
                 evidence=SectionEvidence(
-                    file="notes.md", section=("Reason",), own_words=True, observation=_observation()
+                    file="notes.md", section=("Reason",), own_words=True, observation=observation
                 ),
             ),
         ),
@@ -66,10 +82,23 @@ def test_located_own_words_adds_copy_and_retries_without_generation(tmp_path: Pa
     path = claim_path(change.claim)
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
     claim = parse_claim(tree[path], path=path)
-    assert {(c.role, c.origin) for c in claim.backing.citations} == {
-        ("copy", "self_source"),
-        ("copy", "independent"),
-    }
+    (citation,) = claim.backing.citations
+    assert (citation.role, citation.origin) == ("copy", "self_source")
+    assert claim.backing.capture_digests == (citation.capture_digest,)
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            citation.capture_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert isinstance(envelope.source, ExternalSourceReference)
+    assert envelope.source.source_identity == observation.source_id
+    assert envelope.source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+    assert envelope.commitment.digest == observation.selected_bytes_digest
+    contract_pins = {pin.target.name for pin in claim.pins if pin.role == "capture-contract"}
+    assert contract_pins == {COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name}
+    file_contract = foreign_source_capture_contract(observation.source_id).identity.name
+    assert capture_contract_path(file_contract) in tree
     retried = service_playbill_write(instance, request=request, caller=caller())
     assert retried.status == "accepted", retried
     assert retried.coordinate == first.coordinate

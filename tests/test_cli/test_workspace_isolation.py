@@ -355,7 +355,7 @@ def test_init_workspace_b_from_a_initializes_b_and_leaves_a_alone(
     binding_b = json.loads((project_b / ".cruxible" / "coverage.json").read_text())
     instance_b = binding_b["instance_id"]
     assert instance_b != instance_a
-    assert "Owner principal: carol" in created.stdout
+    assert "Owner: carol, private key" in created.stdout
     context = json.loads(first_run["context"].read_text())
     before = json.loads(context_before)
     assert context["instance_id"] == instance_a

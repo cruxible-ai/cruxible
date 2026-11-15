@@ -1,26 +1,22 @@
-"""``workspace.file`` as a core built-in: structure one authorized workspace file read.
+"""Core's built-in workspace reads: check the bytes core read for one file.
 
 Core performs the read (``documents/workspace_file.py``): the workspace binding,
 the allowed roots, the symlink walk, the no-follow open, the containment
-re-check, the size cap and the ``source-read-receipt``. What reaches this module
-is the outcome of that read -- bytes, base64-encoded, with their declared length
-and digest -- and its whole job is to turn those bytes into a structured capture
-body.
-
-It began as a port of a provider package's file reader (cruxible-providers
-db085204; the package has since been deleted, and file reading is core's
-alone): the same field validation, strict base64 decode, length and digest
-checks and text/bytes structuring. The envelopes that package produced are kept
-as recorded provenance in ``tests/fixtures/workspace_file_parity.json``, and
-the built-in must still produce them byte for byte (tests/test_providers/
-test_builtin_workspace_file.py). The one addition is a typed refusal above
-1 MiB: core admitted no larger file while it still classified inputs.
+re-check, the size budget and the ``source-read-receipt``. What reaches this
+module is the outcome of one file's read -- bytes, base64-encoded, with their
+declared length and digest (the handoff) -- and its job is to refuse bytes whose
+encoding, length or digest disagrees with what core declared. It returns an
+empty output: core commits the bytes it read as the call's capture field
+(``workspace.file``) or as one member of its list (``workspace.files``), so the
+call's value is exactly the base kit's result, ``{capture}`` or ``{captures}``.
 
 The module is pure, and a guard test holds it to that: it imports no ``os``,
 ``socket`` or ``io`` and never names ``open``. It reads no file, contacts no
 endpoint, reads no clock and consults no secret; its output is a function of
 its input. That purity is what lets core run it in-process, inside the daemon,
-with no process boundary or lease (``providers/builtin_runtime.py``).
+with no process boundary or lease (``providers/builtin_runtime.py``). Its
+behaviour is pinned by ``tests/fixtures/workspace_file_parity.json``
+(tests/test_providers/test_builtin_workspace_file.py).
 """
 
 from __future__ import annotations
@@ -39,10 +35,10 @@ from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeTrace,
 )
 
-OPERATION = "workspace.file"
-"""The one operation the adapter serves."""
+OPERATIONS: tuple[str, ...] = ("workspace.file", "workspace.files")
+"""The operations the adapter serves: one file per call, for a one-path or a glob read."""
 CONTENT_ENCODING = "base64"
-"""The only content encoding the operation admits: RFC 4648 section 4, padded, no line breaks."""
+"""The only content encoding the handoff admits: RFC 4648 section 4, padded, no line breaks."""
 
 INPUT_FIELDS: tuple[str, ...] = (
     "logical_source",
@@ -52,30 +48,14 @@ INPUT_FIELDS: tuple[str, ...] = (
     "byte_length",
     "bytes_digest",
 )
-"""The closed set of run-input fields. Anything else refuses rather than being ignored."""
-
-BYTE_SIZE_CEILINGS: tuple[tuple[str, int], ...] = (
-    ("tiny", 4_096),
-    ("small", 65_536),
-    ("medium", 1_048_576),
-)
-"""Inclusive upper bounds per size class, in order; above the last is ``large``."""
-
-MAX_STRUCTURED_BYTES = BYTE_SIZE_CEILINGS[-1][1]
-"""The most bytes the built-in structures (1 MiB). A larger file is refused, typed.
-
-Core admitted no larger file before it stopped classifying inputs (the built-in
-never claimed the ``large`` size class), so this refusal keeps the built-in's
-behaviour where admission used to hold it.
-"""
+"""The closed set of handoff fields. Anything else refuses rather than being ignored."""
 
 # The package's ``cruxible_provider_runtime.canonical.SHA256_RE``, matched the same way.
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-_BOM = "\ufeff"
 
 
 def decode_declared_bytes(payload: Mapping[str, Any]) -> bytes | None:
-    """Decode the run input's payload, or ``None`` when it is not a base64 string.
+    """Decode the handoff's payload, or ``None`` when it is not a base64 string.
 
     Strict: the alphabet is RFC 4648 section 4 with padding, and a stray
     character (a line break included) is not a payload.
@@ -92,43 +72,11 @@ def decode_declared_bytes(payload: Mapping[str, Any]) -> bytes | None:
         return None
 
 
-def content_kind_class(data: bytes) -> str:
-    """``text`` for strict UTF-8 without a NUL byte, ``binary`` otherwise."""
-
-    if b"\x00" in data:
-        return "binary"
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return "binary"
-    return "text"
-
-
-def byte_size_class(length: int) -> str:
-    for class_id, ceiling in BYTE_SIZE_CEILINGS:
-        if length <= ceiling:
-            return class_id
-    return "large"
-
-
-def input_bucket_label(data: bytes) -> str:
-    """The ``input_bucket`` string the output has always carried, from the bytes alone.
-
-    Core no longer classifies inputs, so nothing hands the adapter a measured
-    bucket; the run context carries only a meaningless placeholder. The output
-    keeps the field, derived here exactly as the retired classifier measured it,
-    so the built-in's result for every input core previously admitted -- and so
-    its behaviour revision and implementation digest -- is unchanged.
-    """
-
-    return f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
-
-
 class WorkspaceFile:
-    """Structure the bytes core read from one workspace file into a result envelope."""
+    """Check the bytes core read from one workspace file; return an empty output."""
 
     #: The operations this entrypoint serves, as a runtime child reads them.
-    operations = (OPERATION,)
+    operations = OPERATIONS
 
     def __call__(self, context: ProviderRuntimeRunContext) -> ProviderRuntimeResultEnvelope:
         payload = context.input
@@ -167,45 +115,20 @@ class WorkspaceFile:
                 context,
                 _refusal(
                     "provider_declined",
-                    "the declared bytes_digest does not match the decoded payload; the adapter "
-                    "will not structure bytes whose identity disagrees with the read receipt",
+                    "the declared bytes_digest does not match the decoded payload; the "
+                    "built-in will not answer for bytes whose identity disagrees with the "
+                    "read receipt",
                     declared=declared_digest,
                     computed=computed_digest,
                 ),
             )
 
-        if len(data) > MAX_STRUCTURED_BYTES:
-            return _refused(
-                context,
-                _refusal(
-                    "provider_declined",
-                    "the built-in structures at most 1 MiB; read a smaller file or "
-                    "install a workspace.file Provider that takes larger ones",
-                    byte_length=len(data),
-                    max_bytes=MAX_STRUCTURED_BYTES,
-                ),
-            )
-
-        content = structure_bytes(data)
-        metrics: dict[str, float] = {"byte_length": float(len(data))}
-        if content["kind"] == "text":
-            metrics["line_count"] = float(content["line_count"])
-            metrics["character_count"] = float(content["character_count"])
         return ProviderRuntimeResultEnvelope(
             protocol_version=PROVIDER_RUNTIME_PROTOCOL,
             run_id=context.run_id,
             status="ok",
-            output={
-                "input_bucket": input_bucket_label(data),
-                "source": {
-                    "logical_source": payload["logical_source"],
-                    "commitment_digest": payload["commitment_digest"],
-                    "bytes_digest": computed_digest,
-                    "byte_length": len(data),
-                },
-                "content": content,
-            },
-            trace=ProviderRuntimeTrace(metrics=metrics),
+            output={},
+            trace=ProviderRuntimeTrace(metrics={"byte_length": float(len(data))}),
         )
 
 
@@ -225,20 +148,20 @@ def _refused(
 
 
 def _validate_shape(payload: Mapping[str, Any]) -> ProviderRuntimeRefusal | None:
-    """Check the run input's shape, field by field, failing closed on any surprise."""
+    """Check the handoff's shape, field by field, failing closed on any surprise."""
 
     unknown = sorted(set(payload) - set(INPUT_FIELDS))
     if unknown:
         return _refusal(
             "invalid_parameter",
-            "the run input carries fields the interface does not declare",
+            "the handoff carries fields it does not declare",
             unknown=unknown,
             declared=list(INPUT_FIELDS),
         )
     missing = [name for name in INPUT_FIELDS if name not in payload]
     if missing:
         return _refusal(
-            "invalid_parameter", "the run input is missing required fields", missing=missing
+            "invalid_parameter", "the handoff is missing required fields", missing=missing
         )
 
     logical_source = payload["logical_source"]
@@ -280,68 +203,10 @@ def _validate_shape(payload: Mapping[str, Any]) -> ProviderRuntimeRefusal | None
     return None
 
 
-def structure_bytes(data: bytes) -> dict[str, Any]:
-    """The capture body for ``data``: a text view when it is text, bytes otherwise."""
-
-    if content_kind_class(data) != "text":
-        return {
-            "kind": "bytes",
-            "encoding": "base64",
-            "byte_length": len(data),
-            "bytes": base64.b64encode(data).decode("ascii"),
-        }
-    text = data.decode("utf-8")
-    lines = _lines(text)
-    return {
-        "kind": "text",
-        "encoding": "utf-8",
-        "bom": text.startswith(_BOM),
-        "newline": _newline_style(text),
-        "trailing_newline": text.endswith(("\n", "\r")),
-        "line_count": len(lines),
-        "character_count": len(text),
-        "text": text,
-        "lines": lines,
-    }
-
-
-def _newline_style(text: str) -> str:
-    crlf = text.count("\r\n")
-    lf = text.count("\n") - crlf
-    cr = text.count("\r") - crlf
-    present = [name for name, count in (("lf", lf), ("crlf", crlf), ("cr", cr)) if count]
-    if not present:
-        return "none"
-    if len(present) == 1:
-        return present[0]
-    return "mixed"
-
-
-def _lines(text: str) -> list[str]:
-    """Split at line feeds; drop one carriage return before each feed and the empty tail.
-
-    Deliberately not ``str.splitlines``: that also splits on form feeds, vertical
-    tabs and the Unicode separators, which a line-numbered citation into a source
-    file does not expect. A lone carriage return is not a line break here either.
-    """
-
-    *terminated, tail = text.split("\n")
-    lines = [part[:-1] if part.endswith("\r") else part for part in terminated]
-    if tail:
-        lines.append(tail)
-    return lines
-
-
 __all__ = [
-    "BYTE_SIZE_CEILINGS",
     "CONTENT_ENCODING",
     "INPUT_FIELDS",
-    "MAX_STRUCTURED_BYTES",
-    "OPERATION",
+    "OPERATIONS",
     "WorkspaceFile",
-    "byte_size_class",
-    "content_kind_class",
     "decode_declared_bytes",
-    "input_bucket_label",
-    "structure_bytes",
 ]

@@ -263,7 +263,7 @@ def test_first_run_from_an_empty_folder_needs_no_git_and_no_flags(
     )
 
     # 1. A bare init starts the daemon and attaches the plain folder.
-    initialized = _run("init", "--principal-id", "owner")
+    initialized = _run("init", "--principal-id", "owner", "--verbose")
     assert "Started a Cruxible daemon on unix socket" in initialized.stderr
     assert "`cruxible server stop` stops it" in initialized.stderr
     coverage_path = folder / ".cruxible" / "coverage.json"

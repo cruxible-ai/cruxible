@@ -14,7 +14,7 @@ from cruxible_client.contracts.claim_types import claim_type_path, render_claim_
 from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
 from cruxible_client.contracts.shapes import contract_path, render_contract
 from tests.core_support._candidate_support import submit_member_candidate
-from tests.core_support._light_capture_support import record_contract
+from tests.core_support._light_capture_support import file_contract, record_contract
 from tests.support.procedures import boundary_contract
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import _claim_type, terminal_procedure
@@ -24,7 +24,7 @@ def test_an_extract_over_a_contract_without_decoding_is_refused_at_acceptance(
     tmp_path: Path,
 ) -> None:
     instance, _owner, procedure, _root, _policy = fixtures._world(
-        tmp_path, accept_procedure=False, contract=record_contract(decoding=None)
+        tmp_path, accept_procedure=False, contract=file_contract(decoding=None)
     )
     extracting = terminal_procedure(procedure, templates=fixtures.FAN_OUT)  # type: ignore[arg-type]
 

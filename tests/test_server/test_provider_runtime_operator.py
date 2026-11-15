@@ -35,13 +35,15 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
+    BindingSide,
     LineSpec,
     evaluate_line_spec_law,
     line_identity_digest,
-    line_slot_signatures,
+    line_slot_needs,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
+    slot_fitter,
 )
 from cruxible_client.contracts.procedures.models import CallNode
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
@@ -318,10 +320,17 @@ def _complete_line_for_admission(
         path=path,
         procedure=accepted_procedure,
         predecessor=None,
-        slots=line_slot_signatures(
-            definition, capabilities=declared_capability_lookup(), builtin={}
+        slots=line_slot_needs(
+            definition, capabilities=declared_capability_lookup(), builtin_names=frozenset()
         ),
         providers={accepted_provider.provider.identity.qualified: accepted_provider},
+        # The capability's Contracts are the copies the build carries.
+        fitter=slot_fitter(
+            BindingSide(
+                contracts=accepted_provider.provider.declares.lookup(),
+                capture_kinds=lambda _name: None,
+            )
+        ),
     )
     assert law.verdict == "accepted", law.diagnostics
     return AcceptedLineSpec(
@@ -883,7 +892,9 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
             ),
         ),
         slots={
-            "ask": pinned_slot(signature_capability(operation.signature(), name="test.served-ask"))
+            "ask": pinned_slot(
+                signature_capability(operation.signature(), name=operation.serves[0])
+            )
         },
         hard_caps=procedure_hard_caps(preset="provider", max_repeat_attempts=1),
         terminal_capability=2,

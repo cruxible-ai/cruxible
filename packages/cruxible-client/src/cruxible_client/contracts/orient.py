@@ -213,6 +213,8 @@ class OrientSubjectKind(_StrictOrientModel):
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_is_none)
     ends: tuple[OrientKindEnd, ...] = Field(default=(), exclude_if=_is_empty)
     kit: str | None = Field(default=None, exclude_if=_is_none)
+    #: What one Subject of the kind is, as authored.
+    description: str | None = Field(default=None, exclude_if=_is_none)
 
 
 class OrientContract(_StrictOrientModel):
@@ -877,6 +879,13 @@ class OrientResult(_StrictOrientModel):
     # (``live.as_of``) whatever ``coordinate`` the read named.
     live: LiveView | None = Field(default=None, exclude_if=_is_none)
     next: tuple[str, ...] = ()
+
+    def __str__(self) -> str:
+        """The map as ``cruxible orient`` prints it; ``repr()`` stays the full model."""
+
+        from cruxible_client.contracts.text_display import render_orient
+
+        return render_orient(self.model_dump(mode="json"))
 
 
 __all__ = [

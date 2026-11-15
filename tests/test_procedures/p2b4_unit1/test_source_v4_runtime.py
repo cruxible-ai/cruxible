@@ -10,7 +10,6 @@ import sys
 import textwrap
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -77,7 +76,7 @@ from cruxible_client.contracts.providers import (
     provider_digest,
     provider_path,
 )
-from cruxible_client.contracts.shapes import Contract, contract_digest
+from cruxible_client.contracts.shapes import Contract
 from cruxible_core.exhaust import journal_payload_bytes, parse_journal_payload
 from cruxible_core.exhaust.producer_receipts import (
     ProducerReceiptJournalNote,
@@ -121,78 +120,20 @@ from tests.test_providers.test_provider_invocation_journal import (
 
 # F02: an external-read Source's provider output is checked against its own
 # operation Contract (execution.py, "every operation output is checked
-# against its own pinned Contract, call or Source ... alike"). There is no
-# shortcut for a free-form envelope: the Contract below mirrors
-# ProviderResultToExternalCapture's own fields exactly, closed, so this
-# fixture's provider validates the same way a real external-read provider
-# would.
-_COORDINATE_CONTRACT = Contract.model_validate(
-    {"name": "test.source-coordinate", "version": 1, "fields": {"lsn": {"type": "string"}}}
-)
-_SELECTOR_CONTRACT = Contract.model_validate(
-    {
-        "name": "test.source-selector",
-        "version": 1,
-        "fields": {"id": {"type": "int"}, "relation": {"type": "string"}},
-    }
-)
-_EFFECTIVE_CONTRACT = Contract.model_validate(
-    {
-        "name": "test.source-effective",
-        "version": 1,
-        "fields": {
-            "tag": {"type": "string"},
-            "effective_from": {"type": "datetime"},
-            "effective_until": {"type": "datetime"},
-        },
-    }
-)
-
-
-def _pinned_nested(contract: Contract) -> dict[str, Any]:
-    """A nested-Contract field type, pinned by exact digest (required once accepted)."""
-
-    return {
-        "kind": "contract",
-        "contract": {
-            "name": contract.name,
-            "version": contract.version,
-            "digest": contract_digest(contract).tagged,
-        },
-    }
-
-
+# against its own pinned Contract, call or Source ... alike"). A Capture is a
+# named field of that Contract, never the whole result: the operation returns
+# ``{capture: <wire>}`` and core commits the field.
 _ENVELOPE_CONTRACT = Contract.model_validate(
     {
         "name": "test.source-envelope",
         "version": 1,
-        "fields": {
-            "tag": {"type": "string"},
-            "source_identity": {"type": "string"},
-            "coordinate_type": {"type": "string"},
-            "coordinate": {"type": _pinned_nested(_COORDINATE_CONTRACT)},
-            "selector_type": {"type": "string"},
-            "selector": {"type": _pinned_nested(_SELECTOR_CONTRACT)},
-            "replayability": {"type": "string"},
-            "content_encoding": {"type": "string"},
-            "content_base64": {"type": "string"},
-            "byte_length": {"type": "int"},
-            "bytes_digest": {"type": "string"},
-            "observed_at": {"type": "datetime"},
-            "source_effective_time": {"type": _pinned_nested(_EFFECTIVE_CONTRACT)},
-        },
+        "fields": {"capture": {"type": "capture<*>"}},
     }
 )
 _VALUE_CONTRACT = Contract.model_validate(
     {"name": "test.source-value", "version": 1, "fields": {"value": {"type": "int"}}}
 )
-_SOURCE_CONTRACTS = (
-    _VALUE_CONTRACT,
-    _COORDINATE_CONTRACT,
-    _SELECTOR_CONTRACT,
-    _EFFECTIVE_CONTRACT,
-    _ENVELOPE_CONTRACT,
-)
+_SOURCE_CONTRACTS = (_VALUE_CONTRACT, _ENVELOPE_CONTRACT)
 
 
 def source_contract_files() -> dict[str, bytes]:
@@ -297,7 +238,7 @@ class _SourceInvoker:
                 protocol_version="2.0",
                 run_id=context.run_id,
                 status="ok",
-                output=output.model_dump(mode="json"),
+                output={"capture": output.model_dump(mode="json")},
             ),
             stderr="",
             duration_seconds=0.001,
@@ -461,13 +402,7 @@ def _source_fixture(
             "occurrence_kind": "source",
             "input_name": source_node.as_,
             "capture_contracts": {source_field: contract_pin.artifact_digest},
-            "contracts": (
-                _VALUE_CONTRACT,
-                _ENVELOPE_CONTRACT,
-                _COORDINATE_CONTRACT,
-                _SELECTOR_CONTRACT,
-                _EFFECTIVE_CONTRACT,
-            ),
+            "contracts": (_VALUE_CONTRACT, _ENVELOPE_CONTRACT),
             "source_runtime_plan_digest": digest("source-runtime-plan", "unit1"),
         }
     )
@@ -644,9 +579,7 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
         ProviderInvocationOutputDigest,
     )
     # Only the journal records from provider_invocation_completed onward could
-    # carry a leaked raw output value; admission_bound legitimately carries the
-    # operation's own out Contract schema, which (matching the real envelope,
-    # F02) declares a field literally named "content_base64".
+    # carry a leaked raw output value (the Capture's wire, in its field).
     assert b"content_base64" not in canonical_bytes(
         payloads[kinds.index("provider_invocation_completed") :]
     )

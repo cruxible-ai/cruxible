@@ -310,7 +310,7 @@ def test_a_400_item_terminal_keeps_every_reason_and_reads_one_in_constant_work(
     from cruxible_core.storage.cas import BodyAccessContext
     from tests.test_procedures import test_claims_terminal as native
 
-    original_contract = native.record_contract
+    original_contract = native.file_contract
 
     def roomy_contract():
         contract = original_contract()
@@ -322,7 +322,7 @@ def test_a_400_item_terminal_keeps_every_reason_and_reads_one_in_constant_work(
             }
         )
 
-    monkeypatch.setattr(native, "record_contract", roomy_contract)
+    monkeypatch.setattr(native, "file_contract", roomy_contract)
     count = 400
     # Each rationale is within D-R13's one-line bound; together they exceed
     # the change-set summary's old 4096-character bound.

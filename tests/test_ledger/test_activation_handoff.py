@@ -116,7 +116,8 @@ def test_two_served_writes_handoff_without_recovery_and_detach_mutable_state(
             pytest.fail("a clean owned activation must not call recover_instance")
 
         guarded.setattr(instance_module, "recover_instance", unexpected)
-        for sequence, name in enumerate(("first", "second"), start=1):
+        # Creation's base kit is generation 1; these two follow it.
+        for sequence, name in enumerate(("first", "second"), start=2):
             proposal = _proposal(instance, owner, name)
             old = instance.accepted_coordinate()
             instance.tree_at(old.git_oid)
@@ -172,7 +173,8 @@ def test_principal_registration_and_revocation_install_successor_registry(tmp_pa
                 instance._recovered.head.principals.semantic_root
                 == instance.accepted_coordinate().semantic_root
             )
-        assert instance.accepted_history()[1].principals.require_active("newcomer") == newcomer
+        registered = instance.accepted_history()[-2]
+        assert registered.principals.require_active("newcomer") == newcomer
     _assert_reopened_parity(instance)
 
 
@@ -181,7 +183,7 @@ def test_lost_cas_recovers_winner_without_installing_loser(tmp_path, monkeypatch
     winner = _proposal(instance, owner, "winner")
     loser = _proposal(instance, owner, "loser")
     kwargs = _arguments(instance, winner)
-    winner_bundle = instance.prepare_generation(**kwargs, sequence=1)
+    winner_bundle = instance.prepare_generation(**kwargs, sequence=len(instance.accepted_history()))
     winner_publisher = instance.activation_publisher()
     winner_projection = winner_publisher.prebuild(winner_bundle, base=kwargs["base"])
     publisher = instance.activation_publisher()
@@ -232,7 +234,8 @@ def test_unsafe_handoff_recovers_instead_of_installing_captured_epoch(
     receipt = _activate(instance, proposal)
     assert receipt.status == "accepted" and len(calls) == 1
     assert instance.accepted_coordinate().git_oid == receipt.accepted_coordinate.git_oid
-    assert instance._recovered.head.sequence == 1
+    # Creation's base kit is generation 1.
+    assert instance._recovered.head.sequence == 2
     _assert_reopened_parity(instance)
 
 

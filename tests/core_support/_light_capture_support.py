@@ -40,6 +40,38 @@ def record_contract(
     )
 
 
+def file_contract(
+    *,
+    name="test.orders-v1",
+    erasure=False,
+    self_asserted=False,
+    replay=None,
+    decoding: CaptureDecoding | None = JSON_DECODING,
+    body_access: str = "open",
+    max_bytes=4096,
+) -> CaptureContractAny:
+    """:func:`record_contract` for a kind a workspace read lands under.
+
+    Core derives a workspace read's coordinate and selector from its kind, so
+    the kind declares one of each: the ``http_response`` shape (a database
+    snapshot declares two selector schemas, and a file read has nothing to
+    choose between them with), or ``foreign_span`` when ``self_asserted``.
+    """
+
+    return lower_capture_contract_input(
+        CaptureContractInputRecord(
+            name=name,
+            shape="foreign_span" if self_asserted else "http_response",
+            replay=replay or ("attested" if self_asserted else "exact"),
+            max_bytes=max_bytes,
+            erasable=erasure,
+            **({} if decoding is None else {"decoding": decoding}),
+            **({} if body_access == "open" else {"body_access": body_access}),
+        ),
+        named=True,
+    )
+
+
 def http_contract(
     *,
     name="test.orders-v1",

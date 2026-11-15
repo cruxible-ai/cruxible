@@ -292,11 +292,6 @@ CORPUS_CONTRACTS = {
 
 def _corpus_resolver(original):
     """Independent schema metadata for unbound operation signatures, not providers."""
-    sources = {
-        node.as_: node
-        for node in original.definition.nodes
-        if node.kind == "call" and node.acquires
-    }
 
     def resolve(kind, value):
         if kind == "slot":
@@ -314,11 +309,7 @@ def _corpus_resolver(original):
         )
         acquiring = bool(getattr(value, "captures", None))
         names = (entry.get("source_view") or entry["output"]) if acquiring else entry["output"]
-        return {
-            "output": {name: None for name in names["fields"]},
-            "input": None,
-            "request_defaults": sources[value.call].input if acquiring else {},
-        }
+        return {"output": {name: None for name in names["fields"]}, "input": None}
 
     return resolve
 
@@ -370,9 +361,17 @@ def _inventory_import_worked_example():
                 "call": "inventory",
                 "captures": {"capture": "security.runtime-inventory-v1"},
                 "slot": "inventory",
+                # The corpus's fixture read stores its request in full: lowering
+                # writes the authored input as it is, with nothing defaulted.
                 "input": {
+                    "coordinate": {"revision": "working"},
+                    "coordinate_type": "http-response-v1",
                     "logical_source": "security.inventory",
                     "relative_path": "inventory.json",
+                    "replayability": "exact",
+                    "selector": {"whole": True},
+                    "selector_type": "whole-response-v1",
+                    "tag": "playbill-workspace-file-source-request-v2",
                 },
             },
             {"read": "held", "query": "security.inventory_index", "params": scope},

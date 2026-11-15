@@ -177,7 +177,7 @@ def test_prepare_generation_binds_complete_change_set_without_advancing_main(
             source_compilation_digest="sha256:" + "77" * 32,
         ),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
 
     assert instance._ledger.read_main() == base.git_oid
@@ -191,7 +191,8 @@ def test_prepare_generation_binds_complete_change_set_without_advancing_main(
     assert bundle.record.approvals == ()
     assert bundle.approvals == ()
     assert change_set_digest(bundle.record).tagged == bundle.record.changeset_digest
-    assert bundle.record_path == "changesets/cs-00000000000000000001.json"
+    # Creation's base kit settled change set 1; this is the next.
+    assert bundle.record_path == "changesets/cs-00000000000000000002.json"
     stored_tree = instance._ledger.read_tree(bundle.oid)
     assert bundle.record_path in stored_tree
     assert b"base_oid" not in stored_tree[bundle.record_path]
@@ -221,7 +222,7 @@ def test_prepare_generation_binds_settlement_actor_to_proposal_admission(
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="reviewer"),
             proposal_actor_id="owner",
-            sequence=1,
+            sequence=len(instance.accepted_history()),
         )
 
 
@@ -240,7 +241,7 @@ def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
     publication = Path(instance.inspect().storage_directories["projections"])
     witness = MemoryWitness()
@@ -275,7 +276,7 @@ def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
             head_oid=bundle.oid,
             semantic_root=bundle.semantic_root.tagged,
             generation_root=bundle.generation_root.tagged,
-            sequence=1,
+            sequence=bundle.record.sequence,
         )
     ]
     # The instance serves what the publisher activated once it re-reads main,
@@ -315,7 +316,7 @@ def test_two_candidates_from_one_base_leave_one_winner_and_no_loser_projection(
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
             proposal_actor_id="owner",
-            sequence=1,
+            sequence=len(instance.accepted_history()),
         )
 
     first_bundle = prepare(first_tree, first)
@@ -365,7 +366,7 @@ def test_prepare_generation_refuses_tampered_law_or_candidate_tree(tmp_path: Pat
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
             proposal_actor_id="owner",
-            sequence=1,
+            sequence=len(instance.accepted_history()),
         )
 
     with pytest.raises(SettlementIntegrityError, match="no longer passes|cannot be reproduced"):
@@ -378,7 +379,7 @@ def test_prepare_generation_refuses_tampered_law_or_candidate_tree(tmp_path: Pat
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
             proposal_actor_id="owner",
-            sequence=1,
+            sequence=len(instance.accepted_history()),
         )
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from pydantic import ValidationError
 
@@ -35,6 +35,9 @@ from cruxible_core.evidence.attestation_verification import (
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import _claim_law_evidence
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
 
 
 def service_append_claim_attestation(
@@ -194,7 +197,7 @@ def service_prepare_claim_attestation_evidence(
         # Keyed blob reads at the head: never the whole tree.
         return instance.blob_at(head.git_oid, path)
 
-    def self_source(body: bytes) -> str:
+    def self_source(body: bytes, location: WorkingSelectionObservation | None = None) -> str:
         path = capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
         accepted = blob(path)
         contract = builtin_contract_for_write(
@@ -209,6 +212,7 @@ def service_prepare_claim_attestation_evidence(
             accepted_contract=contract,
             observed_at=at,
             accepted_coordinate=public,
+            location=location,
         ).capture_digest
 
     digests: set[str] = set()
@@ -227,7 +231,8 @@ def service_prepare_claim_attestation_evidence(
                 repair="Attest through the CLI, the SDK or the MCP adapter beside the workspace",
             )
         if isinstance(evidence, SectionEvidence) and evidence.own_words:
-            digests.add(self_source(observation.selected_content))
+            # The attested own words keep their place, as write's do.
+            digests.add(self_source(observation.selected_content, observation))
         else:
             source = observation.source_id
             contract_path = capture_contract_path(

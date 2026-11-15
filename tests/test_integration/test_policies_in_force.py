@@ -42,7 +42,9 @@ from cruxible_core.service.claims.policies import service_playbill_policies_in_f
 from tests.core_support._adoption_fixture import _claim_type as _legacy_claim_type
 from tests.core_support._adoption_fixture import _claim_type_path, _query_definition
 from tests.core_support._light_capture_support import record_contract
-from tests.core_support._support import initialize_local
+
+# Counts proposals, generations and policies from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.support.lines import action_trigger, trigger_members
 from tests.support.procedures import procedure_artifact, procedure_members
 from tests.test_indexes.test_projection_next import _accepted_procedure

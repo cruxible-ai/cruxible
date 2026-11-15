@@ -163,8 +163,11 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     EvidenceRequirement,
     RevisionEvidence,
+    claim_type_path,
     effective_evidence_requirement,
     effective_revision_evidence,
+    render_claim_type,
+    retired_successor,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
@@ -276,6 +279,7 @@ from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient, configured_principal_id
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_client.authoring.files import WorkspaceCatalog
     from cruxible_client.authoring.world import World
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -965,6 +969,8 @@ class ChangeSetDraft:
     _playbill: Cruxible = field(repr=False, compare=False)
     rationale: str | None = None
     _members: list[_ChangeSetMember] = field(default_factory=list, repr=False)
+    #: Key fields staged with ``.field(..., key=True)``, by kind, in call order.
+    _keys: dict[str, list[str]] = field(default_factory=dict, repr=False)
 
     def claim(
         self,
@@ -1348,7 +1354,9 @@ class ChangeSetDraft:
         kind only, literal and one-valued, accepted or defined in this set) with
         optional ``uniqueness`` -- the default ``unique`` refuses a second Subject
         with the same key, ``hint`` only surfaces it in the duplicates audit -- or
-        ``minted=True`` to have core mint opaque ids. Core then names every new Subject of the kind:
+        ``minted=True`` to have core mint opaque ids; with neither, the keys are the
+        fields this set staged with ``.field(..., key=True)`` for the kind.
+        Core then names every new Subject of the kind:
         its id is the readable rendering of its key, or a minted id. ``normalizers``
         maps a key (predicate or last name) to its identity normalizer, pinned by
         version (e.g. ``Pep503Normalizer(version=1)``); unnamed keys take ``none@1``.
@@ -1357,6 +1365,9 @@ class ChangeSetDraft:
         a Subject of a single-key unique kind by its key.
         """
 
+        if not keys and not minted and not retire:
+            # The fields this set staged with `.field(..., key=True)` for this kind.
+            keys = tuple(self._keys.get(name, ()))
         payload = SubjectKindAuthoringPayload(
             name=name,
             description=description,
@@ -1397,6 +1408,106 @@ class ChangeSetDraft:
             )
         )
         return self
+
+    def field(
+        self,
+        kind: str,
+        name: str,
+        value_type: FieldType | str,
+        *,
+        description: str | None = None,
+        many: bool | None = None,
+        members: Mapping[str | int | bool, str] | None = None,
+        key: bool = False,
+        default_role: ClaimRole | str | None = None,
+        sources: Sequence[str] = (),
+        canonical_form: Sequence[str] | None = None,
+    ) -> PendingClaimTypeRef:
+        """Define (or edit) one field of a kind, with the short form's defaults.
+
+        The field is the ClaimType ``<kind>.<name>``. Everything not given takes
+        the default ``cruxible claim-type propose`` gives a field, lowered by the
+        same function: roles ``[default_role]`` (else ``[normative]``), the
+        own-words evidence rule plus one rule per ``sources`` entry, supported
+        and current resolution, and ``[nfc, trim]`` for a string or enum value.
+        ``members`` maps each enum member to what it means; ``many`` makes the
+        field hold several values (left out: one, or an edit's accepted
+        cardinality). ``key=True`` marks a key: a
+        ``.subject_kind(name=kind)`` in this set that names no keys takes the
+        key fields staged for its kind, in call order.
+
+        A field the instance already holds is edited: ``value_type`` is
+        restated, what is left out (``many``, ``description``, ``members``,
+        ``default_role``, ``canonical_form``) keeps its accepted value, and its
+        live Claims are carried to the new version, as ``claim-type propose``
+        does; ``sources`` shapes a new field's rules only. Retire one with
+        ``.retire_claim_type``.
+
+        Next: more fields, ``.subject_kind(name=kind, description=...)``, then
+        ``.prepare()`` for the lint, and ``.submit()``.
+        """
+
+        from cruxible_client.contracts.claim_type_inputs import (
+            ClaimTypeInputRecord,
+            default_resolution_policy,
+            lower_claim_type_input,
+        )
+
+        if key and many:
+            raise ValueError(f"{kind}.{name}: a key field holds one value; drop many=True")
+        predicate = f"{kind}.{name}"
+        predecessor = self._playbill._accepted_field(predicate)
+        stated: dict[str, object] = {"predicate": predicate, "value": coerce_field_type(value_type)}
+        # Left out (None), an edit keeps the accepted cardinality; a new field is one-valued.
+        if many is not None or predecessor is None:
+            cardinality: Literal["one", "many"] = "many" if many else "one"
+            stated["cardinality"] = cardinality
+            if predecessor is not None and predecessor.cardinality != cardinality:
+                # A stated change of cardinality takes the resolution policy the
+                # short form gives a new field of that cardinality; the law then
+                # decides whether the field's Claims allow it.
+                stated["resolution_policy"] = default_resolution_policy(cardinality)
+        if description is not None:
+            stated["description"] = description
+        if members is not None:
+            stated["member_descriptions"] = [
+                {"member": member, "description": meaning} for member, meaning in members.items()
+            ]
+        if default_role is not None:
+            stated["default_role"] = _enum(
+                default_role, ClaimRole, label="field default role"
+            ).value
+        if sources:
+            stated["anticipated_source_ids"] = sorted(set(sources), key=lambda s: s.encode())
+        if canonical_form is not None:
+            stated["canonical_form"] = tuple(canonical_form)
+        record = ClaimTypeInputRecord.model_validate(stated)
+        tree = (
+            {}
+            if predecessor is None
+            else {claim_type_path(predicate): render_claim_type(predecessor)}
+        )
+        definition = lower_claim_type_input(record, tree=tree)
+        payload: AuthoringChangeSetMember = (
+            ClaimTypeAuthoringPayload(claim_type=definition)
+            if predecessor is None
+            else ClaimTypeSuccessionMember(successor=definition, carry_all=True)
+        )
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "field", "input": record.model_dump(mode="json")},
+            )
+        )
+        if key:
+            self._keys.setdefault(kind, []).append(predicate)
+        return PendingClaimTypeRef(
+            address=predicate,
+            coordinate=self._playbill.coordinate,
+            value_type=definition.value,
+        )
 
     def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> PendingClaimTypeRef:
         """Define one whole ClaimType inside this changeset, and return a ref.
@@ -1508,6 +1619,43 @@ class ChangeSetDraft:
         )
         return self
 
+    def retire_claim_type(
+        self,
+        predicate: str | ClaimTypeRef,
+        *,
+        reason: ClaimRetirementReason = "superseded",
+    ) -> ChangeSetDraft:
+        """Retire one accepted ClaimType (a field) in this changeset.
+
+        The successor is the accepted definition, marked retired. Its live
+        Claims retire with it, with ``reason``; what can only be carried
+        (retired Claims, Documents) is carried -- the closure ``claim-type
+        migrate`` disposes, filled by the daemon. Several per set; the set lands
+        when policy allows, like any other member.
+
+        Next: more members, then ``.prepare()`` (``intent.diagnostics`` if
+        refused) and ``.submit()``.
+        """
+
+        name = _address(predicate, RefKind.CLAIM_TYPE)
+        current = self._playbill._accepted_field(name)
+        if current is None:
+            raise ValueError(
+                f"{name!r} is not an accepted ClaimType here, so there is nothing to retire; "
+                "cx.orient(section='claim_types') lists them"
+            )
+        self._members.append(
+            _ChangeSetMember(
+                payload=ClaimTypeSuccessionMember(
+                    successor=retired_successor(current), retire_dependents=reason
+                ),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "retire_claim_type", "predicate": name, "reason": reason},
+            )
+        )
+        return self
+
     def prepare(self) -> Intent:
         """Compile and preflight the whole changeset as one intent.
 
@@ -1574,6 +1722,20 @@ class ChangeSetDraft:
             _program_stamp("changes", {"members": decisions, "rationale": self.rationale}),
             DiagnosticSourceMap(tuple(entries)),
         )
+
+
+def _short_form_rules(roles: Sequence[str]) -> tuple[ClaimEvidenceAdmissionRule, ...]:
+    """The evidence rules the short form gives a new field with no source."""
+
+    from cruxible_client.contracts.claim_type_inputs import (
+        default_evidence_policy,
+        identity_evidence_policy,
+    )
+
+    policy = identity_evidence_policy(
+        default_evidence_policy(tuple(roles), "self", ()), identities={}
+    )
+    return ClaimEvidenceAdmissionPolicy.model_validate(policy).rules
 
 
 class _Unset(Enum):
@@ -1683,14 +1845,21 @@ class WriteBatch:
     def append_section(
         self,
         file: str,
-        text: str,
+        text: str = "",
         *,
+        heading: str | None = None,
         under: tuple[str, ...] = (),
         name: str | None = None,
         id: str | None = None,
     ) -> WriteBatch:
-        """Append a child, creating a missing file with your text. Next: .write()."""
-        self.docs.append(AppendSection(id=id, file=file, under=under, text=text, name=name))
+        """Append a child, creating a missing file. Next: .write().
+
+        ``heading=`` names the heading once (``text`` is then its body);
+        without it ``text`` starts with the heading line.
+        """
+        self.docs.append(
+            AppendSection(id=id, file=file, under=under, text=text, heading=heading, name=name)
+        )
         return self
 
     def replace_section(
@@ -2010,6 +2179,28 @@ class Intent:
         return (
             f"Intent({self._raw.get('intent_id')!r}, "
             f"revision={self._raw.get('intent_revision')}, {state}{proposal})"
+        )
+
+    def __str__(self) -> str:
+        # No I/O: its state, proposal and outcome, and every diagnostic when refused.
+        from cruxible_client.contracts.text_display import render_intent
+
+        status = self._candidate_status
+        return render_intent(
+            intent_id=self._raw.get("intent_id"),
+            revision=self._raw.get("intent_revision"),
+            state=(
+                "refused"
+                if self.refused
+                else status.state
+                if status is not None
+                else "prepared"
+                if self._preflight is not None
+                else "not observed"
+            ),
+            proposal_id=None if status is None else status.proposal_id,
+            outcome=self.outcome,
+            diagnostics=self.diagnostics,
         )
 
     @property
@@ -2910,6 +3101,18 @@ class Cruxible:
         self._coordinate = _coordinate(head.coordinate.model_dump(mode="json"))
         return head
 
+    @property
+    def files(self) -> WorkspaceCatalog:
+        """The workspace's file catalog: ``cx.files.add(name, path)``, ``cx.files.remove(name)``.
+
+        The same edits as ``cruxible files add``/``remove``. Next: ``cx.file(path)``
+        selects text from a catalogued file.
+        """
+
+        from cruxible_client.authoring.files import WorkspaceCatalog
+
+        return WorkspaceCatalog(self._workspace_root)
+
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
 
@@ -3059,7 +3262,12 @@ class Cruxible:
             ("derivational", tuple(r for r in role_values if r == "derivation")),
             ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
         )
-        rules = tuple(
+        rules = (
+            # No source: the short form's own-words rule (`claim-type propose`
+            # and `changes.field` lower through the same function), so a field
+            # drafted here admits what its writer says in its own words.
+            _short_form_rules(role_values) if not source_ids else ()
+        ) + tuple(
             ClaimEvidenceAdmissionRule(
                 rule_id=f"source-{source_id}-{admission}",
                 claim_roles=rule_roles,
@@ -3311,29 +3519,58 @@ class Cruxible:
     def section(
         self,
         file: str,
-        heading_path: tuple[str, ...],
+        heading_path: tuple[str, ...] | None = None,
         *,
-        text: str,
+        text: str | None = None,
+        heading: str | None = None,
+        body: str = "",
         under: tuple[str, ...] = (),
         replace: bool = False,
         expect: str | None = None,
     ) -> AuthoredSection:
         """Carry a new section's text as evidence for one typed write.
 
-        Append a heading subtree, or ``replace=True`` to replace ``heading_path``
-        (empty: preamble). ``expect`` checks the prior subtree digest on replace.
-        The heading path cites the resulting section, so a renamed heading must
-        be cited explicitly through a batch instead.
+        ``cx.section(file, heading="slug", body="...", under=("Notes",))`` names
+        the heading once: the heading line is written at the depth its place
+        needs, and the cited path is ``(*under, heading)``. With
+        ``replace=True`` it replaces that section's body. The longer form
+        gives the cited ``heading_path`` and ``text`` starting with the heading
+        line. ``replace=True`` with ``heading_path`` replaces it (empty:
+        preamble). ``expect`` checks the prior subtree digest on replace. An
+        appended section leaves one blank line after it.
         Next: ``subject.set(status=..., evidence=section, because=...)``; inspect
         ``outcome.docs`` for file conflicts even after a Claim was admitted.
         """
         if expect is not None and not replace:
             raise ValueError("expect is only available for a replacement")
-        operation: DocOp = (
-            ReplaceSection(file=file, section=heading_path, text=text, expect=expect)
-            if replace
-            else AppendSection(file=file, under=under, text=text)
-        )
+        operation: DocOp
+        if heading is not None:
+            if heading_path is not None or text is not None:
+                raise TypeError(
+                    "section() takes heading= and body= (the path is under + heading), "
+                    "or heading_path and text=, not both"
+                )
+            heading_path = (*under, heading)
+            operation = (
+                ReplaceSection(
+                    file=file, section=heading_path, heading=heading, text=body, expect=expect
+                )
+                if replace
+                else AppendSection(file=file, under=under, heading=heading, text=body)
+            )
+        else:
+            if heading_path is None or text is None:
+                raise TypeError(
+                    "section() needs heading= (and body=), or heading_path and text= "
+                    "starting with the heading line"
+                )
+            if body:
+                raise TypeError("body= goes with heading=; with heading_path, pass text=")
+            operation = (
+                ReplaceSection(file=file, section=heading_path, text=text, expect=expect)
+                if replace
+                else AppendSection(file=file, under=under, text=text)
+            )
         return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
 
     def note(
@@ -3344,6 +3581,7 @@ class Cruxible:
         about: Sequence[str | SubjectRef],
         because: str,
         under: tuple[str, ...] = (),
+        heading: str | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -3352,8 +3590,9 @@ class Cruxible:
 
         One write: the append plus an about change on the new section, under
         the same governance as any write; the file is written once admitted.
-        ``text`` starts with the section's heading. Backlinks on each Subject
-        list the note, and say when the section changes after it.
+        ``text`` starts with the section's heading, or ``heading=`` names it
+        once and ``text`` is its body. Backlinks on each Subject list the note,
+        and say when the section changes after it.
         Next: ``cx.backlinks(subject)``.
         """
 
@@ -3361,7 +3600,9 @@ class Cruxible:
         return self._write(
             WriteRequest(
                 because=because,
-                docs=(AppendSection(id="note", file=file, under=under, text=text),),
+                docs=(
+                    AppendSection(id="note", file=file, under=under, text=text, heading=heading),
+                ),
                 changes=(AboutChange(ref="note", subjects=subjects),),
                 dry_run=dry_run,
                 accept=accept,
@@ -4000,6 +4241,17 @@ class Cruxible:
                 entries_for_keywords(builder="claim", emitted=emitted, sites=sites)
             ),
         )
+
+    def _accepted_field(self, predicate: str) -> ClaimType | None:
+        """The accepted ClaimType for ``predicate`` at this context's coordinate, if any."""
+
+        try:
+            envelope = self._accepted_claim_type_envelope(predicate, predicate)
+        except CoreError as error:
+            if getattr(error, "error_code", None) == "cruxible.get.ref_not_found":
+                return None
+            raise
+        return ClaimType.model_validate(envelope)
 
     def _accepted_claim_type_envelope(
         self, predicate_name: str, predicate: str | ClaimTypeRef

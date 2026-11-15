@@ -134,6 +134,7 @@ from cruxible_core.coverage.workspace import (
     observe_workspace,
 )
 from cruxible_core.errors import ConfigError, DaemonOperationScopeError, DataValidationError
+from cruxible_core.kits.base_kit import bundled_kit_reference
 from cruxible_core.mcp.daemon import (
     DaemonUnavailableError,
     configured_daemon_target,
@@ -389,8 +390,8 @@ def handle_playbill_kit_add(
     at: str | None = None,
 ) -> KitChangeResult:
     """Install a kit by reference or bundle. This adapter reads the reference as
-    ``kit add`` does: a local kit directory or OCI layout, else a registry
-    reference it pulls and verifies.
+    ``kit add`` does: ``base`` (the base kit this core bundles), a local kit
+    directory or OCI layout, else a registry reference it pulls and verifies.
 
     A commit stages the kit's bundled provider files in the daemon's body store
     first, so the daemon can install them; a preview sends none. The result
@@ -407,8 +408,13 @@ def handle_playbill_kit_add(
         raise DataValidationError("kit add takes exactly one of reference or bundle")
     source = None
     if reference is not None:
-        image, source = resolve_kit_image(reference)
-        bundle = unpack_artifact(KIT_ARTIFACT, image)
+        # ``base`` is the base kit this core bundles, read before any directory or registry.
+        bundled = bundled_kit_reference(reference)
+        if bundled is not None:
+            bundle, source = bundled
+        else:
+            image, source = resolve_kit_image(reference)
+            bundle = unpack_artifact(KIT_ARTIFACT, image)
     assert bundle is not None
     resolved = bundle
     # Checked before the daemon, so a bad template refuses before anything is proposed.

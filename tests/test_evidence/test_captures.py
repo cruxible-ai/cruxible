@@ -329,3 +329,331 @@ def test_a_derive_reducer_is_content_addressed_and_read_back_exactly(tmp_path: P
     other = store.store(b'{"tag":"something-else"}')
     with pytest.raises(CaptureFormatError, match="reducer is invalid"):
         read_derive_reducer(store, other.digest)
+
+
+# -- One Capture per citation (revision 72): own words located in a file ----------------
+
+_LOCATED_CLAIM = "CLM-0123456789abcdef0123456789abcdef"
+_LOCATED_BODY = b"The checks passed.\n"
+# Computed by revision 71's builder (601152d4e) from these exact inputs.
+_UNLOCATED_DIGEST = "sha256:791b750287f66cca00ffc26a2733b9aef91d3968fdabe4eda3fc901f6decc404"
+
+
+def _location(body: bytes = _LOCATED_BODY, source_id: str = "repo.notes"):  # type: ignore[no-untyped-def]
+    import base64
+    import hashlib
+
+    from cruxible_client.contracts.authoring.models import (
+        SectionSelector,
+        WorkingAnchorWindow,
+        WorkingDigestCoordinate,
+        WorkingSelectionObservation,
+    )
+
+    page = b"# Decision\n" + body
+    return WorkingSelectionObservation(
+        source_id=source_id,
+        coordinate=WorkingDigestCoordinate(
+            source_content_digest="sha256:" + hashlib.sha256(page).hexdigest(),
+            source_byte_length=len(page),
+        ),
+        selected_content_base64=base64.b64encode(body).decode("ascii"),
+        selected_bytes_digest="sha256:" + hashlib.sha256(body).hexdigest(),
+        selector=WorkingAnchorWindow(
+            anchor=body.decode("ascii").strip(),
+            start_byte=len(page) - len(body),
+            end_byte=len(page),
+            observed_occurrence_count=1,
+            section=SectionSelector(path=("Decision",)),
+        ),
+    )
+
+
+def _located(tmp_path: Path):  # type: ignore[no-untyped-def]
+    store = body_store(tmp_path)
+    location = _location()
+    result = build_coordinator_self_source_capture(
+        store=store,
+        actor_id="owner",
+        claim_id=_LOCATED_CLAIM,
+        body=_LOCATED_BODY,
+        observed_at=NOW,
+        accepted_coordinate=_accepted_coordinate(),
+        location=location,
+    )
+    return store, location, result
+
+
+def test_located_own_words_are_one_coordinator_capture_sourced_at_their_file(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.captures import (
+        FOREIGN_SOURCE_COORDINATE_TYPE,
+        FOREIGN_SOURCE_SELECTOR_TYPE,
+        coordinator_location_valid,
+    )
+    from cruxible_client.contracts.source_references import ExternalSourceReference
+
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    store, location, result = _located(tmp_path)
+    envelope = result.envelope
+    source = envelope.source
+    assert isinstance(source, ExternalSourceReference)
+    assert source.source_identity == "repo.notes"
+    assert (source.coordinate_type, source.selector_type) == (
+        FOREIGN_SOURCE_COORDINATE_TYPE,
+        FOREIGN_SOURCE_SELECTOR_TYPE,
+    )
+    assert source.coordinate == location.coordinate.model_dump(mode="json")
+    assert source.selector == {
+        "claim_id": _LOCATED_CLAIM,
+        "working_selection": location.selector.model_dump(mode="json"),
+    }
+    assert source.replayability == "attested_only"
+    assert envelope.capture_contract_digest == capture_contract_digest(contract).tagged
+    assert envelope.commitment.digest == location.selected_bytes_digest
+    assert envelope.run_coordinate.run_id == f"coordinator-self-source:{_LOCATED_CLAIM.casefold()}"
+    assert coordinator_location_valid(envelope)
+    assert verify_capture(result.capture_digest, store=store, contract=contract) == envelope
+    assert capture_is_coordinator_self_source(envelope, contract=contract, claim_id=_LOCATED_CLAIM)
+    reuse = classify_capture_reuse(
+        envelope, contract=contract, store=store, claim_id=_LOCATED_CLAIM
+    )
+    assert reuse == "claim_bound"
+    other = classify_capture_reuse(
+        envelope,
+        contract=contract,
+        store=store,
+        claim_id="CLM-abcdefabcdefabcdefabcdefabcdefab",
+    )
+    assert other == "claim_bound_mismatch"
+
+
+def test_a_location_must_select_exactly_the_own_words(tmp_path: Path) -> None:
+    from cruxible_client.contracts.captures import CaptureFormatError
+
+    with pytest.raises(CaptureFormatError, match="exactly the own words"):
+        build_coordinator_self_source_capture(
+            store=body_store(tmp_path),
+            actor_id="owner",
+            claim_id=_LOCATED_CLAIM,
+            body=b"Other words.\n",
+            observed_at=NOW,
+            accepted_coordinate=_accepted_coordinate(),
+            location=_location(),
+        )
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    ["schema", "replayability", "selector_claim", "binding", "foreign_contract"],
+)
+def test_a_located_coordinator_capture_outside_its_one_form_refuses(
+    tmp_path: Path, forgery: str
+) -> None:
+    from cruxible_client.contracts.captures import (
+        CaptureFormatError,
+        coordinator_location_valid,
+        foreign_source_capture_contract,
+        render_capture_envelope,
+    )
+
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    store, _location_used, result = _located(tmp_path)
+    envelope = result.envelope
+    source = envelope.source
+    assert source.kind == "external"
+    selector = dict(source.selector)  # type: ignore[union-attr, arg-type]
+    if forgery == "schema":
+        forged_source = source.model_copy(update={"selector_type": "whole-response-v1"})
+    elif forgery == "replayability":
+        forged_source = source.model_copy(update={"replayability": "exact"})
+    elif forgery == "selector_claim":
+        selector["claim_id"] = "CLM-abcdefabcdefabcdefabcdefabcdefab"
+        forged_source = source.model_copy(update={"selector": selector})
+    elif forgery == "binding":
+        forged_source = source.model_copy(update={"producer_binding_digest": digest("x", "y")})
+    else:
+        forged_source = source
+    forged = envelope.model_copy(update={"source": forged_source})
+    stored = store.store(render_capture_envelope(forged))
+    if forgery == "foreign_contract":
+        # The located form is the coordinator contract's alone: the same envelope
+        # under the file's own contract does not verify as that contract's.
+        with pytest.raises(CaptureFormatError):
+            verify_capture(
+                stored.digest, store=store, contract=foreign_source_capture_contract("repo.notes")
+            )
+        return
+    assert not coordinator_location_valid(forged)
+    with pytest.raises(CaptureFormatError):
+        verify_capture(stored.digest, store=store, contract=contract)
+    assert (
+        classify_capture_reuse(forged, contract=contract, store=store, claim_id=_LOCATED_CLAIM)
+        == "claim_bound_mismatch"
+    )
+
+
+def test_unlocated_own_words_keep_their_exact_bytes(tmp_path: Path) -> None:
+    """``location=None`` builds the very envelope revision 71 built (digest pinned)."""
+
+    from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+
+    store = body_store(tmp_path)
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    unlocated = build_coordinator_self_source_capture(
+        store=store,
+        actor_id="owner",
+        claim_id=_LOCATED_CLAIM,
+        body=_LOCATED_BODY,
+        observed_at=NOW,
+        accepted_coordinate=_accepted_coordinate(),
+    )
+    # The pre-revision-72 composition, spelled out: one CAS observation under the
+    # coordinator contract with the original receipt and binding preimages.
+    coordinate = _accepted_coordinate()
+    expected = build_cas_capture(
+        store=store,
+        contract=contract,
+        source_body=_LOCATED_BODY,
+        run_coordinate=CaptureRunCoordinateV1(
+            run_kind="provider",
+            run_id=f"coordinator-self-source:{_LOCATED_CLAIM.casefold()}",
+            bound_generation=coordinate.generation_root,
+            executable_identity=contract.identity,
+            executable_digest=capture_contract_digest(contract).tagged,
+        ),
+        run_receipt_digest=typed_digest(
+            Sha256Value,
+            "playbill-coordinator-self-source-receipt-v1",
+            {
+                "actor_id": "owner",
+                "body_digest": unlocated.commitment_digest,
+                "claim_id": _LOCATED_CLAIM,
+                "observed_at": NOW.isoformat(),
+            },
+        ).tagged,
+        producer=ArtifactIdentity(kind="Principal", name="owner"),
+        producer_binding_digest=typed_digest(
+            Sha256Value,
+            "playbill-coordinator-self-source-binding-v1",
+            {
+                "actor_id": "owner",
+                "claim_id": _LOCATED_CLAIM,
+                "generation_root": coordinate.generation_root,
+            },
+        ).tagged,
+        observed_at=NOW,
+    )
+    assert unlocated.capture_digest == expected.capture_digest
+    assert unlocated.capture_digest == _UNLOCATED_DIGEST
+    _store, _location_used, located = _located(tmp_path / "located")
+    assert located.capture_digest != unlocated.capture_digest
+    assert located.commitment_digest == unlocated.commitment_digest
+
+
+def test_located_own_words_reproduce_their_commitment_length(tmp_path: Path) -> None:
+    """A located envelope claiming another length than its retained bytes refuses.
+
+    The unlocated (CAS) form already refuses the same forgery; the located form
+    holds the same exact bytes and refuses alike.
+    """
+
+    from cruxible_client.contracts.captures import CaptureFormatError, render_capture_envelope
+
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    store, _location_used, result = _located(tmp_path)
+    unlocated = build_coordinator_self_source_capture(
+        store=store,
+        actor_id="owner",
+        claim_id=_LOCATED_CLAIM,
+        body=_LOCATED_BODY,
+        observed_at=NOW,
+        accepted_coordinate=_accepted_coordinate(),
+    ).envelope
+    located = result.envelope
+    source = located.source
+    selector = dict(source.selector)  # type: ignore[union-attr, arg-type]
+    window = dict(selector["working_selection"])
+    short = len(_LOCATED_BODY) - 1
+    # A window shrunk with the declared length keeps the location consistent;
+    # the retained bytes still say otherwise.
+    window["end_byte"] = window["start_byte"] + short
+    selector["working_selection"] = window
+    forgeries = (
+        unlocated.model_copy(
+            update={"commitment": unlocated.commitment.model_copy(update={"byte_length": 0})}
+        ),
+        located.model_copy(
+            update={
+                "source": source.model_copy(update={"selector": selector}),
+                "commitment": located.commitment.model_copy(update={"byte_length": short}),
+            }
+        ),
+    )
+    for forged in forgeries:
+        digest = store.store(render_capture_envelope(forged)).digest
+        with pytest.raises(CaptureFormatError, match="byte length does not reproduce"):
+            verify_capture(digest, store=store, contract=contract)
+    # Declared alone, the wrong length is not even the located form.
+    lying = located.model_copy(
+        update={"commitment": located.commitment.model_copy(update={"byte_length": 0})}
+    )
+    digest = store.store(render_capture_envelope(lying)).digest
+    with pytest.raises(CaptureFormatError):
+        verify_capture(digest, store=store, contract=contract)
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    ["empty", "no_section", "outside_file", "not_canonical", "unknown_coordinate"],
+)
+def test_a_located_capture_needs_a_real_file_coordinate_and_section_window(
+    tmp_path: Path, forgery: str
+) -> None:
+    """The located form is granted only to a usable location (the review's probe).
+
+    An empty coordinate and working selection, a window with no heading path,
+    one past the observed file's end, a non-canonical spelling or an unknown
+    coordinate kind is not a location drift or re-binding can use.
+    """
+
+    from cruxible_client.contracts.captures import (
+        CaptureFormatError,
+        coordinator_location_valid,
+        render_capture_envelope,
+    )
+
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    store, _location_used, result = _located(tmp_path)
+    envelope = result.envelope
+    source = envelope.source
+    coordinate = dict(source.coordinate)  # type: ignore[union-attr, arg-type]
+    window = dict(source.selector["working_selection"])  # type: ignore[union-attr, index]
+    if forgery == "empty":
+        coordinate, window = {}, {}
+    elif forgery == "no_section":
+        window.pop("section")
+    elif forgery == "outside_file":
+        coordinate["source_byte_length"] = window["end_byte"] - 1
+    elif forgery == "not_canonical":
+        # The model fills in the section's extent: the stored bytes are not its form.
+        window["section"] = {"path": ["Decision"]}
+    else:
+        coordinate["kind"] = "observed_somewhere"
+    forged = envelope.model_copy(
+        update={
+            "source": source.model_copy(
+                update={
+                    "coordinate": coordinate,
+                    "selector": {"claim_id": _LOCATED_CLAIM, "working_selection": window},
+                }
+            )
+        }
+    )
+    assert not coordinator_location_valid(forged)
+    digest = store.store(render_capture_envelope(forged)).digest
+    with pytest.raises(CaptureFormatError):
+        verify_capture(digest, store=store, contract=contract)
+    reuse = classify_capture_reuse(forged, contract=contract, store=store, claim_id=_LOCATED_CLAIM)
+    assert reuse == "claim_bound_mismatch"

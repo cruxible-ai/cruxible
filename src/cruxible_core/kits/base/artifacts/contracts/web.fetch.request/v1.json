@@ -1,0 +1,77 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "One resource to retrieve with one HTTP GET. query parameters are encoded onto url in order, and the built URL is the request its coordinate records. A credential is named by reference; its material stays in the run's secret custody, never in this payload.",
+  "fields": {
+    "credential_header": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+      }
+    },
+    "credential_ref": {
+      "optional": true,
+      "type": {
+        "kind": "string"
+      }
+    },
+    "expected_format": {
+      "optional": true,
+      "type": {
+        "kind": "enum",
+        "members": [
+          "auto",
+          "bytes",
+          "csv",
+          "html",
+          "json",
+          "text"
+        ]
+      }
+    },
+    "logical_source": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    },
+    "max_bytes": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "max": 33554432,
+        "min": 1
+      }
+    },
+    "paced": {
+      "optional": true,
+      "type": {
+        "kind": "bool"
+      }
+    },
+    "query": {
+      "optional": true,
+      "type": {
+        "item": {
+          "contract": {
+            "digest": "sha256:2f01ed6821337f937c6c77bba4910e06a10fb65a57232a1119d858fa672ecb3a",
+            "name": "web.fetch.query_param",
+            "version": 1
+          },
+          "kind": "contract"
+        },
+        "kind": "list",
+        "max_items": 64
+      }
+    },
+    "url": {
+      "type": {
+        "kind": "string",
+        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://\\S+$"
+      }
+    }
+  },
+  "name": "web.fetch.request",
+  "version": 1
+}

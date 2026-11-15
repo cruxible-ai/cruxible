@@ -1,0 +1,38 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "A derive over one Capture this run fetched (an HTML document): text is its main content as Markdown; json is canonical JSON {url, final_url, title?, text, links}. Pure: it reads only the Capture's bytes and contacts nothing.",
+  "fields": {
+    "form": {
+      "type": {
+        "kind": "enum",
+        "members": [
+          "json",
+          "text"
+        ]
+      }
+    },
+    "logical_source": {
+      "optional": true,
+      "type": {
+        "kind": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,255}$"
+      }
+    },
+    "max_bytes": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "max": 33554432,
+        "min": 1
+      }
+    },
+    "source": {
+      "type": {
+        "capture_kind": "*",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "web.render.request",
+  "version": 1
+}

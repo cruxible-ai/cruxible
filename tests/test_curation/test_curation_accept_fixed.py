@@ -170,7 +170,8 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
     )
 
     assert (result.status, result.item.status) == ("recorded", "accepted_fixed")
-    assert result.item.resolved_at_generation == 2
+    # Generation 1 is creation's base kit.
+    assert result.item.resolved_at_generation == 3
     assert result.item.accepted_changeset_digest == record.changeset_digest
     assert instance.accepted_coordinate() == accepted_before_action
 
@@ -219,7 +220,7 @@ def test_accept_fixed_resolves_the_change_from_a_proposal_id_or_a_generation(
             **(
                 {"accepted_proposal_id": second.proposal.admission.proposal_id}
                 if named_by == "proposal"
-                else {"accepted_generation": 2}
+                else {"accepted_generation": 3}
             ),
         ),
         actor_context=_actor(),

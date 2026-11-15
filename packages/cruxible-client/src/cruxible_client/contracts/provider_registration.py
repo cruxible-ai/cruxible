@@ -16,8 +16,9 @@ gates on it). The same block is embedded in the provider build artifact.
 
 :func:`evaluate_declared_operations` is the registration law: every reference
 resolves inside ``declares``, the block carries exactly what the operations
-reach, carried layouts are sound, and no operation serves a ``workspace.``
-capability, which only core's builtin serves.
+reach, carried layouts are sound, no operation serves a ``workspace.``
+capability, which only core's builtin serves, and no operation's result
+Contract is itself a Capture: a Capture is always a named ``capture<K>`` field.
 """
 
 from __future__ import annotations
@@ -26,8 +27,9 @@ import re
 import unicodedata
 from collections import deque
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Annotated, Final, Literal, TypeAlias
+from typing import Annotated, Final, Literal, TypeAlias, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -50,10 +52,20 @@ from cruxible_client.contracts.provider_operations import (
     OperationEffect,
     OperationRefusal,
     OperationSignature,
+    capture_fields,
+    capture_list_fields,
 )
 from cruxible_client.contracts.shapes import (
     Contract,
     ContractRef,
+    DateTimeType,
+    DecimalType,
+    EnumOfType,
+    EnumType,
+    FieldType,
+    IntType,
+    NumberType,
+    StringType,
     all_field_refs,
     contract_digest,
     parse_contract_ref,
@@ -84,6 +96,7 @@ PROVIDER_DECLARED_CONTRACT_MISMATCH: Final = "cruxible.provider.declared_contrac
 PROVIDER_DECLARED_CONTRACT_UNPINNED: Final = "cruxible.provider.declared_contract_unpinned"
 PROVIDER_DECLARED_CAPTURE_KIND_MISSING: Final = "cruxible.provider.declared_capture_kind_missing"
 PROVIDER_DECLARED_UNREACHED: Final = "cruxible.provider.declared_unreached"
+PROVIDER_RESULT_IS_CAPTURE: Final = "cruxible.provider.result_is_capture"
 
 #: Every code the registration law returns itself (a carried layout's problems keep
 #: their own ``cruxible.capture_kind.*`` codes).
@@ -94,6 +107,7 @@ RegistrationLawCode = Literal[
     "cruxible.provider.declared_contract_unpinned",
     "cruxible.provider.declared_capture_kind_missing",
     "cruxible.provider.declared_unreached",
+    "cruxible.provider.result_is_capture",
 ]
 
 
@@ -445,6 +459,62 @@ class PackageRegistration(_Strict):
 # -- the registration law ------------------------------------------------------------------
 
 
+def _admits_literal(field_type: FieldType, value: str) -> bool:
+    if isinstance(field_type, EnumType):
+        return value in field_type.members
+    if isinstance(field_type, EnumOfType):
+        return True  # its members live on a ClaimType; it may admit the value
+    if isinstance(field_type, StringType):
+        return (
+            (field_type.pattern is None or re.fullmatch(field_type.pattern, value) is not None)
+            and (field_type.min_len is None or len(value) >= field_type.min_len)
+            and (field_type.max_len is None or len(value) <= field_type.max_len)
+        )
+    return False
+
+
+def _admits_wire_value(field_type: FieldType, annotation: object) -> bool:
+    """Whether a wire field's value (typed ``annotation`` in the wire model) could
+    validate against ``field_type``; anything the model leaves open admits."""
+
+    if get_origin(annotation) is Literal:
+        return any(_admits_literal(field_type, str(member)) for member in get_args(annotation))
+    if annotation is str:
+        return isinstance(field_type, StringType | EnumType | EnumOfType)
+    if annotation is int:
+        return isinstance(field_type, IntType | NumberType | DecimalType)
+    if annotation is datetime:
+        return isinstance(field_type, DateTimeType | StringType)
+    return True
+
+
+def spells_capture_wire(contract: Contract) -> bool:
+    """Whether ``contract`` could itself be a Capture's wire, rather than carry one.
+
+    That is a result Contract with no ``capture<K>`` field that declares every
+    required field of the wire a provider returns a Capture in
+    (``ProviderResultToExternalCapture``), each with a type the wire's value could
+    validate against, and whose other wire fields it declares (``tag``,
+    ``content_encoding``) admit the wire's values. A record with a different tag,
+    an incompatible field type, or a named Capture field is an ordinary record.
+    Cost: linear in the Contract's fields.
+    """
+
+    from cruxible_client.contracts.captures import ProviderResultToExternalCapture
+
+    if capture_fields(contract) or capture_list_fields(contract):
+        return False
+    for name, info in ProviderResultToExternalCapture.model_fields.items():
+        declared = contract.fields.get(name)
+        if declared is None:
+            if info.is_required():
+                return False
+            continue
+        if not _admits_wire_value(declared.type, info.annotation):
+            return False
+    return True
+
+
 def evaluate_declared_operations(
     operations: Sequence[DeclaredOperation], declares: ProviderDeclares
 ) -> tuple[LawProblem, ...]:
@@ -456,8 +526,10 @@ def evaluate_declared_operations(
     digest and they resolve inside ``declares``; every ``capture<K>`` the reached
     Contracts name is a carried CaptureKind, whose layout's rows and field-rule
     types are reached in turn (their Contracts and named kinds, transitively);
-    carried layouts pass the layout law; and ``declares`` carries nothing the
-    operations do not reach. ``built_against`` is a record and is not judged.
+    carried layouts pass the layout law; no operation's ``out`` Contract spells
+    the Capture wire (:func:`spells_capture_wire`); and ``declares`` carries
+    nothing the operations do not reach. ``built_against`` is a record and is
+    not judged.
     """
 
     problems: list[LawProblem] = []
@@ -521,6 +593,17 @@ def evaluate_declared_operations(
 
     for operation in operations:
         pending.extend((ref, f"operation `{operation.name}`") for ref in operation.contract_refs())
+        out = carried.get((operation.out.name, operation.out.version))
+        if out is not None and spells_capture_wire(out):
+            problems.append(
+                LawProblem(
+                    PROVIDER_RESULT_IS_CAPTURE,
+                    f"operation `{operation.name}` returns {operation.out.spelling}, which "
+                    "spells a Capture's wire as its own fields; a Capture is a named field of "
+                    "the result Contract: declare it as `capture: capture<*>` (or "
+                    "capture<K>) and return the Capture in that field.",
+                )
+            )
     while pending:
         ref, owner = pending.popleft()
         found = check(ref, owner=owner)
@@ -600,6 +683,7 @@ __all__ = [
     "PROVIDER_DECLARED_CONTRACT_MISSING",
     "PROVIDER_DECLARED_CONTRACT_UNPINNED",
     "PROVIDER_DECLARED_UNREACHED",
+    "PROVIDER_RESULT_IS_CAPTURE",
     "REGISTRATION_SCHEMA_VERSION",
     "BuiltAgainst",
     "BuiltAgainstCapability",
@@ -614,4 +698,5 @@ __all__ = [
     "capability_reserved_message",
     "evaluate_declared_operations",
     "evaluate_registration_law",
+    "spells_capture_wire",
 ]

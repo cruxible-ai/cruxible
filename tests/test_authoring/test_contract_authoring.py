@@ -472,18 +472,30 @@ def test_orient_pages_the_contracts_section(tmp_path: Path) -> None:
     from cruxible_core.service.discovery.orient import service_playbill_orient
 
     instance = accept_contract_world(tmp_path)
-    # Three authored versions plus all seven genesis Contracts, by name/version.
+    # Three authored versions plus the base kit's Contracts, by name/version.
     expected = [
         "security.epss-page@1",
         "security.epss-row@1",
         "security.epss-row@2",
-        "workspace.file.content@1",
-        "workspace.file.refusal.invalid_parameter@1",
-        "workspace.file.refusal.mismatched_lengths@1",
-        "workspace.file.refusal.provider_declined@1",
+        "web.fetch.pages.failure@1",
+        "web.fetch.pages.request@1",
+        "web.fetch.pages.result@1",
+        "web.fetch.query_param@1",
+        "web.fetch.request@1",
+        "web.fetch.result@1",
+        "web.render.dom.request@1",
+        "web.render.dom.result@1",
+        "web.render.request@1",
+        "web.render.result@1",
+        "web.search-result@1",
+        "web.search.request@1",
+        "web.search.result@1",
+        "web.search.results.request@1",
+        "web.search.results.result@1",
         "workspace.file.request@1",
         "workspace.file.result@1",
-        "workspace.file.source@1",
+        "workspace.files.request@1",
+        "workspace.files.result@1",
     ]
     page = service_playbill_orient(instance, section="contracts", limit=2)
     coordinate = page.coordinate
@@ -507,14 +519,11 @@ def test_orient_pages_the_contracts_section(tmp_path: Path) -> None:
             )
         else:
             assert page.next_cursor is None
-    assert seen == expected and len(set(seen)) == 10
-    assert pins == {
-        name: (
-            ("security.epss-row@2",)
-            if name == "security.epss-page@1"
-            else ("workspace.file.content@1", "workspace.file.source@1")
-            if name == "workspace.file.result@1"
-            else ()
-        )
-        for name in expected
+    assert seen == expected and len(set(seen)) == len(expected)
+    nested = {
+        "security.epss-page@1": ("security.epss-row@2",),
+        "web.fetch.pages.request@1": ("web.fetch.query_param@1",),
+        "web.fetch.pages.result@1": ("web.fetch.pages.failure@1",),
+        "web.fetch.request@1": ("web.fetch.query_param@1",),
     }
+    assert pins == {name: (nested.get(name, ())) for name in expected}

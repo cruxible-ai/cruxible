@@ -16,7 +16,9 @@ from cruxible_client.contracts.subjects import SubjectShell, render_subject, sub
 from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION
 from cruxible_core.indexes.sqlite import ProjectionIntegrityError, bind_projection
 from cruxible_core.runtime.instance import PlaybillInstance
-from tests.core_support._support import initialize_local
+
+# Counts projections and Documents from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 

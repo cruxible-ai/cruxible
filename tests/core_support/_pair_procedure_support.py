@@ -134,7 +134,7 @@ def _capture_contract() -> Any:
         lower_capture_contract_input(
             CaptureContractInputRecord(
                 name=CAPTURE,
-                shape="database_snapshot",
+                shape="http_response",
                 replay="exact",
                 max_bytes=4_194_304,
                 decoding=JSON_DECODING,
@@ -328,10 +328,6 @@ def pair_spec(
                 "input": {
                     "logical_source": source,
                     "relative_path": f"data/{doc}.json",
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 7, "relation": doc},
                 },
             },
             {

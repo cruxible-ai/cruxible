@@ -23,6 +23,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.capabilities import CapabilityRef
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
     CaptureRetentionErasurePolicy,
@@ -1242,6 +1243,8 @@ def test_line_replay_key_membership_is_closed(tmp_path) -> None:
     binding = ProcedureProviderBinding(
         node_id="provider",
         slot="fetch",
+        capability=CapabilityRef(name="test.fetch", version=1, digest="sha256:" + "c" * 64),
+        fit="identical",
         operation="read",
         operation_signature_digest=_digest("signature"),
         provider_artifact_digest=_digest("provider"),
@@ -1770,6 +1773,8 @@ def test_provider_bindings_are_exactly_the_acquisition_plans_own(tmp_path) -> No
     stray = ProcedureProviderBinding(
         node_id="provider",
         slot="fetch",
+        capability=CapabilityRef(name="test.fetch", version=1, digest="sha256:" + "c" * 64),
+        fit="identical",
         operation="read",
         operation_signature_digest=_digest("signature"),
         provider_artifact_digest=_digest("provider"),

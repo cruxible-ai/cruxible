@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from cruxible_client.contracts.procedures.acquisition_rules import (
     AcquisitionRule,
     resolve_acquisition_rules,
@@ -11,7 +13,6 @@ from cruxible_client.contracts.provider_execution import (
     VerifiedProviderBinding,
 )
 from cruxible_client.contracts.provider_registration import DeclaredOperation
-from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
 from cruxible_core.procedures.ports import (
     ResolvedAcquisitionRules,
     bound_operation,
@@ -69,23 +70,28 @@ def _occurrence(
     )
 
 
-def test_bound_operation_names_the_workspace_builtin() -> None:
+@pytest.mark.parametrize("name", ["workspace.file", "workspace.files"])
+def test_bound_operation_names_the_workspace_builtin(name: str) -> None:
     from cruxible_client.contracts.shapes import contract_digest
-    from cruxible_client.contracts.workspace_file import workspace_file_contracts
+    from cruxible_client.contracts.workspace_file import (
+        workspace_file_contracts,
+        workspace_read_signature_digest,
+    )
 
-    _source, _content, request, result = workspace_file_contracts()
+    handoff, file_result, files_result = workspace_file_contracts()
+    result = file_result if name == "workspace.file" else files_result
     operation = declared_operation(
         {
-            "name": "workspace.file",
+            "name": name,
             "in": {
-                "name": "workspace.file.request",
+                "name": "workspace.file.handoff",
                 "version": 1,
-                "digest": contract_digest(request).tagged,
+                "digest": contract_digest(handoff).tagged,  # type: ignore[arg-type]
             },
             "out": {
-                "name": "workspace.file.result",
+                "name": result.name,  # type: ignore[attr-defined]
                 "version": 1,
-                "digest": contract_digest(result).tagged,
+                "digest": contract_digest(result).tagged,  # type: ignore[arg-type]
             },
             "effect": "pure",
             "entrypoint": "pkg.mod:fn",
@@ -95,11 +101,12 @@ def test_bound_operation_names_the_workspace_builtin() -> None:
         _occurrence(
             kind="source",
             operation=operation,
-            signature_digest=workspace_file_signature_digest(),
+            signature_digest=workspace_read_signature_digest(name),  # type: ignore[arg-type]
         )
     )
-    assert bound.builtin == "workspace.file"
-    assert bound.out_digest == contract_digest(result).tagged
+    # Each of the builtin's two reads is recognised by its own exact signature.
+    assert bound.builtin == name
+    assert bound.out_digest == contract_digest(result).tagged  # type: ignore[arg-type]
 
 
 def test_bound_operation_reads_a_call_occurrence() -> None:

@@ -34,9 +34,11 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
     DIRECT_SELF_ASSERTED_CONTRACT_ID,
     FOREIGN_SOURCE_COORDINATE_TYPE,
+    FOREIGN_SOURCE_SELECTOR_TYPE,
     AcceptedCaptureContract,
     CaptureContractV1,
     CaptureEnvelopeAny,
+    CaptureFormatError,
     CaptureObjectStoreProtocol,
     CaptureProductionUnproven,
     CaptureShape,
@@ -55,6 +57,7 @@ from cruxible_client.contracts.captures import (
     capture_is_direct_self_source,
     capture_retained_body_digests,
     classify_capture_reuse,
+    coordinator_location_valid,
     foreign_source_contract_id,
     is_coordinator_self_source_contract,
     parse_capture_envelope,
@@ -2004,8 +2007,19 @@ def _rebind_replaces(
     store: CaptureObjectStoreProtocol,
     capture_contracts: Mapping[str, AcceptedCaptureContract],
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+    claim_id: str,
 ) -> bool:
     """Whether each dropped citation has a new one of its role, origin and contract.
+
+    One collapse (Claim law v4 revision 3): own words once located by a second
+    Capture -- a copy, independent, under the file's foreign-source contract,
+    whose working selection is bound to this Claim, dropped together with the
+    Claim's unlocated own words over the same bytes (the pair's other half) --
+    are replaced by the one located own-words Capture (a copy, self_source,
+    under the coordinator contract) whose location names the same file. The
+    pair's own-words half is replaced by the same new citation under the
+    ordinary rule. A copy with no such own-words half is no pair and keeps the
+    ordinary rule.
 
     Reads the envelopes of the dropped and the newly added citations only: the
     cost is this Claim's change, never its whole history.
@@ -2023,8 +2037,76 @@ def _rebind_replaces(
         )
 
     offered = {(item.role, item.origin, contract(item)) for item in added}
+    coordinator = f"CaptureContract:{COORDINATOR_SELF_SOURCE_CONTRACT_ID}"
+    located_sources: set[str] | None = None
+
+    def offered_locations() -> set[str]:
+        nonlocal located_sources
+        if located_sources is None:
+            located_sources = set()
+            for item in added:
+                if (item.role, item.origin) != ("copy", "self_source"):
+                    continue
+                if contract(item) != coordinator:
+                    continue
+                envelope = _stored_capture_envelope(store, item.capture_digest)
+                if envelope is not None and coordinator_location_valid(envelope):
+                    assert isinstance(envelope.source, ExternalSourceReference)
+                    located_sources.add(envelope.source.source_identity)
+        return located_sources
+
+    own_words_halves: set[str] | None = None
+
+    def dropped_own_words() -> set[str]:
+        """What the dropped unlocated own words of this Claim commit to: a pair's other half."""
+
+        nonlocal own_words_halves
+        if own_words_halves is None:
+            own_words_halves = set()
+            for other in dropped:
+                if (other.role, other.origin) != ("copy", "self_source"):
+                    continue
+                if contract(other) != coordinator:
+                    continue
+                envelope = _stored_capture_envelope(store, other.capture_digest)
+                if (
+                    envelope is not None
+                    and isinstance(envelope.source, CasSourceReference)
+                    and envelope.run_coordinate.run_id
+                    == f"coordinator-self-source:{claim_id.casefold()}"
+                ):
+                    own_words_halves.add(envelope.commitment.digest)
+        return own_words_halves
+
+    def collapses(item: ClaimCitation, identity: str) -> bool:
+        if (item.role, item.origin) != ("copy", "independent"):
+            return False
+        envelope = _stored_capture_envelope(store, item.capture_digest)
+        if envelope is None or not isinstance(envelope.source, ExternalSourceReference):
+            return False
+        source = envelope.source
+        selector = source.selector
+        try:
+            foreign = f"CaptureContract:{foreign_source_contract_id(source.source_identity)}"
+        except CaptureFormatError:
+            return False
+        return (
+            identity == foreign
+            and source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+            and source.selector_type == FOREIGN_SOURCE_SELECTOR_TYPE
+            and isinstance(selector, dict)
+            and selector.get("claim_id") == claim_id
+            and isinstance(selector.get("working_selection"), dict)
+            # Only a revision-71 pair collapses: the same revision drops the
+            # Claim's own words over these very bytes. A standalone copy keeps
+            # the ordinary rule (replaced under its own contract).
+            and envelope.commitment.digest in dropped_own_words()
+            and source.source_identity in offered_locations()
+        )
+
     return all(
-        (identity := contract(item)) is not None and (item.role, item.origin, identity) in offered
+        (identity := contract(item)) is not None
+        and ((item.role, item.origin, identity) in offered or collapses(item, identity))
         for item in dropped
     )
 
@@ -2412,6 +2494,7 @@ def evaluate_claim_law(
                 store=capture_store,
                 capture_contracts=capture_contracts,
                 historical_capture_contract=historical_capture_contract,
+                claim_id=claim.identity.name,
             ):
                 return _diagnostic(
                     "cruxible.claim.rebind_unmatched",

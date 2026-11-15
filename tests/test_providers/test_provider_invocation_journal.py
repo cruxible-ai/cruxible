@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.capabilities import CapabilityRef
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
@@ -183,6 +184,7 @@ def _bind(accepted: AcceptedProcedure, provider: AcceptedProvider) -> AcceptedPr
     direct-run spec would (ruling C4) -- one slot, one build, by name.
     """
     from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
+    from cruxible_client.contracts.shapes import ContractRef, contract_digest
     from cruxible_core.procedures.reference_binding import bind_procedure_references
     from tests.core_support._p2b1_support import digest as _p2b1_digest
 
@@ -193,6 +195,14 @@ def _bind(accepted: AcceptedProcedure, provider: AcceptedProvider) -> AcceptedPr
         if identity.kind == "Provider" and identity == provider.provider.identity:
             return provider.provider, provider.artifact_digest
         if identity.kind == "Contract":
+            # The operation's own Contracts resolve (the capability pins them);
+            # the graph's named pins are stand-ins.
+            name, _, version = identity.name.rpartition("/v")
+            carried = provider.provider.declares.lookup()(
+                ContractRef(name=name, version=int(version))
+            )
+            if carried is not None:
+                return carried, contract_digest(carried).tagged
             return object(), _p2b1_digest(identity.name)
         if identity.kind == "EffectPolicy":
             return object(), _digest("effect-policy")
@@ -270,7 +280,11 @@ def _accepted_one_provider(
         nodes=(graph_node,),
         returns=returns,
         slots={
-            SLOT: pinned_slot(signature_capability(operation_signature, name="test.invocation"))
+            SLOT: pinned_slot(
+                signature_capability(
+                    operation_signature, name=provider.provider.operations[0].serves[0]
+                )
+            )
         },
         hard_caps=procedure_hard_caps(preset="provider", max_wall_clock=max_wall_clock),
     )
@@ -338,6 +352,8 @@ def _prepared_acquisition_run(
         node_id=node.node_id,
         repeat_node_id=repeat_node_id,
         slot=SLOT,
+        capability=CapabilityRef(name="pilot.fixture", version=1, digest="sha256:" + "c" * 64),
+        fit="identical",
         provider_artifact_digest=provider.artifact_digest,
         operation=operation,
         operation_signature_digest=operation_signature_digest(operation.signature()),
@@ -460,7 +476,7 @@ def test_provider_call_journals_completed_receipt_before_progress(
     assert isinstance(state.receipt, ProcedureRunReceipt)
     assert state.receipt.invocation_origin == "line"
     (binding,) = state.receipt.resolved_provider_bindings
-    assert binding.tag == "cruxible-procedure-provider-binding-v4"
+    assert binding.tag == "cruxible-procedure-provider-binding-v5"
     assert binding.operation == "compute"
     assert state.receipt.invocation_receipt_digests == (
         payload["receipt_digest"],  # type: ignore[index]

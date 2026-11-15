@@ -64,7 +64,7 @@ def test_carried_section_write_does_constant_work_at_20_and_200_subjects(tmp_pat
         (request,) = client.write_requests
         assert (
             request.changes[0].evidence.observation.selected_content
-            == b"# Basis\nThe check passed.\n"
+            == b"# Basis\nThe check passed.\n\n"
         )
         measured.append(
             (

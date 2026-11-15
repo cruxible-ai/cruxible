@@ -131,10 +131,6 @@ def sbom_pairs_spec() -> Any:
                 "input": {
                     "logical_source": SOURCE,
                     "relative_path": SBOM_PATH,
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 1, "relation": "sbom"},
                 },
             },
             {

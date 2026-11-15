@@ -535,6 +535,22 @@ def render_claim_type(claim_type: ClaimType) -> bytes:
     return pretty_canonical_bytes(claim_type.model_dump(mode="json"))
 
 
+def retired_successor(current: ClaimType) -> ClaimType:
+    """The successor that retires ``current``: the same definition, marked retired.
+
+    One spelling for every road that retires a field (``changes.retire_claim_type``,
+    ``cruxible claim-type retire``): the bytes, and so the digest, are the same.
+    """
+
+    return current.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=claim_type_digest(current).tagged
+            )
+        }
+    )
+
+
 _CLAIM_TYPE_PARSES: ParseMemo[ClaimType] = ParseMemo(capacity=1024, max_bytes=16 * 1024 * 1024)
 
 
@@ -928,6 +944,7 @@ def evaluate_claim_type_law(
 
 
 __all__ = [
+    "retired_successor",
     "AcceptedClaimType",
     "CLAIM_TYPE_FORMAT",
     "ClaimInverse",

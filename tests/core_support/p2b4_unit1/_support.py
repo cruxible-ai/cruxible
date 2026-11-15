@@ -9,6 +9,7 @@ from pathlib import Path
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.capabilities import CapabilityRef
 from cruxible_client.contracts.captures import (
     CaptureContract,
     ProviderResultToExternalCapture,
@@ -132,6 +133,8 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         node_id="source-orders",
         input_name="orders",
         slot="orders",
+        capability=CapabilityRef(name="pilot.fixture", version=1, digest="sha256:" + "c" * 64),
+        fit="identical",
         provider_artifact_digest=provider_digest,
         operation=operation,
         operation_signature_digest=operation_sig_digest,
@@ -174,6 +177,8 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         deployment_digest=deployment_digest,
         operation=local.operation,
         operation_signature_digest=local.operation_signature_digest,
+        capability=occurrence.capability,
+        fit=occurrence.fit,
         protocol_version="2.0",
         capture_contracts={"capture": capture_contract_digest(contract).tagged},
         input_digest=digest("input", "source"),

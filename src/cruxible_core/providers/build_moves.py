@@ -4,8 +4,9 @@ A Procedure names no provider build: each provider-calling node names a slot,
 and a Line binds every slot to one exact ``{build, operation}``. Moving to
 another build is therefore a change to Lines (``provider move``, or a ``kit
 add`` that ships a new build of a provider some Line binds): each binding to
-the old build moves to the new build's operation serving the same exact
-signature, in a Line successor, in the same change set.
+the old build moves to the new build's operation that serves the slot's
+capability and fits it (the operation of the same name first), in a Line
+successor, in the same change set.
 
 A Line successor is a new Line digest, so a grant never follows it (ruling C3):
 each Mandate pinning the old Line digest takes a same-name propose-only
@@ -33,6 +34,12 @@ from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     parse_procedure,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    SlotFitter,
+    SlotNeed,
+    judge_slot_binding,
+    operation_spelling,
 )
 from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
@@ -69,8 +76,8 @@ _STOPPED_KINDS = {"line": "line", "procedure-mandate": "mandate"}
 
 
 class ProviderBuildMoveRefused(ValueError):
-    """A Line cannot move to the target build: the build serves no operation with a
-    bound slot's exact signature (``reason`` = ``contract_changed``)."""
+    """A Line cannot move to the target build: no operation of it serves a bound slot's
+    capability and fits it (``reason`` = ``contract_changed``)."""
 
     def __init__(self, message: str, *, reason: str = "contract_changed") -> None:
         super().__init__(message)
@@ -85,12 +92,23 @@ class ProviderBuildMove:
     target: ArtifactPin
     source_operations: tuple[DeclaredOperation, ...]
     target_operations: tuple[DeclaredOperation, ...]
+    target_build: ProviderV2
 
-    def moved(self, binding: LineBinding) -> LineBinding:
-        """The binding on the target build: its operation with the same exact signature.
+    def moved(
+        self,
+        slot: str,
+        need: SlotNeed,
+        binding: LineBinding,
+        *,
+        build: ProviderV2,
+        fitter: SlotFitter,
+    ) -> LineBinding:
+        """The binding on the target build: an operation serving the slot's capability that
+        fits it.
 
-        The operation of the same name wins when it serves that signature; else the
-        one target operation that does. Anything else refuses ``contract_changed``.
+        The operation of the same name wins when it serves and fits; else the one
+        target operation that does. Anything else refuses ``contract_changed``,
+        naming why the operations offered do not fit.
         """
 
         old = next(
@@ -100,19 +118,38 @@ class ProviderBuildMove:
             raise ProviderBuildMoveRefused(
                 f"{binding.spelling} names no operation of {self.source.target.name}"
             )
-        fitting = [
-            item for item in self.target_operations if item.signature().same_as(old.signature())
-        ]
-        chosen = next((item for item in fitting if item.name == old.name), None)
-        if chosen is None and len(fitting) == 1:
-            chosen = fitting[0]
-        if chosen is None:
-            raise ProviderBuildMoveRefused(
-                f"{self.target.target.name} serves "
-                + ("no" if not fitting else "several")
-                + f" operation with {old.signature().spelling()}"
+        offered = sorted(
+            self.target_operations, key=lambda item: (item.name != old.name, item.name)
+        )
+        fitting: list[DeclaredOperation] = []
+        reasons: list[str] = []
+        for operation in offered:
+            verdict = judge_slot_binding(
+                slot,
+                need,
+                build,
+                self.target.artifact_digest,
+                operation,
+                spelling=operation_spelling(self.target.target.name, operation.name),
+                fitter=fitter,
             )
-        return LineBinding(build=self.target, operation=chosen.name)
+            if verdict.problem is None:
+                if operation.name == old.name:
+                    return LineBinding(build=self.target, operation=operation.name)
+                fitting.append(operation)
+            elif need.pin.name in operation.serves or need.builtin:
+                reasons.append(verdict.problem[1])
+        if len(fitting) == 1:
+            return LineBinding(build=self.target, operation=fitting[0].name)
+        if fitting:
+            raise ProviderBuildMoveRefused(
+                f"{self.target.target.name} serves slot {slot!r} ({need.spelling}) with several "
+                "operations: " + ", ".join(item.name for item in fitting)
+            )
+        raise ProviderBuildMoveRefused(
+            f"{self.target.target.name} serves no operation that fits slot {slot!r} "
+            f"({need.spelling})" + (": " + " ".join(reasons) if reasons else "")
+        )
 
 
 @dataclass(frozen=True)
@@ -163,6 +200,7 @@ def build_move(tree: Mapping[str, bytes], source: str, target: str) -> ProviderB
         target=new_pin,
         source_operations=old.operations,
         target_operations=new.operations,
+        target_build=new,
     )
 
 
@@ -182,13 +220,23 @@ def _rebound_line(
     previous = parse_line_spec(tree[path], path=path)
     line = parse_line_spec(overlay[path], path=path) if path in overlay else previous
     bindings = dict(line.bindings)
+    needs: dict[str, SlotNeed] | None = None
+    fitter: SlotFitter | None = None
     for key, binding in line.bindings.items():
         if path in overlay and previous.bindings.get(key) != binding:
             continue  # Preserve an explicit binding authored with the release.
         move = moves.get(binding.build.target.qualified)
         if move is None or move.source.artifact_digest != binding.build.artifact_digest:
             continue
-        bindings[key] = move.moved(binding)
+        if needs is None or fitter is None:
+            needs, fitter = _line_needs(ChainMap(cast(Any, overlay), cast(Any, tree)), line)
+        need = needs.get(key)
+        if need is None:
+            raise ProviderBuildMoveRefused(
+                f"{line.identity.qualified} binds slot {key!r}, which its Procedure does "
+                "not declare"
+            )
+        bindings[key] = move.moved(key, need, binding, build=move.target_build, fitter=fitter)
     if bindings == line.bindings:
         return None
     return render_line_spec(
@@ -201,6 +249,42 @@ def _rebound_line(
             }
         )
     )
+
+
+def _line_needs(view: Mapping[str, bytes], line: Any) -> tuple[dict[str, SlotNeed], SlotFitter]:
+    """The slots a Line binds, resolved in ``view``, and a fitter over the same view."""
+
+    from cruxible_client.contracts.capabilities import tree_capability_resolver
+    from cruxible_client.contracts.procedures.artifacts import procedure_path
+    from cruxible_client.contracts.procedures.line_specs import (
+        SlotCapabilityUnresolved,
+        line_slot_needs,
+    )
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+    from cruxible_core.providers.operation_index import (
+        line_child_definitions,
+        memoized_slot_fitter,
+        tree_capability_side,
+    )
+
+    def definition(identity: ArtifactIdentity) -> Any:
+        target = procedure_path(identity.name)
+        content = view.get(target)
+        return None if content is None else parse_procedure(content, path=target).definition
+
+    procedure = definition(line.procedure.target)
+    if procedure is None:
+        raise ProviderBuildMoveRefused(f"{line.identity.qualified}: its Procedure is not here")
+    try:
+        needs = line_slot_needs(
+            procedure,
+            capabilities=tree_capability_resolver(view),
+            builtin_names=BUILTIN_CAPABILITY_NAMES,
+            child=line_child_definitions(procedure, definition),
+        )
+    except (SlotCapabilityUnresolved, ValueError) as exc:
+        raise ProviderBuildMoveRefused(f"{line.identity.qualified}: {exc}") from exc
+    return needs, memoized_slot_fitter(tree_capability_side(view))
 
 
 def _stopped(

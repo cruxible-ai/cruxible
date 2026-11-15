@@ -1,7 +1,8 @@
 """In-process execution of core built-in Providers.
 
 A built-in is an ordinary governed Provider artifact (seeded at genesis) whose
-implementation is core code: ``workspace.file`` is the one today. Its binding is
+implementation is core code: the workspace reads (``workspace.file`` and
+``workspace.files``) are the only one today. Its binding is
 a constant -- the deployment, materialization and environment-manifest digests
 are compiler-owned (``governance/seed_artifacts/workspace_file.py``) -- and its
 invocation is a function call in the daemon's own process, with no child, no
@@ -137,12 +138,14 @@ class BuiltinImplementation:
 #: adapter, in place. A guard test pins the keys
 #: (tests/test_providers/test_builtin_workspace_file.py).
 _BUILTIN_REVISIONS: tuple[BuiltinImplementation, ...] = (
-    # Revision 1 (2026-10-07): ported from a provider package's file reader
-    # (cruxible-providers db085204; that package is deleted, its envelopes are
-    # recorded in tests/fixtures/workspace_file_parity.json).
+    # Revision 2 (2026-11-13): the adapter checks the bytes core read and returns
+    # an empty output; core commits them as the call's capture field. It replaces
+    # revision 1 (a structuring port of a provider package's file reader), under
+    # which nothing was published. Its envelopes are recorded in
+    # tests/fixtures/workspace_file_parity.json.
     BuiltinImplementation(
         identity=workspace_file_builtin_identity(
-            "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
+            "sha256:04922994e7747b10f7a84726512d7b537d89d37655ca63a926bbb216dfdc25a5"
         ),
         adapter=WorkspaceFile(),
     ),

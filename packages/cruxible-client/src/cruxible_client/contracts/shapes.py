@@ -524,7 +524,9 @@ class _Spelling:
             if match is None or match.end() == position:
                 if text[position:].strip() == "":
                     break
-                raise ContractFormatError(f"cannot read the type {text!r} at {position}")
+                raise ContractFormatError(
+                    f"cannot read the type {text!r} at {position}" + _enum_spelling_hint(text)
+                )
             group = match.lastgroup
             assert group is not None
             self.tokens.append((group, match.group(group)))
@@ -573,12 +575,15 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
     if name in _SIMPLE_TYPES:
         return {"kind": name}
     if name == "enum":
-        reader.take("sym", "[")
-        members = [_read_literal_text(reader)]
-        while reader.at_symbol(","):
-            reader.take("sym", ",")
-            members.append(_read_literal_text(reader))
-        reader.take("sym", "]")
+        try:
+            reader.take("sym", "[")
+            members = [_read_literal_text(reader)]
+            while reader.at_symbol(","):
+                reader.take("sym", ",")
+                members.append(_read_literal_text(reader))
+            reader.take("sym", "]")
+        except ContractFormatError as error:
+            raise ContractFormatError(str(error) + _enum_spelling_hint(reader.text)) from error
         return {"kind": "enum", "members": members}
     if name == "enum_of":
         if reader.at_symbol(":"):
@@ -657,6 +662,17 @@ def _read_ref(reader: _Spelling) -> dict[str, Any]:
     reader.take("sym", "@")
     _n, version = reader.take("num")
     return _ref(name, version)
+
+
+def _enum_spelling_hint(text: str) -> str:
+    """The repair for an enum spelling that does not read, else nothing."""
+
+    if not text.lstrip().startswith("enum"):
+        return ""
+    return (
+        ": quote a member that is not a plain name or number, such as a version "
+        '(enum["0.5.0", next]), or pass the model: EnumType(members=("0.5.0", "next"))'
+    )
 
 
 def _read_literal_text(reader: _Spelling) -> str:

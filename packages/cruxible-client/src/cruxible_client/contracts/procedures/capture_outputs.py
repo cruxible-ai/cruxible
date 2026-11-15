@@ -1,10 +1,13 @@
 """Capture outputs: which call fields commit Captures, and the laws that pin them.
 
-A call acquires when its slot's capability's out Contract carries ``capture<K>`` fields (or
-when its operation returns its whole output as Capture wire). Each such field
-is one capture output, described by ``{node_path, field, capture_kind,
-acquisition_key}``, and keyed ``<alias>.<field>``: its acquisition rule, its
-plan decision, its journal records and its Capture budget are all its own.
+A call acquires when its slot's capability's out Contract carries ``capture<K>``
+fields: a Capture is always a named field of the result Contract, never the
+whole result (core's builtin workspace reads commit the bytes core read as
+the one field their result declares: ``capture`` for ``workspace.file``,
+``captures`` for ``workspace.files``). Each such field is one capture output,
+described by ``{node_path, field, capture_kind, acquisition_key}``, and keyed
+``<alias>.<field>``: its acquisition rule, its plan decision, its journal
+records and its Capture budget are all its own.
 Admission, trigger binding and execution all read these descriptors. A trigger
 substitutes one of them, named ``<alias>.<field>``, and only from a call with
 exactly one capture field: substituting one field of a call would leave the
@@ -35,6 +38,10 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.provider_operations import capture_fields, capture_list_fields
 from cruxible_client.contracts.shapes import ANY_CAPTURE_KIND, Contract, ContractRef
+from cruxible_client.contracts.workspace_file import (
+    workspace_read_operation,
+    workspace_read_problem,
+)
 
 ContractLookup = Callable[[ContractRef], Contract | None]
 CaptureLookup = Callable[[str], CaptureContractAny | None]
@@ -142,7 +149,9 @@ def procedure_capture_problem(
     A call's out Contract is its slot's capability's ``out``
     (``capability_lookup``). A slot naming one of ``builtin_capabilities`` (the
     capability names core's builtin serves) is a workspace read: core commits
-    the bytes it read as the call's one capture field.
+    the bytes it read as the one field that out Contract declares, a
+    ``capture<K>`` for one path or a ``list<capture<K>>`` for a glob, and
+    returns nothing else.
     """
 
     calls = {node.as_: node for node in definition.nodes if isinstance(node, CallNode)}
@@ -150,36 +159,56 @@ def procedure_capture_problem(
     list_fields: dict[str, frozenset[str]] = {}
     for node in calls.values():
         slot = definition.slots.get(node.slot)
-        if slot is not None and node.acquires and slot.capability.name in builtin_capabilities:
-            # Core reads the workspace bytes itself: its one capture field is core's.
-            if set(node.captures) != {CAPTURE_FIELD}:
-                return (
-                    "cruxible.procedure.captures_mismatch",
-                    f"call {node.node_id!r}: a workspace.file read commits the bytes core read "
-                    f"as its one capture field, {CAPTURE_FIELD!r}",
-                )
-            declared: dict[str, str] | None = None
-        else:
-            capability = (
-                None
-                if slot is None or capability_lookup is None
-                else capability_lookup(slot.capability)
-            )
-            out = (
+        capability = (
+            None
+            if slot is None or capability_lookup is None
+            else capability_lookup(slot.capability)
+        )
+        out = (
+            None
+            if capability is None or contract_lookup is None
+            else contract_lookup(capability.out)
+        )
+        listed = () if out is None else capture_list_fields(out)
+        list_fields[node.as_] = frozenset(name for name, _kind, _cap in listed)
+        declared = (
+            None
+            if out is None
+            else {
+                **dict(capture_fields(out)),
+                **{name: kind for name, kind, _cap in listed},
+            }
+        )
+        builtin = (
+            None
+            if slot is None or slot.capability.name not in builtin_capabilities
+            else workspace_read_operation(slot.capability.name)
+        )
+        if builtin is not None:
+            # Core reads the workspace bytes itself and returns nothing else: the
+            # request may declare only what it reads, the result is field for
+            # field what it returns, and the kind is one it can derive the read's
+            # source from (the check authoring makes too).
+            request = (
                 None
                 if capability is None or contract_lookup is None
-                else contract_lookup(capability.out)
+                else contract_lookup(capability.in_)
             )
-            listed = () if out is None else capture_list_fields(out)
-            list_fields[node.as_] = frozenset(name for name, _kind, _cap in listed)
-            declared = (
-                None
-                if out is None
-                else {
-                    **dict(capture_fields(out)),
-                    **{name: kind for name, kind, _cap in listed},
-                }
+            only = next(iter(node.captures), None) if len(node.captures) == 1 else None
+            landed = None if only is None else capture_lookup(node.captures[only].target.name)
+            problem = workspace_read_problem(
+                builtin,
+                capability=slot.capability.spelling if slot is not None else builtin,
+                request=request,
+                result=out,
+                capture_kind=landed,
+                capture_field=only,
             )
+            if problem is not None:
+                return (
+                    f"cruxible.procedure.{problem.code}",
+                    f"call {node.node_id!r}: {problem.message}",
+                )
         if declared is None:
             pass
         elif not node.acquires:
@@ -190,19 +219,15 @@ def procedure_capture_problem(
                     f"{sorted(declared)}; name the CaptureContract of each in 'captures'",
                 )
             continue
-        elif not declared:
-            if set(node.captures) != {CAPTURE_FIELD}:
-                return (
-                    "cruxible.procedure.captures_mismatch",
-                    f"call {node.node_id!r}: its operation returns one Capture as its whole "
-                    f"output; its captures name exactly {CAPTURE_FIELD!r}",
-                )
         else:
+            # A Capture is always a named field of the result Contract: an out
+            # Contract with no capture field commits none.
             if set(node.captures) != set(declared):
                 return (
                     "cruxible.procedure.captures_mismatch",
                     f"call {node.node_id!r}: captures {sorted(node.captures)} differ from the "
-                    f"out Contract's capture fields {sorted(declared)}",
+                    f"out Contract's capture fields {sorted(declared)}; a Capture is a named "
+                    "capture<K> field of the result Contract, never the whole result",
                 )
             for field, kind in declared.items():
                 named = node.captures[field].target.name

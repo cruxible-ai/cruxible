@@ -384,9 +384,9 @@ def _item(subject: str, value: str) -> dict[str, object]:
 
 
 def _native_capture():
-    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._light_capture_support import file_contract
 
-    contract = record_contract()
+    contract = file_contract()
     return contract.model_copy(
         update={
             "selection_budget": contract.selection_budget.model_copy(update={"max_bytes": 1 << 20})

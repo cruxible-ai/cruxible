@@ -41,7 +41,7 @@ def _accepted_document(tmp_path: Path):
             source_compilation_digest="sha256:" + "77" * 32,
         ),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)

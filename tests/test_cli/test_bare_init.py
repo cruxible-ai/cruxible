@@ -108,7 +108,18 @@ def test_a_bare_init_creates_the_host_and_the_cli_acts_as_its_owner(daemon: Path
     binding = principal_binding(URL, instance_id)
     assert context.principals[binding].active == "alice"
     assert context.principals[binding].settings == {"alice": str(settings.resolve())}
-    assert "The CLI now acts as alice" in result.stdout
+    # The lines that matter (F2/F3); the rest is behind --verbose or context show.
+    assert result.stdout.splitlines() == [
+        f"Cruxible initialized: {instance_id} at {result.stdout.split(' at ', 1)[1][:12]}",
+        f"Owner: alice, private key {key_dir / 'alice.ed25519'}",
+        "The owner key signs approvals; it is separate from daemon auth (off: any process "
+        "of this OS user may call the daemon).",
+        *[line for line in result.stdout.splitlines() if line.startswith("Approval policy: ")],
+        *[line for line in result.stdout.splitlines() if line.startswith("Base kit: ")],
+        "More: cruxible context show",
+    ]
+    assert len(result.stdout.splitlines()) <= 6
+    assert "Approval policy: " in result.stdout
 
     # No flag and no environment: the CLI loads the remembered owner itself.
     identity = _whoami()
@@ -135,7 +146,7 @@ def test_init_with_a_reviewer_key_dir_leaves_the_reviewer_usable_by_context(
     settings = reviewer_dir / "cruxible.env"
     assert settings.is_file()
     assert "export CRUXIBLE_PRINCIPAL_ID=reviewer" in settings.read_text()
-    assert f"Reviewer settings: {settings}" in result.stdout
+    assert f"Reviewer: reviewer, private key {reviewer_dir / 'reviewer.ed25519'}" in result.stdout
     assert "cruxible context use --principal reviewer" in result.stdout
     remembered = load_cli_context().principals[principal_binding(URL, instance_id)]
     assert remembered.active == "alice"

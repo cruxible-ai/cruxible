@@ -166,7 +166,12 @@ def test_archive_transition_uses_index_without_reopening_closed_evidence(tmp_pat
             reason="close before reconciliation",
             withdrawn_at=WITHDRAWN_AT,
         )
-    assert "refs/settled/archive" not in instance._ledger.mirror_refs()
+    # Creation's settled base kit proposal may already sit in the archive; the
+    # withdrawn one does not until reconciliation.
+    archive = instance._ledger.mirror_refs().get("refs/settled/archive")
+    assert archive is None or not instance._ledger.is_ancestor(
+        proposal.admission.candidate_commit_oid, archive
+    )
 
     def forbidden(*args, **kwargs):
         pytest.fail("archive transition reopened closed evidence")

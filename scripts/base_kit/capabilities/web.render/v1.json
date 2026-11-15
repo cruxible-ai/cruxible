@@ -1,0 +1,9 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Derives one readable document from one fetched HTML Capture: its main content as Markdown (form text), or canonical JSON with its URL, final URL, title, text and links (form json), returned as one Capture. It reads only the Capture's bytes and contacts nothing.",
+  "effect": "pure",
+  "in": "web.render.request@1",
+  "name": "web.render",
+  "out": "web.render.result@1",
+  "version": 1
+}

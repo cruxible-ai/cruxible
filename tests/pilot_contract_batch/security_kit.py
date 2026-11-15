@@ -277,7 +277,13 @@ def slot_binding_seconds(instance: Any, kit: SimpleNamespace) -> dict[str, float
     import statistics
 
     from cruxible_core.capabilities.lookup import capability_in_projection
-    from cruxible_core.providers.operation_index import line_slot_map, resolve_slot_bindings
+    from cruxible_core.providers.operation_index import (
+        line_slot_map,
+        memoized_slot_fitter,
+        projection_build_reader,
+        projection_capability_side,
+        resolve_slot_bindings,
+    )
 
     template = json.loads(kit.template.TEMPLATE.read_text())
     lines = [m for m in template["members"] if m["kind"] == "line" and m.get("bindings")]
@@ -301,7 +307,11 @@ def slot_binding_seconds(instance: Any, kit: SimpleNamespace) -> dict[str, float
                 for _ in range(RUNS):
                     with Stopwatch() as watch:
                         resolve_slot_bindings(
-                            typed.connection, {slot: slots[slot]}, {slot: reference}
+                            typed.connection,
+                            {slot: slots[slot]},
+                            {slot: reference},
+                            fitter=memoized_slot_fitter(projection_capability_side(typed)),
+                            builds=projection_build_reader(typed),
                         )
                     samples.append(watch.seconds)
                 out[f"{line['name']}.{slot}"] = statistics.median(samples)

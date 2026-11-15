@@ -1,0 +1,9 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Reads every file a glob matches in an authorized workspace and returns their exact bytes as a list of Captures, one per file, sorted by name. More matches than max_files refuses the read before any file is read; a file that fails to read is left out and the list is marked incomplete. Core serves it: the daemon reads the files, and no provider takes part.",
+  "effect": "pure",
+  "in": "workspace.files.request@1",
+  "name": "workspace.files",
+  "out": "workspace.files.result@1",
+  "version": 1
+}

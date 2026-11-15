@@ -1430,7 +1430,9 @@ cruxible claim-type propose --template
 cruxible claim-type propose --input FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
 cruxible claim-type propose --builtin semantic.alias|semantic.distinct_from [--name NAME]
   [--dry-run|--commit] [--json]
-cruxible claim-type migrate REQUEST_FILE|- [--json]
+cruxible claim-type retire PREDICATE... --because TEXT [--reason superseded|was-wrong|was-rescinded]
+  [--dry-run] [--no-accept] [--json]
+cruxible claim-type migrate REQUEST_FILE|- [--no-accept] [--json]
 ~~~
 
 Read the accepted ClaimTypes with `cruxible orient --section
@@ -1470,14 +1472,34 @@ and returns nonblocking policy/source lint beside the proposal, among it
 `cruxible.claim_type.permitted_role_unadmitted` (a permitted role no evidence
 rule admits, so every write in it lands `uncovered`) and
 `cruxible.claim_type.field_name_reserved` (a field name that collides with a
-read column). The optional,
+read column). Three modelling hints come with it, never refusals:
+`cruxible.claim_type.field_restates_ledger` (a field named for what the ledger
+records about every Claim: `decided_by`, `updated_at`, `reason`,
+`recommendation` and the like), `cruxible.claim_type.string_holds_prose` (a
+string with no pattern bounded above 200 characters, other than the default
+`string{max_len: 256}`: prose belongs in a
+Document section the Claim cites) and
+`cruxible.claim_type.enum_members_name_things` (an enum member that looks like
+a version, a date or an identifier, which names a thing that is better a kind
+and a `subject<K>` field). A change set's preflight (`authoring compile`,
+`authoring submit`, the SDK's `prepare()`) returns the same lint for every
+ClaimType it defines, each warning naming its definition in `artifact`. The optional,
 sorted `anticipated_source_ids` input supplies
 source-specific repair suggestions without entering the governed ClaimType.
 Expert proposals, migration preflight and submission, and SDK cold-dependency
 preflight deliver the same typed lint; advisories never enter candidate identity,
 the approval frontier, or its certificate. `migrate` atomically succeeds the
 ClaimType and disposes every dependent the request names; it never authors
-retirement decisions from diagnostics.
+retirement decisions from diagnostics. A submitted migration lands when policy
+and the caller's tier allow, like a change set (`--no-accept`, or `accept:
+never` in the request, keeps the proposal).
+
+`retire` retires one or more fields as one change set: each successor is the
+accepted ClaimType marked retired, and each field's live Claims retire with it
+under `--reason` (default `superseded`); retired Claims and Documents in the
+closure are carried. It lands when policy and the caller's tier allow. The
+change-set member is a `claim_type_succession` with `retire_dependents: REASON`;
+the SDK spelling is `cx.changes(rationale=...).retire_claim_type(predicate)`.
 
 Cruxible ships builtin ClaimTypes, and a new instance starts with every one of them.
 `semantic.alias` states another name a Subject is known by (any kind; many
@@ -1895,7 +1917,9 @@ as `identity` per kind in `orient`) declares how Subjects of one kind are named:
   purpose). The id is the readable rendering of the canonical key: each part
   NFKC-normalized and lowercased, every run outside `[a-z0-9.]` turned into `-`
   and trimmed, composite parts joined with `--`, an `x` prefix when it does not
-  begin with a letter, `x-<8 hex>` when nothing readable is left. When a
+  begin with a letter (a Subject id always does, so a release keyed `0.5.0` is
+  `x0.5.0`; the key still names it, and the write's outcome says so),
+  `x-<8 hex>` when nothing readable is left. When a
   different key already renders to that id, or a live alias already names it,
   the later Subject takes `<id>-<8 hex of its key digest>`: a new id never
   shadows an existing alias.
@@ -4189,10 +4213,12 @@ printed coordinate reads back; each history row prints both (`seq N at
 <12 hex>`). An all-digit value of 11 or fewer characters is always a
 generation, never an oid prefix; twelve or more digits are a prefix. Evidence
 names each Capture by its `CAP-<12 hex>` handle, which `get` and `capture read`
-both accept, labels a copy by origin (`own words`, `passage of FILE`) and says
+both accept, labels a copy by origin (`own words (N bytes)`, `own words in FILE (N bytes)`
+for your own words found in a file, `location in FILE` for a copy that records
+where cited text sits) and says
 whether the verdict reads it: `admitted`, `not admitted` (offered as evidence,
 refused by the ClaimType's rule) or `not evidence` (a copy the rule does not
-admit). It lists the Claim version's attestations, accepted ones and the
+admit; a location row omits it). It lists the Claim version's attestations, accepted ones and the
 events `claim attest` recorded, each with whether it counts toward the
 verdict and why (`--detail why` carries the same as `attestation_accounts`).
 A `ClaimType:` or `Procedure:` card lists up to five governed Documents that

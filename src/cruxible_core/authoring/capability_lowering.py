@@ -39,7 +39,10 @@ from cruxible_client.contracts.shapes import (
     contract_path,
     parse_contract,
 )
-from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+from cruxible_core.capabilities.artifact import (
+    BUILTIN_CAPABILITY_NAMES,
+    bundled_version_problems,
+)
 
 
 @dataclass(frozen=True)
@@ -67,7 +70,9 @@ def _repair(code: str, payload: CapabilityAuthoringPayload) -> str:
             "Write the Contract as name@N without a digest; lowering pins the accepted version."
         ),
         CAPABILITY_RESERVED: (
-            "Declare the capability under your own prefix; workspace. names are core's."
+            "Install version 1 with `cruxible kit add base`, then author version 2."
+            if payload.name in BUILTIN_CAPABILITY_NAMES and payload.version == 1
+            else "Declare the capability under your own prefix; workspace. names are core's."
         ),
     }.get(code, "Repair the capability's name, version, effect and Contracts.")
 
@@ -139,7 +144,7 @@ def render_capability_member(
         parent_content=tree.get(path),
         content=content,
         builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
-    )
+    ) + bundled_version_problems(capability)
     if problems:
         first = problems[0]
         raise CapabilityLoweringRefusal(first.code, first.message, _repair(first.code, payload))

@@ -256,6 +256,28 @@ def service_subject_backlinks(
         )
 
 
+def subject_has_backlinks(connection: Any, subject: str) -> bool:
+    """Whether ``backlinks`` lists anything for a Subject: two point seeks, no page.
+
+    A note or Document about it (the primary key's ``target, relation`` prefix),
+    or a section one of its live Claims cites (``backlinks_by_claim_subject``).
+    """
+
+    target = f"Subject:{subject}"
+    return (
+        connection.execute(
+            "SELECT 1 FROM backlinks WHERE target=? AND relation='about' LIMIT 1", (target,)
+        ).fetchone()
+        is not None
+        or connection.execute(
+            "SELECT 1 FROM backlinks INDEXED BY backlinks_by_claim_subject "
+            "WHERE claim_subject=? LIMIT 1",
+            (target,),
+        ).fetchone()
+        is not None
+    )
+
+
 def service_definition_guidance(
     instance: PlaybillInstance,
     *,

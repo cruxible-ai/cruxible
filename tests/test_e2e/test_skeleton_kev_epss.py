@@ -947,7 +947,7 @@ def _contract_digest_in(checkout: Path, name: str) -> str:
 
 
 def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
-    """A core test-double provider: one pure ``derive`` returning Capture wire."""
+    """A core test-double provider: one pure ``derive`` returning one Capture field."""
 
     from cruxible_client.contracts.providers import (
         ProviderDistributionRef,
@@ -959,6 +959,7 @@ def _derive_build(checkout: Path, *, effect: str = "pure") -> Any:
     served = (
         {
             "name": "derive",
+            "serves": [derive_capability_name(effect)],
             "in": "test.derive.request@1",
             "out": "web.fetch.result@1",
             "effect": effect,
@@ -1047,26 +1048,29 @@ class DeriveReplay(Replay):
             body = kev_view(base64.b64decode(source["content_base64"]), context.input["watched"])
             digest = "sha256:" + hashlib.sha256(body).hexdigest()
             named = source["bytes_digest"]
+            # A Capture is a named field of the result: web.fetch.result's ``capture``.
             return {
-                "tag": "playbill-provider-result-to-external-capture-v1",
-                "source_identity": "test.kev-view",
-                "coordinate_type": "http-response-v1",
-                "coordinate": {
-                    "url": VIEW_URL,
-                    "final_url": VIEW_URL,
-                    "content_type": "application/json",
-                    "request_digest": "sha256:" + hashlib.sha256(named.encode()).hexdigest(),
-                    "source": "packaged-recording",
-                    "status": 200,
-                },
-                "selector_type": "whole-response-v1",
-                "selector": {},
-                "replayability": "attested_only",
-                "content_base64": base64.b64encode(body).decode("ascii"),
-                "content_encoding": "base64",
-                "byte_length": len(body),
-                "bytes_digest": digest,
-                "observed_at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "capture": {
+                    "tag": "playbill-provider-result-to-external-capture-v1",
+                    "source_identity": "test.kev-view",
+                    "coordinate_type": "http-response-v1",
+                    "coordinate": {
+                        "url": VIEW_URL,
+                        "final_url": VIEW_URL,
+                        "content_type": "application/json",
+                        "request_digest": "sha256:" + hashlib.sha256(named.encode()).hexdigest(),
+                        "source": "packaged-recording",
+                        "status": 200,
+                    },
+                    "selector_type": "whole-response-v1",
+                    "selector": {},
+                    "replayability": "attested_only",
+                    "content_base64": base64.b64encode(body).decode("ascii"),
+                    "content_encoding": "base64",
+                    "byte_length": len(body),
+                    "bytes_digest": digest,
+                    "observed_at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
             }
 
         return Invoker(output=output)

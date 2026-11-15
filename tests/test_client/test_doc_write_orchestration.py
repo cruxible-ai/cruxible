@@ -35,7 +35,7 @@ def test_create_is_written_after_acceptance_and_catalog_retry_is_unique(tmp_path
 
     result = write_workspace(request, workspace=tmp_path, submit=submit)
     assert result.docs[0].written
-    assert (tmp_path / "chosen/notes.md").read_bytes() == b"# A\nwords\n"
+    assert (tmp_path / "chosen/notes.md").read_bytes() == b"# A\nwords\n\n"
     retried = write_workspace(request, workspace=tmp_path, submit=lambda _: _answer())
     assert retried.docs[0].written
     catalog = yaml.safe_load((tmp_path / ".cruxible/files.yaml").read_text())
@@ -175,7 +175,10 @@ def test_section_ref_resolves_resulting_path_and_never_crosses_wire(tmp_path, re
     def submit(request):
         evidence = request.changes[0].evidence
         assert evidence.ref is None and evidence.section == ("After",)
-        assert evidence.observation.selected_content == b"# After\nnew\n"
+        # An appended section leaves one blank line after it; a replacement is exact.
+        assert evidence.observation.selected_content == (
+            b"# After\nnew\n" if replace else b"# After\nnew\n\n"
+        )
         assert evidence.own_words
         assert '"ref"' not in request.model_dump_json()
         assert '"id"' not in request.model_dump_json()
@@ -311,7 +314,7 @@ def test_about_link_is_observed_like_section_evidence_and_unlink_needs_no_sectio
     assert isinstance(change, AboutChange) and change.ref is None
     assert change.file == "doc-notes.md" and change.section == ("Triage",)
     assert change.observation is not None
-    assert change.observation.selected_content == b"# Triage\nLooks benign\n"
+    assert change.observation.selected_content == b"# Triage\nLooks benign\n\n"
     assert "notes.md" not in change.observation.model_dump_json().replace("doc-notes.md", "")
     # The section is gone: an unlink still names the note by source and path.
     (tmp_path / "notes.md").write_bytes(b"# Other\n")

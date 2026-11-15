@@ -692,12 +692,33 @@ def test_no_authorized_root_refuses_binding(tmp_path: Path) -> None:
 def test_authored_request_never_carries_the_binding_digest() -> None:
     from cruxible_client.contracts.workspace_file import (
         WorkspaceBindingDigestAuthored,
+        WorkspaceFileRequest,
+        WorkspaceReadShape,
         parse_authored_workspace_request,
     )
 
-    authored = _authored("note.txt").model_dump(mode="json")
-    assert "workspace_binding_digest" not in authored and "workspace" not in authored
+    shape = WorkspaceReadShape(
+        coordinate_type="workspace-snapshot-v1",
+        selector_type="workspace-file-v1",
+        replayability="exact",
+    )
+    authored = WorkspaceFileRequest(
+        logical_source="workspace.docs", relative_path="note.txt"
+    ).model_dump(mode="json")
+    assert authored == {"logical_source": "workspace.docs", "relative_path": "note.txt"}
     with pytest.raises(WorkspaceBindingDigestAuthored):
         parse_authored_workspace_request(
-            {**authored, "workspace_binding_digest": "sha256:" + "1" * 64}
+            {**authored, "workspace_binding_digest": "sha256:" + "1" * 64}, shape
         )
+    # The read core performs: the authored path, the kind's source shape, the
+    # working revision and the whole file.
+    read = parse_authored_workspace_request(authored, shape)
+    assert (read.relative_path, read.coordinate_type, read.selector_type) == (
+        "note.txt",
+        "workspace-snapshot-v1",
+        "workspace-file-v1",
+    )
+    assert (read.coordinate, read.selector) == ({"revision": "working"}, {"whole": True})
+    # A field the builtin does not read is refused, never ignored.
+    with pytest.raises(ValueError, match="coordinate_type"):
+        parse_authored_workspace_request({**authored, "coordinate_type": "x"}, shape)

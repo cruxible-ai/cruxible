@@ -302,6 +302,36 @@ def accept_kit_capabilities(instance: Any) -> None:
         accept_tree(instance, members, name="kit-capabilities")
 
 
+#: The one refinement a path parameter gains so a workspace read typed against
+#: ``workspace.file@1``'s request (``relative_path: string{min_len: 1, max_len:
+#: 1024}``) accepts it: the kit's path spelling states a pattern, no ``min_len``.
+_PATH_MIN_LEN = "string{min_len: 1, "
+
+
+def _typed_paths(members_function: Callable[..., Any]) -> Callable[..., Any]:
+    """``params_contract_members`` with every ``relative_path`` parameter given ``min_len: 1``.
+
+    A workspace read is typed against its capability's request (the file-read
+    slice); the kit's params Contracts predate it and are converted here until
+    the kit is re-authored.
+    """
+
+    def wrapper(procedure: str, description: str, fields: Any) -> Any:
+        converted = {
+            name: (
+                (_PATH_MIN_LEN + spelling.removeprefix("string{"), text)
+                if name == "relative_path"
+                and spelling.startswith("string{")
+                and "min_len" not in spelling
+                else (spelling, text)
+            )
+            for name, (spelling, text) in fields.items()
+        }
+        return members_function(procedure, description, converted)
+
+    return wrapper
+
+
 @contextmanager
 def converted_kit(kit: SimpleNamespace) -> Iterator[None]:
     """The kit's slot sources converted to capability slots, and its EXTRACT steps to
@@ -328,6 +358,9 @@ def converted_kit(kit: SimpleNamespace) -> Iterator[None]:
         )
         for name in ("import_spec", "attention_spec"):
             stack.enter_context(_replaced(findings, name, _converting(getattr(findings, name))))
+        for module in (kit.inventory, findings):
+            members = module.params_contract_members
+            stack.enter_context(_replaced(module, "params_contract_members", _typed_paths(members)))
         yield
 
 

@@ -99,7 +99,7 @@ def test_write_doc_payload_creates_file_and_cites_section(
     assert result.exit_code == 0, result.output
     outcome = json.loads(result.stdout)
     assert outcome["docs"][0]["written"] and outcome["changes"][0]["verdict"] == "supported"
-    assert (tmp_path / "notes.md").read_text() == "# Decision\nReady\n"
+    assert (tmp_path / "notes.md").read_text() == "# Decision\nReady\n\n"
     schema = _run("write", "--schema")
     assert "docs" in json.loads(schema.stdout)["properties"]
 

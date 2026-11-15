@@ -1260,7 +1260,7 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=2,
+        sequence=len(instance.accepted_history()),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)

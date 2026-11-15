@@ -14,7 +14,9 @@ from cruxible_core.proposals.proposal_notes import admission_bytes
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
-from tests.core_support._support import initialize_local
+
+# These tests count every proposal and evidence file from genesis: no base kit add.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.support.evidence_files import remove_later
 from tests.test_proposals.test_grouped_proposal_notes import _submit as _submit_once
 
@@ -810,6 +812,9 @@ def test_a_pre_acceptance_index_is_reconstructed_on_the_current_schema(tmp_path)
     instance._accepted_history_index.close()
     with sqlite3.connect(index_path) as connection:
         connection.execute("DROP TABLE proposals")
+        # A file from before acceptance never held the Subject rows either.
+        connection.execute("DROP TABLE proposal_subjects")
+        connection.execute("DROP TABLE proposal_readmissions")
         connection.executescript(proposal_index._PRE_ACCEPTANCE_SCHEMA_SQL)
     # A checkpoint that still certifies the file: only the schema is behind.
     marker_path = evidence.root / ".proposal-source.json"
@@ -951,3 +956,20 @@ def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_
     assert reopened.read_admission(first.admission.proposal_id) == first.admission
     assert owner.proposals.reconstructions == 0
     owner.close()
+
+
+def test_a_proposals_subject_rows_insert_a_statement_per_chunk_not_per_row() -> None:
+    """A settle's proposal opens with many Claim members: its rows cost O(1) statements."""
+
+    from cruxible_core.indexes.proposals import proposal_index
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.executescript(proposal_index._SUBJECTS_SCHEMA)
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+    rows = [(f"subjects/k/s{index:04d}.json", "prop-1", "k.f") for index in range(700)]
+    proposal_index._insert_subject_rows(connection, [*rows, rows[0]])
+    assert len(statements) == 3  # 333 + 333 + 35 rows; a repeated row is ignored
+    proposal_index._insert_subject_rows(connection, [])
+    assert len(statements) == 3
+    assert connection.execute("SELECT count(*) FROM proposal_subjects").fetchone() == (700,)

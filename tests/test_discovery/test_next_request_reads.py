@@ -333,3 +333,47 @@ def test_summary_avoids_cards_health_and_unneeded_dependency_facts(
     summary = playbill_next.summarize_playbill_next(instance, request=request)
     assert summary.items == full.items[:3]
     assert summary.total_items == full.total_items
+
+
+@pytest.mark.parametrize("shape", ["one_capture", "revision_71_pair"])
+def test_located_own_words_commit_their_section_to_drift(tmp_path: Path, shape: str) -> None:
+    """Editing a section a Claim's own words stand in drifts that Claim, in both shapes.
+
+    The own words are a copy no rule here admits (a ``self`` type), so only
+    their location commits them: one located own-words Capture, or an older
+    pair's located copy. The commitment is the section's bytes in its file,
+    under its heading path, which the client compares with the file as it is.
+    """
+
+    from tests.test_claims.test_claim_located_own_words import LocatedWorld, located
+    from tests.test_claims.test_claim_type_v7_revisions import WHEN, v7_type
+    from tests.test_claims.test_identity_evidence_rules import SOURCE
+
+    world = LocatedWorld(tmp_path)
+    world.seed(v7_type())
+    observation = located(b"status: ready\n")
+    if shape == "one_capture":
+        tree, path = world.author_located(observation)
+        world.accept(tree, name="located")
+        from cruxible_client.contracts.claims import parse_claim
+
+        claim_id = parse_claim(tree[path], path=path).identity.name
+    else:
+        claim_id = world.legacy(observation).claim_id
+    claim = world.claim(claim_id)
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    inventory = playbill_next._citation_commitments(
+        world.instance,
+        coordinate=AcceptedCoordinate.from_internal(world.instance.accepted_coordinate()),
+        evaluation_time=WHEN,
+    )
+    committed = [
+        inventory.by_id[item.citation_id]
+        for item in claim.backing.citations  # type: ignore[union-attr]
+        if item.citation_id in inventory.by_id
+    ]
+    (commitment,) = committed
+    assert commitment.source_id == SOURCE
+    assert commitment.section == ("Status",)
+    assert commitment.commitment_digest == observation.selected_bytes_digest

@@ -85,6 +85,16 @@ def _shell(body_digest: str) -> DocumentShell:
     )
 
 
+def _base_kit_receipts(instance: PlaybillInstance) -> tuple[object, ...]:
+    """The documents a fresh instance lists: the receipt of creation's base kit."""
+
+    listed = service_list_playbill_documents(
+        instance, access=BodyAccessContext(principal_id="reader")
+    ).documents
+    assert [item.envelope["identity"] for item in listed] == ["document:kit-base"]
+    return listed
+
+
 def test_service_document_lifecycle_keeps_state_boundaries_explicit(tmp_path: Path) -> None:
     instance, owner, reviewer = _instance(tmp_path)
     body_bytes = b"# Cruxible design\n\nGoverned prose.\n"
@@ -96,7 +106,8 @@ def test_service_document_lifecycle_keeps_state_boundaries_explicit(tmp_path: Pa
             instance,
             access=BodyAccessContext(principal_id="reader"),
         ).documents
-        == ()
+        # Only the kit receipt of creation's base kit.
+        == _base_kit_receipts(instance)
     )
 
     proposed = service_propose_playbill_document(

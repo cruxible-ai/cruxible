@@ -611,7 +611,8 @@ def test_overrule_is_terminal_for_the_detector_version(tmp_path: Path) -> None:
         actor_context=_actor(),
     )
     assert result.item.status == "overruled"
-    assert result.item.resolved_at_generation == 0
+    # Generation 1 is creation's base kit.
+    assert result.item.resolved_at_generation == 1
     assert instance.accepted_coordinate() == accepted_before
 
 

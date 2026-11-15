@@ -2377,6 +2377,131 @@ def test_claim_law_revision_10_refuses_a_drop_replaced_under_another_contract(
     assert _refusal(outcome).code == "cruxible.claim.rebind_unmatched"
 
 
+def _review_section(workspace: Path, text: str) -> dict[str, Any]:
+    """The ``Review`` section of repo.reports, observed as the writer's own words."""
+
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.write import SectionEvidence
+
+    report_evidence(workspace, "catalogued")
+    (workspace / "reports.md").write_text(f"# Reports\n\n## Review\n\n{text}\n", "utf-8")
+    observed = observe_evidence(
+        SectionEvidence(file="reports.md", section=("Reports", "Review"), own_words=True),
+        workspace=workspace,
+    )
+    assert observed is not None
+    return observed.model_dump(mode="json")
+
+
+def _cited_source(instance: PlaybillInstance, digest: str) -> str | None:
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            digest, access=BodyAccessContext(principal_id="t", can_read_body=True)
+        )
+    )
+    return getattr(envelope.source, "source_identity", None)
+
+
+def _contract_pins(instance: PlaybillInstance, claim: str) -> set[str]:
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+
+    path = claim_path(claim)
+    content = instance.blob_at(instance.accepted_coordinate().git_oid, path)
+    assert content is not None
+    return {
+        pin.target.name
+        for pin in parse_claim(content, path=path).pins
+        if pin.role == "capture-contract"
+    }
+
+
+def test_rebind_moves_located_own_words_as_one_citation(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """Located own words are one citation; a section re-bind replaces exactly it."""
+
+    workspace = tmp_path / "ws"
+    first = _write(
+        instance, _set(WI1, "status", "ready", evidence=_review_section(workspace, "Ready."))
+    )
+    assert first.status == "accepted", first
+    claim = first.changes[0].claim
+    assert claim is not None
+    (before,) = _claim_citations(instance, claim)
+    assert (before.role, before.origin) == ("copy", "self_source")
+    assert _cited_source(instance, before.capture_digest) == "repo.reports"
+
+    outcome = _write(
+        instance,
+        {"op": "rebind", "target": claim, "evidence": _review_section(workspace, "Ready again.")},
+        because="The review was re-read.",
+    )
+    assert outcome.status == "accepted", outcome
+    (after,) = _claim_citations(instance, claim)
+    assert after.citation_id != before.citation_id
+    assert (after.role, after.origin) == ("copy", "self_source")
+    assert _cited_source(instance, after.capture_digest) == "repo.reports"
+    assert _contract_pins(instance, claim) == {
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
+    }
+
+
+def test_rebind_collapses_a_revision_71_pair_into_one_located_citation(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """An older pair's located copy and own words both move to one new citation.
+
+    The located copy's contract pin leaves with it: no Capture of the Claim is
+    taken under the file's contract any more.
+    """
+
+    from cruxible_client.contracts.write import SectionEvidence
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support.legacy_located_pair import lower_legacy_pair, own_words_payload
+
+    workspace = tmp_path / "ws"
+    # The Subject exists first (a write names a new one by its key).
+    assert _write(instance, _set(WI1, "title", "Tidy")).status == "accepted"
+    section = SectionEvidence.model_validate(_review_section(workspace, "Ready."))
+    assert section.observation is not None
+    pair = lower_legacy_pair(
+        instance,
+        own_words_payload(
+            subject_path=subject_path(KIND, "wi-1"),
+            predicate=f"{KIND}.status",
+            value="ready",
+            observation=section.observation,
+        ),
+    )
+    accept_tree(instance, pair.updates, name="legacy-pair")
+    assert {(item.role, item.origin) for item in _claim_citations(instance, pair.claim_id)} == {
+        ("copy", "self_source"),
+        ("copy", "independent"),
+    }
+    assert REPORTS.identity.name in _contract_pins(instance, pair.claim_id)
+
+    outcome = _write(
+        instance,
+        {
+            "op": "rebind",
+            "target": pair.claim_id,
+            "evidence": _review_section(workspace, "Ready, checked."),
+        },
+        because="The review was re-read.",
+    )
+    assert outcome.status == "accepted", outcome
+    (after,) = _claim_citations(instance, pair.claim_id)
+    assert (after.role, after.origin) == ("copy", "self_source")
+    assert _cited_source(instance, after.capture_digest) == "repo.reports"
+    assert _contract_pins(instance, pair.claim_id) == {
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
+    }
+    assert _values(instance, WI1, "status") == ["ready"]
+
+
 # -- 4f: a re-bind from one Capture moves every live Claim citing it ------------------
 
 

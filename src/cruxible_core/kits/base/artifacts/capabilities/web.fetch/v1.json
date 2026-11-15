@@ -1,0 +1,17 @@
+{
+  "artifact_format": "cruxible-capability-v1",
+  "description": "Fetches one web resource with one HTTP GET and returns the exact body the origin sent as one Capture. Query parameters are encoded onto the URL in order; a credential is named by reference and never carried in the request.",
+  "effect": "external_read",
+  "in": {
+    "digest": "sha256:1f4eefbeef292080ab075e22d068a4e45f6b01170802f2ca470daa2329444137",
+    "name": "web.fetch.request",
+    "version": 1
+  },
+  "name": "web.fetch",
+  "out": {
+    "digest": "sha256:0a349322bad1fb456e4363692494b8e8650edf8fe2abbcee25cab700fcf24579",
+    "name": "web.fetch.result",
+    "version": 1
+  },
+  "version": 1
+}

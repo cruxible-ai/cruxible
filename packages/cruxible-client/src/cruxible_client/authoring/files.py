@@ -263,7 +263,7 @@ def add_catalog_entry(
         raise FileCatalogEditError(
             "entry_exists",
             f"file {name!r} is already catalogued at {existing[0].locator}; pass --replace "
-            "to update it",
+            "(replace=True in the SDK) to update it",
         )
     kept = tuple(item for item in entries if item not in existing)
     _write_portable(catalog_path, (*kept, entry))
@@ -273,6 +273,51 @@ def add_catalog_entry(
         catalog_path=catalog_path.relative_to(root).as_posix(),
         entry=entry,
     )
+
+
+def catalog_file(
+    root: Path,
+    *,
+    name: str,
+    path: Path,
+    document_id: str | None = None,
+    document_kind: str | None = None,
+    title: str | None = None,
+    media_type: str | None = None,
+    governance_scope: Iterable[str] = (),
+    required_tier: Literal["governed_write", "graph_write", "admin"] | None = None,
+    public_uri: str | None = None,
+    replace: bool = False,
+) -> FileCatalogEdit:
+    """Catalogue PATH under NAME: what ``cruxible files add`` and ``cx.files.add`` both do.
+
+    With ``document_id`` (and its kind, title and scope) the entry also declares
+    the Document the file compiles to; its media type defaults from the file
+    suffix and its scopes are sorted. Without one the file is a source to cite.
+    """
+
+    scopes = tuple(governance_scope)
+    fields: dict[str, object] = {
+        key: value
+        for key, value in {
+            "document_id": document_id,
+            "document_kind": document_kind,
+            "title": title,
+            "media_type": media_type,
+            "required_tier": required_tier,
+            "public_uri": public_uri,
+        }.items()
+        if value is not None
+    }
+    if document_id is not None:
+        fields.setdefault("media_type", media_type_for(path))
+        fields["governance_scope"] = tuple(
+            sorted(set(scopes), key=lambda item: item.encode("utf-8"))
+        )
+        fields = {key: value for key, value in fields.items() if value is not None}
+    elif scopes:
+        fields["governance_scope"] = scopes
+    return add_catalog_entry(root, name=name, path=path, fields=fields, replace=replace)
 
 
 def remove_catalog_entry(root: Path, *, name: str) -> FileCatalogEdit:
@@ -301,12 +346,74 @@ def remove_catalog_entry(root: Path, *, name: str) -> FileCatalogEdit:
     )
 
 
+class WorkspaceCatalog:
+    """The workspace's file catalog (``.cruxible/files.yaml``), from the SDK: ``cx.files``.
+
+    The same edits as ``cruxible files add`` and ``cruxible files remove``, through
+    the same code. A relative path is read from the workspace root. Writes only
+    the catalog file. Next: ``cx.file(path).section(...)`` cites the file.
+    """
+
+    __slots__ = ("_root",)
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def add(
+        self,
+        name: str,
+        path: str | Path,
+        *,
+        document_id: str | None = None,
+        document_kind: str | None = None,
+        title: str | None = None,
+        media_type: str | None = None,
+        governance_scope: Iterable[str] = (),
+        required_tier: Literal["governed_write", "graph_write", "admin"] | None = None,
+        public_uri: str | None = None,
+        replace: bool = False,
+    ) -> FileCatalogEdit:
+        """Catalogue PATH under NAME, the source name evidence is cited under.
+
+        With ``document_id``, ``document_kind``, ``title`` and ``governance_scope``
+        the entry also declares the Document the file compiles to. An existing
+        NAME refuses (``cruxible.files.catalog_edit_refused``, ``entry_exists``)
+        unless ``replace=True``.
+        Next: ``cx.file(path).section("Heading")`` to cite it.
+        """
+
+        target = Path(path).expanduser()
+        return catalog_file(
+            self._root,
+            name=name,
+            path=target if target.is_absolute() else self._root / target,
+            document_id=document_id,
+            document_kind=document_kind,
+            title=title,
+            media_type=media_type,
+            governance_scope=governance_scope,
+            required_tier=required_tier,
+            public_uri=public_uri,
+            replace=replace,
+        )
+
+    def remove(self, name: str) -> FileCatalogEdit:
+        """Remove NAME's entry; citations already made keep their retained passage.
+
+        Next: ``cx.files.add(name, path)`` to catalogue it again.
+        """
+
+        return remove_catalog_entry(self._root, name=name)
+
+
 __all__ = [
     "FileCatalogEdit",
     "FileCatalogEditError",
     "FileCatalogEditRefusal",
+    "WorkspaceCatalog",
     "WorkspaceFileError",
     "add_catalog_entry",
+    "catalog_file",
     "media_type_for",
     "remove_catalog_entry",
     "compile_client_file_context",

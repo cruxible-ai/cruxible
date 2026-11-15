@@ -80,7 +80,7 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.repairs import HandEditRepair
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_OPERATION,
-    WorkspaceFileSourceRequestV2,
+    WorkspaceFileRequest,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust.records import parse_journal_payload
@@ -111,7 +111,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.core_support._light_capture_support import file_contract as capture_contract
 from tests.core_support._support import initialize_local
 from tests.support.capabilities import (
     WORKSPACE_FILE_SPEC,
@@ -141,7 +141,9 @@ SOURCE_ALIAS = "advisory"
 #: The workspace read's one capture output, as acquisition rules and triggers name it.
 SOURCE_CAPTURE = f"{SOURCE_ALIAS}.capture"
 RELATIVE_PATH = "data/osv-advisory.json"
-ADVISORY = b"high"
+#: The advisory document: the Procedure extracts its severity (a workspace read's
+#: value is the Capture core committed, so the severity is read through a layout).
+ADVISORY = canonical_bytes({"severity": "high"})
 
 
 class _WorkspaceInvoker:
@@ -149,7 +151,7 @@ class _WorkspaceInvoker:
 
     It asserts the daemon handed it exactly the governed read -- the bytes the
     reader confirmed and the commitment digest the run derived -- and returns
-    the parsed document, which is what the real adapter returns.
+    an empty output, which is what the real adapter returns.
     """
 
     def __init__(self) -> None:
@@ -175,26 +177,8 @@ class _WorkspaceInvoker:
                 protocol_version="2.0",
                 run_id=context.run_id,
                 status="ok",
-                output={
-                    "input_bucket": "content_kind=text;byte_size=tiny",
-                    "source": {
-                        "logical_source": context.input["logical_source"],
-                        "commitment_digest": context.input["commitment_digest"],
-                        "bytes_digest": context.input["bytes_digest"],
-                        "byte_length": context.input["byte_length"],
-                    },
-                    "content": {
-                        "kind": "text",
-                        "encoding": "utf-8",
-                        "bom": False,
-                        "newline": "none",
-                        "trailing_newline": False,
-                        "line_count": 1,
-                        "character_count": len(raw.decode("utf-8")),
-                        "text": raw.decode("utf-8"),
-                        "lines": [raw.decode("utf-8")],
-                    },
-                },
+                # The builtin returns no field of its own: core commits the bytes.
+                output={},
             ),
             stderr="",
             duration_seconds=0.001,
@@ -253,16 +237,13 @@ def _contracts() -> tuple[Any, Any]:
     )
 
 
-def _source_request(instance: PlaybillInstance, root: Path) -> WorkspaceFileSourceRequestV2:
-    # Authored as intent only: the daemon resolves the attached workspace.
+def _source_request(instance: PlaybillInstance, root: Path) -> WorkspaceFileRequest:
+    # Authored as intent only: the daemon resolves the attached workspace, and
+    # derives the coordinate and selector from the kind the read lands under.
     del instance, root
-    return WorkspaceFileSourceRequestV2(
+    return WorkspaceFileRequest(
         logical_source="commerce.production.orders",
         relative_path=RELATIVE_PATH,
-        coordinate_type="database-snapshot-v1",
-        coordinate={"lsn": "workspace"},
-        selector_type="relation-primary-key-v1",
-        selector={"id": 7, "relation": "orders"},
     )
 
 
@@ -284,22 +265,6 @@ def _procedure(  # noqa: PLR0913
         artifact_digest=capture_contract_digest(contract).tagged,
     )
     request = _source_request(instance, root).model_copy(update={"relative_path": relative_path})
-    from cruxible_client.contracts.captures import capture_components
-
-    components = capture_components(contract)
-    request = request.model_copy(
-        update={
-            "coordinate_type": components.coordinate_schema_pins[0].target.name,
-            "selector_type": next(
-                (
-                    pin.target.name
-                    for pin in components.selector_schema_pins
-                    if pin.target.name == "relation-primary-key-v1"
-                ),
-                components.selector_schema_pins[0].target.name,
-            ),
-        }
-    )
     definition = procedure_definition(
         name=PROCEDURE_NAME,
         description="Read one accepted advisory document and shape its severity.",
@@ -317,7 +282,9 @@ def _procedure(  # noqa: PLR0913
             ),
             ProjectNode(
                 node_id="shape",
-                fields={"severity": f"$steps.{SOURCE_ALIAS}.content.text"},
+                # A kind with a JSON layout reads the severity through an extract
+                # (``_world``); without one the run's value names the Capture.
+                fields={"severity": f"$steps.{SOURCE_ALIAS}.capture"},
                 as_="result",
             ),
         ),
@@ -582,10 +549,13 @@ def _world(  # noqa: PLR0913
     write_at: str = RELATIVE_PATH,
     document: bool = False,
 ):  # type: ignore[no-untyped-def]
-    """The Source world; ``document`` reads the severity out of a JSON document."""
+    """The Source world; ``document`` reads the severity out of the JSON document.
 
-    if document and contents is None:
-        contents = canonical_bytes({"severity": ADVISORY.decode()})
+    A workspace read's value is the Capture core committed, so a severity is
+    read only through an extract over the kind's ``document`` record set;
+    without ``document`` the run's value names the Capture.
+    """
+
     instance, owner = initialize_local(tmp_path)
     # `initialize_local` attaches exactly this root to the instance.
     workspace_root = tmp_path / "workspace"
@@ -733,7 +703,7 @@ def test_readiness_reports_a_source_procedure_directly_runnable(tmp_path: Path) 
 def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
     tmp_path: Path,
 ) -> None:
-    instance, _owner, _procedure, root, policy_artifact = _world(tmp_path)
+    instance, _owner, _procedure, root, policy_artifact = _world(tmp_path, document=True)
 
     state, invoker = _run(instance, root)
 
@@ -793,12 +763,12 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
 def test_a_changed_file_yields_a_different_receipt_and_a_different_value(
     tmp_path: Path,
 ) -> None:
-    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path, document=True)
 
     first, _invoker = _run(instance, root)
     assert first.status == "succeeded"
 
-    changed = b"critical"
+    changed = canonical_bytes({"severity": "critical"})
     (root / RELATIVE_PATH).write_bytes(changed)
 
     # Re-running AT THE SAME EVALUATION INSTANT is the same occurrence, so it
@@ -935,7 +905,7 @@ def test_a_line_occurrence_reads_the_workspace_file_through_the_same_reader(
 ) -> None:
     """The Line lane now builds the reader too, and reads exactly what the direct lane does."""
 
-    instance, root, line = _line_world(tmp_path)
+    instance, root, line = _line_world(tmp_path, document=True)
 
     state, invoker = _run_line(instance, root, line)
 
@@ -1467,7 +1437,10 @@ def test_a_source_closure_that_stops_reproducing_refuses_before_the_first_attemp
 
     import cruxible_core.service.procedures.procedure_runs as service
 
-    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+    # A kind without a layout: no extract preflight stands before the Source's.
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path, contract=capture_contract(decoding=None)
+    )
     real_execute = service.service_execute_direct_procedure
 
     def without_contracts(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -1614,7 +1587,9 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     from cruxible_core.authoring.preflight import compute_preflight
     from cruxible_core.proposals.proposals import AuthenticatedActor
 
-    instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path, accept_procedure=False)
+    instance, _owner, procedure, _root, _policy_artifact = _world(
+        tmp_path, accept_procedure=False, document=True
+    )
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
 

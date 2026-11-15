@@ -235,6 +235,8 @@ class _Identity:
     rule: Literal["keys", "minted"]
     keys: tuple[str, ...] = ()
     unique: bool = True
+    #: What one Subject of the kind is, as authored on its SubjectKind.
+    description: str | None = None
 
     def key_words(self) -> dict[str, str]:
         """Each key part's ``define()`` keyword (its leaf, keyword-escaped) -> its predicate."""
@@ -580,12 +582,17 @@ class _FieldChange:
 
 
 class _Landing:
-    """Where one new Subject landed: shared by a draft and every draft derived from it."""
+    """Where one new Subject landed: shared by a draft and every draft derived from it.
 
-    __slots__ = ("ref",)
+    ``accepted`` holds the changes an accepted write already sent, by identity,
+    so a landed draft reused later sends only what it gained since.
+    """
+
+    __slots__ = ("accepted", "ref")
 
     def __init__(self) -> None:
         self.ref: str | None = None
+        self.accepted: dict[int, _FieldChange] = {}
 
 
 class WorldWritable:
@@ -603,8 +610,10 @@ class WorldNewSubject(WorldWritable):
     ``edit().set``): it is sent as a reference to its own ``create``, so the
     order of drafts never matters. ``w.write`` (or ``draft.write``) creates it,
     or lands on the one live Subject its key already names. Once accepted,
-    ``address`` is the id core assigned. Reads at this World's coordinate still
-    do not see it: ``cx.world()`` again for those.
+    ``address`` is the id core assigned, and the draft (or one derived from it)
+    passed to a later write is a reference to that Subject: its key, fields and
+    sections are not sent again, only changes added after the acceptance. Reads
+    at this World's coordinate still do not see it: ``cx.world()`` again for those.
     """
 
     subject_kind: str
@@ -612,6 +621,9 @@ class WorldNewSubject(WorldWritable):
     _key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
     _create_new: bool = False
     _expect_new: bool = False
+    #: What the key Claims cite and their role, from ``define(evidence=, role=)``.
+    _evidence: Evidence | AuthoredSection | None = None
+    _role: WriteRole | None = None
     _changes: tuple[_FieldChange, ...] = ()
     _landing: _Landing = field(default_factory=_Landing, repr=False)
 
@@ -795,6 +807,8 @@ class KindNamespace:
         *key: SubjectKeyValue,
         create_new: bool = False,
         expect_new: bool = False,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
         **fields: object,
     ) -> WorldNewSubject:
         """Draft one new Subject of this kind by its key, with fields; core assigns its id.
@@ -802,7 +816,10 @@ class KindNamespace:
         The kind's SubjectKind says what the key is: a one-key kind takes its
         value positionally or by its key's leaf; a composite kind takes each key
         part by its leaf; a minted kind takes none. Every other keyword is a
-        field: set when it holds one value, added when it holds many. A key one
+        field: set when it holds one value, added when it holds many.
+        ``evidence=`` (``cx.section(..., heading=...)`` carries prose) and
+        ``role=`` back the key Claims and these fields as ``.set`` backs its
+        fields; without them they rest on the write's ``because``. A key one
         live Subject already holds lands on that Subject and creates nothing
         (``resolved: existing``, so a seed run again answers as done);
         ``expect_new=True`` refuses ``cruxible.write.subject_exists`` instead.
@@ -821,7 +838,14 @@ class KindNamespace:
                 "one), then read a new World"
             )
         return self._world._define(
-            kind, identity, key, dict(fields), create_new=create_new, expect_new=expect_new
+            kind,
+            identity,
+            key,
+            dict(fields),
+            create_new=create_new,
+            expect_new=expect_new,
+            evidence=evidence,
+            role=role,
         )
 
     def where(self, /, **filters: object) -> CompactQuery:
@@ -1026,10 +1050,12 @@ class World:
     def describe(self) -> str:
         """Name the verbs that act on this world, then its vocabulary, as text to read.
 
-        Each Subject kind is listed with its fields: the leaf a Subject answers
-        by attribute, then what the field holds (``literal``, ``-> kind`` for
-        a Subject), its cardinality, enum members and
-        description. Next: ``print(w.describe())``, then one of the verbs it
+        Each Subject kind is listed with its description, then its fields: the
+        leaf a Subject answers by attribute, then what the field holds (its type
+        -- ``enum``, ``string{max_len: 120}`` with its bounds and pattern -- or
+        ``-> kind`` for a Subject), its cardinality, ``key`` for a key field,
+        enum members and description, and one line per enum member meaning.
+        Next: ``print(w.describe())``, then one of the verbs it
         lists -- ``cx.query(kind, ...)`` to read values, ``cx.get(ref)`` for
         one thing, ``w.<kind>[id].set(...)`` to write.
         """
@@ -1044,34 +1070,53 @@ class World:
             lines.extend(f"  {call:<40} {what}" for call, what in verbs)
         lines.append("Vocabulary:")
         for kind in self._kind_paths():
-            lines.append(f"  {kind}")
+            kind_node = self._node_at(kind)
+            identity = None if kind_node is None else kind_node.identity
+            description = None if identity is None else identity.description
+            lines.append(
+                f"  {kind}" + ("" if not description else " -- " + description.splitlines()[0])
+            )
+            keys = () if identity is None else identity.keys
             for leaf, names in sorted(self._leaf_map(kind).items()):
                 # A leaf two predicates share is reachable only by full name.
                 for name in names:
                     label = leaf if len(names) == 1 else name
-                    lines.append("    " + self._describe_field(label, name))
+                    lines.extend(
+                        "    " + line
+                        for line in self._describe_field(label, name, key=name in keys)
+                    )
         if self.unstructured_predicates:
             lines.append("  unreadable by this client: " + ", ".join(self.unstructured_predicates))
         return "\n".join(lines)
 
-    def _describe_field(self, label: str, predicate: str) -> str:
-        """One field line of ``describe()``: what it holds, how many, and what it means."""
+    def _describe_field(self, label: str, predicate: str, *, key: bool = False) -> list[str]:
+        """A field's ``describe()`` lines: what it holds, how many, what it means,
+        then one indented line per enum member meaning."""
 
         node = self._node_at(predicate)
         assert node is not None and node.structure is not None
         structure = node.structure
-        held = (
-            "-> " + " | ".join(subject_value_kinds(structure.value))
-            if claim_value_kind(structure.value) == "subject"
-            else claim_value_kind(structure.value)
-        )
-        parts = [f"{label}: {held}, {structure.cardinality}"]
-        members = value_members(structure.value)
+        value = structure.value
+        members = value_members(value)
+        if claim_value_kind(value) == "subject":
+            held = "-> " + " | ".join(subject_value_kinds(value))
+        elif members:
+            held = value.kind
+        else:
+            held = render_type(value)
+        parts = [f"{label}: {held}, {structure.cardinality}" + (", key" if key else "")]
         if members:
             parts.append("[" + ", ".join(members) + "]")
-        if node.meaning is not None and node.meaning.description:
-            parts.append("-- " + node.meaning.description.splitlines()[0])
-        return " ".join(parts)
+        meaning = node.meaning
+        if meaning is not None and meaning.description:
+            parts.append("-- " + meaning.description.splitlines()[0])
+        lines = [" ".join(parts)]
+        if meaning is not None:
+            lines.extend(
+                f"  {item.member}: {item.description.splitlines()[0]}"
+                for item in meaning.member_descriptions
+            )
+        return lines
 
     def _kind_paths(self) -> tuple[str, ...]:
         return tuple(sorted(self._walk(lambda node: node.subject_kind)))
@@ -1143,6 +1188,7 @@ class World:
         changes: list[Change] = []
         docs: list[DocOp] = []
         authored: set[int] = set()
+        landings: dict[int, _Landing] = {}
 
         def mine(item: WorldWritable) -> None:
             if getattr(item, "_world", None) is not self:
@@ -1152,8 +1198,24 @@ class World:
 
         def value(raw: object) -> Any:
             if isinstance(raw, WorldNewSubject):
+                if raw._landing.ref is not None:
+                    return landed(raw)
                 return CreatedSubject(created=label(raw))
             return _write_value(raw)
+
+        def landed(draft: WorldNewSubject) -> str:
+            # An accepted draft is a reference to its Subject: only changes it
+            # gained after that acceptance are sent, under the assigned id.
+            mine(draft)
+            ref = draft._landing.ref
+            assert ref is not None
+            key = id(draft._landing)
+            if key not in landings:
+                landings[key] = draft._landing
+            done = sent.setdefault(key, [])
+            fresh = [c for c in draft._changes if id(c) not in draft._landing.accepted]
+            send(ref, fresh, done)
+            return ref
 
         def send(
             subject: str | CreatedSubject,
@@ -1164,12 +1226,7 @@ class World:
                 if any(item is earlier for earlier in done):
                     continue
                 done.append(item)
-                evidence = item.evidence
-                if isinstance(evidence, AuthoredSection):
-                    if id(evidence) not in authored:
-                        authored.add(id(evidence))
-                        docs.append(evidence.operation)
-                    evidence = evidence.citation
+                evidence = cited(item.evidence)
                 changes.append(
                     SetChange(
                         subject=subject,
@@ -1190,11 +1247,22 @@ class World:
                     )
                 )
 
+        def cited(evidence: Evidence | AuthoredSection | None) -> Evidence | None:
+            # A section carried as prose is authored once per write, however
+            # many changes cite it.
+            if isinstance(evidence, AuthoredSection):
+                if id(evidence) not in authored:
+                    authored.add(id(evidence))
+                    docs.append(evidence.operation)
+                return evidence.citation
+            return evidence
+
         def label(draft: WorldNewSubject) -> str:
             mine(draft)
             key = id(draft._landing)
             name = labels.get(key)
             if name is None:
+                landings[key] = draft._landing
                 name = labels[key] = f"new-{len(labels) + 1}"
                 creates.append(
                     (
@@ -1205,6 +1273,8 @@ class World:
                             key=draft._key,
                             create_new=draft._create_new,
                             expect_new=draft._expect_new,
+                            role=draft._role,
+                            evidence=cited(draft._evidence),
                         ),
                     )
                 )
@@ -1213,7 +1283,10 @@ class World:
 
         for item in items:
             if isinstance(item, WorldNewSubject):
-                label(item)
+                if item._landing.ref is not None:
+                    landed(item)
+                else:
+                    label(item)
             elif isinstance(item, WorldSubjectEdit):
                 mine(item)
                 done = sent.setdefault(id(item), [])
@@ -1234,6 +1307,8 @@ class World:
         if outcome.status == "accepted":
             for position, (landing, _create) in enumerate(creates):
                 landing.ref = outcome.changes[position].subject
+            for key, landing in landings.items():
+                landing.accepted.update((id(change), change) for change in sent.get(key, ()))
         return outcome
 
     def _define(
@@ -1245,6 +1320,8 @@ class World:
         *,
         create_new: bool,
         expect_new: bool,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
     ) -> WorldNewSubject:
         """One draft: its key read by the kind's identity rule, the other keywords as fields."""
 
@@ -1304,6 +1381,8 @@ class World:
                     op="add" if node.structure.cardinality == "many" else "set",
                     field=predicate,
                     value=raw,
+                    evidence=evidence,
+                    role=role,
                 )
             )
         return WorldNewSubject(
@@ -1312,6 +1391,8 @@ class World:
             _key=sent,
             _create_new=create_new,
             _expect_new=expect_new,
+            _evidence=evidence,
+            _role=role,
             _changes=tuple(changes),
         )
 
@@ -2076,6 +2157,7 @@ def build_world(
                 rule=declared.rule,
                 keys=tuple(declared.keys),
                 unique=declared.uniqueness != "hint",
+                description=declared.description,
             ),
         )
     return World(

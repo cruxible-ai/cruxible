@@ -89,7 +89,7 @@ def _capture_contract(*, minted: bool = False) -> Any:
     bare = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=CAPTURE,
-            shape="database_snapshot",
+            shape="http_response",
             replay="exact",
             max_bytes=262144,
             decoding=JSON_DECODING,
@@ -256,10 +256,6 @@ def upsert_spec(
                 "input": {
                     "logical_source": "commerce.production.orders",
                     "relative_path": "data/doc.json",
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 7, "relation": "orders"},
                 },
             },
             {

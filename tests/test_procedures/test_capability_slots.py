@@ -5,8 +5,7 @@ the base or in the same change set, pins it by digest, and types the call
 against its request and result Contracts; it refuses an unknown capability and
 a pin whose digest differs. The Procedure law reads each slot's effect from its
 capability. Core recognises its builtin file read by the capability's name. A
-Line still binds by the exact signature the capability derives
-(``provisional_slot_signatures``) until the binding slice lands.
+Line binds each slot by its capability and fit (``tests/test_procedures/test_binding_fit.py``).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.authored import CallStep
 from cruxible_client.contracts.procedures.line_specs import (
     SlotCapabilityUnresolved,
-    provisional_slot_signatures,
+    slot_needs,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.shapes import Contract
@@ -81,23 +80,25 @@ def test_a_slot_is_one_capability_and_may_truncate_and_nothing_else() -> None:
         ProcedureSlot.model_validate({"capability": "test.compute@1", "effect": "pure"})
 
 
-def test_the_slot_signature_is_derived_from_the_capability() -> None:
+def test_a_slot_need_is_its_resolved_capability() -> None:
     pure = compute_capability()
-    signatures = provisional_slot_signatures(
+    needs = slot_needs(
         {"compute": ProcedureSlot.model_validate(pinned_slot(pure))},
-        capability_lookup(pure),
-        builtin={},
+        capabilities=capability_lookup(pure),
+        builtin_names=frozenset(),
     )
-    assert signatures["compute"].key() == (
-        pure.in_.digest,
-        pure.out.digest,
-        "pure",
+    need = needs["compute"]
+    assert (need.capability, need.spelling, need.may_truncate, need.builtin) == (
+        pure,
+        "test.compute@1",
+        False,
+        False,
     )
     with pytest.raises(SlotCapabilityUnresolved, match="'compute'.*test.compute@1"):
-        provisional_slot_signatures(
+        slot_needs(
             {"compute": ProcedureSlot.model_validate(pinned_slot(pure))},
-            capability_lookup(),
-            builtin={},
+            capabilities=capability_lookup(),
+            builtin_names=frozenset(),
         )
 
 
@@ -314,43 +315,68 @@ def test_the_builtin_is_recognised_by_capability_name_not_contract_digests() -> 
 
 
 def test_a_builtin_slot_binds_by_name_to_the_builtin_operation() -> None:
-    """Whatever request its capability pins (the base kit's is the authored one),
-    the provisional key of a builtin slot is the builtin operation's own signature."""
+    """Whatever request its capability pins (the base kit's is the authored one), a
+    slot naming a capability core's builtin serves is marked builtin: it binds by
+    name, without a fit check (ruling B1)."""
 
-    from cruxible_client.contracts.provider_operations import operation_signature_digest
-    from cruxible_client.contracts.workspace_file import is_workspace_file_signature
-    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
-    read = ProcedureSlot.model_validate(pinned_slot(_workspace_read()))
+    read = _workspace_read()
     for name in ("workspace.file", "workspace.files"):
-        slot = read.model_copy(
-            update={"capability": read.capability.model_copy(update={"name": name})}
+        renamed = read.model_copy(update={"name": name})
+        slot = ProcedureSlot.model_validate(pinned_slot(read))
+        slot = slot.model_copy(
+            update={"capability": slot.capability.model_copy(update={"name": name})}
         )
-        (signature,) = provisional_slot_signatures(
-            {"read": slot}, capability_lookup(), builtin=builtin_slot_signatures()
+        (need,) = slot_needs(
+            {"read": slot},
+            capabilities=lambda ref, found=renamed: found,
+            builtin_names=BUILTIN_CAPABILITY_NAMES,
         ).values()
-        assert is_workspace_file_signature(operation_signature_digest(signature))
+        assert need.builtin and need.pin.name == name
 
 
 def test_a_workspace_read_commits_core_bytes_as_its_one_capture_field() -> None:
     from cruxible_client.contracts.procedures.capture_outputs import procedure_capture_problem
     from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
 
+    # A workspace.file version whose result declares a plain field, not the Capture.
     read = _workspace_read()
-    definition = _one_call(pinned_slot(read), acquires=True, field="document")
+    definition = _one_call(pinned_slot(read), acquires=True, field="capture")
 
     def problem(builtins: Any) -> Any:
         return procedure_capture_problem(
             definition,
-            contract_lookup=lambda ref: None,
+            contract_lookup=lambda ref: VALUE if ref.name == VALUE.name else None,
             capture_lookup=lambda name: object(),  # type: ignore[arg-type,return-value]
             capability_lookup=capability_lookup(read),
             builtin_capabilities=builtins,
         )
 
-    # Recognised by name, the read's one capture field is core's: "document" is refused.
+    # Recognised by name, the capability must ask for what the builtin reads and
+    # return what it returns; this one's request (test.value) is checked first.
     found = problem(BUILTIN_CAPABILITY_NAMES)
-    assert found is not None and found[0] == "cruxible.procedure.captures_mismatch"
-    assert "workspace.file" in found[1]
+    assert found is not None and found[0] == "cruxible.procedure.workspace_request_field_unread"
+    assert "workspace.file@1" in found[1] and "core's builtin" in found[1]
     # The same slot not recognised is an ordinary call; nothing about core's field.
-    assert problem(()) is None
+    ordinary = problem(())
+    assert ordinary is not None and "core's builtin" not in ordinary[1]
+
+
+def test_an_acquiring_call_whose_result_declares_no_capture_field_is_refused() -> None:
+    """A Capture is a named field of the result Contract, never the whole result."""
+
+    from cruxible_client.contracts.procedures.capture_outputs import procedure_capture_problem
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+
+    plain = compute_capability("external_read")
+    definition = _one_call(pinned_slot(plain), acquires=True)
+    found = procedure_capture_problem(
+        definition,
+        contract_lookup=lambda ref: VALUE if ref.name == VALUE.name else None,
+        capture_lookup=lambda name: object(),  # type: ignore[arg-type,return-value]
+        capability_lookup=capability_lookup(plain),
+        builtin_capabilities=BUILTIN_CAPABILITY_NAMES,
+    )
+    assert found is not None and found[0] == "cruxible.procedure.captures_mismatch"
+    assert "never the whole result" in found[1]

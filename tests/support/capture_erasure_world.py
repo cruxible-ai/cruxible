@@ -27,7 +27,7 @@ from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._light_capture_support import record_contract as capture_contract
+from tests.core_support._light_capture_support import file_contract as capture_contract
 from tests.core_support._write_support import KIND, caller, seed_write_vocabulary
 from tests.support.claim_types import claim_type as build_claim_type
 

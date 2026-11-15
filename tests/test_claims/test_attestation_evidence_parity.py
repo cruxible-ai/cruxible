@@ -476,3 +476,102 @@ def test_the_evidence_step_and_append_are_flat_in_unrelated_claims(tmp_path: Pat
         assert large["claim_parses"] == small["claim_parses"], (small, large)
         assert large["git_blob_reads"] == small["git_blob_reads"], (small, large)
         assert large["sql_vm_steps"] <= small["sql_vm_steps"] * 1.10 + 200, (small, large)
+
+
+def _source_identity(instance: Any, digest: str) -> str | None:
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            digest, access=BodyAccessContext(principal_id="t", can_read_body=True)
+        )
+    )
+    return getattr(envelope.source, "source_identity", None)
+
+
+def test_attested_own_words_keep_their_place(tmp_path: Path) -> None:
+    """A section attested as own words is one own-words Capture sourced at its file."""
+
+    instance, claim, signer, workspace = _world(tmp_path)
+    (workspace / "reports.md").write_text(
+        "# Reports\n\nthree\n\n## Review\n\nLooked again.\n", encoding="utf-8"
+    )
+    _attest(
+        instance,
+        claim,
+        signer,
+        workspace,
+        evidence=SectionEvidence(file="reports.md", section=("Reports", "Review"), own_words=True),
+    )
+    _basis, (cited,) = _cited(instance)
+    assert _source_identity(instance, cited) == "repo.reports"
+
+
+def test_own_words_located_first_install_the_files_contract_for_attestation(
+    tmp_path: Path,
+) -> None:
+    """Located own words are a file's first use: an attestation citing the file still works.
+
+    The own words are one Capture under the self-source contract, yet the write
+    installs the file's contract (no pin), as the located copy did, so file
+    evidence on it is attested without another write citing the file first.
+    """
+
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.captures import (
+        capture_contract_digest,
+        capture_contract_path,
+        foreign_source_capture_contract,
+    )
+
+    instance, claim, signer, workspace = _world(tmp_path)
+    catalog = workspace / ".cruxible" / "files.yaml"
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        + "  - name: repo.elsewhere\n    locator: elsewhere.md\n",
+        encoding="utf-8",
+    )
+    (workspace / "elsewhere.md").write_text(
+        "# Else\n\n## Review\n\nReady, by my reading.\n\nunique words\n", encoding="utf-8"
+    )
+    elsewhere = foreign_source_capture_contract("repo.elsewhere")
+    path = capture_contract_path(elsewhere.identity.name)
+    assert instance.blob_at(instance.accepted_coordinate().git_oid, path) is None
+    own_words = observe_evidence(
+        SectionEvidence(file="elsewhere.md", section=("Else", "Review"), own_words=True),
+        workspace=workspace,
+    )
+    written = service_playbill_write(
+        instance,
+        request=WriteRequest.model_validate(
+            {
+                "because": "My reading of the review.",
+                "changes": [
+                    {
+                        "op": "set",
+                        "subject": f"{KIND}/wi-1",
+                        "field": "status",
+                        "value": "ready",
+                        "evidence": own_words.model_dump(mode="json"),  # type: ignore[union-attr]
+                    }
+                ],
+            }
+        ),
+        caller=caller(),
+    )
+    assert written.status == "accepted", written
+    (only,) = cited_captures(instance, written.changes[0].claim)
+    assert _source_identity(instance, only) == "repo.elsewhere"
+    assert instance.blob_at(instance.accepted_coordinate().git_oid, path) is not None
+
+    _attest(
+        instance,
+        claim,
+        signer,
+        workspace,
+        evidence=FileEvidence(file="elsewhere.md#unique words"),
+    )
+    basis, (cited,) = _cited(instance)
+    assert basis == "new_capture"
+    assert _contract_of(instance, cited) == capture_contract_digest(elsewhere).tagged

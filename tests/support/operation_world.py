@@ -121,12 +121,25 @@ def operation(
     refusals: Mapping[str, bool] | None = None,
     entrypoint: str = "demo.runtime:Provider",
     signature: tuple[str, str] = ("test.value@1", "test.value@1"),
+    serves: tuple[str, ...] | None = None,
 ) -> DeclaredOperation:
-    """One unpinned operation (``signature`` = in, out); ``refusals`` maps code -> absorbable."""
+    """One unpinned operation (``signature`` = in, out); ``refusals`` maps code -> absorbable.
 
+    ``serves`` defaults to the fixture capability over ``test.value@1`` for the
+    operation's effect (:func:`compute_capability`) when ``signature`` is that
+    one, else to the operation's own name.
+    """
+
+    if serves is None:
+        serves = (
+            (compute_capability(effect).name,)
+            if signature == ("test.value@1", "test.value@1")
+            else (name,)
+        )
     return declared_operation(
         {
             "name": name,
+            "serves": sorted(set(serves), key=lambda item: item.encode("utf-8")),
             "in": signature[0],
             "out": signature[1],
             "effect": effect,

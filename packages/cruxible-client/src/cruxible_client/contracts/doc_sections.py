@@ -180,6 +180,50 @@ def _inserted(text: str, newline: bytes) -> bytes:
     return raw.replace(b"\n", newline)
 
 
+def _spaced(raw: bytes, newline: bytes) -> bytes:
+    """An appended subtree ends with one blank line, so the next heading never abuts it."""
+
+    body = raw.rstrip(b"\r\n")
+    return body + newline + newline if body else raw
+
+
+def _same_subtree(left: bytes, right: bytes) -> bool:
+    """Whether two subtrees hold the same text; trailing line breaks are spacing."""
+
+    return left.rstrip(b"\r\n") == right.rstrip(b"\r\n")
+
+
+def heading_level(
+    document: SectionDocument, *, under: SectionPath = (), replaces: bool = False
+) -> int:
+    """The heading depth a section built from its heading text takes at its place.
+
+    Under a section: one deeper than it. Replacing a section: its own depth.
+    At the root: the depth of the document's top headings, else 1.
+    """
+
+    if replaces:
+        return document.section(under).level
+    if under:
+        level = document.section(under).level + 1
+        if level > 6:
+            raise DocSectionError(
+                "section_invalid",
+                f"{under[-1]!r} is a level-6 heading; Markdown headings go six deep.",
+                repair="Append under a shallower section",
+            )
+        return level
+    return min((section.level for section in document.sections), default=1)
+
+
+def heading_text(heading: str, body: str, *, level: int) -> str:
+    """A section's text from its heading, once, and the body under it."""
+
+    lines = f"{'#' * level} {heading}\n"
+    body = body.strip("\r\n")
+    return lines + (f"\n{body}\n" if body else "")
+
+
 def _unique_new_paths(before: SectionDocument, after: SectionDocument) -> None:
     counts: dict[SectionPath, int] = {}
     for section in before.sections:
@@ -202,9 +246,9 @@ def append_section(
 
     document = parse_sections(content or b"", file=file)
     parent = document.section(under)
-    raw = _inserted(text, document.newline)
+    raw = _spaced(_inserted(text, document.newline), document.newline)
     inserted = parse_sections(raw, file=file)
-    identical_document = not under and document.content == raw
+    identical_document = not under and _same_subtree(document.content, raw)
     if not inserted.sections or (
         content is not None and not identical_document and inserted.sections[0].start != 0
     ):
@@ -251,7 +295,7 @@ def append_section(
     existing = [item for item in document.sections if item.path == target]
     if existing:
         current = document.section(target)
-        if document.subtree(target) == raw:
+        if _same_subtree(document.subtree(target), raw):
             return SectionEdit(document.content, target, current.digest, current.digest, False)
         raise DocSectionError("section_exists", f"Section {target!r} already exists.")
     position = parent.end if under else len(document.content)

@@ -15,7 +15,7 @@ import dataclasses
 import functools
 import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
@@ -1838,22 +1838,31 @@ def _default_implementers(
     """The live builds here that stand in for an index default, or none.
 
     A default provider stands for the operations the kit's Procedures' slots
-    need, so it is skipped only when every slot the kit carries is already
-    served by a live build of another provider here. The builds come from the
-    signature index (one seek per slot), never a walk of every Provider.
+    need, so it is skipped only when, for every slot the kit carries, a live
+    operation of another provider here serves the slot's capability and fits it.
+    The candidates come from the capability index (one seek per capability),
+    never a walk of every Provider.
     """
+
+    from collections import ChainMap
 
     from cruxible_client.contracts.capabilities import (
         CapabilityRef,
         tree_capability_resolver,
     )
+    from cruxible_client.contracts.capability_fit import Fits
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         SlotCapabilityUnresolved,
-        provisional_slot_signatures,
+        slot_needs,
     )
-    from cruxible_core.procedures.declared_inputs import builtin_slot_signatures
-    from cruxible_core.providers.operation_index import fitting_operations
+    from cruxible_core.capabilities.artifact import BUILTIN_CAPABILITY_NAMES
+    from cruxible_core.providers.operation_index import (
+        memoized_slot_fitter,
+        serving_operations,
+        tree_build_reader,
+        tree_capability_side,
+    )
 
     if provider.delivery != "index" or not provider.operations:
         return ()
@@ -1864,28 +1873,47 @@ def _default_implementers(
         return from_kit(ref) or from_tree(ref)
 
     try:
-        signatures = {
-            signature.key(): signature
+        needs = {
+            (need.pin.name, need.pin.version, need.pin.digest, need.may_truncate): need
             for path, content in sorted(contents.items())
             if path.startswith("procedures/")
-            for signature in provisional_slot_signatures(
+            for need in slot_needs(
                 parse_procedure(content, path=path).definition.slots,
-                capabilities,
-                builtin=builtin_slot_signatures(),
+                capabilities=capabilities,
+                builtin_names=BUILTIN_CAPABILITY_NAMES,
             ).values()
         }
     except SlotCapabilityUnresolved:
         return ()  # the kit's own add refuses the Procedure; no provider stands in
-    if not signatures:
+    if not needs:
         return ()
+    fitter = memoized_slot_fitter(
+        tree_capability_side(ChainMap(cast(Any, contents), cast(Any, tree)))
+    )
+    builds = tree_build_reader(tree)
     found: set[str] = set()
-    for _key, signature in sorted(signatures.items()):
-        serving = {
-            item.build.removeprefix("Provider:")
-            for item in fitting_operations(connection, signature)
-            if parse_provider_build_name(item.build.removeprefix("Provider:")).name
-            != provider.provider_id
-        }
+    for key, need in sorted(needs.items(), key=lambda item: repr(item[0])):
+        serving: set[str] = set()
+        for row in serving_operations(connection, need.pin.name):
+            name = row.build.removeprefix("Provider:")
+            if parse_provider_build_name(name).name == provider.provider_id:
+                continue
+            if not need.builtin:
+                if row.effect != need.capability.effect:
+                    continue
+                build = builds(row.build, row.build_digest)
+                operation = (
+                    None
+                    if build is None
+                    else next(
+                        (item for item in build.operations if item.name == row.operation), None
+                    )
+                )
+                if build is None or operation is None:
+                    continue
+                if not isinstance(fitter(str(key), need, build, row.build_digest, operation), Fits):
+                    continue
+            serving.add(name)
         if not serving:
             return ()
         found.update(serving)
@@ -2962,10 +2990,22 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
         for receipt in receipts:
-            kits.append(_installed_kit(connection, tree, receipt, versions))
+            kits.append(_bundled_comparison(_installed_kit(connection, tree, receipt, versions)))
     from cruxible_core.service.kit_resume import kit_resume_statuses
 
     return KitStatus(kits=tuple(kits), resumes=kit_resume_statuses(instance))
+
+
+def _bundled_comparison(kit: InstalledKit) -> InstalledKit:
+    """The installed base kit against the one this core bundles: a local comparison."""
+
+    from cruxible_core.kits.base_kit import BASE_KIT_PIN
+
+    if kit.kit_id != BASE_KIT_PIN.kit_id:
+        return kit
+    return kit.model_copy(
+        update={"latest_available": BASE_KIT_PIN.version, "update_check": "checked"}
+    )
 
 
 def _installed_kit(

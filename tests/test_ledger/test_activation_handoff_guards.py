@@ -85,7 +85,7 @@ def test_handoff_keeps_frozen_successor_identical_to_restart(tmp_path):
 def test_handoff_authenticates_with_predecessor_daemon_key(tmp_path, monkeypatch):
     instance, _owner, reviewer = _instance(tmp_path)
     inputs = _input(instance, reviewer)
-    bundle = instance.prepare_generation(**inputs, sequence=1)
+    bundle = instance.prepare_generation(**inputs, sequence=len(instance.accepted_history()))
     parent = instance.accepted_history()[-1]
     calls = []
 
@@ -109,9 +109,9 @@ def test_handoff_refuses_changed_predecessor_receipts(tmp_path, mutation):
     instance.settle_and_activate(**_input(instance, reviewer))
     parent = instance.accepted_history()[-1]
     inputs = _input(instance, reviewer, index=2)
-    bundle = instance.prepare_generation(**inputs, sequence=2)
+    bundle = instance.prepare_generation(**inputs, sequence=len(instance.accepted_history()))
     tree = dict(bundle.tree)
-    previous_path = "changesets/cs-00000000000000000001.json"
+    previous_path = f"changesets/cs-{parent.sequence:020d}.json"
     if mutation == "modify":
         tree[previous_path] = b"{}\n"
     elif mutation == "delete":
@@ -131,10 +131,11 @@ def test_handoff_refuses_changed_predecessor_receipts(tmp_path, mutation):
 def test_handoff_refuses_noncontiguous_sequence(tmp_path):
     instance, _owner, reviewer = _instance(tmp_path)
     inputs = _input(instance, reviewer)
-    bundle = instance.prepare_generation(**inputs, sequence=1)
+    sequence = len(instance.accepted_history())
+    bundle = instance.prepare_generation(**inputs, sequence=sequence)
     record = build_change_set_record(
         inputs["candidate"],
-        sequence=2,
+        sequence=sequence + 1,
         approvals=inputs["approvals"],
         actor_binding=inputs["actor_binding"],
     )
@@ -155,7 +156,7 @@ def test_handoff_refuses_noncontiguous_sequence(tmp_path):
 def test_handoff_defers_possible_retired_content_to_full_recovery(tmp_path):
     instance, _owner, reviewer = _instance(tmp_path)
     inputs = _input(instance, reviewer)
-    bundle = instance.prepare_generation(**inputs, sequence=1)
+    bundle = instance.prepare_generation(**inputs, sequence=len(instance.accepted_history()))
     suspect = replace(
         bundle,
         tree={
@@ -178,9 +179,11 @@ def test_handoff_checkpoint_stride_and_uncheckpointed_suffix_reopen(tmp_path, mo
     instance, _owner, reviewer = _instance(tmp_path)
     monkeypatch.setattr(instance_module, "DEFAULT_CHECKPOINT_INTERVAL", 2)
     checkpoint_dir = instance._checkpoint_directory(instance.root)
-    for index in range(1, 4):
+    # Creation's base kit is generation 1, so index 1 settles generation 2 (on the
+    # stride) and index 2 settles generation 3, the uncheckpointed suffix.
+    for index in range(1, 3):
         instance.settle_and_activate(**_input(instance, reviewer, index=index))
-        if index == 2:
+        if index == 1:
             checkpoint_files = {p: p.read_bytes() for p in checkpoint_dir.iterdir() if p.is_file()}
             assert checkpoint_files
     assert {p: p.read_bytes() for p in checkpoint_dir.iterdir() if p.is_file()} == checkpoint_files

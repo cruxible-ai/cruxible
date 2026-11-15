@@ -406,7 +406,7 @@ def empty_results_answer(payload: Mapping[str, Any]) -> dict[str, Any]:
     Checked on today's engine with today's full extract: a document with no
     ``results`` key at all is read as incomplete and retires nothing; one whose
     ``results`` is present and empty is a complete read of zero records, and
-    ``mirror`` retires every title. This answer takes the second form. Scenario
+    ``mirror`` retires every rank. This answer takes the second form. Scenario
     7 states when that read is honoured (the producer's layout declares
     ``results``) and when binding refuses the producer first (it does not).
     """
@@ -693,7 +693,7 @@ def thin_layout_package(base: BaseKit) -> PilotPackage:
     carries the kind's decoding and no layout: it promises no record set at all.
     The shapes fit by name; only layout coverage (note §2.3) can refuse it. Run,
     it writes an empty ``results`` (see :func:`empty_results_answer`): a complete
-    read with no records, on which ``when_absent: mirror`` retires every title.
+    read with no records, on which ``when_absent: mirror`` retires every rank.
     """
 
     request, result, contracts = _copied(base, RESULTS)

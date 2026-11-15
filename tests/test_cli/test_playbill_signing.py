@@ -381,7 +381,8 @@ def test_cli_missing_signer_never_falls_back_to_daemon(
     # silently turn into a daemon/bearer signature or an attestation submit.
     assert result.exit_code != 0
     assert submitted is False
-    assert instance.accepted_history()[-1].sequence == 0
+    # Still creation's base kit generation: nothing was accepted.
+    assert instance.accepted_history()[-1].sequence == 1
 
 
 def test_cli_approval_without_a_terminal_refuses_before_contacting_the_daemon(

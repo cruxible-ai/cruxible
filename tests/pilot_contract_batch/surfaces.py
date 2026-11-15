@@ -123,7 +123,40 @@ def list_capabilities(instance: Any) -> tuple[CapabilityEntry, ...]:
     precondition of scenarios 2, 4, 5, 7 and 8.
     """
 
-    raise SurfaceMissing("list_capabilities", BASE_KIT)
+    from cruxible_client.contracts.capabilities import capability_identity, parse_capability_ref
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+    from cruxible_core.service.kits import _receipts
+
+    listed = []
+    cursor = None
+    while True:
+        page = service_playbill_orient(instance, section="capabilities", cursor=cursor)
+        listed.extend(page.capabilities)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    coordinate = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(coordinate.git_oid)
+    owners = [(receipt.kit_id, receipt.owns) for receipt in _receipts(instance, tree)]
+    entries = []
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for item in listed:
+            ref = parse_capability_ref(item.capability)
+            envelope = projection.typed.envelope(
+                capability_identity(ref.name, ref.version).qualified
+            )
+            assert envelope is not None, item.capability
+            kit_id = next(
+                (kit for kit, owns in owners if any(ref.name.startswith(p) for p in owns)), None
+            )
+            entries.append(
+                CapabilityEntry(
+                    pin=CapabilityPin(ref.name, ref.version, envelope.artifact_digest),
+                    effect=item.effect,
+                    kit_id=kit_id,
+                )
+            )
+    return tuple(sorted(entries, key=lambda entry: (entry.pin.name, entry.pin.version)))
 
 
 # -- scenario 2: slots in authoring -----------------------------------------------------
@@ -268,7 +301,88 @@ def accept_line(instance: Any, line: Mapping[str, Any]) -> AcceptedLine:
     Owner: binding (slice 4). Reused by scenarios 5 and 7.
     """
 
-    raise SurfaceMissing("accept_line", BINDING)
+    import json
+
+    from cruxible_client.contracts.authoring.inputs import LineInput
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, parse_line_spec
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+    from cruxible_core.errors import RequestRefusedError
+    from tests.support.operation_world import author
+
+    payload = LineInput.model_validate(dict(line))
+    try:
+        author(instance, payload, name=f"line-{line['name']}")
+    except AuthoringLoweringError as exc:
+        raise RequestRefusedError(exc.code, exc.message, repair=exc.repairs) from exc
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = line_spec_path(str(line["name"]))
+    accepted = parse_line_spec(tree[path], path=path)
+    procedure = json.loads(tree["procedures/" + accepted.procedure.target.name + ".json"])
+    pins = procedure["definition"]["slots"]
+    fits = _binding_fits(instance, accepted)
+    return AcceptedLine(
+        name=accepted.identity.name,
+        slots={
+            slot: SlotBinding(
+                slot=slot,
+                operation=(f"{binding.build.target.name.partition('/')[0]}#{binding.operation}"),
+                capability=CapabilityPin(
+                    name=pins[slot]["capability"]["name"],
+                    version=pins[slot]["capability"]["version"],
+                    digest=pins[slot]["capability"]["digest"],
+                ),
+                fit=fits[slot],
+            )
+            for slot, binding in sorted(accepted.bindings.items())
+        },
+    )
+
+
+def _binding_fits(instance: Any, line: Any) -> dict[str, Any]:
+    """How each of an accepted Line's bindings fits its slot, judged at the head."""
+
+    from cruxible_client.contracts.procedures.line_specs import (
+        judge_slot_binding,
+        operation_spelling,
+    )
+    from cruxible_core.capabilities.lookup import capability_in_projection
+    from cruxible_core.providers.operation_index import (
+        line_slot_map,
+        memoized_slot_fitter,
+        projection_build_reader,
+        projection_capability_side,
+    )
+
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        typed = projection.typed
+
+        def child(identity: Any) -> Any:
+            source = typed.source(identity.qualified)
+            return None if source is None else source.definition
+
+        procedure = typed.source(line.procedure.target.qualified)
+        needs = line_slot_map(
+            procedure.definition, child, lambda ref: capability_in_projection(projection, ref)
+        )
+        fitter = memoized_slot_fitter(projection_capability_side(typed))
+        builds = projection_build_reader(typed)
+        found: dict[str, Any] = {}
+        for slot, binding in line.bindings.items():
+            build = builds(binding.build.target.qualified, binding.build.artifact_digest)
+            assert build is not None
+            (operation,) = [item for item in build.operations if item.name == binding.operation]
+            verdict = judge_slot_binding(
+                slot,
+                needs[slot],
+                build,
+                binding.build.artifact_digest,
+                operation,
+                spelling=operation_spelling(binding.build.target.name, binding.operation),
+                fitter=fitter,
+            )
+            assert verdict.problem is None, verdict.problem
+            found[slot] = verdict.fit
+        return found
 
 
 # -- scenario 5: swap -------------------------------------------------------------------
@@ -281,7 +395,18 @@ def run_slot_records(instance: Any, state: Any) -> dict[str, RunSlotRecord]:
     with Capture-as-field (slices 4 and 6).
     """
 
-    raise SurfaceMissing("run_slot_records", SWAP)
+    records: dict[str, RunSlotRecord] = {}
+    for binding in state.receipt.resolved_provider_bindings:
+        assert binding.capability.digest is not None and binding.fit is not None
+        records[binding.slot] = RunSlotRecord(
+            slot=binding.slot,
+            capability=CapabilityPin(
+                binding.capability.name, binding.capability.version, binding.capability.digest
+            ),
+            fit=binding.fit,
+            operation_signature_digest=binding.operation_signature_digest,
+        )
+    return records
 
 
 # -- scenario 6: layout and thin EXTRACT ------------------------------------------------
@@ -369,7 +494,57 @@ def layout_coverage_gap(instance: Any, *, kind: str, package: Any) -> str | None
     Owner: coverage (slice 7).
     """
 
-    raise SurfaceMissing("layout_coverage_gap", COVERAGE)
+    from cruxible_client.contracts.capability_fit import FitUnresolved
+    from cruxible_client.contracts.capture_layouts import DeclaredCaptureKind, layout_covers
+    from cruxible_client.contracts.provider_registration import PackageRegistration
+    from cruxible_client.contracts.shapes import edge_refusal
+    from cruxible_core.providers.operation_index import projection_capability_side
+
+    declares = PackageRegistration.model_validate(package.registration).declares
+    copy = declares.capture_kind(kind) or DeclaredCaptureKind(name=kind)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        side = projection_capability_side(projection.typed).side
+        held = side.capture_kinds(kind) or DeclaredCaptureKind(name=kind)
+        carried = declares.lookup()
+
+        def type_fits(sender: Any, receiver: Any) -> Any:
+            from cruxible_client.contracts.capability_fit import Fits, Unfit
+            from cruxible_client.contracts.shapes import render_type
+
+            refused = edge_refusal(sender, receiver)
+            if refused is None:
+                return Fits(fit="identical" if sender == receiver else "structural")
+            return Unfit(
+                side="result",
+                path="value",
+                problem="type",
+                sender=render_type(sender),
+                receiver=render_type(receiver),
+            )
+
+        def row_fits(sender: Any, receiver: Any) -> Any:
+            from cruxible_client.contracts.capability_fit import record_fits
+
+            try:
+                return record_fits(
+                    sender,
+                    receiver,
+                    carried,
+                    side.contracts,
+                    side="result",
+                    capture_covers=lambda *_: None,
+                )
+            except FitUnresolved as exc:
+                raise AssertionError(str(exc)) from exc
+
+        # The provider produces the kind; the instance's declaration is what readers read.
+        gap = layout_covers(copy, held, type_fits=type_fits, row_fits=row_fits)
+    if gap is None:
+        return None
+    return (
+        f"{gap.entry}: the provider's copy declares {gap.producer}; "
+        f"the instance declares {gap.reader}"
+    )
 
 
 # -- scenario 8: kit requires kit -------------------------------------------------------

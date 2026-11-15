@@ -1,0 +1,8 @@
+{
+  "kit_id": "base",
+  "owns": [
+    "web.",
+    "workspace."
+  ],
+  "version": "1.0.0"
+}

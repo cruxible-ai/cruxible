@@ -552,7 +552,7 @@ def test_a_claim_accepted_before_this_law_stays_retirable_and_revisable(
         owner,
         admitted.candidate,
         admitted.evaluation.evaluated_tree_oid,
-        sequence=1,
+        sequence=len(instance.accepted_history()),
     )
     monkeypatch.undo()
 
@@ -587,7 +587,7 @@ def test_a_claim_accepted_before_this_law_stays_retirable_and_revisable(
         owner,
         revised.candidate,
         revised.evaluation.evaluated_tree_oid,
-        sequence=2,
+        sequence=len(instance.accepted_history()),
     )
 
     # A successor that cites the same Capture a NEW way is new evidence.

@@ -80,8 +80,9 @@ def test_settlement_checks_all_stored_bytes_and_avoids_full_tree_read(tmp_path, 
     def full_read(*args, **kwargs):
         pytest.fail("warm settlement must read only changed physical blobs")
 
+    sequence = len(instance.accepted_history())
     monkeypatch.setattr(instance._ledger, "read_tree", full_read)
-    bundle = instance.prepare_generation(**inputs, sequence=1)
+    bundle = instance.prepare_generation(**inputs, sequence=sequence)
     assert bundle.tree[bundle.record_path]
     original = instance._ledger.create_signed_generation
 
@@ -90,5 +91,5 @@ def test_settlement_checks_all_stored_bytes_and_avoids_full_tree_read(tmp_path, 
 
     monkeypatch.setattr(instance._ledger, "create_signed_generation", changed)
     with pytest.raises(SettlementIntegrityError, match="stored generation tree differs"):
-        instance.prepare_generation(**inputs, sequence=1)
+        instance.prepare_generation(**inputs, sequence=sequence)
     assert instance._ledger.read_main() == inputs["base"].git_oid

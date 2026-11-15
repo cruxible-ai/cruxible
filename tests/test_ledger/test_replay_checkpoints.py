@@ -111,7 +111,8 @@ def _reopen(fixture) -> RecoveredInstanceState:  # type: ignore[no-untyped-def]
     return _reopen_instance(fixture)._recovered
 
 
-STRIDE_PROFILE = replace(PROFILE, name="strided", checkpoint_interval=2)
+# The head (creation's base kit, then the profile's generations) is off this stride.
+STRIDE_PROFILE = replace(PROFILE, name="strided", checkpoint_interval=3)
 
 
 def test_a_checkpoint_written_on_the_acceptance_stride_seeds_a_reopen(tmp_path: Path) -> None:
@@ -405,6 +406,8 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
     instance, _owner, reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
     approvals = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
+    # Creation's base kit is generation 1; this one follows it.
+    sequence = len(instance.accepted_history())
     bundle = prepare_generation(
         instance._ledger,
         base=base,
@@ -414,7 +417,7 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=1,
+        sequence=sequence,
     )
     projections = Path(instance.inspect().storage_directories["projections"])
     publisher = ActivationPublisher(
@@ -434,7 +437,7 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
     cold = publisher._replay_checkpoint_body(
         replace(bundle, merkle=None),
         base=base,
-        parent=publisher.accepted_coordinates_by_sequence[0],
+        parent=publisher.accepted_coordinates_by_sequence[sequence - 1],
     )
 
     def no_rehash(_tree):
@@ -451,7 +454,7 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
     record = load_checkpoint_file(_checkpoints(instance))
     assert record is not None
     assert record.body.members == expected_members
-    assert record.body.sequence == 1
+    assert record.body.sequence == sequence
     assert record.body.git_oid == bundle.oid
     assert record.body.semantic_root == bundle.semantic_root.tagged
     assert record.body == cold

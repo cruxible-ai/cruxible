@@ -69,7 +69,7 @@ _WORLD_MEMBERS = frozenset(
 )
 #: ``define()`` keywords that are not fields: a field leaf spelled like one is
 #: set with ``draft.set(...)`` instead.
-_DEFINE_OPTIONS = frozenset({"create_new", "expect_new"})
+_DEFINE_OPTIONS = frozenset({"create_new", "expect_new", "evidence", "role"})
 
 _STUB_IMPORTS = (
     "from collections.abc import Sequence",
@@ -477,6 +477,10 @@ def _define_member(world: World, node: _Node, body: _Body) -> None:
     options = [] if identity.rule == "minted" else ["    expect_new: bool = ...,"]
     if identity.rule == "keys" and not identity.unique:
         options.insert(0, "    create_new: bool = ...,")
+    options += [
+        "    evidence: Evidence | AuthoredSection | None = ...,",
+        "    role: WriteRole | None = ...,",
+    ]
     # One key is positional or by its leaf; a composite key's parts are keywords.
     positional = key_lines if len(identity.keys) == 1 else []
     keywords = [

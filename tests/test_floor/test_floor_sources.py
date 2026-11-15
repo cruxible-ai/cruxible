@@ -19,9 +19,16 @@ WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
 
 
+#: The receipt Document of creation's base kit: every instance lists it as a source.
+BASE_KIT_RECEIPT = "kit-base"
+
+
 def _rows(content: bytes) -> tuple[str, list[list[str]]]:
+    """The header and every row but the base kit receipt's."""
+
     header, *rows = content.decode().splitlines()
-    return header, [row.split("\t") for row in rows]
+    split = [row.split("\t") for row in rows]
+    return header, [row for row in split if row[0] != BASE_KIT_RECEIPT]
 
 
 def test_the_ledger_lists_evidence_sources_but_not_self_sources(tmp_path: Any) -> None:
@@ -33,7 +40,7 @@ def test_the_ledger_lists_evidence_sources_but_not_self_sources(tmp_path: Any) -
     header, rows = _rows(files["sources/LEDGER"])
     # A value the writer stated on its own say is no evidence source.
     assert rows == []
-    assert header.startswith("# sources LEDGER  0 sources  columns: source, contracts")
+    assert header.startswith("# sources LEDGER  1 sources  columns: source, contracts")
 
     workspace = tmp_path / "workspace"
     _write(instance, _set(WI1, "measured", 3, evidence=report_evidence(workspace, "Count: 3")))
@@ -101,7 +108,7 @@ def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path:
     materialize_floor(workspace, export=_export_envelope(files))
     floor = workspace / ".cruxible/floor"
     header, rows = _rows((floor / "sources/INDEX").read_bytes())
-    assert header.startswith("# sources INDEX  3 sources  columns: source, contracts, locator")
+    assert header.startswith("# sources INDEX  4 sources  columns: source, contracts, locator")
     assert header.endswith("(locators joined from the local workspace catalog)")
     located = {row[0]: row[2] for row in rows}
     assert located == {
@@ -332,3 +339,23 @@ def test_a_contract_change_rereads_only_the_claims_taken_under_it(monkeypatch: A
         changed_contracts=["sha256:b"],
     )
     assert read == ["b"] and dropped.rows["source.b"].split("\t")[1] == "-"
+
+
+def test_own_words_located_in_a_file_are_on_its_line(tmp_path: Path) -> None:
+    """Located own words are one Capture sourced at their file: the file lists the Claim.
+
+    Unlocated own words still come from no source.
+    """
+
+    from tests.test_service.test_write_verbs import _review_section
+
+    (tmp_path / "instance").mkdir()
+    instance, _owner = seed_write_surface(tmp_path / "instance")
+    _write(instance, _set(WI2, "title", "Self-evidenced"))
+    workspace = tmp_path / "workspace"
+    _write(instance, _set(WI1, "status", "ready", evidence=_review_section(workspace, "Ready.")))
+    _header, rows = _rows(service_export_playbill_floor(instance)["sources/LEDGER"])
+    (reports,) = [row for row in rows if row[0] == "repo.reports"]
+    assert reports[2] == "-"
+    assert reports[3] == "1"
+    assert [row[0] for row in rows] == ["repo.reports"]

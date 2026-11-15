@@ -288,6 +288,40 @@ def _write_doc_sections(world: World) -> object:
     return result
 
 
+def _capture_and_claim_rows(world: World) -> tuple[int, int]:
+    """The accepted projection's Capture rows (its maintained count) and Claim rows.
+
+    Read outside the measured window: a check of what the route stored, not
+    part of its work.
+    """
+
+    instance = world.instance
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        connection = projection.typed.connection
+        captures = connection.execute("SELECT amount FROM capture_count").fetchone()
+        claims = connection.execute("SELECT count(*) FROM claims").fetchone()
+    return (0 if captures is None else int(captures[0])), int(claims[0])
+
+
+def _count_captures(world: World) -> None:
+    world.prepared = _capture_and_claim_rows(world)
+
+
+def _one_capture_per_citing_claim(world: World, result: Any) -> None:
+    """Located own words store one Capture per citing Claim, in SMALL and LARGE alike.
+
+    The write states the section's Claim and, creating its Subject by key, the
+    key Claim on the write's own words: each new Claim cites exactly one new
+    Capture (revision 71 stored a second, locating Capture per section Claim).
+    """
+
+    captures_before, claims_before = world.prepared
+    captures_after, claims_after = _capture_and_claim_rows(world)
+    stored, new_claims = captures_after - captures_before, claims_after - claims_before
+    assert any(change.claim is not None for change in result.changes), result
+    assert new_claims > 0 and stored == new_claims, (world.shape.name, stored, new_claims)
+
+
 def _typed_creates(world: World) -> list[dict[str, Any]]:
     """Two Subjects by ``create`` changes, one naming the other by its label."""
 
@@ -844,7 +878,12 @@ def _routes() -> list[Route]:
     return [
         Route("write.create.dry_run", _write(lambda w: _creates(w, "dry"), dry_run=True)),
         Route("write.create", _write(lambda w: _creates(w, "new"))),
-        Route("write.doc_sections", _write_doc_sections),
+        Route(
+            "write.doc_sections",
+            _write_doc_sections,
+            prepare=_count_captures,
+            verify=_one_capture_per_citing_claim,
+        ),
         *(
             Route(
                 f"tick.after_generation.{part}",

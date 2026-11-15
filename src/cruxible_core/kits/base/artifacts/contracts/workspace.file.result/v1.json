@@ -1,0 +1,14 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "The exact bytes the daemon read, as one Capture.",
+  "fields": {
+    "capture": {
+      "type": {
+        "capture_kind": "*",
+        "kind": "capture"
+      }
+    }
+  },
+  "name": "workspace.file.result",
+  "version": 1
+}

@@ -18,6 +18,7 @@ from cruxible_client.contracts.provider_registration import (
     capability_reserved_message,
     evaluate_declared_operations,
     evaluate_registration_law,
+    spells_capture_wire,
 )
 from cruxible_client.contracts.shapes import Contract, contract_digest, validate_contract
 
@@ -237,7 +238,116 @@ def test_the_law_codes_are_a_closed_vocabulary() -> None:
         "cruxible.provider.declared_contract_unpinned",
         "cruxible.provider.declared_capture_kind_missing",
         "cruxible.provider.declared_unreached",
+        "cruxible.provider.result_is_capture",
     }
+
+
+def test_a_result_contract_that_spells_a_capture_is_refused() -> None:
+    """A Capture is a named field of the result Contract, never the result itself."""
+
+    spelled = validate_contract(
+        {
+            "name": "acme.lookup.result",
+            "version": 1,
+            "fields": {
+                "source_identity": "string",
+                "coordinate_type": "string",
+                "coordinate": "string",
+                "selector_type": "string",
+                "selector": "string",
+                "replayability": "enum[attested_only]",
+                "content_base64": "string",
+                "byte_length": "int{0..}",
+                "bytes_digest": "string",
+                "observed_at": "datetime",
+            },
+        }
+    )
+    assert spells_capture_wire(spelled)
+    assert not spells_capture_wire(RESULT)
+    registration = _registration(
+        declares=_declares(contracts=_sorted(ROW, PARAM, REQUEST, spelled, DECLINED))
+    )
+    problems = [
+        problem
+        for problem in evaluate_registration_law(registration)
+        if problem.code != "cruxible.provider.declared_unreached"  # acme.hits, now unnamed
+    ]
+    assert [problem.code for problem in problems] == ["cruxible.provider.result_is_capture"]
+    assert "acme.lookup.result@1" in problems[0].message
+    assert "capture: capture<*>" in problems[0].message
+
+
+_AUDIT_ROW_FIELDS: dict[str, Any] = {
+    "tag": 'enum["acme.audit-row-v1"]',
+    "source_identity": "string",
+    "coordinate_type": "string",
+    "coordinate": "string",
+    "selector_type": "string",
+    "selector": "string",
+    "replayability": "bool",
+    "content_base64": "string",
+    "byte_length": "int{0..}",
+    "bytes_digest": "string",
+    "observed_at": "datetime",
+}
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        # A foreign tag and a boolean replayability: it cannot validate as the wire.
+        _AUDIT_ROW_FIELDS,
+        # The same record carrying its Capture correctly, in a named field.
+        {**_AUDIT_ROW_FIELDS, "capture": "capture<*>"},
+        # The wire's tag, but replayability can never hold exact or attested_only.
+        {**_AUDIT_ROW_FIELDS, "tag": "string"},
+        # Every other field wire-compatible; only the tag excludes the wire's literal.
+        {**_AUDIT_ROW_FIELDS, "replayability": "enum[exact]"},
+        # A wire-compatible record that holds its Capture in a named field.
+        {**_AUDIT_ROW_FIELDS, "tag": "string", "replayability": "string", "capture": "capture<*>"},
+    ],
+    ids=["foreign-tag", "with-capture-field", "bool-replayability", "tag-only", "named-capture"],
+)
+def test_an_ordinary_record_with_the_wire_field_names_installs(fields: dict[str, Any]) -> None:
+    """Only a Contract that could itself be the wire is refused, not one that shares names."""
+
+    audit = validate_contract({"name": "acme.lookup.result", "version": 1, "fields": fields})
+    assert not spells_capture_wire(audit)
+    registration = _registration(
+        declares=_declares(contracts=_sorted(ROW, PARAM, REQUEST, audit, DECLINED))
+    )
+    codes = _codes(registration)
+    assert "cruxible.provider.result_is_capture" not in codes
+    assert set(codes) <= {"cruxible.provider.declared_unreached"}  # acme.hits, unnamed now
+
+
+def test_the_wire_shaped_contract_with_its_tag_is_still_refused() -> None:
+    wire = validate_contract(
+        {
+            "name": "acme.lookup.result",
+            "version": 1,
+            "fields": {
+                **_AUDIT_ROW_FIELDS,
+                "tag": 'enum["playbill-provider-result-to-external-capture-v1"]',
+                "replayability": "enum[attested_only]",
+                "content_encoding": "enum[base64]",
+            },
+        }
+    )
+    assert spells_capture_wire(wire)
+    assert not spells_capture_wire(
+        validate_contract(
+            {
+                "name": "acme.lookup.result",
+                "version": 1,
+                "fields": {
+                    **wire.model_dump(mode="json")["fields"],
+                    "content_encoding": {"type": "enum[hex]"},
+                },
+            }
+        )
+    )
 
 
 def test_no_operation_serves_a_workspace_capability() -> None:

@@ -550,6 +550,8 @@ def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
         "        name: str | int | bool,\n"
         "        *,\n"
         "        expect_new: bool = ...,\n"
+        "        evidence: Evidence | AuthoredSection | None = ...,\n"
+        "        role: WriteRole | None = ...,\n"
         "    ) -> _N_sec__package: ...\n"
     ) in stub
     assert (
@@ -1862,11 +1864,11 @@ def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
     vocabulary = described.split("Vocabulary:\n", 1)[1].splitlines()
     assert vocabulary == [
         "  dev.batch",
-        "    landed_at: literal, one",
+        '    landed_at: string{pattern: "^[0-9a-f]{40}$", max_len: 256}, one',
         "  sec.package",
         "  sec.vulnerability",
         "    affects_package: -> sec.package, one",
-        "    severity: literal, one [high, low]",
+        "    severity: enum, one [high, low]",
     ]
 
 

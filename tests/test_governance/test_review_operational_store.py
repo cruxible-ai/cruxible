@@ -322,7 +322,10 @@ def test_lock_symlink_refuses_without_following_target(tmp_path: Path) -> None:
     exhaust = Path(instance.inspect().storage_directories["exhaust"])
     target = tmp_path / "outside-lock-target"
     target.write_text("untouched", encoding="utf-8")
-    (exhaust / ".review-operational-v1.lock").symlink_to(target)
+    lock = exhaust / ".review-operational-v1.lock"
+    # Creation's base kit add already wrote through the store, leaving its lock file.
+    lock.unlink(missing_ok=True)
+    lock.symlink_to(target)
 
     with pytest.raises(ReviewOperationalStoreError, match="lock path is not trustworthy"):
         instance.review_operational_store().head()

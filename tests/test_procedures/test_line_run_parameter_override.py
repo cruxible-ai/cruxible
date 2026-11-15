@@ -59,7 +59,7 @@ def override_spec() -> Any:
         reference_text=True,
         input={},
         output={},
-        params={"path": 'string{max_len: 64, pattern: "^data/[a-z]+[.]json$"}'},
+        params={"path": 'string{min_len: 1, max_len: 64, pattern: "^data/[a-z]+[.]json$"}'},
         slots={"fetch": {"capability": "workspace.file@1"}},
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=262144),
         steps=[
@@ -70,10 +70,6 @@ def override_spec() -> Any:
                 "input": {
                     "logical_source": "commerce.production.orders",
                     "relative_path": "$params.path",
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 7, "relation": "orders"},
                 },
             },
             {"extract": "entries", "capture": "$steps.doc.capture", "records": "entries"},

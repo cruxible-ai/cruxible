@@ -540,7 +540,11 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         publisher_provider = parse_provider(_tree(publisher)[held_path], path=held_path)
         assert here.identity == publisher_provider.identity
         assert provider_digest(here) != provider_digest(publisher_provider)
-        (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
+        (status,) = (
+            kit
+            for kit in playbill_api.playbill_kit_status(consumer.instance_id).kits
+            if kit.kit_id != "base"
+        )
         assert [(item.provider_id, item.state) for item in status.providers] == [
             ("kit-call", "installed")
         ]

@@ -189,7 +189,7 @@ def test_line_acceptance_refuses_ambiguous_and_unfilled_slots_listing_candidates
     author_procedure(other, slotted_spec(effect="external_read"))
     unfilled = _refusal(lambda: author_line(other))
     assert unfilled.error_code == "cruxible.line.slot_unfilled"
-    assert "test.value@1 -> test.value@1 (external_read)" in str(unfilled)
+    assert "(test.compute-read@1, external_read)" in str(unfilled)
 
 
 def test_an_explicit_operation_binding_resolves_past_the_candidate_limit(tmp_path):
@@ -794,23 +794,20 @@ def sourced_spec(*, description=None):  # type: ignore[no-untyped-def]
         procedure="test.sourced",
         description=description,
         input={},
-        output={"length": "int"},
+        output={"document": "capture<test.orders-v1>"},
         slots={"read": slot(f"{WORKSPACE_FILE}@1")},
         steps=[
             CallStep(
                 call="doc",
                 captures={"capture": "test.orders-v1"},
                 slot="read",
+                # The authored request: workspace.file@1's request, nothing else.
                 input={
                     "logical_source": "commerce.production.orders",
                     "relative_path": "data/doc.json",
-                    "coordinate_type": "database-snapshot-v1",
-                    "coordinate": {"lsn": "workspace"},
-                    "selector_type": "relation-primary-key-v1",
-                    "selector": {"id": 7, "relation": "orders"},
                 },
             ),
-            ProjectStep(project="out", fields={"length": "$doc.source.byte_length"}),
+            ProjectStep(project="out", fields={"document": "$doc.capture"}),
         ],
         returns="out",
         hard_caps=procedure_limits(provider_calls=1, capture_bytes=65536),
@@ -822,13 +819,13 @@ def sourced_world(  # type: ignore[no-untyped-def]
 ):
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from tests.core_support._identity_support import accept_tree
-    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._light_capture_support import file_contract
 
     instance = world(tmp_path, operation_build(), *builds)
     root = tmp_path / "workspace"
     (root / "data").mkdir(parents=True, exist_ok=True)
     (root / "data/doc.json").write_text('{"value": 7}')
-    contract = record_contract()
+    contract = file_contract()
     accept_tree(
         instance,
         {capture_contract_path(contract.identity.name): render_capture_contract(contract)},
@@ -935,12 +932,13 @@ def test_a_captured_source_call_records_operation_fields_and_replays(tmp_path):
     instance, root = sourced_world(tmp_path)
     state = run_sourced(instance, root)
     assert state.status == "succeeded", state.terminal
-    assert state.result == {"length": len('{"value": 7}')}
     (receipt,) = invocation_receipts(instance, state.run_id)
     assert receipt.operation == "workspace.file"
     assert receipt.operation_signature_digest == workspace_file_signature_digest()
     (observed,) = state.source_observations
     assert observed.capture_digest is not None
+    # The call's value is the base kit's result: the one Capture core read.
+    assert state.result == {"document": observed.capture_digest}
     _grain, replayed = replay(instance, state)
     assert replayed.procedure.pins == state.receipt.validated_pins
 
@@ -991,12 +989,16 @@ def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(
     assert accepted_line(instance, SOURCE_LINE).bindings["read"].build.target.name == (
         "cruxible-builtin"
     )
-    # The builtin declines this read (its size guard's refusal, as it returns it).
+    # The builtin declines this read (its digest guard's refusal, as it returns it).
     monkeypatch.setattr(
         builtin_runtime,
         "_guarded_call",
         lambda adapter, context: builtin_runtime._envelope(
-            context, "provider_declined", "not today", byte_length=2, max_bytes=1
+            context,
+            "provider_declined",
+            "not today",
+            declared="sha256:" + "0" * 64,
+            computed="sha256:" + "1" * 64,
         ),
     )
     state = run_sourced(instance, root)
@@ -1065,6 +1067,7 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
         operation(
             "compute",
             signature=("test.value@1", "test.severity_value@1"),
+            serves=("test.compute.severity",),
         ),
     )
     manifest = ProviderRuntimeManifest(
@@ -1199,8 +1202,9 @@ def _fetch_world(
     request_url=None,
 ):  # type: ignore[no-untyped-def]
     """A world whose ``fetch`` slot is an ``external_read`` Source operation
-    with a declared out Contract stricter than the generic Capture wire
-    shape (F02): it accepts only ``replayability: exact``.
+    whose out Contract is its Capture, a named field, beside a declared field
+    stricter than the Capture wire allows (F02): ``replayability`` accepts only
+    ``exact``.
 
     ``request_url``, when given, adds a ``url`` field (declared on the
     request Contract, and named in the authored Source's own request) so a
@@ -1235,17 +1239,10 @@ def _fetch_world(
         {
             "name": "demo.fetch.result",
             "version": 1,
+            # A Capture is a named field of the result Contract, never the result.
             "fields": {
-                "source_identity": {"type": "string"},
-                "coordinate_type": {"type": "string"},
-                "coordinate": {"type": "string"},
-                "selector_type": {"type": "string"},
-                "selector": {"type": "string"},
+                "capture": {"type": "capture<*>"},
                 "replayability": {"type": "enum[exact]"},
-                "content_base64": {"type": "string"},
-                "byte_length": {"type": "int{0..}"},
-                "bytes_digest": {"type": "string"},
-                "observed_at": {"type": "datetime"},
             },
         }
     )
@@ -1257,6 +1254,7 @@ def _fetch_world(
             "fetch",
             effect="external_read",
             signature=("demo.fetch.request@1", "demo.fetch.result@1"),
+            serves=("demo.fetch",),
         ),
     )
     manifest = ProviderRuntimeManifest(
@@ -1354,22 +1352,12 @@ def test_an_external_read_sources_output_is_checked_against_its_operation_contra
     operation's own out Contract, not only the generic Capture-wire shape."""
 
     instance = _fetch_world(tmp_path)
+    good = _fetch_output()
 
     def bad_output(context):  # type: ignore[no-untyped-def]
-        return {
-            "source_identity": "demo.events",
-            "coordinate_type": "database-snapshot-v1",
-            "coordinate": "workspace",
-            "selector_type": "relation-primary-key-v1",
-            "selector": "orders",
-            # Wire-shape valid (Literal["exact", "attested_only"]); the
-            # operation's own out Contract permits only "exact" (F02).
-            "replayability": "attested_only",
-            "content_base64": "e30=",
-            "byte_length": 2,
-            "bytes_digest": "sha256:" + "0" * 64,
-            "observed_at": "2026-10-29T12:00:00Z",
-        }
+        # The Capture is sound; the operation's own out Contract permits only
+        # "exact" in its declared replayability field (F02).
+        return {**good(context), "replayability": "attested_only"}
 
     state, _ = run_line(instance, invoker=Invoker(output=bad_output), name="test.fetched-line")
     assert state.status == "node_refused", state.terminal
@@ -1386,16 +1374,19 @@ def _fetch_output(*, byte_length=2, content_base64="e30=", coordinate_type="data
 
     def output(context):  # type: ignore[no-untyped-def]
         return {
-            "source_identity": "demo.events",
-            "coordinate_type": coordinate_type,
-            "coordinate": "workspace",
-            "selector_type": "relation-primary-key-v1",
-            "selector": "orders",
+            "capture": {
+                "source_identity": "demo.events",
+                "coordinate_type": coordinate_type,
+                "coordinate": "workspace",
+                "selector_type": "relation-primary-key-v1",
+                "selector": "orders",
+                "replayability": "exact",
+                "content_base64": content_base64,
+                "byte_length": byte_length,
+                "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+                "observed_at": "2026-10-29T12:00:00Z",
+            },
             "replayability": "exact",
-            "content_base64": content_base64,
-            "byte_length": byte_length,
-            "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-            "observed_at": "2026-10-29T12:00:00Z",
         }
 
     return output

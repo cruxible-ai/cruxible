@@ -47,7 +47,9 @@ from cruxible_core.service.kits import (
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.core_support._subject_kind_support import keyed_subject_kind
-from tests.core_support._support import initialize_local
+
+# These tests install their own small kit named base: no bundled base kit at creation.
+from tests.core_support._support import initialize_without_base_kit as initialize_local
 from tests.test_e2e.test_skeleton_kev_epss import _claim_type, _key_type
 
 STAMP = "2026-11-12T12:00:00.000000Z"

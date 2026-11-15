@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts import provider_operations
+from cruxible_client.contracts.capabilities import CapabilityRef
 from cruxible_client.contracts.procedures.acquisition_rules import LineAcquisitionRule
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
@@ -105,6 +106,8 @@ def _plan_and_admission(
         occurrence_kind="provider",
         node_id="provider",
         slot="fetch",
+        capability=CapabilityRef(name="pilot.fixture", version=1, digest="sha256:" + "c" * 64),
+        fit="identical",
         provider_artifact_digest=_digest("provider"),
         operation=operation,
         operation_signature_digest=operation_signature_digest,
@@ -246,9 +249,11 @@ def test_prepared_run_bindings_are_exactly_the_plans_own(tmp_path: Path) -> None
     manifest = ProcedureAdmissionMaterialManifest(members=())
     (binding,) = admission.resolved_provider_bindings
     assert binding.model_dump(mode="json") == {
-        "tag": "cruxible-procedure-provider-binding-v4",
+        "tag": "cruxible-procedure-provider-binding-v5",
         "node_id": binding.node_id,
         "slot": plan.external_occurrences[0].slot,
+        "capability": plan.external_occurrences[0].capability.model_dump(mode="json"),
+        "fit": "identical",
         "operation": plan.external_occurrences[0].operation.name,
         "operation_signature_digest": plan.external_occurrences[0].operation_signature_digest,
         "provider_artifact_digest": plan.external_occurrences[0].provider_artifact_digest,

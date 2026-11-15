@@ -560,7 +560,7 @@ def _forget_parsed_receipts() -> None:
 def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fixture contract selects at most 4 KB; a fan-out of 2N items needs more."""
 
-    original = _light_capture_support.record_contract
+    original = _light_capture_support.file_contract
 
     def roomy(*args: Any, **kwargs: Any) -> Any:
         contract = original(*args, **kwargs)

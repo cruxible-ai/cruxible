@@ -6,96 +6,47 @@
     "contracts": [
       {
         "artifact_format": "cruxible-contract-v1",
-        "description": "A workspace file as text (utf-8) or as base64 bytes.",
+        "description": "The bytes the daemon read for one workspace file, handed to core's builtin. Core builds it; a Procedure never writes or reads it.",
         "fields": {
-          "bom": {
-            "optional": true,
-            "type": {
-              "kind": "bool"
-            }
-          },
           "byte_length": {
-            "optional": true,
             "type": {
               "kind": "int",
               "min": 0
             }
           },
           "bytes": {
-            "optional": true,
             "type": {
               "kind": "string"
             }
           },
-          "character_count": {
-            "optional": true,
+          "bytes_digest": {
             "type": {
-              "kind": "int",
-              "min": 0
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
             }
           },
-          "encoding": {
+          "commitment_digest": {
+            "type": {
+              "kind": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "content_encoding": {
             "type": {
               "kind": "enum",
               "members": [
-                "base64",
-                "utf-8"
+                "base64"
               ]
             }
           },
-          "kind": {
+          "logical_source": {
             "type": {
-              "kind": "enum",
-              "members": [
-                "bytes",
-                "text"
-              ]
-            }
-          },
-          "line_count": {
-            "optional": true,
-            "type": {
-              "kind": "int",
-              "min": 0
-            }
-          },
-          "lines": {
-            "optional": true,
-            "type": {
-              "item": {
-                "kind": "string"
-              },
-              "kind": "list",
-              "max_items": 1000000
-            }
-          },
-          "newline": {
-            "optional": true,
-            "type": {
-              "kind": "enum",
-              "members": [
-                "cr",
-                "crlf",
-                "lf",
-                "mixed",
-                "none"
-              ]
-            }
-          },
-          "text": {
-            "optional": true,
-            "type": {
-              "kind": "string"
-            }
-          },
-          "trailing_newline": {
-            "optional": true,
-            "type": {
-              "kind": "bool"
+              "kind": "string",
+              "min_len": 1
             }
           }
         },
-        "name": "workspace.file.content",
+        "name": "workspace.file.handoff",
         "version": 1
       },
       {
@@ -182,15 +133,8 @@
       },
       {
         "artifact_format": "cruxible-contract-v1",
-        "description": "Detail of a provider_declined refusal: a digest or size guard.",
+        "description": "Detail of a provider_declined refusal: the declared and computed digests.",
         "fields": {
-          "byte_length": {
-            "optional": true,
-            "type": {
-              "kind": "int",
-              "min": 0
-            }
-          },
           "computed": {
             "optional": true,
             "type": {
@@ -202,13 +146,6 @@
             "type": {
               "kind": "string"
             }
-          },
-          "max_bytes": {
-            "optional": true,
-            "type": {
-              "kind": "int",
-              "min": 0
-            }
           }
         },
         "name": "workspace.file.refusal.provider_declined",
@@ -216,76 +153,12 @@
       },
       {
         "artifact_format": "cruxible-contract-v1",
-        "description": "Bytes the daemon read, handed to the structuring operation.",
+        "description": "The exact bytes the daemon read, as one Capture.",
         "fields": {
-          "byte_length": {
+          "capture": {
             "type": {
-              "kind": "int",
-              "min": 0
-            }
-          },
-          "bytes": {
-            "type": {
-              "kind": "string"
-            }
-          },
-          "bytes_digest": {
-            "type": {
-              "kind": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            }
-          },
-          "commitment_digest": {
-            "type": {
-              "kind": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            }
-          },
-          "content_encoding": {
-            "type": {
-              "kind": "enum",
-              "members": [
-                "base64"
-              ]
-            }
-          },
-          "logical_source": {
-            "type": {
-              "kind": "string",
-              "min_len": 1
-            }
-          }
-        },
-        "name": "workspace.file.request",
-        "version": 1
-      },
-      {
-        "artifact_format": "cruxible-contract-v1",
-        "description": "One structured workspace file.",
-        "fields": {
-          "content": {
-            "type": {
-              "contract": {
-                "digest": "sha256:7ed18a800e8b9b98477894082c999e2c4a5a76cd5f83022a7d2de7b31a26470d",
-                "name": "workspace.file.content",
-                "version": 1
-              },
-              "kind": "contract"
-            }
-          },
-          "input_bucket": {
-            "type": {
-              "kind": "string"
-            }
-          },
-          "source": {
-            "type": {
-              "contract": {
-                "digest": "sha256:fd19582a84b74e3e3de3be164672781ef1c02ea7bcdf2786f5b66b6d94b51db3",
-                "name": "workspace.file.source",
-                "version": 1
-              },
-              "kind": "contract"
+              "capture_kind": "*",
+              "kind": "capture"
             }
           }
         },
@@ -294,34 +167,20 @@
       },
       {
         "artifact_format": "cruxible-contract-v1",
-        "description": "Which supplied bytes a workspace.file result structured.",
+        "description": "The exact bytes the daemon read, one Capture per matched file, sorted by the files' names. A glob that matches nothing returns an empty list.",
         "fields": {
-          "byte_length": {
+          "captures": {
             "type": {
-              "kind": "int",
-              "min": 0
-            }
-          },
-          "bytes_digest": {
-            "type": {
-              "kind": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            }
-          },
-          "commitment_digest": {
-            "type": {
-              "kind": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            }
-          },
-          "logical_source": {
-            "type": {
-              "kind": "string",
-              "min_len": 1
+              "item": {
+                "capture_kind": "*",
+                "kind": "capture"
+              },
+              "kind": "list",
+              "max_items": 1000
             }
           }
         },
-        "name": "workspace.file.source",
+        "name": "workspace.files.result",
         "version": 1
       }
     ]
@@ -336,12 +195,12 @@
         "local_env"
       ],
       "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
-      "implementation_digest": "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994",
+      "implementation_digest": "sha256:18e9bddcd464531c616b69e2899c1e548215480ee5beae723aa6bf4d24a84ac1",
       "materialization_references": [
         {
           "environment_pin_key": "builtin",
           "kind": "local_env",
-          "materialization_digest": "sha256:6abe553b21aa386d479efb1dc79f26f9097a99b74ab09f7c82dbabb164e68640",
+          "materialization_digest": "sha256:6f662776ce35eb3b27acedfa2b881d3b5370c1178a8e1da527107ec71e809a91",
           "tag": "playbill-provider-local-materialization-reference-v1"
         }
       ],
@@ -354,17 +213,17 @@
   },
   "operations": [
     {
-      "description": "Reads a workspace file (or the files a glob names) in the daemon's own process and returns each as a Capture of its exact bytes. Core's built-in; no other provider may serve a workspace. capability.",
+      "description": "Reads one workspace file in the daemon's own process and returns its exact bytes as one Capture. Core's built-in; no other provider may serve a workspace. capability.",
       "effect": "pure",
       "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
       "in": {
-        "digest": "sha256:d9c33d4ac151700c89f5391b66adf73c6e6cddfc199670cd4cb9dc01651f7240",
-        "name": "workspace.file.request",
+        "digest": "sha256:db3a93ed5c9ee7164c4e2505ad2ee2885a708a2e427f19023b017386df6a11da",
+        "name": "workspace.file.handoff",
         "version": 1
       },
       "name": "workspace.file",
       "out": {
-        "digest": "sha256:fe3980a054beed0610045a28a27fbb50c0bad89e91fb5059a76667e34e169dd8",
+        "digest": "sha256:e0ebd7475a603ba3942a86e8742d9d2fde6c17157ffd9a6ad04797c0d652edf9",
         "name": "workspace.file.result",
         "version": 1
       },
@@ -388,14 +247,62 @@
         "provider_declined": {
           "absorbable": true,
           "contract": {
-            "digest": "sha256:a62e52087a3313ab7addc7ac912d0137fbb2cad4d6f505c0da731a7e1f88f439",
+            "digest": "sha256:93f543bb0165e0d8938886edf1fdda0ea8be1463d80ceede3c3c3296f367ddb2",
             "name": "workspace.file.refusal.provider_declined",
             "version": 1
           }
         }
       },
       "serves": [
-        "workspace.file",
+        "workspace.file"
+      ],
+      "source": {
+        "path": "src/cruxible_core/providers/builtin_workspace_file.py",
+        "repository": "https://github.com/cruxible-ai/cruxible"
+      }
+    },
+    {
+      "description": "Reads every workspace file a glob matches in the daemon's own process and returns their exact bytes as a list of Captures, sorted by name, past the request's max_files refused before any file is read. Core's built-in; no other provider may serve a workspace. capability.",
+      "effect": "pure",
+      "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
+      "in": {
+        "digest": "sha256:db3a93ed5c9ee7164c4e2505ad2ee2885a708a2e427f19023b017386df6a11da",
+        "name": "workspace.file.handoff",
+        "version": 1
+      },
+      "name": "workspace.files",
+      "out": {
+        "digest": "sha256:94a02051ca920df020b187f3c1c297a803fe312b944bdbc23e533835a5781531",
+        "name": "workspace.files.result",
+        "version": 1
+      },
+      "refusals": {
+        "invalid_parameter": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:5e6c3b6b882421a4b102983822a3d31a30f75594be20be15a10f086d727130ca",
+            "name": "workspace.file.refusal.invalid_parameter",
+            "version": 1
+          }
+        },
+        "mismatched_lengths": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:59106e6033c7107e3d435225545fce2c93eeb69a9208bc74bc084a5c70739f3e",
+            "name": "workspace.file.refusal.mismatched_lengths",
+            "version": 1
+          }
+        },
+        "provider_declined": {
+          "absorbable": true,
+          "contract": {
+            "digest": "sha256:93f543bb0165e0d8938886edf1fdda0ea8be1463d80ceede3c3c3296f367ddb2",
+            "name": "workspace.file.refusal.provider_declined",
+            "version": 1
+          }
+        }
+      },
+      "serves": [
         "workspace.files"
       ],
       "source": {
@@ -411,13 +318,13 @@
       "filename": "cruxible-builtin-workspace-file",
       "materialization_source": "local",
       "name": "cruxible-builtin",
-      "sha256": "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d",
+      "sha256": "sha256:04922994e7747b10f7a84726512d7b537d89d37655ca63a926bbb216dfdc25a5",
       "version": "1"
     },
     "local_env": {
-      "lock_sha256": "sha256:947c40b7cb6597b13a4def134d8ec2085d88b34cb5585a81a7d680ef259c60de",
+      "lock_sha256": "sha256:22d16068376d20ac9d8b2a031343225778d59c0b8c702b060636f37cfd10c1bc",
       "materialization_digests": {
-        "builtin": "sha256:6abe553b21aa386d479efb1dc79f26f9097a99b74ab09f7c82dbabb164e68640"
+        "builtin": "sha256:6f662776ce35eb3b27acedfa2b881d3b5370c1178a8e1da527107ec71e809a91"
       }
     },
     "manifest": {

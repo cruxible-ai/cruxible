@@ -580,13 +580,19 @@ def check_kit_updates(
 
     Client-side and best effort: a registry that cannot answer within a short
     timeout reports ``unavailable``; ``offline`` skips the check. Kits from a
-    directory or layout have nothing to check.
+    directory or layout have nothing to check. A kit the daemon already compared
+    (``checked``: the base kit against the one core bundles) is kept as it is.
     """
 
     client = registry
     checked = []
     try:
         for kit in status.kits:
+            if kit.update_check == "checked":
+                # The daemon compared it locally (the base kit against the one
+                # core bundles); no registry is asked.
+                checked.append(kit)
+                continue
             if not registry_source(kit.source):
                 checked.append(kit.model_copy(update={"update_check": "local_source"}))
                 continue

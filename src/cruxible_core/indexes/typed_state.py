@@ -537,16 +537,17 @@ def schema_sql() -> str:
             "CREATE UNIQUE INDEX pins_required_target_unique ON pins(source_identity,target_identity,target_digest) WHERE edge_kind='required_pin'",
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
-            # The signature index: each live build's operations by exact
-            # signature, so fitting a slot is one seek (providers.operation_index).
-            # Maintained at accept: a changed build's rows are replaced.
+            # The capability index: one row per live build operation and capability
+            # name it serves, so binding a slot seeks only that name's rows
+            # (providers.operation_index). Maintained at accept: a changed build's
+            # rows are replaced.
             """CREATE TABLE provider_operations (
             source_identity TEXT NOT NULL REFERENCES providers(identity),
-            operation TEXT NOT NULL, in_digest TEXT NOT NULL, out_digest TEXT NOT NULL,
+            operation TEXT NOT NULL, capability TEXT NOT NULL,
             effect TEXT NOT NULL CHECK(effect IN ('pure','external_read','external_mutation')),
-            PRIMARY KEY(source_identity,operation)
+            PRIMARY KEY(source_identity,operation,capability)
         ) STRICT""",
-            "CREATE INDEX provider_operations_by_signature ON provider_operations(in_digest,out_digest,effect,source_identity,operation)",
+            "CREATE INDEX provider_operations_by_capability ON provider_operations(capability,effect,source_identity,operation)",
             """CREATE TABLE claim_type_names (
             source_identity TEXT NOT NULL REFERENCES claim_types(identity),
             kind TEXT NOT NULL CHECK(kind IN ('predicate','subject_kind')),
@@ -1435,6 +1436,47 @@ class TypedStateReader:
                 rows.append(row)
         self.work["owners_selected"] += len(rows)
         return tuple(sorted(rows, key=lambda row: row.identity.encode("utf-8")))
+
+    def envelopes_by_digest(
+        self, *, kind: str, digests: tuple[str, ...]
+    ) -> tuple[ArtifactEnvelopeRow, ...]:
+        """The accepted artifacts of ``kind`` whose current digest is one of ``digests``."""
+
+        if not digests:
+            return ()
+        # The kind's owner table: its (artifact_digest, identity) index seeks
+        # each digest, never scanning the kind's population.
+        owner = OWNER_BY_KIND[kind]
+        rows = [
+            ArtifactEnvelopeRow(*row)
+            for row in self.connection.execute(
+                f"SELECT {self._owner_columns(owner)} FROM {owner.table} WHERE artifact_digest "
+                "IN (" + ",".join("?" for _ in digests) + ")",
+                digests,
+            )
+        ]
+        self.work["owners_selected"] += len(rows)
+        return tuple(sorted(rows, key=lambda row: row.identity.encode("utf-8")))
+
+    def first_envelope(self, *, kind: str) -> ArtifactEnvelopeRow | None:
+        """The accepted artifact of ``kind`` with the smallest digest, if any: one row."""
+
+        # The owner table's (artifact_digest, identity) index supplies the first
+        # row: a seek, with no scan or sort of the kind's population.
+        owner = OWNER_BY_KIND[kind]
+        row = self.connection.execute(
+            f"SELECT {self._owner_columns(owner)} FROM {owner.table} "
+            "ORDER BY artifact_digest, identity LIMIT 1"
+        ).fetchone()
+        self.work["owners_selected"] += row is not None
+        return None if row is None else ArtifactEnvelopeRow(*row)
+
+    @staticmethod
+    def _owner_columns(owner: OwnerCodec) -> str:
+        """The envelope columns of one owner table, as ``envelope`` selects them."""
+
+        version = "predecessor_digest,revision" if owner.versioned else "NULL,1"
+        return f"identity,'{owner.kind}',format_tag,path,artifact_digest,{version}"
 
     def query_artifact_definitions(
         self,

@@ -594,12 +594,25 @@ def bind_to_build(accepted: AcceptedProcedure, build: Any, operation: str) -> Ac
 
     from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
     from cruxible_client.contracts.providers import provider_digest
+    from cruxible_client.contracts.shapes import ContractRef
 
     digest = provider_digest(build).tagged
     binding = LineBinding(build=binding_pin(build.identity, digest), operation=operation)
+
+    def lookup(identity: ArtifactIdentity) -> tuple[Any, str] | None:
+        if identity == build.identity:
+            return build, digest
+        if identity.kind == "Contract" and build.declares is not None:
+            # The slot's capability pins the Contracts the build carries copies of.
+            name, _, version = identity.name.rpartition("/v")
+            found = build.declares.lookup()(ContractRef(name=name, version=int(version)))
+            if found is not None:
+                return found, contract_digest(found).tagged
+        return None
+
     return bind_fixture(
         accepted,
-        lookup=lambda identity: (build, digest) if identity == build.identity else None,
+        lookup=lookup,
         bindings={slot: binding for slot in accepted.procedure.definition.slots},
     )
 

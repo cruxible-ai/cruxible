@@ -49,7 +49,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import FOREIGN_SOURCE_MAX_BYTES
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
-from cruxible_client.contracts.doc_sections import SectionPath, section_digest
+from cruxible_client.contracts.doc_sections import HeadingText, SectionPath, section_digest
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 from cruxible_client.contracts.proposal_models import CHANGE_SET_RATIONALE_MAX_LENGTH
 from cruxible_client.contracts.read_values import ShownValue
@@ -269,15 +269,27 @@ Evidence = Annotated[
 # -- document operations --------------------------------------------------------
 
 
+_HEADING_DESCRIPTION = "Heading text; the line is built at its depth and text is the body."
+
+
 class AppendSection(_StrictWriteModel):
-    """Append a child subtree; a missing file is created with exactly this text."""
+    """Append a child subtree, leaving one blank line after it; a missing file is created."""
 
     op: Literal["append"] = "append"
     id: str | None = Field(default=None, min_length=1, exclude_if=_omit_none)
     file: str = Field(min_length=1)
     under: SectionPath = ()
-    text: str = Field(min_length=1)
+    text: str = ""
+    heading: HeadingText | None = Field(
+        default=None, exclude_if=_omit_none, description=_HEADING_DESCRIPTION
+    )
     name: str | None = Field(default=None, min_length=1, description="Catalog name for a new file.")
+
+    @model_validator(mode="after")
+    def _section_given(self) -> AppendSection:
+        if self.heading is None and not self.text:
+            raise ValueError("an append needs text starting with its heading line, or heading")
+        return self
 
 
 class ReplaceSection(_StrictWriteModel):
@@ -288,7 +300,16 @@ class ReplaceSection(_StrictWriteModel):
     file: str = Field(min_length=1)
     section: SectionPath
     text: str
+    heading: HeadingText | None = Field(
+        default=None, exclude_if=_omit_none, description=_HEADING_DESCRIPTION
+    )
     expect: str | None = Field(default=None, pattern=CAPTURE_DIGEST_PATTERN)
+
+    @model_validator(mode="after")
+    def _heading_names_a_section(self) -> ReplaceSection:
+        if self.heading is not None and not self.section:
+            raise ValueError("the preamble has no heading; replace it with text alone")
+        return self
 
 
 DocOp = Annotated[AppendSection | ReplaceSection, Field(discriminator="op")]
@@ -429,6 +450,18 @@ class CreateChange(_StrictWriteModel):
     expect_new: bool = Field(
         default=False,
         description="Refuse subject_exists if the key has a live holder.",
+    )
+    role: WriteRole | None = Field(
+        default=None,
+        description="The key Claims' role, when the key field permits more than one.",
+    )
+    evidence: Evidence | None = Field(
+        default=None,
+        description=(
+            "What the key Claims cite, as a set's evidence: a section (one this write "
+            "appends: its text is the author's own words), a file, a Capture, or self. "
+            "Default: the write's `because`."
+        ),
     )
 
 
@@ -1060,6 +1093,13 @@ class WriteOutcome(_StrictWriteModel):
     @property
     def refused(self) -> bool:
         return self.status in ("refused", "would_refuse")
+
+    def __str__(self) -> str:
+        """The outcome as ``cruxible write`` prints it; ``repr()`` stays the full model."""
+
+        from cruxible_client.contracts.text_display import render_write_outcome
+
+        return render_write_outcome(self)
 
 
 __all__ = [

@@ -1,16 +1,16 @@
-"""workspace.file as a core built-in: parity, purity, identity and seeded bytes.
+"""The workspace reads as a core built-in: behaviour, purity, identity and seeded bytes.
 
-The parity golden (``tests/fixtures/workspace_file_parity.json``) is recorded
-provenance: it was produced by running the file reader of a provider package
-(``cruxible-provider-workspace`` at cruxible-providers db085204; the package has
-since been deleted, file reading being core's alone) over its six registration
-fixtures and a set of edge and refusal vectors, rendering each result the way
-the child harness does, and digesting the envelope without its run id. The
-built-in must reproduce every digest.
+The behaviour golden (``tests/fixtures/workspace_file_parity.json``) records the
+built-in's envelope for six registration fixtures (inherited from the provider
+package the first revision was ported from) and a set of edge and refusal
+vectors, each rendered the way the child harness renders it and digested without
+its run id. The built-in must reproduce every digest.
 
-The same golden is the behaviour pin for ``WORKSPACE_FILE_BUILTIN_REVISION``: an
+The golden is the behaviour pin for ``WORKSPACE_FILE_BUILTIN_REVISION``: an
 adapter change that moves any digest fails here, and is a semantic change that
 needs a new revision (and so a new implementation digest and genesis seeds).
+Revision 2 checks the handoff and returns an empty output: core commits the
+bytes it read as the call's capture field.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_client.contracts.shapes import Contract, contract_digest
+from cruxible_client.contracts.shapes import Contract, contract_digest, parse_contract
 from cruxible_client.contracts.workspace_file import (
     workspace_file_contracts,
     workspace_file_refusal_contracts,
@@ -47,12 +47,7 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
 )
 from cruxible_core.ledger.bootstrap import genesis_seed_files
 from cruxible_core.providers.builtin_runtime import BUILTIN_IMPLEMENTATIONS
-from cruxible_core.providers.builtin_workspace_file import (
-    MAX_STRUCTURED_BYTES,
-    WorkspaceFile,
-    decode_declared_bytes,
-    input_bucket_label,
-)
+from cruxible_core.providers.builtin_workspace_file import WorkspaceFile
 from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeBudgets,
     ProviderRuntimeRunContext,
@@ -78,8 +73,8 @@ def _pseudo_random(length: int, *, seed: str) -> bytes:
     return bytes(output[:length])
 
 
-#: The package's six registration fixtures (byte-equal to the 0.2.x package's):
-#: the parity golden's registration-fixture inputs.
+#: The six registration fixtures (byte-equal to the 0.2.x package's): the
+#: golden's registration-fixture inputs.
 _FIXTURE_BYTES: dict[str, bytes] = {
     "workspace-file-binary-medium": _pseudo_random(70_000, seed="workspace-file-binary-medium"),
     "workspace-file-binary-small": _pseudo_random(5_000, seed="workspace-file-binary-small"),
@@ -96,11 +91,10 @@ _FIXTURE_BYTES: dict[str, bytes] = {
 
 @dataclass(frozen=True)
 class _ConformanceFixture:
-    """One parity-golden input: its id, its run input and its bytes' bucket label."""
+    """One golden input: its id and its handoff."""
 
     fixture_id: str
     canonical_input: dict[str, object]
-    measured_bucket_id: str
 
 
 def _fixture(fixture_id: str, data: bytes) -> _ConformanceFixture:
@@ -114,7 +108,6 @@ def _fixture(fixture_id: str, data: bytes) -> _ConformanceFixture:
             "byte_length": len(data),
             "bytes_digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
         },
-        measured_bucket_id=input_bucket_label(data),
     )
 
 
@@ -149,12 +142,7 @@ def _context(payload: object) -> ProviderRuntimeRunContext:
 
 
 def _envelope_digest(payload: object) -> tuple[str, dict[str, Any]]:
-    """The envelope without its protocol version and run id, digested as the golden is.
-
-    The golden digests were taken under protocol 1.0 with the measured bucket in
-    the context; the adapter derives the output's bucket label from the bytes,
-    so they reproduce from the bytes alone under protocol 2.0.
-    """
+    """The envelope without its protocol version and run id, digested as the golden is."""
 
     document = json.loads(WorkspaceFile()(_context(payload)).to_json())
     document.pop("protocol_version")
@@ -163,28 +151,21 @@ def _envelope_digest(payload: object) -> tuple[str, dict[str, Any]]:
     return "sha256:" + hashlib.sha256(raw).hexdigest(), document
 
 
-def _measured(payload: object) -> str | None:
-    data = decode_declared_bytes(payload)  # type: ignore[arg-type]
-    return None if data is None else input_bucket_label(data)
-
-
-def test_the_port_reproduces_the_package_on_every_registration_fixture() -> None:
+def test_the_built_in_answers_every_registration_fixture_as_recorded() -> None:
     fixtures = {fixture.fixture_id: fixture for fixture in WORKSPACE_FILE_FIXTURES}
     assert sorted(fixtures) == sorted(item["fixture_id"] for item in GOLDEN["fixtures"])
     for expected in GOLDEN["fixtures"]:
         fixture = fixtures[expected["fixture_id"]]
-        assert _measured(fixture.canonical_input) == expected["input_bucket"]
         digest, document = _envelope_digest(fixture.canonical_input)
-        assert document["status"] == "ok"
-        assert document["output"]["input_bucket"] == expected["input_bucket"]
+        # The call's value is the Capture core commits: the built-in adds no field.
+        assert document["status"] == "ok" and document["output"] == {}
         assert digest == expected["envelope_sha256"], expected["fixture_id"]
 
 
 @pytest.mark.parametrize("vector", GOLDEN["vectors"], ids=lambda item: item["id"])
-def test_the_port_reproduces_the_package_on_edge_and_refusal_vectors(
+def test_the_built_in_answers_edge_and_refusal_vectors_as_recorded(
     vector: dict[str, Any],
 ) -> None:
-    assert _measured(vector["input"]) == vector["measured_bucket"]
     digest, document = _envelope_digest(vector["input"])
     assert document["status"] == vector["status"]
     if "refusal_code" in vector:
@@ -192,37 +173,29 @@ def test_the_port_reproduces_the_package_on_edge_and_refusal_vectors(
     assert digest == vector["envelope_sha256"]
 
 
-def test_the_built_in_refuses_more_than_one_mebibyte_typed() -> None:
-    """Admission no longer holds files above 1 MiB back; the adapter refuses them."""
+def test_the_built_in_takes_a_file_above_one_mebibyte() -> None:
+    """The structuring guard is gone: the CaptureKind's byte budget bounds a read."""
 
-    for length, status in ((MAX_STRUCTURED_BYTES, "ok"), (MAX_STRUCTURED_BYTES + 1, "refused")):
-        data = b"a" * length
-        payload = {
-            "logical_source": "fixtures/large",
-            "commitment_digest": f"sha256:{'c0' * 32}",
-            "content_encoding": "base64",
-            "bytes": base64.b64encode(data).decode("ascii"),
-            "byte_length": len(data),
-            "bytes_digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
-        }
-        _digest, document = _envelope_digest(payload)
-        assert document["status"] == status
-    assert document["refusal"]["code"] == "provider_declined"
-    assert document["refusal"]["detail"] == {
-        "byte_length": MAX_STRUCTURED_BYTES + 1,
-        "max_bytes": MAX_STRUCTURED_BYTES,
+    data = b"a" * (1_048_576 + 1)
+    payload = {
+        "logical_source": "fixtures/large",
+        "commitment_digest": f"sha256:{'c0' * 32}",
+        "content_encoding": "base64",
+        "bytes": base64.b64encode(data).decode("ascii"),
+        "byte_length": len(data),
+        "bytes_digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
     }
+    _digest, document = _envelope_digest(payload)
+    assert document["status"] == "ok" and document["output"] == {}
 
 
 def test_the_behaviour_revision_and_derived_identity_are_frozen() -> None:
     """Bump the revision only with a golden change; everything else derives from it."""
 
     assert WORKSPACE_FILE_BUILTIN_REVISION == (
-        "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
+        "sha256:04922994e7747b10f7a84726512d7b537d89d37655ca63a926bbb216dfdc25a5"
     )
-    assert WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST == (
-        "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994"
-    )
+    assert WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST == IMPLEMENTATION_DIGEST
     assert (
         len(
             {
@@ -251,8 +224,8 @@ def test_the_seeded_provider_speaks_protocol_2_from_one_entrypoint() -> None:
         "requires_extras",
         "deterministic",
     }
-    assert WorkspaceFile.operations == ("workspace.file",)
-    assert [item.entrypoint for item in provider.operations] == [row.entrypoint]
+    assert WorkspaceFile.operations == ("workspace.file", "workspace.files")
+    assert {item.entrypoint for item in provider.operations} == {row.entrypoint}
 
 
 def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> None:
@@ -262,8 +235,9 @@ def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> No
     provider = workspace_file_builtin_provider()
     path = provider_path(provider.identity.name)
     assert seeds[path] == render_provider(provider)
-    # The builtin carries its own four handoff and three refusal Contracts, each
-    # nested Contract pinned by digest, so its law needs no instance Contract.
+    # The builtin carries its handoff, its copies of the base kit's two result
+    # Contracts and its three refusal Contracts, so its law needs no instance
+    # Contract.
     carried = {
         (contract.name, contract.version): contract_digest(contract).tagged
         for contract in (*workspace_file_contracts(), *workspace_file_refusal_contracts())
@@ -274,9 +248,23 @@ def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> No
         (item.name, item.version): contract_digest(item).tagged
         for item in provider.declares.contracts
     } == carried
-    (operation,) = provider.operations
-    assert operation.serves == ("workspace.file", "workspace.files")
-    assert operation.description and operation.source.path.endswith("builtin_workspace_file.py")
+    # Two operations, each serving the capability of its name (ruling O2), each
+    # returning its copy of the base kit's result, byte for byte.
+    one, glob = provider.operations
+    assert (one.name, one.serves, glob.name, glob.serves) == (
+        "workspace.file",
+        ("workspace.file",),
+        "workspace.files",
+        ("workspace.files",),
+    )
+    base = Path(__file__).parents[2] / "src/cruxible_core/kits/base/artifacts"
+    for operation in (one, glob):
+        assert operation.in_.name == "workspace.file.handoff"
+        kit_path = f"contracts/{operation.out.name}/v{operation.out.version}.json"
+        kit_copy = parse_contract((base / kit_path).read_bytes(), path=kit_path)
+        assert operation.out.digest == contract_digest(kit_copy).tagged
+        assert operation.description
+        assert operation.source.path.endswith("builtin_workspace_file.py")
     provider_law = evaluate_provider_law(
         provider, path=path, predecessor=None, serves_reserved=True
     )
@@ -319,10 +307,11 @@ def test_the_adapter_module_is_pure() -> None:
 #: ``cruxible.provider.implementation.v2`` identity) and the revision it was
 #: derived from. A revision bump appends a line; an old line must never change
 #: or disappear, because seeded instances pin it forever.
+IMPLEMENTATION_DIGEST = "sha256:18e9bddcd464531c616b69e2899c1e548215480ee5beae723aa6bf4d24a84ac1"
 FROZEN_BUILTIN_IMPLEMENTATIONS = (
     (
-        "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994",
-        "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d",
+        IMPLEMENTATION_DIGEST,
+        "sha256:04922994e7747b10f7a84726512d7b537d89d37655ca63a926bbb216dfdc25a5",
     ),
 )
 
@@ -357,6 +346,6 @@ def test_provider_list_names_the_providers_installed_here(tmp_path) -> None:  # 
 
     (builtin,) = catalog.installed
     assert builtin.provider == "cruxible-builtin"
-    assert builtin.operations == ("workspace.file",)
+    assert builtin.operations == ("workspace.file", "workspace.files")
     assert catalog.packages == ()
     assert catalog.detail is not None and "No provider repository configured" in catalog.detail

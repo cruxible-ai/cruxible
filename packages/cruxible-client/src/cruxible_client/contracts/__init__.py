@@ -783,6 +783,18 @@ class IsolatedExecutorRegistration(BaseModel):
     capabilities: tuple[str, ...] = ()
 
 
+class InitBaseKit(BaseModel):
+    """The base kit creation installs: ``accepted`` at once, or ``proposed`` under
+    independent approval, with the proposal that awaits a second approver."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kit_id: str
+    version: str
+    status: Literal["accepted", "proposed"]
+    proposal_id: str | None = None
+
+
 class InitResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -794,6 +806,9 @@ class InitResult(BaseModel):
     approval_policy_mode: ApprovalPolicyMode
     workspace_advertisement: WorkspaceAdvertisement
     git_workspace_note: GitWorkspaceNote | None = None
+    #: What creation's base kit add did. ``None`` when this init found the
+    #: instance already created.
+    base_kit: InitBaseKit | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CasObjectResult(BaseModel):
@@ -1270,6 +1285,11 @@ ClaimTypeLintCode: TypeAlias = Literal[
     "cruxible.claim_type.stale_eligible_never_current",
     "cruxible.claim_type.description_missing",
     "cruxible.claim_type.subject_kind_undeclared",
+    # Definition-time modelling hints: a field naming what the ledger records, a
+    # long free string (prose), an enum whose members name things (a kind).
+    "cruxible.claim_type.field_restates_ledger",
+    "cruxible.claim_type.string_holds_prose",
+    "cruxible.claim_type.enum_members_name_things",
 ]
 
 
@@ -1286,6 +1306,9 @@ class ClaimTypeLintWarning(BaseModel):
     contract_digest: str | None = None
     #: The rule fragment that would resolve the warning, as authored input.
     replacement_rule_fragment: dict[str, Any]
+    #: The definition warned about (``ClaimType:<predicate>``,
+    #: ``SubjectKind:<name>``) when one lint covers several: a change set's.
+    artifact: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ClaimTypeProposalLint(BaseModel):

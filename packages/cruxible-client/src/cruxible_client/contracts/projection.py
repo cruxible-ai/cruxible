@@ -114,6 +114,11 @@ class AcceptedCoordinate(_StrictProjectionModel):
     def _compiler_digest(cls, value: str) -> str:
         return _tagged_sha256(value, label="compiler_digest")
 
+    def __str__(self) -> str:
+        """The generation's short Git OID, as ``World`` prints it; ``repr()`` keeps every digest."""
+
+        return self.git_oid[:12]
+
     @classmethod
     def from_internal(cls, coordinate: AcceptedProjectionCoordinate) -> AcceptedCoordinate:
         values = (

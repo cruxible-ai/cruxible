@@ -343,7 +343,11 @@ def test_a_sources_proposal_previews_and_writes_neither_the_cas_nor_a_proposal(
     assert preview.status == "would_propose"
     assert preview.proposal.candidate is not None
     assert instance.body_store().verify(digest) is False
-    assert instance.proposal_evidence().list_admissions() == ()
+    # Only creation's base kit add.
+    assert [
+        item.target_ref.rpartition("/")[2].startswith("kit-base-")
+        for item in instance.proposal_evidence().list_admissions()
+    ] == [True]
     committed = propose(dry_run=False, at=preview.accepted_coordinate.git_oid)
     assert committed.status == "admitted"
     assert instance.body_store().verify(digest) is True

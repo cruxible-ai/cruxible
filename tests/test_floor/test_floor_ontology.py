@@ -190,7 +190,8 @@ def test_the_kind_card_greps_to_its_field_and_the_indexes_head_their_columns(
         "ontology/contracts/INDEX": "# contracts INDEX",
         "ontology/queries/INDEX": "# queries INDEX  0 queries",
         "ontology/lines/INDEX": "# lines INDEX  0 lines",
-        "ontology/kits/INDEX": "# kits INDEX  0 kits",
+        # Creation's base kit.
+        "ontology/kits/INDEX": "# kits INDEX  1 kits",
     }
     for path, header in headers.items():
         assert _text(render, path).startswith(header), (path, _text(render, path))
@@ -305,7 +306,11 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
     fields = yaml.safe_load(card)["fields"]
     assert fields["status"]["owner"] == f"kit={KIT}"
     assert fields["priority"]["owner"] == "local"
-    (kit_row,) = _text(installed, "ontology/kits/INDEX").splitlines()[1:]
+    (kit_row,) = [
+        row
+        for row in _text(installed, "ontology/kits/INDEX").splitlines()[1:]
+        if row.startswith(f"{KIT}\t")
+    ]
     receipt_gen = installed.generation
     assert kit_row.split("\t") == [
         KIT,
@@ -341,7 +346,11 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
     fields = yaml.safe_load(card)["fields"]
     assert fields["status"]["owner"] == f"kit={KIT}"
     assert fields["title"]["owner"] == "local"
-    (kit_row,) = _text(upgraded, "ontology/kits/INDEX").splitlines()[1:]
+    (kit_row,) = [
+        row
+        for row in _text(upgraded, "ontology/kits/INDEX").splitlines()[1:]
+        if row.startswith(f"{KIT}\t")
+    ]
     assert kit_row.split("\t")[:6] == [
         KIT,
         "1.1.0",
