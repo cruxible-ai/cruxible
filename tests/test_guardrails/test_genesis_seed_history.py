@@ -195,9 +195,7 @@ def test_moved_seeds_without_a_new_entry_fail_after_the_release(
     assert "triggers/floor-refresh.json" in problems[0]
 
     # The bytes moved and entry N was edited to match: still refused.
-    monkeypatch.setattr(
-        genesis_seeds, "GENESIS_SEED_HISTORY", (*_earlier(), _edited(entry, moved))
-    )
+    monkeypatch.setattr(genesis_seeds, "GENESIS_SEED_HISTORY", (*_earlier(), _edited(entry, moved)))
     (problem,) = seed_history_problems(_pins(), moved)
     assert f"History entry {entry.ordinal} ({entry.name}) was edited" in problem
     assert f"Do not edit entry {entry.ordinal}" in problem
