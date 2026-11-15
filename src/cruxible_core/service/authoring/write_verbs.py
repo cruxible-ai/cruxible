@@ -4595,7 +4595,18 @@ def service_playbill_write(
         if request.docs:
             outcome = outcome.model_copy(
                 update={
-                    "hint": DOCS_ONLY_HINT if not request.changes and not outcome.refused else None,
+                    # Only a new section is known to be uncited: a replaced one may
+                    # be cited, and the write does not read who cites it.
+                    "hint": DOCS_ONLY_HINT
+                    if not request.changes
+                    and not outcome.refused
+                    and all(
+                        isinstance(edit, DocEditObservation)
+                        and edit.op == "append"
+                        and edit.before_digest is None
+                        for edit in request.docs
+                    )
+                    else None,
                     "docs": tuple(
                         DocOutcome(
                             source_id=edit.source_id,
