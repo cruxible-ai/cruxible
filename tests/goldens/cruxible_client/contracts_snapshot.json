@@ -77709,6 +77709,85 @@
             "type": "string"
           }
         },
+        "change_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "change_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Change Count",
+            "type": "integer"
+          }
+        },
+        "change_counts": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "change_counts",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewChangeCount"
+            },
+            "title": "Change Counts",
+            "type": "array"
+          }
+        },
+        "change_counts_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "change_counts_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Change Counts Truncated",
+            "type": "boolean"
+          }
+        },
+        "changes": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "changes",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewChange"
+            },
+            "title": "Changes",
+            "type": "array"
+          }
+        },
+        "changes_next": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "changes_next",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Changes Next"
+          }
+        },
         "counts": {
           "has_default": false,
           "has_default_factory": false,
@@ -77716,6 +77795,56 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/ReviewSummaryCounts"
+          }
+        },
+        "definition_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "definition_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Definition Count",
+            "type": "integer"
+          }
+        },
+        "definitions": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "definitions",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewDefinition"
+            },
+            "title": "Definitions",
+            "type": "array"
+          }
+        },
+        "definitions_next": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "definitions_next",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Definitions Next"
           }
         },
         "finding_count": {
@@ -78175,7 +78304,377 @@
             "title": "BodyRestricted",
             "type": "object"
           },
+          "ChangeOutcome": {
+            "additionalProperties": false,
+            "description": "What one change did, or would do.",
+            "properties": {
+              "about": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "An about change: the Subjects the note links after it ([] = retired).",
+                "title": "About"
+              },
+              "after": {
+                "$ref": "#/$defs/ShownValue",
+                "default": null
+              },
+              "already_live": {
+                "default": false,
+                "description": "The value was already live as `claim`: nothing was submitted for it.",
+                "title": "Already Live",
+                "type": "boolean"
+              },
+              "before": {
+                "$ref": "#/$defs/ShownValue",
+                "default": null
+              },
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The Capture cited as evidence, as its handle CAP-<12 hex>.",
+                "title": "Capture"
+              },
+              "claim": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The Claim this change writes, revises or retires.",
+                "title": "Claim"
+              },
+              "contenders_created": {
+                "default": [],
+                "description": "Live Claims this one now contends with in a single-value slot.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Contenders Created",
+                "type": "array"
+              },
+              "field": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field"
+              },
+              "file": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "File"
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "An about change: the section's note (NOTE-…).",
+                "title": "Note"
+              },
+              "op": {
+                "enum": [
+                  "create",
+                  "set",
+                  "add",
+                  "retire",
+                  "rebind",
+                  "about"
+                ],
+                "title": "Op",
+                "type": "string"
+              },
+              "predicate": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predicate"
+              },
+              "resolved": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "created",
+                      "existing"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolved"
+              },
+              "retired": {
+                "default": [],
+                "description": "Dependent Claims retired with this one.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Retired",
+                "type": "array"
+              },
+              "revises": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revises"
+              },
+              "section": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Section"
+              },
+              "subject": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subject"
+              },
+              "verdict": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The written Claim's verdict: at the accepted coordinate once accepted, otherwise as the candidate evaluation found it.",
+                "title": "Verdict"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "title": "ChangeOutcome",
+            "type": "object"
+          },
           "JsonValue": {},
+          "MandateChangeScope": {
+            "additionalProperties": false,
+            "description": "The evidence bases one change kind of a scoped ClaimType settles on.",
+            "properties": {
+              "basis": {
+                "items": {
+                  "enum": [
+                    "extracted",
+                    "measured",
+                    "derived",
+                    "absence"
+                  ],
+                  "type": "string"
+                },
+                "title": "Basis",
+                "type": "array"
+              }
+            },
+            "required": [
+              "basis"
+            ],
+            "title": "MandateChangeScope",
+            "type": "object"
+          },
+          "MandateChanges": {
+            "additionalProperties": false,
+            "description": "Per change kind, the bases a settle grant covers; a kind left out never settles.",
+            "properties": {
+              "create": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "retire": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "revise": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateChangeScope"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "title": "MandateChanges",
+            "type": "object"
+          },
+          "MandateScope": {
+            "additionalProperties": false,
+            "description": "One ClaimType a settle grant covers.\n\n``claim_type`` is its ``ClaimType:<predicate>`` ref, ``changes`` the\nchange kinds the grant may settle on it with the evidence bases each\nsettles on, ``value`` an enum or bool ClaimType's allowed moves, and\n``binds`` which referent of the changed Claim (its ``subject`` or its\n``object``) binds the condition query's parameter.",
+            "properties": {
+              "binds": {
+                "enum": [
+                  "subject",
+                  "object"
+                ],
+                "title": "Binds",
+                "type": "string"
+              },
+              "changes": {
+                "$ref": "#/$defs/MandateChanges"
+              },
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateValueCondition"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "claim_type",
+              "changes",
+              "binds"
+            ],
+            "title": "MandateScope",
+            "type": "object"
+          },
+          "MandateValueCondition": {
+            "additionalProperties": false,
+            "description": "Enum and bool ClaimTypes only: the values a settled change may move from and to.\n\n``from`` lists the held values a change may replace (a create holds none, so\nit settles only when ``from`` is omitted); ``to`` the values it may write (a\nretirement or an inverse writes none, so it settles only when ``to`` is\nomitted). At least one is declared.",
+            "properties": {
+              "from": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "title": "MandateValueCondition",
+            "type": "object"
+          },
           "OriginatingLine": {
             "additionalProperties": false,
             "description": "The root Line and exact accepted version responsible for a proposal.",
@@ -78223,6 +78722,288 @@
             "title": "PriorRefusalCoverage",
             "type": "object"
           },
+          "ReviewChange": {
+            "additionalProperties": false,
+            "description": "One proposed value change, in the write outcome's form, with what it cites.\n\n``change`` is a ``ChangeOutcome`` exactly as ``write`` answers one: op,\nSubject, field, before and after, the Claim and its candidate verdict.\n``role`` is the Claim's role; ``rationale`` the item's own reason, when a\nProcedure proposed it (the change set's ``rationale`` covers the rest).",
+            "properties": {
+              "change": {
+                "$ref": "#/$defs/ChangeOutcome"
+              },
+              "citations": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewCitation"
+                },
+                "title": "Citations",
+                "type": "array"
+              },
+              "citations_more": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Citations More",
+                "type": "integer"
+              },
+              "rationale": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rationale"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              }
+            },
+            "required": [
+              "change"
+            ],
+            "title": "ReviewChange",
+            "type": "object"
+          },
+          "ReviewChangeCount": {
+            "additionalProperties": false,
+            "description": "How many of a proposal's value changes have this Subject kind, field and op.",
+            "properties": {
+              "count": {
+                "minimum": 1,
+                "title": "Count",
+                "type": "integer"
+              },
+              "field": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field"
+              },
+              "op": {
+                "title": "Op",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject_kind",
+              "op",
+              "count"
+            ],
+            "title": "ReviewChangeCount",
+            "type": "object"
+          },
+          "ReviewCitation": {
+            "additionalProperties": false,
+            "description": "One Capture a proposed Claim cites, where in it, and the text it cites.\n\n``source`` is the Capture's logical source (a catalogued file's name, a\nfeed); ``section`` and ``anchor`` locate a file citation. ``text`` is the\ncited bytes, cut at ``REVIEW_CITED_TEXT_MAX_CHARS`` (``text_truncated``).\nIt is absent when this reader may not read Capture bodies\n(``text_withheld``), or when the Capture commits to no exact bytes.",
+            "properties": {
+              "anchor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Anchor"
+              },
+              "capture": {
+                "description": "CAP-<12 hex>; get and read_capture accept it.",
+                "title": "Capture",
+                "type": "string"
+              },
+              "origin": {
+                "description": "independent, self_source (own words) or legacy.",
+                "title": "Origin",
+                "type": "string"
+              },
+              "section": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Section"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source"
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Text"
+              },
+              "text_truncated": {
+                "default": false,
+                "title": "Text Truncated",
+                "type": "boolean"
+              },
+              "text_withheld": {
+                "default": false,
+                "title": "Text Withheld",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "capture",
+              "origin"
+            ],
+            "title": "ReviewCitation",
+            "type": "object"
+          },
+          "ReviewDefinition": {
+            "additionalProperties": false,
+            "description": "One proposed definition: its kind, name and action, and its typed fields.\n\n``detail`` is the definition as it would stand (Line, ProcedureMandate,\nRunbook, Trigger); other kinds, and retirements, carry none. ``changed``\nlists a revision's changed fields.",
+            "properties": {
+              "action": {
+                "enum": [
+                  "created",
+                  "revised",
+                  "retired"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "changed": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewFieldChange"
+                },
+                "title": "Changed",
+                "type": "array"
+              },
+              "detail": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "line": "#/$defs/ReviewLineDefinition",
+                        "procedure-mandate": "#/$defs/ReviewMandateDefinition",
+                        "runbook": "#/$defs/ReviewRunbookDefinition",
+                        "trigger": "#/$defs/ReviewTriggerDefinition"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/ReviewLineDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewMandateDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewRunbookDefinition"
+                      },
+                      {
+                        "$ref": "#/$defs/ReviewTriggerDefinition"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "action"
+            ],
+            "title": "ReviewDefinition",
+            "type": "object"
+          },
+          "ReviewFieldChange": {
+            "additionalProperties": false,
+            "description": "One top-level field a revision changes: its value before and after.",
+            "properties": {
+              "after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReviewSummaryValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "before": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReviewSummaryValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field"
+            ],
+            "title": "ReviewFieldChange",
+            "type": "object"
+          },
           "ReviewGuidance": {
             "additionalProperties": false,
             "description": "A governed Document that ``guides`` a ClaimType or Procedure this proposal touches.",
@@ -78254,6 +79035,237 @@
               "document"
             ],
             "title": "ReviewGuidance",
+            "type": "object"
+          },
+          "ReviewLineBinding": {
+            "additionalProperties": false,
+            "description": "One Line slot: the provider build (``name/<12 hex>``) and operation it is bound to.",
+            "properties": {
+              "operation": {
+                "title": "Operation",
+                "type": "string"
+              },
+              "provider": {
+                "title": "Provider",
+                "type": "string"
+              },
+              "slot": {
+                "title": "Slot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "slot",
+              "provider",
+              "operation"
+            ],
+            "title": "ReviewLineBinding",
+            "type": "object"
+          },
+          "ReviewLineDefinition": {
+            "additionalProperties": false,
+            "properties": {
+              "acquisition": {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": "Acquisition",
+                "type": "object"
+              },
+              "authority": {
+                "title": "Authority",
+                "type": "string"
+              },
+              "bindings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ReviewLineBinding"
+                },
+                "title": "Bindings",
+                "type": "array"
+              },
+              "budgets": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "title": "Budgets",
+                "type": "object"
+              },
+              "inbox": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Inbox",
+                "type": "array"
+              },
+              "kind": {
+                "const": "line",
+                "default": "line",
+                "title": "Kind",
+                "type": "string"
+              },
+              "parameters": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ReviewSummaryValue"
+                },
+                "title": "Parameters",
+                "type": "object"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "trigger_input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Trigger Input"
+              }
+            },
+            "required": [
+              "procedure",
+              "authority"
+            ],
+            "title": "ReviewLineDefinition",
+            "type": "object"
+          },
+          "ReviewMandateDefinition": {
+            "additionalProperties": false,
+            "properties": {
+              "condition": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Condition"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "title": "Expires At",
+                "type": "string"
+              },
+              "grants": {
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "Grants",
+                "type": "string"
+              },
+              "kind": {
+                "const": "procedure-mandate",
+                "default": "procedure-mandate",
+                "title": "Kind",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "namespace": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Namespace",
+                "type": "array"
+              },
+              "scope": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/MandateScope"
+                },
+                "title": "Scope",
+                "type": "array"
+              },
+              "subject_creation": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Creation",
+                "type": "array"
+              },
+              "subjects": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subjects"
+              },
+              "suspended": {
+                "default": false,
+                "title": "Suspended",
+                "type": "boolean"
+              },
+              "valid_from": {
+                "format": "date-time",
+                "title": "Valid From",
+                "type": "string"
+              }
+            },
+            "required": [
+              "line",
+              "grants",
+              "valid_from",
+              "expires_at"
+            ],
+            "title": "ReviewMandateDefinition",
+            "type": "object"
+          },
+          "ReviewRunbookDefinition": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "kind": {
+                "const": "runbook",
+                "default": "runbook",
+                "title": "Kind",
+                "type": "string"
+              },
+              "steps": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Steps",
+                "type": "array"
+              }
+            },
+            "required": [
+              "steps"
+            ],
+            "title": "ReviewRunbookDefinition",
             "type": "object"
           },
           "ReviewSummaryCounts": {
@@ -78490,6 +79502,143 @@
             ],
             "title": "ReviewSummaryValue",
             "type": "object"
+          },
+          "ReviewTriggerDefinition": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "trigger",
+                "default": "trigger",
+                "title": "Kind",
+                "type": "string"
+              },
+              "schedule": {
+                "title": "Schedule",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "schedule",
+              "target"
+            ],
+            "title": "ReviewTriggerDefinition",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -78515,8 +79664,73 @@
             "title": "Candidate Digest",
             "type": "string"
           },
+          "change_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Change Count",
+            "type": "integer"
+          },
+          "change_counts": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewChangeCount"
+            },
+            "title": "Change Counts",
+            "type": "array"
+          },
+          "change_counts_truncated": {
+            "default": false,
+            "title": "Change Counts Truncated",
+            "type": "boolean"
+          },
+          "changes": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewChange"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "changes_next": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Changes Next"
+          },
           "counts": {
             "$ref": "#/$defs/ReviewSummaryCounts"
+          },
+          "definition_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Definition Count",
+            "type": "integer"
+          },
+          "definitions": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ReviewDefinition"
+            },
+            "title": "Definitions",
+            "type": "array"
+          },
+          "definitions_next": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Definitions Next"
           },
           "finding_count": {
             "minimum": 0,

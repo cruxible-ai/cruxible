@@ -501,6 +501,9 @@ def handle_playbill_review(
     rows_limit: int = 5,
     groups_limit: int = 5,
     findings_after: str | None = None,
+    changes_from: int = 0,
+    definitions_from: int = 0,
+    groups: bool = False,
 ) -> contracts.ProposalReviewResponse:
     return _daemon_call(
         lambda client: client.review_proposal(
@@ -508,6 +511,9 @@ def handle_playbill_review(
             proposal_id,
             include_body=include_body,
             detail=detail,
+            changes_from=changes_from,
+            definitions_from=definitions_from,
+            groups=groups,
             summary_after=summary_after,
             summary_group=summary_group,
             rows_after=rows_after,

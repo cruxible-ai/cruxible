@@ -504,6 +504,9 @@ def service_review_playbill_proposal(
     rows_limit: int = 5,
     groups_limit: int = 5,
     findings_after: str | None = None,
+    changes_from: int = 0,
+    definitions_from: int = 0,
+    groups: bool = True,
 ) -> ProposalReview | ProposalReviewSummary:
     """Return bounded summary pages, or the full immutable review with detail=True.
 
@@ -535,6 +538,9 @@ def service_review_playbill_proposal(
             groups_limit=groups_limit,
             findings_after=findings_after,
             access=access,
+            changes_from=changes_from,
+            definitions_from=definitions_from,
+            groups=groups,
         )
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     proposal = inspection.proposal

@@ -2459,8 +2459,11 @@ class Proposal:
         self.proposal_id = proposal_id
 
     def review(self) -> ReviewedProposal:
-        """Fetch an immutable full review; inspect its details before approving.
+        """Fetch an immutable full review; read it before approving.
 
+        ``print(review)`` shows what ``cruxible proposal review`` prints: the value
+        changes with what each cites, and the definitions; ``review.details`` is
+        the full candidate review.
         Next: ``proposal.approve(signer=..., reviewed=review)``.
         """
         return review_proposal(self._playbill, self.proposal_id)

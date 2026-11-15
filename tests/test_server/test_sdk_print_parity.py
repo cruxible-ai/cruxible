@@ -138,3 +138,28 @@ def test_a_claim_summary_prints_the_view_the_sdk_read(world) -> None:  # type: i
     first, second = text.splitlines()
     assert first == "dev.item/a  dev.item.state = done"
     assert second.startswith(f"{claim.removeprefix('Claim:')}  verdict=")
+
+
+def test_a_reviewed_proposal_prints_what_cruxible_proposal_review_prints(
+    world,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S6/S17: print(proposal.review()) is the reviewer's view the CLI prints, read once."""
+
+    http, instance_id, cx, _claim = world
+    pending = cx.set(
+        "dev.item/a", "dev.item.state", "open", because="Reopened for review.", accept="never"
+    )
+    assert pending.proposal is not None
+    proposal_id = pending.proposal.proposal_id
+    reviewed = cx.proposal(proposal_id).review()
+
+    cli_text = _cli(http, instance_id, monkeypatch, "proposal", "review", proposal_id)
+
+    _same_text(cli_text, str(reviewed))
+    assert "  set dev.item/a state: done -> open  [" in cli_text
+    # A revision cites what it adds, not the earlier revisions' evidence.
+    assert "It is done now." not in cli_text
+    calls: list[str] = []
+    setattr(cx._client, "review_proposal", lambda *args, **kwargs: calls.append("review"))
+    assert str(reviewed) and calls == []

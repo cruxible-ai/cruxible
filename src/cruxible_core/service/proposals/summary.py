@@ -24,7 +24,12 @@ from cruxible_client.contracts.claims import ClaimArtifact, parse_claim
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_summary import (
+    REVIEW_CHANGE_COUNTS_MAX,
+    REVIEW_CHANGES_PAGE,
+    REVIEW_DEFINITIONS_PAGE,
     ProposalReviewSummary,
+    ReviewChangeCount,
+    ReviewDefinition,
     ReviewSummaryCounts,
     ReviewSummaryGroup,
     ReviewSummaryRow,
@@ -38,6 +43,15 @@ from cruxible_core.service.discovery.backlinks import (
     REVIEW_GUIDANCE_MAX_DEFINITIONS,
     claim_type_identity,
     review_guidance,
+)
+from cruxible_core.service.proposals.review_view import (
+    CitedText,
+    claim_change_row,
+    claim_type_cardinality,
+    definition_row,
+    review_change,
+    subject_change_row,
+    subject_revision_row,
 )
 
 BATCH_SIZE = 32
@@ -68,6 +82,18 @@ CREATE TABLE IF NOT EXISTS review_kinds (
  PRIMARY KEY(candidate,kind)
 );
 CREATE TABLE IF NOT EXISTS review_findings (
+ candidate TEXT NOT NULL, position INTEGER NOT NULL, data TEXT NOT NULL,
+ PRIMARY KEY(candidate,position)
+);
+CREATE TABLE IF NOT EXISTS review_changes (
+ candidate TEXT NOT NULL, position INTEGER NOT NULL, data TEXT NOT NULL,
+ PRIMARY KEY(candidate,position)
+);
+CREATE TABLE IF NOT EXISTS review_change_counts (
+ candidate TEXT NOT NULL, subject_kind TEXT NOT NULL, field TEXT NOT NULL, op TEXT NOT NULL,
+ count INTEGER NOT NULL, PRIMARY KEY(candidate,subject_kind,field,op)
+);
+CREATE TABLE IF NOT EXISTS review_definitions (
  candidate TEXT NOT NULL, position INTEGER NOT NULL, data TEXT NOT NULL,
  PRIMARY KEY(candidate,position)
 );
@@ -166,6 +192,13 @@ def _build(
     cited: set[str] = set()
     definitions: set[str] = set()
     evidence = {item.path: item for item in candidate.law_evidence}
+    # The reviewer's view, from the same members: value changes and definitions.
+    change_rows: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+    change_counts: dict[tuple[str, str, str], int] = {}
+    definition_rows: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    cardinality = claim_type_cardinality(
+        lambda path: instance.proposal_blobs(tree_oid, (path,), proposal_id=proposal_id).get(path)
+    )
     # Only immutable changed paths drive this explicit cold rebuild. No population scan.
     for start in range(0, len(candidate.members), BATCH_SIZE):
         members = candidate.members[start : start + BATCH_SIZE]
@@ -223,6 +256,40 @@ def _build(
                 after["artifact_digest"] = member.candidate_artifact_digest
             columns = _columns(before, after)
             diagnostics = evidence[member.path].diagnostics
+            if member.artifact_kind == "claim":
+                verdict = evidence[member.path].result.get("claim_evidence")
+                row_key, row_kind, row_field, op, row = claim_change_row(
+                    path=member.path,
+                    disposition=member.disposition,
+                    old=old,
+                    new=new,
+                    verdict=(verdict.get("initial_verdict") if isinstance(verdict, dict) else None),
+                    cardinality=cardinality,
+                    base_oid=base_oid,
+                )
+            elif member.artifact_kind == "subject" and member.disposition != "replace":
+                row_key, row_kind, row_field, op, row = subject_change_row(
+                    path=member.path, disposition=member.disposition
+                )
+            else:
+                row = None
+                definition_rows.append(
+                    subject_revision_row(member.path)
+                    if member.artifact_kind == "subject"
+                    else definition_row(
+                        path=member.path,
+                        artifact_kind=member.artifact_kind,
+                        disposition=member.disposition,
+                        old=old,
+                        new=new,
+                        before=before,
+                        after=after,
+                    )
+                )
+            if row is not None:
+                change_rows.append((row_key, row))
+                count_key = (row_kind, row_field or "", op)
+                change_counts[count_key] = change_counts.get(count_key, 0) + 1
             refusals: tuple[PriorRefusalReceipt, ...] = ()
             refusals_more = False
             if (
@@ -318,6 +385,20 @@ def _build(
         "INSERT INTO review_kinds VALUES (?,?,?)",
         [(digest, kind, _json(value)) for kind, value in kinds.items()],
     )
+    change_rows.sort(key=lambda item: item[0])
+    connection.executemany(
+        "INSERT INTO review_changes VALUES (?,?,?)",
+        [(digest, position, _json(row)) for position, (_, row) in enumerate(change_rows)],
+    )
+    connection.executemany(
+        "INSERT INTO review_change_counts VALUES (?,?,?,?,?)",
+        [(digest, *key, count) for key, count in change_counts.items()],
+    )
+    definition_rows.sort(key=lambda item: item[0])
+    connection.executemany(
+        "INSERT INTO review_definitions VALUES (?,?,?)",
+        [(digest, position, _json(row)) for position, (_, row) in enumerate(definition_rows)],
+    )
     connection.execute(
         "INSERT INTO review_builds VALUES (?,?,?,?,?)",
         (
@@ -332,6 +413,8 @@ def _build(
                     "prior_refusal_member_count": prior_refusal_member_count,
                     "cited_captures": sorted(cited),
                     "guided_definitions": sorted(definitions),
+                    "change_count": len(change_rows),
+                    "definition_count": len(definition_rows),
                 }
             ),
         ),
@@ -386,10 +469,18 @@ def service_review_summary(
     groups_limit: int = 5,
     findings_after: str | None = None,
     access: BodyAccessContext | None = None,
+    changes_from: int = 0,
+    definitions_from: int = 0,
+    groups: bool = True,
 ) -> ProposalReviewSummary:
     """Read bounded groups/rows; ``access`` decides restricted-derived values (C14).
 
-    Cold reconstruction is atomic and candidate-local."""
+    The reviewer's view pages by position: ``changes_from`` and
+    ``definitions_from`` (the previous page's ``changes_next`` and
+    ``definitions_next``). ``groups=False`` leaves out the grouped rows; any
+    group or row cursor asks for them. Cold reconstruction is atomic and
+    candidate-local; a page reads its own rows and the text its shown changes
+    cite (one body read per cited Capture body), never the instance."""
     evidence = instance.proposal_evidence()
     admission = evidence.read_admission(proposal_id)
     evaluation = evidence.read_evaluation(admission.proposal_id)
@@ -493,8 +584,9 @@ def service_review_summary(
                 raise ProposalIntegrityError(
                     "Unknown summary group; use a group from this candidate"
                 )
+        groups = groups or after is not None or group is not None
         result = []
-        for _, group_id, raw in records[:groups_limit]:
+        for _, group_id, raw in records[:groups_limit] if groups else ():
             data = json.loads(raw)
             rows, cursor = _rows(
                 connection, cache_key, group_id, data["shared_fields"], rows_after, limit
@@ -509,6 +601,27 @@ def service_review_summary(
         }
         metadata = json.loads(built[3])
         cited_captures = metadata.pop("cited_captures", None)
+        change_count = int(metadata.pop("change_count", 0))
+        definition_count = int(metadata.pop("definition_count", 0))
+        if changes_from < 0 or definitions_from < 0:
+            raise ProposalIntegrityError(
+                "changes_from and definitions_from are positions: 0 or a page's *_next"
+            )
+        change_records = connection.execute(
+            "SELECT position,data FROM review_changes WHERE candidate=? AND position>=? "
+            "ORDER BY position LIMIT ?",
+            (cache_key, changes_from, REVIEW_CHANGES_PAGE + 1),
+        ).fetchall()
+        definition_records = connection.execute(
+            "SELECT position,data FROM review_definitions WHERE candidate=? AND position>=? "
+            "ORDER BY position LIMIT ?",
+            (cache_key, definitions_from, REVIEW_DEFINITIONS_PAGE + 1),
+        ).fetchall()
+        count_records = connection.execute(
+            "SELECT subject_kind,field,op,count FROM review_change_counts WHERE candidate=? "
+            "ORDER BY subject_kind,field,op LIMIT ?",
+            (cache_key, REVIEW_CHANGE_COUNTS_MAX + 1),
+        ).fetchall()
         guidance = review_guidance(
             instance,
             metadata.pop("guided_definitions", ()),
@@ -550,11 +663,79 @@ def service_review_summary(
             group_count=built[1],
             next_cursor=(
                 _cursor(cache_key, "groups", list(records[groups_limit - 1][:2]))
-                if len(records) > groups_limit
+                if groups and len(records) > groups_limit
+                else None
+            ),
+            change_count=change_count,
+            changes_next=(
+                change_records[REVIEW_CHANGES_PAGE][0]
+                if len(change_records) > REVIEW_CHANGES_PAGE
+                else None
+            ),
+            change_counts=tuple(
+                ReviewChangeCount(subject_kind=kind, field=field or None, op=op, count=count)
+                for kind, field, op, count in count_records[:REVIEW_CHANGE_COUNTS_MAX]
+            ),
+            change_counts_truncated=len(count_records) > REVIEW_CHANGE_COUNTS_MAX,
+            definitions=tuple(
+                ReviewDefinition.model_validate_json(data)
+                for _, data in definition_records[:REVIEW_DEFINITIONS_PAGE]
+            ),
+            definition_count=definition_count,
+            definitions_next=(
+                definition_records[REVIEW_DEFINITIONS_PAGE][0]
+                if len(definition_records) > REVIEW_DEFINITIONS_PAGE
                 else None
             ),
         )
-    return withhold_summary_values(instance, summary, cited_captures, access)
+    summary = withhold_summary_values(instance, summary, cited_captures, access)
+    return _with_changes(
+        instance,
+        summary,
+        admission,
+        [json.loads(data) for _, data in change_records[:REVIEW_CHANGES_PAGE]],
+        access,
+    )
+
+
+def _with_changes(
+    instance: PlaybillInstance,
+    summary: ProposalReviewSummary,
+    admission: Any,
+    rows: list[dict[str, Any]],
+    access: BodyAccessContext | None,
+) -> ProposalReviewSummary:
+    """The page's value changes, each with its citations and item reason.
+
+    A withheld summary (C14) keeps each change's op, Subject, field, Claim and
+    before value; the proposed value, verdict, cited text and reason go.
+    Cited text needs body read (``access.can_read_body``).
+    """
+
+    if not rows:
+        return summary
+    withheld = summary.withheld is not None
+    evidence = instance.proposal_evidence()
+    operation = None if withheld else evidence.item_reason_operation(admission)
+
+    def reason(path: str) -> str | None:
+        if operation is None:
+            return None
+        record = evidence.read_item_reason(operation, path)
+        return None if record is None else record.reason
+
+    cited = CitedText(
+        instance,
+        access or BodyAccessContext(principal_id="anonymous"),
+        withheld=withheld,
+    )
+    return summary.model_copy(
+        update={
+            "changes": tuple(
+                review_change(row, cited=cited, reason=reason, withheld=withheld) for row in rows
+            )
+        }
+    )
 
 
 def withhold_summary_values(
@@ -609,79 +790,3 @@ def withhold_summary_values(
     return summary.model_copy(
         update={"groups": groups, "findings": (), "item_reasons": (), "withheld": notice}
     )
-
-
-def render_review_summary(review: ProposalReviewSummary) -> str:
-    lines = [f"Proposal: {review.proposal_id}", f"Candidate: {review.candidate_digest}"]
-    if review.originating_line is not None:
-        lines.append(
-            f"Originating Line: {review.originating_line.identity.qualified} "
-            f"{review.originating_line.artifact_digest}"
-        )
-    if review.rationale is not None:
-        lines.append(f"Why: {review.rationale.value}")
-    lines.append(f"Required tier: {review.required_tier}; activation: {review.activation_policy}")
-    for requirement in review.approval_requirements:
-        lines.append(
-            f"Approval: {requirement.role}, "
-            f"{requirement.minimum_distinct_signers} distinct signer(s)"
-        )
-    lines.append(review.projection_advisory)
-    if review.item_reason_count:
-        lines.append(
-            f"Item reasons: {review.item_reason_count} (bounded preview; --detail to page)"
-        )
-        for reason in review.item_reasons:
-            lines.append(f"  Reason: {_json(reason.value)}")
-    if review.prior_refusal_member_count:
-        lines.append(
-            f"Earlier refusals: {review.prior_refusal_member_count} member(s); "
-            "bounded receipts in rows, --detail for all"
-        )
-    if review.prior_refusal_coverage is not None:
-        coverage = review.prior_refusal_coverage
-        lines.append(
-            f"Earlier refusal coverage: generation {coverage.indexed_through_generation} "
-            f"of {coverage.accepted_generation} at summary build; --detail to refresh"
-        )
-    for item in review.guidance:
-        title = "" if item.title is None else f" ({item.title})"
-        lines.append(f"Guidance for {item.definition}: {item.document}{title}")
-    for finding in review.findings:
-        lines.append(f"Finding: {_json(finding.value)}")
-    lines.append(
-        f"Changes: {review.counts.created} created / {review.counts.revised} revised / "
-        f"{review.counts.retired} retired"
-    )
-    for kind, counts in review.subject_kinds.items():
-        lines.append(
-            f"{kind}: {counts.created} created / {counts.revised} revised / "
-            f"{counts.retired} retired"
-        )
-    if review.subject_kinds_truncated:
-        lines.append(
-            f"Showing {len(review.subject_kinds)} of {review.subject_kind_count} Subject kinds; "
-            "--detail for all"
-        )
-    for group in review.groups:
-        lines.append(
-            f"{group.subject_kind} {group.disposition} "
-            f"({sum(group.counts.model_dump().values())}) group={group.group}"
-        )
-        if group.node is not None:
-            lines.append(f"  Template: {group.procedure_digest} / {group.node}[{group.template}]")
-        lines.append("  Varying: " + ", ".join(group.varying_columns))
-        shared = {key: value.model_dump(mode="json") for key, value in group.shared_fields.items()}
-        lines.append(f"  Shared: {_json(shared)}")
-        for row in group.rows:
-            lines.append(f"  {row.path}: {_json(row.model_dump(mode='json'))}")
-        if group.next_cursor:
-            lines.append(
-                f"  More rows: --summary-group {group.group} --rows-after {group.next_cursor}"
-            )
-    if review.next_cursor:
-        lines.append(f"More groups: --summary-after {review.next_cursor}")
-    if review.findings_next_cursor:
-        lines.append(f"More findings: --findings-after {review.findings_next_cursor}")
-    lines.append("Full review: --detail")
-    return "\n".join(lines) + "\n"

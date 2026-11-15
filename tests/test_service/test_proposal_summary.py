@@ -12,6 +12,7 @@ from cruxible_client.contracts import ProposalReviewSummary
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import OriginatingLine
+from cruxible_client.contracts.proposal_summary import REVIEW_CHANGES_PAGE
 from cruxible_client.contracts.refs import Ref
 from cruxible_core.service.proposals.review import ProposalReview, service_review_playbill_proposal
 from cruxible_core.service.proposals.summary import BATCH_SIZE
@@ -23,9 +24,8 @@ ACCESS = BodyAccessContext(principal_id="test", can_read_body=True)
 
 
 def _review(instance, proposal_id, **options):
-    return service_review_playbill_proposal(
-        instance, proposal_id=proposal_id, access=ACCESS, **options
-    )
+    options.setdefault("access", ACCESS)
+    return service_review_playbill_proposal(instance, proposal_id=proposal_id, **options)
 
 
 def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_path, monkeypatch):
@@ -120,6 +120,15 @@ def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_pat
     assert summary_size < 32_000
     assert summary_size * 100 < before_size
     assert reads and max(reads) <= BATCH_SIZE
+    # The reviewer's view is paged too: one page of changes and the counts per field.
+    assert summary.change_count == 1000
+    assert len(summary.changes) == REVIEW_CHANGES_PAGE == summary.changes_next
+    (count,) = summary.change_counts
+    assert count.subject_kind == claims.KIND and count.count == 1000
+    rendered = str(summary)
+    assert f"Values (1000; showing {REVIEW_CHANGES_PAGE}):" in rendered
+    assert f"More values: --changes-from {REVIEW_CHANGES_PAGE}" in rendered
+    assert "Values by kind and field:" in rendered
     # Warm paging must not decode the candidate or read any proposal member.
     monkeypatch.setattr(
         type(instance.proposal_evidence()),
@@ -134,6 +143,13 @@ def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_pat
     expected = sorted(m.path for m in full.members)
     assert [r.path for r in next_page.groups[0].rows] == expected[5:10]
     assert next_page.groups[0].counts == group.counts
+    later = _review(instance, proposal_id, changes_from=summary.changes_next, groups=False)
+    assert later.groups == () and later.group_count == 1 and later.next_cursor is None
+    assert len(later.changes) == REVIEW_CHANGES_PAGE
+    assert later.changes_next == 2 * REVIEW_CHANGES_PAGE
+    assert {item.change.claim for item in later.changes}.isdisjoint(
+        item.change.claim for item in summary.changes
+    )
     (tmp_path / "summary-sizes.json").write_text(
         json.dumps(
             {"full_bytes": before_size, "summary_bytes": summary_size, "members": len(full.members)}
@@ -365,6 +381,27 @@ def test_admitted_mixed_proposal_preserves_before_after_and_action_counts(tmp_pa
         revision.shared_fields["after.object"].value
         == changed.candidate_semantic_artifact["statement"]["object"]
     )
+    # The same members in the write outcome's form: a revision shows before -> after,
+    # a retirement the value it ends, a new Claim its value.
+    by_claim = {item.change.claim: item.change for item in summary.changes}
+    assert len(by_claim) == 3
+    set_change = by_claim[revised.identity.name]
+    before_value = revised.statement.object.value
+    after_value = changed.candidate_semantic_artifact["statement"]["object"]["value"]
+    assert set_change.op == "set" and set_change.before == before_value
+    assert set_change.after == after_value != before_value
+    ended = by_claim[retired.identity.name]
+    assert ended.op == "retire" and ended.after is None
+    assert ended.before == retired.statement.object.value
+    (added,) = [
+        change
+        for claim, change in by_claim.items()
+        if claim not in {revised.identity.name, retired.identity.name}
+    ]
+    assert added.op in {"set", "add"} and added.after and added.before is None
+    rendered = str(summary)
+    assert f"{set_change.field}: {before_value} -> {after_value}" in rendered
+    assert f"retire {ended.subject} {ended.field}: {ended.before}" in rendered
 
 
 @pytest.mark.parametrize(
@@ -510,6 +547,22 @@ def test_typed_line_subject_and_definition_revisions_show_actual_fields(tmp_path
             ]
             assert shared[f"before.{field}"]["value"] == old[field]
             assert shared[f"after.{field}"]["value"] == new[field]
+            definition = json.loads(
+                connection.execute("SELECT data FROM review_definitions").fetchone()[0]
+            )
+            assert definition["action"] == "revised"
+            if kind == "subject":
+                assert definition["kind"] == "Subject"
+                continue
+            assert field in [change["field"] for change in definition["changed"]]
+            if kind == "line" and field == "parameters":
+                detail = definition["detail"]
+                assert detail["kind"] == "line" and detail["parameters"]["changed"]["value"]
+                for binding, original in zip(detail["bindings"], line.bindings.values()):
+                    # A provider build shows as NAME/<12 hex>, as coordinates do.
+                    name = original.build.target.name
+                    head, slash, build = name.rpartition("/")
+                    assert binding["provider"] == (f"{head}/{build[:12]}" if slash else name)
 
 
 def test_closure_role_splits_groups_and_findings_storage_is_bounded(tmp_path):
@@ -647,11 +700,22 @@ def test_summary_preserves_governance_and_bounded_item_reasons(tmp_path):
     ]
     assert summary.item_reason_count == full.item_reason_count == 1
     assert summary.item_reasons[0].value["reason"] == full.item_reasons[0].reason
-    from cruxible_core.service.proposals.summary import render_review_summary
-
-    rendered = render_review_summary(summary)
+    rendered = str(summary)
     assert "Required tier:" in rendered and "Item reasons: 1" in rendered
-    assert "projection coverage" in rendered and "--detail" in rendered
+    assert "--detail" in rendered
+    # The reviewer's view: each Claim in the write outcome's form, with the item's
+    # own reason and the text it cites, read from the Capture body.
+    (claim,) = [item for item in summary.changes if item.change.claim is not None]
+    assert claim.rationale == full.item_reasons[0].reason
+    assert claim.change.verdict is not None
+    assert claim.citations and claim.citations[0].capture.startswith("CAP-")
+    assert claim.citations[0].text and not claim.citations[0].text_withheld
+    assert f"because: {claim.rationale}" in rendered
+    assert f"| {claim.citations[0].text.splitlines()[0]}" in rendered
+    # A reader without body read sees where the citation points, not its text.
+    blind = _review(instance, proposal, access=BodyAccessContext(principal_id="blind"))
+    (cited,) = [item for item in blind.changes if item.change.claim is not None]
+    assert cited.citations[0].text is None and cited.citations[0].text_withheld
 
 
 def test_summary_prior_refusals_are_bounded_and_ordered_as_problems(tmp_path):

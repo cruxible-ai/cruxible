@@ -101,6 +101,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.get_reads import GetRequest
+from cruxible_client.contracts.proposal_summary import ProposalReviewSummary
 from cruxible_client.contracts.triggers import GenerationAcceptedSchedule
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.runtime import playbill_api
@@ -625,6 +626,25 @@ def _activate_proposal(world: World) -> object:
     return receipt
 
 
+def _prepare_review(world: World) -> None:
+    pending = _worlds.write(
+        world,
+        [{"op": "set", "subject": world.subject(2), "field": "title", "value": "to review"}],
+        accept="never",
+    )
+    assert pending.proposal is not None
+    world.prepared = pending.proposal.proposal_id
+
+
+def _review_proposal(world: World) -> object:
+    """The reviewer's view: a page of changes with the text each cites, read cold."""
+
+    result = playbill_api.playbill_review_proposal(world.instance_id, world.prepared, groups=False)
+    assert isinstance(result, ProposalReviewSummary), result
+    assert result.change_count == 1 and result.changes[0].change.after == "to review"
+    return result
+
+
 def _prepare_stale_activation(world: World) -> None:
     pending = _worlds.write(
         world,
@@ -995,6 +1015,8 @@ def _routes() -> list[Route]:
         Route(
             "cold.dry_run", _write(lambda w: _creates(w, "colddry"), dry_run=True), prepare=_reopen
         ),
+        # A proposal review costs its own members and one page, never the instance.
+        Route("read.proposal.review", _review_proposal, prepare=_prepare_review),
         # The vocabulary file's next check: the change records since its export.
         Route(
             "read.next.vocabulary_file",

@@ -57,10 +57,23 @@ class ReviewedProposal:
     _snapshot: bytes = field(repr=False)
     proposal_id: str
     candidate_digest: str
+    _summary: bytes = field(default=b"", repr=False, compare=False)
 
     @property
     def details(self) -> api.ProposalReview:
         return api.ProposalReview.model_validate_json(self._snapshot)
+
+    @property
+    def summary(self) -> api.ProposalReviewSummary:
+        """The reviewer's view of this same candidate: value changes, what they cite,
+        definitions (its first page), as ``cruxible proposal review`` prints it."""
+
+        return api.ProposalReviewSummary.model_validate_json(self._summary)
+
+    def __str__(self) -> str:
+        """The review as ``cruxible proposal review`` prints it; no request is made."""
+
+        return str(self.summary)
 
 
 def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:
@@ -102,12 +115,19 @@ def review_proposal(cx: Cruxible, proposal_id: str) -> ReviewedProposal:
         _checked_review(review, proposal_id)
     except ValueError as exc:
         raise ApprovalReviewMismatch("Daemon returned an inconsistent review") from exc
+    summary = cx._client.review_proposal(cx._instance_id, proposal_id, groups=False)
+    if (
+        not isinstance(summary, api.ProposalReviewSummary)
+        or summary.candidate_digest != review.candidate_digest
+    ):
+        raise ApprovalReviewMismatch("Review summary names a different candidate")
     return ReviewedProposal(
         cx,
         cx._instance_id,
         canonical_bytes(review.model_dump(mode="json")),
         review.proposal_id,
         review.candidate_digest,
+        summary.model_dump_json().encode("utf-8"),
     )
 
 

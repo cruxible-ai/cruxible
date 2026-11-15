@@ -3013,9 +3013,26 @@ def reject_proposal(
     type=click.IntRange(1, 500),
     help="Item reasons per page (default 50).",
 )
-@click.option("--detail", is_flag=True, help="Return the full candidate review.")
-@click.option("--summary-after", default=None, help="Next group page cursor.")
-@click.option("--summary-group", default=None, help="Page rows of this exact group.")
+@click.option(
+    "--detail",
+    is_flag=True,
+    help="The full candidate review: every member's artifact and semantic delta, "
+    "governance and attestation coverage.",
+)
+@click.option(
+    "--changes-from",
+    default=0,
+    type=click.IntRange(0),
+    help="Show value changes from this position (the last page's More values:).",
+)
+@click.option(
+    "--definitions-from",
+    default=0,
+    type=click.IntRange(0),
+    help="Show definitions from this position (the last page's More definitions:).",
+)
+@click.option("--summary-after", default=None, help="Next group page cursor (grouped rows).")
+@click.option("--summary-group", default=None, help="Page the stored rows of this exact group.")
 @click.option("--rows-after", default=None, help="Next row page cursor.")
 @click.option("--rows-limit", default=5, type=click.IntRange(1, 10))
 @click.option("--groups-limit", default=5, type=click.IntRange(1, 10))
@@ -3036,8 +3053,15 @@ def review_proposal(
     rows_limit: int,
     groups_limit: int,
     findings_after: str | None,
+    changes_from: int,
+    definitions_from: int,
 ) -> None:
+    """Read a proposal before approving it: its value changes and what each cites, and its
+    definitions. ``--json`` adds the stored fields grouped by kind; ``--detail`` is the
+    full candidate review."""
+
     workspace = Path(workspace_root)
+    grouped = output_json or any(item is not None for item in (summary_after, summary_group))
 
     def _review_at_observed_coordinate(
         client: CruxibleClient, instance_id: str
@@ -3077,6 +3101,9 @@ def review_proposal(
             workspace_observation=observation,
             item_reasons_after=item_reasons_after,
             item_reasons_limit=item_reasons_limit,
+            changes_from=changes_from,
+            definitions_from=definitions_from,
+            groups=grouped,
         )
 
     result = _server_call(
@@ -3086,9 +3113,7 @@ def review_proposal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     elif isinstance(result, contracts.ProposalReviewSummary):
-        from cruxible_core.service.proposals.summary import render_review_summary
-
-        click.echo(render_review_summary(result), nl=False)
+        click.echo(str(result))
     else:
         review = ProposalReview.model_validate(result.model_dump(mode="json"))
         click.echo(render_playbill_proposal_review_pointer(review), nl=False)
