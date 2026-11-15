@@ -7,6 +7,7 @@ the same request gives the same result on the SDK, the CLI and MCP.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -457,12 +458,17 @@ def test_vocabulary_lint_does_not_grow_with_unrelated_capture_contracts(
     http, instance_id, _ = playbill_http
     cx = _cx(http, instance_id, tmp_path)
     rows = {"read": 0}
+    # Only this thread's reads are the lint's: the daemon's consumer threads
+    # (Trigger runner, floor delivery) read the same projection after every
+    # accepted generation, and counting them made the totals depend on timing.
+    lint_thread = threading.get_ident()
     for name in ("envelopes", "envelopes_by_digest", "envelope", "first_envelope"):
         original = getattr(TypedStateReader, name)
 
         def counted(self: object, *args: object, _original=original, **kwargs: object) -> object:
             result = _original(self, *args, **kwargs)
-            rows["read"] += len(result) if isinstance(result, tuple) else result is not None
+            if threading.get_ident() == lint_thread:
+                rows["read"] += len(result) if isinstance(result, tuple) else result is not None
             return result
 
         monkeypatch.setattr(TypedStateReader, name, counted)
