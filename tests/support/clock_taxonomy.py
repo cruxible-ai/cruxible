@@ -614,6 +614,7 @@ NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
     {
         # A retained source selection locating own words in a file, not a time.
         ("ClaimAuthoringPayload", "located_at"),
+        ("SubjectCreationAuthoringPayload", "located_at"),
         ("AuthoringIntentCoordinator", "clock"),
         # Reads re-observations at the instant it is given; it holds no time.
         ("ClaimFactRowV1", "_reobserved"),
