@@ -517,8 +517,50 @@ def test_vocabulary_lint_does_not_grow_with_unrelated_capture_contracts(
         assert lint is None or all(item.contract_identity != named for item in lint.warnings), lint
         return rows["read"]
 
+    def reader_steps() -> tuple[int, int, str]:
+        """SQLite VM steps of the two contract readers the lint may use, and the plan."""
+
+        instance = get_playbill_manager().get(instance_id)
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            typed = projection.typed
+            connection = typed.connection
+            first_digest = typed.first_envelope(kind="capture-contract")
+            assert first_digest is not None
+            steps = [0]
+
+            def step() -> int:
+                steps[0] += 1
+                return 0
+
+            connection.set_progress_handler(step, 1)
+            try:
+                typed.first_envelope(kind="capture-contract")
+                first = steps[0]
+                steps[0] = 0
+                typed.envelopes_by_digest(
+                    kind="capture-contract", digests=(first_digest.artifact_digest,)
+                )
+                by_digest = steps[0]
+            finally:
+                connection.set_progress_handler(None, 1)
+            plan = " ".join(
+                str(row[-1])
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN SELECT identity,format_tag,path,artifact_digest "
+                    "FROM capture_contracts ORDER BY artifact_digest, identity LIMIT 1"
+                )
+            )
+        return first, by_digest, plan
+
     add_contracts(0, 1)
     small = lint_rows()
+    small_steps = reader_steps()
     add_contracts(1, 50)
     large = lint_rows()
+    large_steps = reader_steps()
     assert small == large == 1, (small, large)
+    # Counted in VM steps, not rows: the digest index supplies the first row
+    # (LIMIT 1 stops the index walk), never a full scan with a sort.
+    assert small_steps[:2] == large_steps[:2], (small_steps, large_steps)
+    assert "capture_contracts_by_digest" in large_steps[2], large_steps
+    assert "TEMP B-TREE" not in large_steps[2], large_steps
