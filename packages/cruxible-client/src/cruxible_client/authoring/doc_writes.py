@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cruxible_client._safe_files import read_regular_file
+from cruxible_client._safe_files import ContainmentError, HeldRoot
 from cruxible_client.authoring.files import (
     FileCatalogEditError,
     add_catalog_entry,
@@ -94,11 +94,24 @@ def _coordinate(content: bytes) -> WorkingDigestCoordinate:
     )
 
 
-def _read(path: Path) -> bytes | None:
+def _read(held: HeldRoot | None, workspace: Path, path: Path) -> bytes | None:
+    """``path``'s bytes, opened beneath the held workspace descriptor, or None if absent.
+
+    Every parent is walked without following a symbolic link, so a parent
+    swapped for one after ``_path`` checked the name is refused, never read.
+    """
+
+    if held is None:  # no workspace folder yet: nothing in it to read
+        return None
     try:
-        return read_regular_file(path)
+        return held.read(path.relative_to(workspace).as_posix())
     except FileNotFoundError:
         return None
+    except ContainmentError as exc:
+        raise DocSectionError(
+            "protected_path",
+            "Choose a regular file inside the workspace, not one under a symbolic link.",
+        ) from exc
 
 
 def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
@@ -259,7 +272,20 @@ def write_workspace(
         for c in request.changes
     ):
         return submit(request)
-    workspace = workspace.expanduser().resolve()
+    root = workspace.expanduser().resolve()
+    if not root.is_dir():
+        return _write_workspace(request, workspace=root, submit=submit, held=None)
+    with HeldRoot(root) as held:
+        return _write_workspace(request, workspace=root, submit=submit, held=held)
+
+
+def _write_workspace(
+    request: WriteRequest,
+    *,
+    workspace: Path,
+    submit: Callable[[WriteRequest], WriteOutcome],
+    held: HeldRoot | None,
+) -> WriteOutcome:
     files: dict[Path, _File] = {}
     records: list[tuple[str, _File, DocEditObservation]] = []
     catalog = None
@@ -304,7 +330,7 @@ def write_workspace(
             raise DocSectionError(
                 "catalog_name_exists", "Choose distinct catalog names for the new files."
             )
-        content = _read(path)
+        content = _read(held, workspace, path)
         state = _File(path, source_id, content, content, entry)
         state.catalogue = entry is None and not editing
         files[path] = state
@@ -463,7 +489,7 @@ def write_workspace(
                     state.path, expected=state.original, replacement=state.current or b""
                 )
             except PageWriteError:
-                rebase_original = moved = _read(state.path)
+                rebase_original = moved = _read(held, workspace, state.path)
                 for index, (op, previous) in enumerate(zip(state.ops, state.edits, strict=True)):
                     rebased, _, _ = _apply(moved, op)
                     applied[index] = rebased.changed

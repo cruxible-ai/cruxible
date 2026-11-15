@@ -389,3 +389,55 @@ def test_failed_history_confirmation_reports_that_the_file_was_written(tmp_path)
         )
     assert caught.value.error_code == "cruxible.doc.history_unconfirmed"
     assert token in caught.value.repair_line
+
+
+@pytest.mark.parametrize("kind", ["file", "section", "replace"])
+def test_a_parent_swapped_for_a_symlink_after_the_check_is_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Review P1: the race itself, forced between the name check and the read."""
+
+    from cruxible_client.authoring import doc_writes
+    from cruxible_client.contracts.write import FileEvidence, SectionEvidence, SetChange
+
+    workspace = tmp_path / "workspace"
+    (workspace / "inside").mkdir(parents=True)
+    (workspace / "inside" / "file.md").write_text("# Public\nnothing here\n")
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "file.md").write_text("# Public\nSECRET outside the workspace\n")
+    real_path = doc_writes._path
+
+    def swapped(root: Path, file: str) -> Path:
+        checked = real_path(root, file)
+        # After the containment check: the parent becomes a link outside.
+        (root / "inside").rename(root / "moved")
+        (root / "inside").symlink_to(private, target_is_directory=True)
+        return checked
+
+    monkeypatch.setattr(doc_writes, "_path", swapped)
+    if kind == "replace":
+        request = WriteRequest(
+            because="x",
+            docs=(ReplaceSection(file="inside/file.md", section=("Public",), text="# Public\nx"),),
+        )
+    else:
+        evidence = (
+            FileEvidence(file="inside/file.md#SECRET")
+            if kind == "file"
+            else SectionEvidence(file="inside/file.md", section=("Public",))
+        )
+        request = WriteRequest(
+            because="x",
+            changes=(
+                SetChange(subject="dev.item/a", field="status", value="x", evidence=evidence),
+            ),
+        )
+    with pytest.raises(WriteRefusalError) as caught:
+        write_workspace(
+            request,
+            workspace=workspace,
+            submit=lambda _: pytest.fail("bytes from outside the workspace were submitted"),
+        )
+    assert caught.value.error_code == "cruxible.doc.protected_path"
+    assert "SECRET" not in str(caught.value)
