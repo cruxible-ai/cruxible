@@ -542,7 +542,7 @@ def review_change_lines(item: ReviewChange, *, why: str | None = None) -> list[s
     extra = [] if item.role in (None, "normative") else [f"role {item.role}"]
     lines = [f"  {change_outcome_line(item.change, extra=extra)}"]
     for citation in item.citations:
-        where = citation.source or "-"
+        where = _public_name(citation.source) if citation.source else "-"
         if citation.section:
             where += "#" + "/".join(citation.section)
         elif citation.anchor:
@@ -576,7 +576,8 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
         ReviewTriggerDefinition,
     )
 
-    lines = [f"  {item.kind} {item.name}: {item.action}"]
+    # Names read in their public spelling (`playbill.` -> `cruxible.`); JSON keeps them.
+    lines = [f"  {item.kind} {_public_name(item.name)}: {item.action}"]
     rows: list[tuple[str, str]] = []
     detail = item.detail
     if isinstance(detail, ReviewLineDefinition):
@@ -611,7 +612,7 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
         if detail.subjects:
             rows.append(("subjects", detail.subjects))
         if detail.condition:
-            rows.append(("condition", detail.condition))
+            rows.append(("condition", _public_name(detail.condition)))
         if detail.subject_creation:
             rows.append(("may create", ", ".join(detail.subject_creation)))
         if detail.suspended:
@@ -619,10 +620,12 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
     elif isinstance(detail, ReviewRunbookDefinition):
         if detail.description:
             lines.append(f"    {printable(detail.description)}")
-        rows.extend((str(index), step) for index, step in enumerate(detail.steps, start=1))
+        rows.extend(
+            (str(index), _public_name(step)) for index, step in enumerate(detail.steps, start=1)
+        )
     elif isinstance(detail, ReviewTriggerDefinition):
         rows.append(("schedule", detail.schedule))
-        rows.append(("target", detail.target))
+        rows.append(("target", _public_name(detail.target)))
     if rows:
         lines.extend(_table([(label, printable(value)) for label, value in rows], "    "))
     if isinstance(detail, ReviewMandateDefinition) and detail.scope:
@@ -633,7 +636,7 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
         header += ["binds"] if binds else []
         table: list[list[str]] = [header]
         for scope in detail.scope:
-            row = [scope.claim_type.removeprefix("ClaimType:")]
+            row = [_public_name(scope.claim_type).removeprefix("ClaimType:")]
             for kind in MANDATE_CHANGE_KIND_ORDER:
                 covered = scope.changes.of(kind)
                 row.append("-" if covered is None else "|".join(covered.basis))
@@ -704,7 +707,9 @@ def render_review_summary(review: ProposalReviewSummary, *, command: str | None 
         )
     for guide in review.guidance:
         title = "" if guide.title is None else f" ({guide.title})"
-        lines.append(f"Guidance for {guide.definition}: {guide.document}{title}")
+        lines.append(
+            f"Guidance for {_public_name(guide.definition)}: {_public_name(guide.document)}{title}"
+        )
     for finding in review.findings:
         value = finding.value
         if isinstance(value, Mapping) and "code" in value:

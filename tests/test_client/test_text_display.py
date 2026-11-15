@@ -472,8 +472,13 @@ def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
             runbook,
             trigger,
             {"kind": "ClaimType", "name": "x.y", "action": "created"},
+            {
+                "kind": "CaptureContract",
+                "name": "playbill.foreign-source.doc-notes.md",
+                "action": "created",
+            },
         ],
-        definition_count=5,
+        definition_count=6,
     )
     text = str(summary)
     expected = [
@@ -487,7 +492,7 @@ def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
         "More values: --changes-from 1",
         "Values by kind and field:",
         "  security.pair  justification  set  2",
-        "Definitions (5):",
+        "Definitions (6):",
         "  Line security.kev-triage: created",
         "    binding      fetch -> web/f3543a2990f6#web.fetch",
         "    parameter    url = https://example.test/kev.json",
@@ -503,11 +508,15 @@ def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
         "    schedule  on cron 0 14 * * * (UTC)",
         "    target    Runbook:security.maintain",
         "  ClaimType x.y: created",
+        # Reserved stored names read in their public spelling; the JSON keeps them.
+        "  CaptureContract cruxible.foreign-source.doc-notes.md: created",
     ]
     lines = text.splitlines()
     for line_text in expected:
         assert line_text in lines, line_text
     assert '{"truncated"' not in text and '"value"' not in text
+    assert "playbill." not in text
+    assert summary.definitions[-1].name == "playbill.foreign-source.doc-notes.md"  # type: ignore[attr-defined]
     # The SDK's str() and the CLI print one renderer.
     from cruxible_client.contracts.text_display import render_review_summary
 
