@@ -11,6 +11,11 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
+from cruxible_client.contracts.claim_type_inputs import (
+    ClaimTypeInputRecord,
+    lower_claim_type_input,
+)
+from cruxible_client.contracts.policies import ClaimAdmissionPolicy, ClaimResolutionPolicy
 from cruxible_client.contracts.shapes import EnumType, StringType
 from cruxible_client.transport.http import CruxibleClient
 from tests.support.claim_types import claim_type as build_claim_type
@@ -74,3 +79,48 @@ def test_prepare_lints_a_field_with_no_evidence_rules_and_the_write_says_uncover
     assert [item.verdict for item in outcome.changes] == ["uncovered"]
     # F21: a write whose values all land uncovered says so in its hint.
     assert outcome.hint is not None and "uncovered" in outcome.hint
+
+
+def _drafted_field(cx: Cruxible, name: str, value: object) -> object:
+    return cx.claim_type(
+        predicate=f"dev.item.{name}",
+        subject_kinds=["dev.item"],
+        value_type=value,  # type: ignore[arg-type]
+        cardinality="one",
+        permitted_roles=["normative"],
+        referent_sensitivity="identity",
+        sources=[],
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
+            cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
+        ),
+        pins=[],
+        evidence_freshness=None,
+        canonical_form=("nfc", "trim"),
+    )
+
+
+def test_a_field_drafted_with_no_sources_takes_the_short_forms_own_words_rule(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F21: `cx.claim_type(sources=[])` admitted nothing, so every write landed uncovered."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    slug = _drafted_field(cx, "slug", SLUG)
+    state = _drafted_field(cx, "state", EnumType(members=("open", "done")))
+    short_form = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate="dev.item.state", cardinality="one"), tree={}
+    )
+    assert state.definition.evidence_admission_policy == short_form.evidence_admission_policy
+
+    changes = cx.changes(rationale="A vocabulary drafted with cx.claim_type.")
+    changes.claim_type(slug)
+    changes.claim_type(state)
+    changes.subject_kind(name="dev.item", keys=["dev.item.slug"], description="An item.")
+    assert changes.submit().outcome.status == "landed"
+    cx.refresh()
+
+    outcome = cx.set("dev.item/a", "dev.item.state", "open", because="It is open.")
+    assert [item.verdict for item in outcome.changes] == ["supported"]
+    assert outcome.hint is None

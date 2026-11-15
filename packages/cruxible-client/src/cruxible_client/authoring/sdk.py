@@ -1576,6 +1576,20 @@ class ChangeSetDraft:
         )
 
 
+def _short_form_rules(roles: Sequence[str]) -> tuple[ClaimEvidenceAdmissionRule, ...]:
+    """The evidence rules the short form gives a new field with no source."""
+
+    from cruxible_client.contracts.claim_type_inputs import (
+        default_evidence_policy,
+        identity_evidence_policy,
+    )
+
+    policy = identity_evidence_policy(
+        default_evidence_policy(tuple(roles), "self", ()), identities={}
+    )
+    return ClaimEvidenceAdmissionPolicy.model_validate(policy).rules
+
+
 class _Unset(Enum):
     TOKEN = "unset"
 
@@ -3059,7 +3073,12 @@ class Cruxible:
             ("derivational", tuple(r for r in role_values if r == "derivation")),
             ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
         )
-        rules = tuple(
+        rules = (
+            # No source: the short form's own-words rule (`claim-type propose`
+            # and `changes.field` lower through the same function), so a field
+            # drafted here admits what its writer says in its own words.
+            _short_form_rules(role_values) if not source_ids else ()
+        ) + tuple(
             ClaimEvidenceAdmissionRule(
                 rule_id=f"source-{source_id}-{admission}",
                 claim_roles=rule_roles,
