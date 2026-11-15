@@ -48,6 +48,13 @@ jobs:
       UV_NO_SYNC: "1"
 
     steps:
+      # The job's own clock: tests/support/hang_dump.py dumps whatever test is
+      # still running 3 minutes before timeout-minutes (45) cancels the job, so a
+      # late hang leaves a stack and a failure rather than a bare cancellation.
+      # Keep the 45 here in step with timeout-minutes.
+      - name: Start the job clock
+        run: echo "CRUXIBLE_TEST_DEADLINE=$(( $(date +%s) + (45 - 3) * 60 ))" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # cruxible-providers is public, so this is an ordinary second checkout and
@@ -93,13 +100,16 @@ jobs:
       # pytest-timeout fails a stalled test with every thread's stack (900 s, or a
       # module's own mark, which must stay under the job's 45 minutes). A stall
       # that holds the GIL keeps its timer from firing; tests/support/hang_dump.py
-      # then dumps every thread 60 s past the test's own timeout and ends the
-      # worker, so the shard reports it instead of being cancelled. No
+      # then dumps every thread 60 s past the test's own timeout (or at the job
+      # clock above, if sooner) and ends the worker, so the shard reports it
+      # instead of being cancelled. A crashed worker's unfinished file is re-queued
+      # with the crashed test first (xdist loadfile), so one restart is allowed: a
+      # transient crash is retried once, a repeatable hang ends the shard. No
       # faulthandler_timeout: a fixed one fired inside long legitimate tests
       # (test_pair_procedure_cost) and once crashed a worker mid-dump, and one
       # past every mark could never fire before the job timeout.
       - name: Test
-        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread
+        run: uv run pytest -n auto --dist loadfile --tb=short --timeout 900 --timeout-method=thread --max-worker-restart=1
 
       - name: Upload per-file test seconds
         if: always()
