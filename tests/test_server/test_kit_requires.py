@@ -21,6 +21,7 @@ from cruxible_client.contracts.kits import (
     KitManifest,
     KitReceipt,
     KitRemoveRequest,
+    KitRequirementStatus,
 )
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
@@ -211,7 +212,18 @@ def test_add_refuses_without_the_required_kit_and_accepts_beside_it(
     )
 
     present = _instance(tmp_path / "present", _base())
-    assert _add(present, dependent).status == "accepted"
+    met = (
+        KitRequirementStatus(
+            kit_id="base", min_version="1.0.0", installed_version="1.0.0", met=True
+        ),
+    )
+    # The preview and the commit say which required kit is held, and at what version.
+    preview = service_add_kit(
+        present, KitAddRequest(bundle=dependent), actor_id="owner", timestamp=STAMP
+    )
+    assert preview.status == "would_propose" and preview.requires == met
+    added = _add(present, dependent)
+    assert added.status == "accepted" and added.requires == met
     receipt = _receipt(present, "acme")
     assert receipt.requires == dependent.manifest.requires
     assert receipt.carried == ()

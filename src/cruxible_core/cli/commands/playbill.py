@@ -141,6 +141,7 @@ from cruxible_client.contracts.kits import (
     KitBuildRequest,
     KitChangeResult,
     KitRemoveRequest,
+    KitRequirementStatus,
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
@@ -174,6 +175,7 @@ from cruxible_client.contracts.text_display import (
     next_lines,
     render_orient,
     short_oid,
+    short_provider_build,
     write_outcome_lines,
 )
 from cruxible_client.contracts.text_display import (  # noqa: F401
@@ -2236,6 +2238,27 @@ def _echo_kit_requires(requires: tuple[KitRequirement, ...]) -> None:
         )
 
 
+def _echo_kit_requirements(requires: Sequence[KitRequirementStatus]) -> None:
+    """Each kit a release requires and whether this instance meets it (add and status)."""
+
+    for required in requires:
+        held = (
+            "not installed"
+            if required.installed_version is None
+            else f"installed {required.installed_version}"
+        )
+        click.echo(
+            f"  requires {required.kit_id} >= {required.min_version}: "
+            f"{'met' if required.met else 'not met'} ({held})"
+        )
+
+
+def _kit_plan_heading(kind: str) -> str:
+    """A kit plan group's heading: every identity kind capitalized (``document`` too)."""
+
+    return kind[:1].upper() + kind[1:]
+
+
 def _echo_kit_change(
     result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
 ) -> None:
@@ -2255,6 +2278,7 @@ def _echo_kit_change(
         if step.detail is not None:
             line += f" ({printable(step.detail)})"
         click.echo(line)
+    _echo_kit_requirements(result.requires)
     _echo_provider_repins(result.repins, result.stops, result.automation_carries)
     if result.provenance is not None:
         provenance = result.provenance
@@ -2266,7 +2290,7 @@ def _echo_kit_change(
     for item in result.plan:
         if item.action == "unchanged":
             continue
-        kind = (item.identity or item.path).partition(":")[0]
+        kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
         line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
         notes = []
         if item.consequence is not None:
@@ -2349,7 +2373,8 @@ def _echo_kit_change(
         "published wheel in dist/ (path dependencies' wheels are not needed). The kit "
         "carries none of its files. kit add installs it by name at exactly this version "
         "from the provider index, refusing any other build, unless live operations of "
-        "other providers already serve and fit every slot the kit carries; a daemon with "
+        "other providers already installed serve every slot's capability and fit it; "
+        "a daemon with "
         "provider_repository configured refuses that install (install the repository's "
         "build first with provider install)."
     ),
@@ -2422,7 +2447,7 @@ def build_kit(
         click.echo(
             f"{kit_id} {version}: {len(bundle.artifacts)} artifacts, "
             f"{len(bundle.manifest.providers)} provider package(s), "
-            f"{bundle.manifest.content_digest}"
+            f"content {bundle.manifest.content_digest}"
         )
         _echo_kit_requires(bundle.manifest.requires)
         template = bundle.manifest.automation_template
@@ -2497,12 +2522,12 @@ def add_kit(
     stops at proposed. A kit that bundles provider packages installs the missing
     ones first (admin permission, the transfer install; registry dependencies
     resolve from the daemon's provider index, PyPI unless configured), installs a
-    default provider by name from that index unless an installed Provider already
-    implements its interfaces (satisfied), and proposes the definitions once they
-    land; an install awaiting approval stops at awaiting_providers, and its
-    activation proposes the definitions on their own, as you (kit status shows
-    the resume). It previews by default; commit with
-    ``--commit --at OID``.
+    default provider by name from that index unless live operations of installed
+    providers already serve every slot's capability (satisfied), and proposes the
+    definitions once they land (each provider carries its own shapes); an
+    install awaiting approval stops at awaiting_providers, and its activation
+    proposes the definitions on their own, as you (kit status shows the resume).
+    It previews by default; commit with ``--commit --at OID``.
     """
     # ``base`` is the base kit this core bundles, read before any directory or registry.
     bundle, origin = bundled_kit_reference(kit) or resolve_kit(kit)
@@ -2539,7 +2564,6 @@ def add_kit(
             template_on_disk=_kit_directory_file(kit, result.automation_template),
             source=_pull_reference(kit, origin),
         )
-        _echo_kit_requires(bundle.manifest.requires)
 
 
 @kit_group.command("pull")
@@ -2606,7 +2630,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if not result.kits:
+    if not result.kits and not result.resumes:
         click.echo("No kits installed.")
     for resume in result.resumes:
         line = f"{resume.kit_id} {resume.version}: kit add {resume.state} (as {resume.actor_id})"
@@ -2617,6 +2641,11 @@ def kit_status(offline: bool, output_json: bool) -> None:
         click.echo(line)
         if resume.detail:
             click.echo(f"  {printable(resume.detail)}")
+        if resume.proposal_open and resume.proposal_id is not None:
+            click.echo(
+                f"  next: cruxible proposal approve {resume.proposal_id} --signer-id ID "
+                "--key FILE (the approval that completes it activates it)"
+            )
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
@@ -2656,16 +2685,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
                 f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
                 f"{state}"
             )
-        for required in kit.requires:
-            held = (
-                "not installed"
-                if required.installed_version is None
-                else f"installed {required.installed_version}"
-            )
-            click.echo(
-                f"  requires {required.kit_id} >= {required.min_version}: "
-                f"{'met' if required.met else 'not met'} ({held})"
-            )
+        _echo_kit_requirements(kit.requires)
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
         for kept in kit.kept:
@@ -3028,9 +3048,26 @@ def reject_proposal(
     type=click.IntRange(1, 500),
     help="Item reasons per page (default 50).",
 )
-@click.option("--detail", is_flag=True, help="Return the full candidate review.")
-@click.option("--summary-after", default=None, help="Next group page cursor.")
-@click.option("--summary-group", default=None, help="Page rows of this exact group.")
+@click.option(
+    "--detail",
+    is_flag=True,
+    help="The full candidate review: every member's artifact and semantic delta, "
+    "governance and attestation coverage.",
+)
+@click.option(
+    "--changes-from",
+    default=0,
+    type=click.IntRange(0),
+    help="Show value changes from this position (the last page's More values:).",
+)
+@click.option(
+    "--definitions-from",
+    default=0,
+    type=click.IntRange(0),
+    help="Show definitions from this position (the last page's More definitions:).",
+)
+@click.option("--summary-after", default=None, help="Next group page cursor (grouped rows).")
+@click.option("--summary-group", default=None, help="Page the stored rows of this exact group.")
 @click.option("--rows-after", default=None, help="Next row page cursor.")
 @click.option("--rows-limit", default=5, type=click.IntRange(1, 10))
 @click.option("--groups-limit", default=5, type=click.IntRange(1, 10))
@@ -3051,8 +3088,15 @@ def review_proposal(
     rows_limit: int,
     groups_limit: int,
     findings_after: str | None,
+    changes_from: int,
+    definitions_from: int,
 ) -> None:
+    """Read a proposal before approving it: its value changes and what each cites, and its
+    definitions. ``--json`` adds the stored fields grouped by kind; ``--detail`` is the
+    full candidate review."""
+
     workspace = Path(workspace_root)
+    grouped = output_json or any(item is not None for item in (summary_after, summary_group))
 
     def _review_at_observed_coordinate(
         client: CruxibleClient, instance_id: str
@@ -3092,6 +3136,9 @@ def review_proposal(
             workspace_observation=observation,
             item_reasons_after=item_reasons_after,
             item_reasons_limit=item_reasons_limit,
+            changes_from=changes_from,
+            definitions_from=definitions_from,
+            groups=grouped,
         )
 
     result = _server_call(
@@ -3101,9 +3148,7 @@ def review_proposal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     elif isinstance(result, contracts.ProposalReviewSummary):
-        from cruxible_core.service.proposals.summary import render_review_summary
-
-        click.echo(render_review_summary(result), nl=False)
+        click.echo(str(result))
     else:
         review = ProposalReview.model_validate(result.model_dump(mode="json"))
         click.echo(render_playbill_proposal_review_pointer(review), nl=False)
@@ -3178,22 +3223,36 @@ def approve_proposal(
         signer_id = str(configured)
     resolved_signer: str = signer_id
 
+    # The prompt shows the reviewer's view `proposal review` prints (its first page).
+    shows_summary = not (output_json or full or yes)
+
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
-    ) -> tuple[str, contracts.ApprovalChallenge, CompilerUpgradeSigningKey]:
+    ) -> tuple[
+        str,
+        contracts.ApprovalChallenge,
+        CompilerUpgradeSigningKey,
+        contracts.ProposalReviewSummary | None,
+    ]:
         key = _signing_key(private_key_path, instance_id=instance_id, signer_id=resolved_signer)
         if key is None:
             raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        summary = None
+        if shows_summary:
+            page = client.review_proposal(instance_id, resolved_id, groups=False)
+            assert isinstance(page, contracts.ProposalReviewSummary)
+            summary = page
         return (
             resolved_id,
             client.prepare_approval(
                 instance_id, resolved_id, signer_id=resolved_signer, include_body=True
             ),
             key,
+            summary,
         )
 
-    resolved_id, challenge, key = _server_call(
+    resolved_id, challenge, key, summary = _server_call(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
@@ -3205,7 +3264,8 @@ def approve_proposal(
             for line in _approval_counts_lines(review):
                 click.echo(line)
         else:
-            click.echo(render_playbill_approval_summary(review), nl=False)
+            assert summary is not None
+            click.echo(render_playbill_approval_summary(review, summary), nl=False)
     if key.source != "option":
         click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?", err=True):
@@ -8722,8 +8782,13 @@ def _echo_runbook_preview(preview: Any) -> None:
         for write in step.writes:
             click.echo(f"      writes {write.subject_kind}: {', '.join(write.claim_types)}")
         for call in step.calls:
-            bound = f" -> {call.build} {call.operation}" if call.build else ""
-            click.echo(f"      calls  {call.slot}{bound}")
+            bound = (
+                f" -> Provider:{short_provider_build(call.build)} {call.operation}"
+                if call.build
+                else ""
+            )
+            capability = f"  (capability {call.capability})" if call.capability else ""
+            click.echo(f"      calls  {call.slot}{bound}{capability}")
         for item in step.inputs:
             for line in _runbook_input_lines(item):
                 click.echo(f"      {line}")

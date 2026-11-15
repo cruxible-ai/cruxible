@@ -749,3 +749,40 @@ def test_a_fetch_input_names_its_url_and_origins_and_no_presence() -> None:
         None,
     )
     assert open_item.origins is None
+
+
+def test_a_call_prints_its_build_short_and_the_capability_its_slot_names(
+    tmp_path: Path,
+) -> None:
+    """S7: a provider prints as Provider:NAME/<12 hex>, as coordinates do, and each
+    call shows the capability the slot names beside the operation."""
+
+    import click
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.commands.playbill import _echo_runbook_preview
+
+    instance, _root = preview_world(tmp_path)
+    author_runbook(instance, "test.rb", [{"line": SETTLE}])
+    preview = service_preview_runbook(instance, name="test.rb")
+    (step,) = preview.steps
+    (call,) = step.calls
+    built = call.model_copy(update={"build": "Provider:web/" + "ab" * 32})
+    preview = preview.model_copy(
+        update={"steps": (step.model_copy(update={"calls": (call, built)}),)}
+    )
+
+    @click.command()
+    def show() -> None:
+        _echo_runbook_preview(preview)
+
+    output = CliRunner().invoke(show).output
+    assert (
+        "      calls  fetch -> Provider:cruxible-builtin workspace.file"
+        "  (capability workspace.file@1)\n" in output
+    )
+    assert (
+        f"      calls  fetch -> Provider:web/{'ab' * 6} workspace.file"
+        "  (capability workspace.file@1)\n" in output
+    )
+    assert "ab" * 7 not in output

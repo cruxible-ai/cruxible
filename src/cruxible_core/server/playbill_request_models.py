@@ -157,6 +157,12 @@ class ReviewRequest(_StrictPlaybillRequest):
     rows_limit: int = Field(default=5, ge=1, le=10)
     groups_limit: int = Field(default=5, ge=1, le=10)
     findings_after: str | None = None
+    #: The reviewer's view pages by position: the previous page's
+    #: ``changes_next`` and ``definitions_next``.
+    changes_from: int = Field(default=0, ge=0)
+    definitions_from: int = Field(default=0, ge=0)
+    #: Include the grouped rows (stored fields by kind); a group cursor implies it.
+    groups: bool = True
     include_body: bool | None = None
     workspace_observation: ReviewWorkspaceObservation | None = None
     # A Procedure proposal's item reasons are paged: the page after this cursor.

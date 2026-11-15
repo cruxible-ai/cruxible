@@ -406,7 +406,9 @@ class AdmittedChangeSet:
         return "proposed" if self.admitted else "blocked"
 
     def refusal_detail(self) -> str:
-        return "Refused: " + "; ".join(item.code for item in self.diagnostics)
+        """Each refusal by code and its message, which names the repair."""
+
+        return "Refused: " + "; ".join(f"{item.code}: {item.message}" for item in self.diagnostics)
 
 
 def admit_change_set(

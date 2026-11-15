@@ -115,9 +115,16 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     assert f"Candidate: {review.candidate_digest}" in rendered
     assert f"Settlement base OID: {review.base_oid}" in rendered
     # `proposal approve` shows the summary by default and the full rendering on --full.
-    summary = render_playbill_approval_summary(review)
+    page = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        groups=False,
+    )
+    summary = render_playbill_approval_summary(review, page)
     assert f"Candidate: {review.candidate_digest}" in summary
-    assert f"Changes ({len(review.members)}):" in summary
+    assert f"Changes: {len(review.members)} created / 0 revised / 0 retired" in summary
+    assert "Required approvals: " in summary
     assert "Semantic delta" not in summary
     assert f"Proposal admission tier: {review.candidate.required_tier}" in rendered
     assert "Approve requires: graph_write" in rendered

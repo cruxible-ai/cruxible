@@ -1387,9 +1387,18 @@ def playbill_review_proposal(
     rows_limit: int = 5,
     groups_limit: int = 5,
     findings_after: str | None = None,
+    changes_from: int = 0,
+    definitions_from: int = 0,
+    groups: bool = True,
 ) -> contracts.ProposalReviewResponse:
     check_permission("cruxible_proposal_review", instance_id=instance_id)
     access = _access(instance_id, include_body=bool(include_body))
+    if not detail:
+        # The summary shows the text a proposed Claim cites to a caller who may
+        # read Capture bodies; it never asks for include_body.
+        access = access.model_copy(
+            update={"can_read_body": _permits("cruxible_body_read", instance_id=instance_id)}
+        )
     result = service_review_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1411,6 +1420,9 @@ def playbill_review_proposal(
         groups_limit=groups_limit,
         findings_after=findings_after,
         item_reasons_after=item_reasons_after,
+        changes_from=changes_from,
+        definitions_from=definitions_from,
+        groups=groups,
         **({} if item_reasons_limit is None else {"item_reasons_limit": item_reasons_limit}),
     )
     if isinstance(result, contracts.ProposalReviewSummary):

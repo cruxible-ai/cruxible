@@ -342,3 +342,197 @@ def test_a_get_card_prints_what_cruxible_get_prints() -> None:
         "next: cruxible get SubjectKind:dev.item --detail history",
     ]
     assert repr(card).startswith("KnowledgeCard(")
+
+
+def _review_summary(**updates: object) -> object:
+    from cruxible_client.contracts.proposal_summary import ProposalReviewSummary
+
+    payload: dict[str, object] = {
+        "proposal_id": "sha256:" + "a" * 64,
+        "candidate_digest": "sha256:" + "b" * 64,
+        "settlement_base": _COORDINATE.model_dump(mode="json"),
+        "rationale": {"value": "Seen in the notes."},
+        "counts": {"created": 3},
+        "subject_kinds": {"line": {"created": 1}, "security.pair": {"created": 2}},
+        "subject_kind_count": 2,
+        "required_tier": "governed_write",
+        "activation_policy": "snapshot",
+        "approval_requirements": [],
+        "findings": [],
+        "finding_count": 0,
+        "groups": [],
+        "group_count": 2,
+        **updates,
+    }
+    return ProposalReviewSummary.model_validate(payload)
+
+
+def test_a_review_summary_prints_changes_and_definitions_not_json() -> None:
+    """S6/S17: a proposal reads as the write that made it, plus one block per definition."""
+
+    change = {
+        "change": {
+            "op": "set",
+            "subject": "security.pair/p1",
+            "field": "justification",
+            "after": "not_in_execute_path",
+            "claim": "CLM-" + "e" * 32,
+            "verdict": "supported",
+        },
+        "role": "normative",
+        "citations": [
+            {
+                "capture": "CAP-98cc912e1ba4",
+                "origin": "self_source",
+                "source": "doc-notes.md",
+                "section": ["CVE-1"],
+                "text": "## CVE-1\n\nNo caller reaches it.",
+            },
+            {
+                "capture": "CAP-ef62b3dae254",
+                "origin": "self_source",
+                "source": "Principal:owner",
+                "text": "Seen in the notes.",
+            },
+        ],
+    }
+    line = {
+        "kind": "Line",
+        "name": "security.kev-triage",
+        "action": "created",
+        "detail": {
+            "kind": "line",
+            "procedure": "security.kev-triage",
+            "authority": "settle",
+            "bindings": [
+                {"slot": "fetch", "provider": "web/f3543a2990f6", "operation": "web.fetch"}
+            ],
+            "parameters": {"url": {"value": "https://example.test/kev.json"}},
+            "acquisition": {"catalog.capture": ["https://example.test"]},
+            "budgets": {"max_provider_calls": 1},
+            "inbox": ["slot_contested"],
+        },
+    }
+    mandate = {
+        "kind": "ProcedureMandate",
+        "name": "security.kev-triage-settle",
+        "action": "revised",
+        "detail": {
+            "kind": "procedure-mandate",
+            "line": "security.kev-triage",
+            "grants": "settle",
+            "valid_from": "2026-11-06T00:00:00Z",
+            "expires_at": "2027-02-05T00:00:00Z",
+            "namespace": ["claims"],
+            "scope": [
+                {
+                    "claim_type": "ClaimType:security.vulnerability.kev_date_added",
+                    "changes": {
+                        "create": {"basis": ["extracted"]},
+                        "retire": {"basis": ["absence"]},
+                    },
+                    "binds": "subject",
+                }
+            ],
+        },
+        "changed": [
+            {
+                "field": "expires_at",
+                "before": {"value": "2027-01-01T00:00:00Z"},
+                "after": {"value": "2027-02-05T00:00:00Z"},
+            }
+        ],
+    }
+    runbook = {
+        "kind": "Runbook",
+        "name": "security.maintain",
+        "action": "created",
+        "detail": {"kind": "runbook", "steps": ["Line:security.kev-triage", "action:x.y"]},
+    }
+    trigger = {
+        "kind": "Trigger",
+        "name": "security.daily",
+        "action": "created",
+        "detail": {
+            "kind": "trigger",
+            "schedule": "on cron 0 14 * * * (UTC)",
+            "target": "Runbook:security.maintain",
+        },
+    }
+    summary = _review_summary(
+        changes=[change],
+        change_count=2,
+        changes_next=1,
+        change_counts=[
+            {"subject_kind": "security.pair", "field": "justification", "op": "set", "count": 2}
+        ],
+        definitions=[
+            line,
+            mandate,
+            runbook,
+            trigger,
+            {"kind": "ClaimType", "name": "x.y", "action": "created"},
+            {
+                "kind": "CaptureContract",
+                "name": "playbill.foreign-source.doc-notes.md",
+                "action": "created",
+            },
+        ],
+        definition_count=6,
+    )
+    text = str(summary)
+    expected = [
+        "Values (2; showing 1):",
+        "  set security.pair/p1 justification: not_in_execute_path"
+        f"  [CLM-{'e' * 32}; verdict supported]",
+        "    cites CAP-98cc912e1ba4 doc-notes.md#CVE-1 (own words)",
+        "      | ## CVE-1",
+        "      | No caller reaches it.",
+        "    cites CAP-ef62b3dae254 Principal:owner (own words): the Why text above",
+        "More values: --changes-from 1",
+        "Values by kind and field:",
+        "  security.pair  justification  set  2",
+        "Definitions (6):",
+        "  Line security.kev-triage: created",
+        "    binding      fetch -> web/f3543a2990f6#web.fetch",
+        "    parameter    url = https://example.test/kev.json",
+        "    acquisition  catalog.capture: https://example.test",
+        "  ProcedureMandate security.kev-triage-settle: revised",
+        "    valid      2026-11-06T00:00:00Z .. 2027-02-05T00:00:00Z",
+        "    ClaimType                              create     revise  retire",
+        "    security.vulnerability.kev_date_added  extracted  -       absence",
+        "    changed expires_at: 2027-01-01T00:00:00Z -> 2027-02-05T00:00:00Z",
+        "  Runbook security.maintain: created",
+        "    1  Line:security.kev-triage",
+        "    2  action:x.y",
+        "    schedule  on cron 0 14 * * * (UTC)",
+        "    target    Runbook:security.maintain",
+        "  ClaimType x.y: created",
+        # Reserved stored names read in their public spelling; the JSON keeps them.
+        "  CaptureContract cruxible.foreign-source.doc-notes.md: created",
+    ]
+    lines = text.splitlines()
+    for line_text in expected:
+        assert line_text in lines, line_text
+    assert '{"truncated"' not in text and '"value"' not in text
+    assert "playbill." not in text
+    assert summary.definitions[-1].name == "playbill.foreign-source.doc-notes.md"  # type: ignore[attr-defined]
+    # The SDK's str() and the CLI print one renderer.
+    from cruxible_client.contracts.text_display import render_review_summary
+
+    assert text == render_review_summary(summary)  # type: ignore[arg-type]
+
+
+def test_a_reviewed_proposal_prints_its_summary_without_a_request() -> None:
+    from cruxible_client.authoring.approval import ReviewedProposal
+
+    summary = _review_summary()
+    reviewed = ReviewedProposal(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        "inst",
+        b"{}",
+        summary.proposal_id,  # type: ignore[attr-defined]
+        summary.candidate_digest,  # type: ignore[attr-defined]
+        summary.model_dump_json().encode(),  # type: ignore[attr-defined]
+    )
+    assert str(reviewed) == str(summary)

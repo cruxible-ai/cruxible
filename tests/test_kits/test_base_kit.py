@@ -274,7 +274,17 @@ def test_under_independent_approval_creation_succeeds_and_the_kit_awaits_approva
     assert (result.status, result.approval_required) == ("proposed", True)
     assert result.proposal_id is not None
     assert [item.sequence for item in instance.accepted_history()] == [0]
-    assert service_kit_status(instance).kits == ()
+    status = service_kit_status(instance)
+    assert status.kits == ()
+    # Kit status shows the pending kit and its proposal, as init reported it.
+    (pending,) = status.resumes
+    assert (pending.kit_id, pending.version, pending.state, pending.proposal_id) == (
+        "base",
+        "1.0.0",
+        "proposed",
+        result.proposal_id,
+    )
+    assert pending.proposal_open is True
     assert capability_path("workspace.file", 1) not in _tree(instance)
 
     # A second principal's approval lands it like any kit add.
@@ -296,8 +306,10 @@ def test_under_independent_approval_creation_succeeds_and_the_kit_awaits_approva
         instance, proposal_id=result.proposal_id, activated_by="owner"
     )
     assert activated.status == "accepted"
-    (installed,) = service_kit_status(instance).kits
+    landed = service_kit_status(instance)
+    (installed,) = landed.kits
     assert (installed.kit_id, installed.source) == ("base", "bundled")
+    assert [resume.proposal_open for resume in landed.resumes] == [False]
 
 
 def test_an_older_bundled_base_kit_shows_behind_and_kit_add_base_previews_the_upgrade(
@@ -669,22 +681,90 @@ def test_a_pending_proposal_under_independent_approval_is_not_duplicated_on_reop
     assert _open_proposals(reopened) == [proposal_id]
 
 
-def test_a_base_kit_removed_on_purpose_stays_removed_on_reopen(tmp_path: Path) -> None:
+def test_the_base_kit_cannot_be_removed_and_says_why_and_what_to_do(
+    tmp_path: Path, no_sockets: list[str]
+) -> None:
+    """Removing it retired web.search-results, which no later `kit add base` could revive
+    (a retired kind stays retired), so `kit add base` ended in a bare revival refusal."""
+
     from cruxible_client.contracts.kits import KitRemoveRequest
+    from cruxible_client.contracts.repairs import HandEditRepair
+    from cruxible_core.errors import RequestRefusedError
     from cruxible_core.service.kits import service_remove_kit
 
     instance, _owner, _reviewer = _create(tmp_path)
-    removed = service_remove_kit(
+    for dry_run in (None, False):
+        with pytest.raises(RequestRefusedError) as refused:
+            service_remove_kit(
+                instance,
+                KitRemoveRequest(kit_id="base", dry_run=dry_run),
+                actor_id="owner",
+                timestamp=FIXED_TIMESTAMP,
+            )
+        assert refused.value.error_code == "cruxible.kit.base_required"
+        assert "the base kit stays installed" in str(refused.value)
+        assert isinstance(refused.value.repair, HandEditRepair)
+        assert "Leave the base kit installed" in refused.value.repair.hand_edit.required_change
+    (installed,) = service_kit_status(instance).kits
+    assert installed.kit_id == "base"
+    # Nothing was proposed, and a reopen leaves the installed kit as it is.
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.base_kit_install is None
+    assert [kit.kit_id for kit in service_kit_status(reopened).kits] == ["base"]
+
+
+def test_a_refused_kit_change_detail_carries_each_message() -> None:
+    """A kit add answered `Refused: cruxible.capture_contract.revival_refused`: no message
+    and no repair. The detail now carries each refusal's message, which names it."""
+
+    from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+    from cruxible_core.service.change_preview import AdmittedChangeSet
+
+    diagnostic = CompilerDiagnostic(
+        code="cruxible.capture_contract.revival_refused",
+        severity="error",
+        message="A retired CaptureContract cannot be revived; propose a new contract "
+        "identity instead.",
+    )
+    admitted = AdmittedChangeSet(
+        previewed=True, candidate=None, diagnostics=(diagnostic,), proposal_id=None, result=None
+    )
+    assert admitted.refusal_detail() == (
+        "Refused: cruxible.capture_contract.revival_refused: A retired CaptureContract cannot "
+        "be revived; propose a new contract identity instead."
+    )
+
+
+def test_the_base_kit_stays_protected_after_an_update_rewrites_its_receipt(
+    tmp_path: Path, no_sockets: list[str]
+) -> None:
+    """Review P2: the guard keyed on the receipt's source, which an update rewrites; a
+    re-add as 1.0.1 from another source then let `kit remove base` retire it all."""
+
+    from cruxible_client.contracts.kits import KitRemoveRequest
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.service.kits import service_remove_kit
+
+    instance, _owner, _reviewer = _create(tmp_path)
+    bundle = bundled_base_kit()
+    copy = bundle.model_copy(
+        update={"manifest": bundle.manifest.model_copy(update={"version": "1.0.1"})}
+    )
+    added = service_add_kit(
         instance,
-        KitRemoveRequest(kit_id="base", dry_run=False),
+        KitAddRequest(bundle=copy, source="local:base-copy", dry_run=False),
         actor_id="owner",
         timestamp=STAMP,
     )
-    assert removed.status == "accepted", removed
-    assert service_kit_status(instance).kits == ()
-    history = [item.sequence for item in instance.accepted_history()]
-
-    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    assert reopened.base_kit_install is None
-    assert service_kit_status(reopened).kits == ()
-    assert [item.sequence for item in reopened.accepted_history()] == history
+    assert added.status == "accepted", added
+    (installed,) = service_kit_status(instance).kits
+    assert (installed.version, installed.source) == ("1.0.1", "local:base-copy")
+    with pytest.raises(RequestRefusedError) as refused:
+        service_remove_kit(
+            instance,
+            KitRemoveRequest(kit_id="base", dry_run=False),
+            actor_id="owner",
+            timestamp=STAMP,
+        )
+    assert refused.value.error_code == "cruxible.kit.base_required"
+    assert [kit.kit_id for kit in service_kit_status(instance).kits] == ["base"]
