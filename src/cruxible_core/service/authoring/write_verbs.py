@@ -4486,9 +4486,6 @@ def _coordinator(
     )
 
 
-@timed_operation("write")
-@unpositioned_operation
-@projection_request
 def _prefixed_id_hint(request: WriteRequest, outcome: WriteOutcome) -> str | None:
     """Why a created Subject's id is not its key as typed, when the rendering prefixed it.
 
@@ -4523,6 +4520,9 @@ def _prefixed_id_hint(request: WriteRequest, outcome: WriteOutcome) -> str | Non
     return " ".join(lines) or None
 
 
+@timed_operation("write")
+@unpositioned_operation
+@projection_request
 def service_playbill_write(
     instance: PlaybillInstance,
     *,
