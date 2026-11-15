@@ -176,9 +176,10 @@ def test_a_genesis_seeded_with_anything_but_the_genesis_seeds_is_refused(tmp_pat
         with pytest.raises(BootstrapError) as refused:
             verify_genesis(ledger, oid, trust_root=trust)
         message = str(refused.value)
+        newest = current_genesis_seed_set()
         assert message.startswith(
-            "genesis seeded artifacts match no known genesis seed set; the closest is set 1 "
-            "(0.5.0), which differs at " + named[name]
+            "genesis seeded artifacts match no known genesis seed set; the closest is set "
+            f"{newest.ordinal} ({newest.name}), which differs at " + named[name]
         ), message
         assert "this release" not in message
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 from collections.abc import Iterator
@@ -174,6 +175,30 @@ def test_the_shared_kind_carries_the_settled_layout() -> None:
     assert kind.decoding is not None and kind.layout is not None
     assert kind.decoding.model_dump(mode="json") == example["decoding"]
     assert kind.layout.model_dump(mode="json") == example["layout"]
+
+
+#: Wording an adopter cannot act on: ruling ids and the implementer's names for things.
+_INTERNAL_WORDING = re.compile(
+    r"\bD-R\d|\bCore serves|\b[Cc]ore's built-?in|workspace\. capability"
+)
+
+
+def test_every_shipped_description_is_written_for_an_adopter() -> None:
+    """The base kit's and the builtin Provider's descriptions say what each thing is for
+    and what it takes and returns, in plain words."""
+
+    from cruxible_core.governance.seed_artifacts.workspace_file import workspace_file_operations
+
+    described: dict[str, str] = {}
+    for path, content in bundled_base_kit().contents().items():
+        description = json.loads(content).get("description")
+        if description is not None:
+            described[path] = description
+    for operation in workspace_file_operations():
+        described[f"cruxible-builtin#{operation.name}"] = operation.description
+    assert len(described) > 20
+    internal = {where: text for where, text in described.items() if _INTERNAL_WORDING.search(text)}
+    assert internal == {}
 
 
 def test_a_drifted_bundle_refuses_to_load(tmp_path: Path) -> None:

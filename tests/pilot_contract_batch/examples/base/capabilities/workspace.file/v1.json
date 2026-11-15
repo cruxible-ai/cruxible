@@ -1,9 +1,9 @@
 {
   "artifact_format": "cruxible-capability-v1",
-  "description": "Reads one file from an authorized workspace and returns its exact bytes as one Capture. Core serves it: the daemon reads the file, and no provider takes part.",
+  "description": "Reads one file from an authorized workspace and returns its exact bytes as one Capture. Every instance serves it: Cruxible reads the file itself, with no provider to install or bind.",
   "effect": "pure",
   "in": {
-    "digest": "sha256:8b0e608c43148f94b2202b7fd23e4c6a9424f43bce6d82d292a69fe5ea889a18",
+    "digest": "sha256:e24daf181788973fdde6e450828328eafdcf963c42bb03e411b7d60cdd7f1426",
     "name": "workspace.file.request",
     "version": 1
   },

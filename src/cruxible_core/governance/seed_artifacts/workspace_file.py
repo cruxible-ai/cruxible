@@ -144,14 +144,15 @@ WORKSPACE_FILE_BUILTIN_SOURCE = {
     "repository": "https://github.com/cruxible-ai/cruxible",
 }
 WORKSPACE_FILE_BUILTIN_DESCRIPTION = (
-    "Reads one workspace file in the daemon's own process and returns its exact bytes as "
-    "one Capture. Core's built-in; no other provider may serve a workspace. capability."
+    "Reads one file from an authorized workspace and returns its exact bytes as one "
+    "Capture. Built into Cruxible and present on every instance; only it serves the "
+    "workspace.file and workspace.files capabilities."
 )
 WORKSPACE_FILES_BUILTIN_DESCRIPTION = (
-    "Reads every workspace file a glob matches in the daemon's own process and returns "
-    "their exact bytes as a list of Captures, sorted by name, past the request's max_files "
-    "refused before any file is read. Core's built-in; no other provider may serve a "
-    "workspace. capability."
+    "Reads every file a glob matches in an authorized workspace and returns their exact "
+    "bytes as a list of Captures, sorted by name; more matches than max_files refuses the "
+    "read before any file is read. Built into Cruxible and present on every instance; "
+    "only it serves the workspace.file and workspace.files capabilities."
 )
 
 
