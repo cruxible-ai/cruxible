@@ -67,6 +67,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBody,
     SubjectAuthoringPayload,
     SubjectCreationAuthoringPayload,
+    WorkingSelectionObservation,
     authoring_member_identity,
 )
 from cruxible_client.contracts.builtin_claim_types import admits_object_subject
@@ -1265,6 +1266,7 @@ class _Planner:
         *,
         create_new: bool,
         single_text: str | None = None,
+        backing: Mapping[str, Any] | None = None,
     ) -> SubjectCreationAuthoringPayload:
         """A creation whose id core assigns at submission, distinct from every other one.
 
@@ -1287,7 +1289,11 @@ class _Planner:
         )
         rationale = self.request.because
         payload = SubjectCreationAuthoringPayload(
-            subject_kind=kind, key=parts, rationale=rationale, create_new=create_new
+            subject_kind=kind,
+            key=parts,
+            rationale=rationale,
+            create_new=create_new,
+            **(backing or {}),
         )
         # The members already planned, kept as they are planned: one set
         # lookup per creation, never a re-digest of every earlier one.
@@ -1324,6 +1330,7 @@ class _Planner:
             )
         kind = change.subject_kind
         declared = self._creatable_kind(kind, index=index, path=f"{prefix}.subject_kind")
+        backing = self.creation_backing(change, index=index)
         bound: _Bound
         if declared.minted:
             if change.key is not None or change.create_new:
@@ -1334,9 +1341,9 @@ class _Planner:
                     repair="Leave key and create_new out",
                     field_path=f"{prefix}.key",
                 )
-            bound = self._new_creation(index, label, kind, (), create_new=False)
+            bound = self._new_creation(index, label, kind, (), create_new=False, backing=backing)
         else:
-            bound = self._keyed_creation(index, change, declared)
+            bound = self._keyed_creation(index, change, declared, backing=backing)
         self.plan.labels[label] = bound
         if bound.member is not None:
             self.plan.creation_changes.setdefault(bound.member, index)
@@ -1347,7 +1354,14 @@ class _Planner:
             pending_subject=label if bound.path is None else None,
         )
 
-    def _keyed_creation(self, index: int, change: CreateChange, declared: SubjectKind) -> _Bound:
+    def _keyed_creation(
+        self,
+        index: int,
+        change: CreateChange,
+        declared: SubjectKind,
+        *,
+        backing: Mapping[str, Any] | None = None,
+    ) -> _Bound:
         prefix = f"changes[{index}]"
         label = change.label
         kind = change.subject_kind
@@ -1375,7 +1389,7 @@ class _Planner:
                     member=planned_pair.member,
                     key=key,
                 )
-            return self._new_creation(index, label, kind, key, create_new=False)
+            return self._new_creation(index, label, kind, key, create_new=False, backing=backing)
         with self.identity_view() as view:
             resolution = view.resolve_creation(
                 kind, final, single_text=single, create_new=change.create_new
@@ -1425,7 +1439,13 @@ class _Planner:
                 key=key,
             )
         return self._new_creation(
-            index, label, kind, key, create_new=change.create_new, single_text=single
+            index,
+            label,
+            kind,
+            key,
+            create_new=change.create_new,
+            single_text=single,
+            backing=backing,
         )
 
     def _new_creation(
@@ -1437,11 +1457,12 @@ class _Planner:
         *,
         create_new: bool,
         single_text: str | None = None,
+        backing: Mapping[str, Any] | None = None,
     ) -> _Bound:
         """Keep the member reference; lowering assigns ids over the complete change set."""
 
         payload = self._pending_creation(
-            label, kind, key, create_new=create_new, single_text=single_text
+            label, kind, key, create_new=create_new, single_text=single_text, backing=backing
         )
         self.plan.pending[label] = payload
         member = payload.member_identity
@@ -1883,6 +1904,84 @@ class _Planner:
 
     # -- evidence ----------------------------------------------------------------
 
+    def creation_backing(self, change: CreateChange, *, index: int) -> dict[str, Any]:
+        """What a create's key Claims cite, and their role: the creation member's fields.
+
+        Evidence reads as a set's does -- a section this write appends is the
+        author's own words, an existing section or file is a working selection, a
+        Capture is cited by handle or digest -- but no evidence requirement
+        applies: the creation covers its key Claims (lowering), so a key Claim
+        never refuses for what it cites. Contract evidence names a Capture by the
+        Subject it is about, which a new Subject is not yet, so it refuses.
+        """
+
+        backing: dict[str, Any] = {} if change.role is None else {"role": change.role}
+        evidence = change.evidence
+        path = f"changes[{index}].evidence"
+        if evidence is None:
+            return backing
+        if isinstance(evidence, ContractEvidence):
+            raise _refuse(
+                "cruxible.write.create_contract_evidence",
+                "contract evidence finds a Capture by the Subject it is about, and this "
+                "Subject does not exist until the write lands",
+                change=index,
+                repair="Cite the Capture by its handle (--capture CAP-...), or a section or file",
+                field_path=f"{path}.contract",
+            )
+        if isinstance(evidence, CaptureEvidence):
+            digest = (
+                evidence.capture
+                if evidence.capture.startswith("sha256:")
+                else self.capture_by_handle(evidence.capture, index=index, path=f"{path}.capture")
+            )
+            return {
+                **backing,
+                "source": ExistingCaptureCitationSource(capture_digest=digest),
+                "citation_role": "evidence",
+            }
+        if isinstance(evidence, SelfEvidence):
+            body = evidence.self.encode("utf-8")
+            return {
+                **backing,
+                "source": SelfSourceBody(content_base64=base64.b64encode(body).decode("ascii")),
+            }
+        observation = self._observed(evidence, index=index)
+        if isinstance(evidence, SectionEvidence) and evidence.own_words:
+            return {
+                **backing,
+                "source": SelfSourceBody(content_base64=observation.selected_content_base64),
+            }
+        return {**backing, "source": observation, "citation_role": "evidence"}
+
+    def _observed(
+        self, evidence: FileEvidence | SectionEvidence, *, index: int
+    ) -> WorkingSelectionObservation:
+        """The writer's observation of file or section evidence, or the refusal naming it."""
+
+        if evidence.observation is not None:
+            return evidence.observation
+        path = f"changes[{index}].evidence"
+        if isinstance(evidence, FileEvidence):
+            raise _refuse(
+                "cruxible.write.file_evidence_unobserved",
+                f"file evidence {evidence.file!r} was not read on the writer's side; "
+                "the daemon never reads workspace files",
+                change=index,
+                repair=(
+                    "Pass it through the CLI (--evidence-file), the SDK or the MCP "
+                    "adapter, which read the file and send what they observed"
+                ),
+                field_path=path,
+            )
+        raise _refuse(
+            "cruxible.write.section_evidence_unobserved",
+            "Section evidence must be read by the writer's adapter.",
+            change=index,
+            field_path=path,
+            repair="Use write through the CLI, MCP or SDK beside the workspace",
+        )
+
     def source(
         self,
         info: PredicateInfo,
@@ -1900,30 +1999,11 @@ class _Planner:
         if capture is not None:
             return ExistingCaptureCitationSource(capture_digest=capture), "evidence"
         if isinstance(evidence, FileEvidence):
-            if evidence.observation is None:
-                raise _refuse(
-                    "cruxible.write.file_evidence_unobserved",
-                    f"file evidence {evidence.file!r} was not read on the writer's side; "
-                    "the daemon never reads workspace files",
-                    change=index,
-                    repair=(
-                        "Pass it through the CLI (--evidence-file), the SDK or the MCP "
-                        "adapter, which read the file and send what they observed"
-                    ),
-                    field_path=path,
-                )
-            return evidence.observation, "evidence"
+            return self._observed(evidence, index=index), "evidence"
         if isinstance(evidence, SectionEvidence):
-            if evidence.observation is None:
-                raise _refuse(
-                    "cruxible.write.section_evidence_unobserved",
-                    "Section evidence must be read by the writer's adapter.",
-                    change=index,
-                    field_path=path,
-                    repair="Use write through the CLI, MCP or SDK beside the workspace",
-                )
+            observation = self._observed(evidence, index=index)
             if not evidence.own_words:
-                return evidence.observation, "evidence"
+                return observation, "evidence"
             if requires_captured_evidence(info.claim_type):
                 raise _refuse(
                     "cruxible.write.evidence_required",
@@ -1932,7 +2012,7 @@ class _Planner:
                     field_path=path,
                     repair="Cite a produced Capture under a ClaimType-admitted contract",
                 )
-            return SelfSourceBody(content_base64=evidence.observation.selected_content_base64), None
+            return SelfSourceBody(content_base64=observation.selected_content_base64), None
         text = evidence.self if isinstance(evidence, SelfEvidence) else self.request.because
         body = text.encode("utf-8")
         if requires_captured_evidence(info.claim_type):

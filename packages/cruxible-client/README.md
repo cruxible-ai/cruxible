@@ -2628,7 +2628,11 @@ A key one live Subject already holds lands on that Subject and creates nothing
 `expect_new=True` refuses `cruxible.write.subject_exists`, and `create_new=True`
 makes a further holder of a `hint` kind's key. `w.<kind>["id"]` never creates:
 a missing id raises `AbsentSubject`. A kind no SubjectKind declares has no
-`define()`.
+`define()`. `define(..., evidence=..., role=...)` backs the key Claims and the
+fields given there as `.set` backs its fields (a `cx.section(...)` carried as
+prose included); without it they rest on the write's `because`. A draft that
+was accepted, reused in a later write, is a reference to its Subject: only
+changes added after the acceptance are sent.
 
 Creation bindings follow the complete batch's deterministic assignment, including
 keys with the same readable rendering. A dry run leaves `subject=None` on every

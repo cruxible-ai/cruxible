@@ -454,6 +454,18 @@ class CreateChange(_StrictWriteModel):
         default=False,
         description="Refuse subject_exists if the key has a live holder.",
     )
+    role: WriteRole | None = Field(
+        default=None,
+        description="The key Claims' role, when the key field permits more than one.",
+    )
+    evidence: Evidence | None = Field(
+        default=None,
+        description=(
+            "What the key Claims cite, as a set's evidence: a section (one this write "
+            "appends: its text is the author's own words), a file, a Capture, or self. "
+            "Default: the write's `because`."
+        ),
+    )
 
 
 class SlotRef(_StrictWriteModel):

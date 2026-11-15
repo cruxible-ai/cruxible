@@ -619,6 +619,9 @@ class WorldNewSubject(WorldWritable):
     _key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
     _create_new: bool = False
     _expect_new: bool = False
+    #: What the key Claims cite and their role, from ``define(evidence=, role=)``.
+    _evidence: Evidence | AuthoredSection | None = None
+    _role: WriteRole | None = None
     _changes: tuple[_FieldChange, ...] = ()
     _landing: _Landing = field(default_factory=_Landing, repr=False)
 
@@ -802,6 +805,8 @@ class KindNamespace:
         *key: SubjectKeyValue,
         create_new: bool = False,
         expect_new: bool = False,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
         **fields: object,
     ) -> WorldNewSubject:
         """Draft one new Subject of this kind by its key, with fields; core assigns its id.
@@ -809,7 +814,10 @@ class KindNamespace:
         The kind's SubjectKind says what the key is: a one-key kind takes its
         value positionally or by its key's leaf; a composite kind takes each key
         part by its leaf; a minted kind takes none. Every other keyword is a
-        field: set when it holds one value, added when it holds many. A key one
+        field: set when it holds one value, added when it holds many.
+        ``evidence=`` (``cx.section(..., heading=...)`` carries prose) and
+        ``role=`` back the key Claims and these fields as ``.set`` backs its
+        fields; without them they rest on the write's ``because``. A key one
         live Subject already holds lands on that Subject and creates nothing
         (``resolved: existing``, so a seed run again answers as done);
         ``expect_new=True`` refuses ``cruxible.write.subject_exists`` instead.
@@ -828,7 +836,14 @@ class KindNamespace:
                 "one), then read a new World"
             )
         return self._world._define(
-            kind, identity, key, dict(fields), create_new=create_new, expect_new=expect_new
+            kind,
+            identity,
+            key,
+            dict(fields),
+            create_new=create_new,
+            expect_new=expect_new,
+            evidence=evidence,
+            role=role,
         )
 
     def where(self, /, **filters: object) -> CompactQuery:
@@ -1188,12 +1203,7 @@ class World:
                 if any(item is earlier for earlier in done):
                     continue
                 done.append(item)
-                evidence = item.evidence
-                if isinstance(evidence, AuthoredSection):
-                    if id(evidence) not in authored:
-                        authored.add(id(evidence))
-                        docs.append(evidence.operation)
-                    evidence = evidence.citation
+                evidence = cited(item.evidence)
                 changes.append(
                     SetChange(
                         subject=subject,
@@ -1214,6 +1224,16 @@ class World:
                     )
                 )
 
+        def cited(evidence: Evidence | AuthoredSection | None) -> Evidence | None:
+            # A section carried as prose is authored once per write, however
+            # many changes cite it.
+            if isinstance(evidence, AuthoredSection):
+                if id(evidence) not in authored:
+                    authored.add(id(evidence))
+                    docs.append(evidence.operation)
+                return evidence.citation
+            return evidence
+
         def label(draft: WorldNewSubject) -> str:
             mine(draft)
             key = id(draft._landing)
@@ -1230,6 +1250,8 @@ class World:
                             key=draft._key,
                             create_new=draft._create_new,
                             expect_new=draft._expect_new,
+                            role=draft._role,
+                            evidence=cited(draft._evidence),
                         ),
                     )
                 )
@@ -1275,6 +1297,8 @@ class World:
         *,
         create_new: bool,
         expect_new: bool,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
     ) -> WorldNewSubject:
         """One draft: its key read by the kind's identity rule, the other keywords as fields."""
 
@@ -1334,6 +1358,8 @@ class World:
                     op="add" if node.structure.cardinality == "many" else "set",
                     field=predicate,
                     value=raw,
+                    evidence=evidence,
+                    role=role,
                 )
             )
         return WorldNewSubject(
@@ -1342,6 +1368,8 @@ class World:
             _key=sent,
             _create_new=create_new,
             _expect_new=expect_new,
+            _evidence=evidence,
+            _role=role,
             _changes=tuple(changes),
         )
 

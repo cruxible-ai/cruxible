@@ -16,6 +16,7 @@ from cruxible_client.contracts.write import (
     AddChange,
     CaptureEvidence,
     Change,
+    CreateChange,
     Evidence,
     FileEvidence,
     RebindChange,
@@ -47,7 +48,7 @@ def observe_changes(changes: Sequence[Change], *, workspace: Path) -> tuple[Chan
 
     observed: list[Change] = []
     for change in changes:
-        if isinstance(change, SetChange | AddChange | RebindChange) and isinstance(
+        if isinstance(change, SetChange | AddChange | CreateChange | RebindChange) and isinstance(
             change.evidence, FileEvidence | SectionEvidence
         ):
             change = change.model_copy(

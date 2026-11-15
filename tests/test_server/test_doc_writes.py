@@ -281,6 +281,57 @@ def test_sdk_catalogues_an_existing_file_and_cites_it(playbill_http, tmp_path):
     assert result.status == "accepted" and result.changes[0].claim, result
 
 
+def _own_words_size(cx, claim_id):
+    """The byte size of the own-words Capture an accepted Claim cites."""
+
+    evidence = cx.get(claim_id, detail="evidence").value
+    (own,) = (item for item in evidence.captures if item.origin == "self_source")
+    return cx.get(own.capture, detail="summary").value.size
+
+
+def test_define_and_add_carry_evidence_like_set(playbill_http, tmp_path):
+    """F33: the key Claims and added values rest on the section, not on ``because``."""
+
+    cx, _, workspace = _context(playbill_http, tmp_path)
+    w = cx.world()
+    because = "Loaded."
+    note = cx.section("notes.md", heading="wi-f33", body="Why this item exists, at length.")
+    draft = w.project.work_item.define("wi-f33", evidence=note, title="F33").add(
+        governs=w.project.work_item["wi-1"], evidence=note
+    )
+    outcome = draft.write(because=because)
+    assert outcome.status == "accepted" and len(outcome.docs) == 1, outcome
+    section = (workspace / "notes.md").read_bytes()
+    assert section == b"# wi-f33\n\nWhy this item exists, at length.\n\n"
+    item = cx.world().project.work_item["wi-f33"]
+    for field in ("slug", "title", "governs"):
+        (view,) = item[field]
+        assert _own_words_size(cx, view.claim_id) == len(section), field
+
+    # Without evidence the key Claim rests on the write's because, as before.
+    bare = w.project.work_item.define("wi-f33-bare")
+    assert bare.write(because=because).status == "accepted"
+    (key,) = cx.world().project.work_item["wi-f33-bare"].slug
+    assert _own_words_size(cx, key.claim_id) == len(because)
+
+    # An existing section (the write above catalogued its file) is a working selection.
+    cited = w.project.work_item.define(
+        "wi-f33-cited", evidence=SectionEvidence(file="notes.md", section=("wi-f33",))
+    )
+    assert cited.write(because=because).status == "accepted"
+    (key,) = cx.world().project.work_item["wi-f33-cited"].slug
+    captures = cx.get(key.claim_id, detail="evidence").value.captures
+    assert [item.source for item in captures] == ["doc-notes.md"]
+    # Contract evidence finds a Capture by its Subject, which a new one is not yet.
+    from cruxible_client.contracts.write import ContractEvidence
+
+    with pytest.raises(WriteRefusalError) as refused:
+        w.project.work_item.define(
+            "wi-f33-contract", evidence=ContractEvidence(contract="repo.reports")
+        ).write(because=because)
+    assert refused.value.error_code == "cruxible.write.create_contract_evidence"
+
+
 def test_typed_carried_replace_and_stale_expect(playbill_http, tmp_path):
     cx, _, workspace = _context(playbill_http, tmp_path)
     w = cx.world()

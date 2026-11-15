@@ -870,7 +870,8 @@ class SubjectCreationAuthoringPayload(_StrictAuthoringModel):
     nothing; several -- refuse (``key_ambiguous``). A creation writes the Subject
     under the id core assigns (the readable rendering of the canonical key, or a
     minted id) with one key Claim per part, citing ``source`` (the rationale as
-    the author's own words when absent).
+    the author's own words when absent). A cited existing section or file is a
+    working selection (``citation_role`` ``evidence``).
     """
 
     tag: Literal["cruxible-subject-creation-authoring-payload-v1"] = (
@@ -889,7 +890,7 @@ class SubjectCreationAuthoringPayload(_StrictAuthoringModel):
     role: Literal["normative", "observation", "environment_binding", "derivation"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    source: ExistingCaptureCitationSource | SelfSourceBody | None = Field(
+    source: ClaimAuthoringSource | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     citation_role: Literal["evidence", "copy"] | None = Field(
@@ -921,9 +922,11 @@ class SubjectCreationAuthoringPayload(_StrictAuthoringModel):
             problem = key_value_problem(self.key_value)
             if problem is not None:
                 raise ValueError(problem)
-        cited = isinstance(self.source, ExistingCaptureCitationSource)
+        cited = isinstance(self.source, ExistingCaptureCitationSource | WorkingSelectionObservation)
         if cited != (self.citation_role is not None):
-            raise ValueError("exactly an existing Capture source states its citation_role")
+            raise ValueError(
+                "exactly an existing Capture or a working selection states its citation_role"
+            )
         return self
 
     @property

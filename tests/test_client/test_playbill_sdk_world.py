@@ -550,6 +550,8 @@ def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
         "        name: str | int | bool,\n"
         "        *,\n"
         "        expect_new: bool = ...,\n"
+        "        evidence: Evidence | AuthoredSection | None = ...,\n"
+        "        role: WriteRole | None = ...,\n"
         "    ) -> _N_sec__package: ...\n"
     ) in stub
     assert (

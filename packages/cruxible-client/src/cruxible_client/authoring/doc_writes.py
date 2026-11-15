@@ -44,6 +44,7 @@ from cruxible_client.contracts.write import (
     AddChange,
     AppendSection,
     Change,
+    CreateChange,
     DocEditObservation,
     DocOp,
     DocOutcome,
@@ -310,7 +311,7 @@ def write_workspace(
                 evidence = SectionEvidence(
                     file=target[0], section=target[1], own_words=evidence.own_words
                 )
-            if isinstance(change, SetChange | AddChange) and isinstance(
+            if isinstance(change, SetChange | AddChange | CreateChange) and isinstance(
                 evidence, SectionEvidence | FileEvidence
             ):
                 state = load(
