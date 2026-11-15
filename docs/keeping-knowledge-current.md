@@ -59,6 +59,7 @@ rows leave it out.
 | Disagreement | `claim_conflicted`, `claim_contradicting_evidence_available` | Two values compete for a field that holds one, or someone attested against a Claim. |
 | Weak evidence | `claim_uncovered` | A value was written that nothing admitted backs. |
 | Pages | `projection_backing_stale`, `projection_dirty` | A stamped passage reflects state that moved, or someone edited it. |
+| Vocabulary file | `vocabulary_file_behind`, `vocabulary_file_baseline_invalid` | Accepted vocabulary moved past `.cruxible/vocabulary.yaml`'s export, or its header names an export this instance does not know; `cruxible vocabulary export` repairs ([Evolving your vocabulary](evolving-your-vocabulary.md#the-vocabulary-file)). |
 | Proposals | `proposal_awaiting_approval`, `proposal_stale` | A change waits for an approval, or the state moved since it was checked. |
 | Automation | `line_inbox_unread`, `line_coverage_gap`, `line_work_pending`, `line_disabled_by_upgrade` | A Line posted something, missed work, or stopped after its definition changed. |
 | Setup | `line_not_enabled` | A Line was accepted but nobody has enabled it yet. |

@@ -215,8 +215,10 @@ history, and the edge makes "every note about this part" one query.
 
 ### Make decisions Subjects, and amend rather than edit
 
-A decision is a Subject with a short summary, a status and edges to what it
-governs, citing the reasoning behind it. When the team changes its mind, record
+A decision is a Subject with a short summary, a status, the date it was made
+and edges to what it governs, each citing the reasoning behind it, written in
+the same change as that reasoning ([Recording a decision with its
+evidence](documents-and-notes.md#recording-a-decision-with-its-evidence)). When the team changes its mind, record
 a new decision that `amends` the old one and mark the old one superseded, so
 both the current answer and the path to it stay readable:
 
@@ -299,29 +301,27 @@ cruxible.write.slot_changed (change 0): catalog.part/bp-1142 title changed after
 ## Where a vocabulary comes from
 
 You can install a vocabulary someone else built as a [kit](kits.md), extend or
-revise it like anything you authored yourself, or define your own fields. A
-field needs only its name, the kinds it applies to, what it holds, and how
-many values a Subject has:
+revise it like anything you authored yourself, or define your own fields. The
+whole vocabulary lives in one file, `.cruxible/vocabulary.yaml`: `cruxible
+vocabulary export` writes it, you edit it, `plan` shows the change and `apply`
+lands it. A field needs only what differs from the defaults:
 
 ~~~yaml
-predicate: catalog.part.warranty_months
-allowed_subject_kinds: [catalog.part]
-value: int{min: 0}
-cardinality: one
+kinds:
+  catalog.part:
+    fields:
+      warranty_months:
+        value: int{0..120}
+        description: How many months the supplier's warranty runs.
 ~~~
 
-~~~text
-$ cruxible claim-type propose --input warranty.yaml --name add-warranty
-admitted  sha256:a1a00ee1…  verdict=candidate
-landed: accepted at dfe3a8309a22
-~~~
-
-Defined this way, a field is normative and backed by its writer's own words;
-[Evidence and admission](evidence-and-admission.md#writing-a-fields-rules)
-shows how to require other evidence. [Evolving your
-vocabulary](evolving-your-vocabulary.md) covers defining and changing fields
-safely. Either way, start from the
-questions your team needs answered, and add fields as those questions arrive.
+A field written this way holds one value, is normative and backed by its
+writer's own words; [Evidence and
+admission](evidence-and-admission.md#writing-a-fields-rules) shows how to
+require other evidence. [Evolving your vocabulary](evolving-your-vocabulary.md)
+covers the file's format, its value types, and changing fields safely. Either
+way, start from the questions your team needs answered, and add fields as
+those questions arrive.
 
 ## Mistakes we made ourselves
 
