@@ -6,8 +6,12 @@ description: Author or adapt requested Cruxible Procedures, Lines, Triggers, Man
 # Automate state
 
 Procedures describe deterministic work over accepted state and contracted
-provider results. A Line binds a Procedure to local parameters, provider
-builds and an authority ceiling. Mandates state the grant, scope and
+provider results. A Procedure names no provider: each slot names a
+capability, a versioned kind of call with a request Contract, a result
+Contract and an effect (`cruxible orient --section capabilities`; the base kit
+holds the shared `workspace.` and `web.` ones). A Line binds each slot to a
+provider operation that serves its capability and fits it, and binds its
+`parameters` to the Procedure's params, under an authority ceiling. Mandates state the grant, scope and
 validity interval. A Runbook orders Line runs and actions; it does not widen
 their authority.
 
@@ -25,9 +29,10 @@ Runbook's writes set off, before anything runs.
 What a Procedure can read: state taps read accepted state (a Query or a
 ClaimType read) at the run's pinned coordinate, in dataflow order, recorded in
 the run's receipt. Use them to compute over what is known instead of
-re-fetching or re-deriving it. Computation beyond read, call, extract, claims,
-filter, dedupe and inbox posts lives in a provider's derive operation behind a
-Contract.
+re-fetching or re-deriving it. What a Capture holds is declared once, as its
+CaptureKind's layout (header fields and named record sets); an extract names
+a record set. Computation beyond read, call, extract, claims, filter, dedupe
+and inbox posts lives in a provider's derive operation behind a capability.
 
 A kit's manifest-named automation template is inert. Tailor sources, local
 names, timing and grants, submit it as authoring, and obtain review and
