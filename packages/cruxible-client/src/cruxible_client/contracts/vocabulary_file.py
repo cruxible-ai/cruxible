@@ -226,7 +226,14 @@ class VocabularyBaseline(_StrictFileModel):
     generation_root: StrictStr
     compiler_digest: StrictStr
     #: sha256 over the accepted digest of every live ClaimType and SubjectKind.
-    vocabulary_digest: StrictStr
+    vocabulary_digest: StrictStr = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def _coordinate_shape(self) -> VocabularyBaseline:
+        # Each coordinate field takes the accepted coordinate's own spelling,
+        # so a malformed header reads as invalid instead of reaching a request.
+        self.coordinate  # noqa: B018 - validates
+        return self
 
     @property
     def coordinate(self) -> AcceptedCoordinate:

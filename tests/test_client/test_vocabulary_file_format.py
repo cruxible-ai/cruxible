@@ -136,6 +136,28 @@ def test_the_header_is_read_without_the_kinds() -> None:
     assert read_vocabulary_header("not: [yaml\n") is None
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("git_oid", "not-an-oid"),
+        ("semantic_root", "sha256:short"),
+        ("compiler_digest", "nope"),
+        ("vocabulary_digest", "sha256:XYZ"),
+    ],
+)
+def test_a_malformed_baseline_is_unreadable_not_forwarded(field: str, value: str) -> None:
+    current = {
+        "git_oid": "a" * 40,
+        "semantic_root": "sha256:" + "b" * 64,
+        "compiler_digest": "sha256:" + "d" * 64,
+        "vocabulary_digest": "sha256:" + "e" * 64,
+    }
+    broken = HEADER.replace(current[field], value)
+    assert read_vocabulary_header(broken) is None
+    with pytest.raises(VocabularyFileError, match="based_on"):
+        load_vocabulary_file(broken + "kinds: {}\n")
+
+
 def test_shorthands_expand_to_the_claim_type_input() -> None:
     entry = VocabularyField.model_validate(
         {"enum": {"open": "Not done.", "done": None}, "many": True, "description": "State."}

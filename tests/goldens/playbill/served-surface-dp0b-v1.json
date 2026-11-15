@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-15:vocabulary-file-050",
-    "surface_digest": "sha256:9ed0f0e1398e85d55238c563e83f06855c1254d12814a92fb32fe342cd2b8ff8"
+    "surface_digest": "sha256:fb4cf43ded143b9aec312d9c0617168b6aeec92ed5a5d0f968b3e238d9056256"
   },
   "surface": {
     "cli_leaves": [
@@ -3013,7 +3013,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_apply",
         "input_schema_digest": "sha256:923365bb0eeb3d4aaa411f9faa7a60e7809fc4a77be910b14a6c59d2263fc873",
         "name": "cruxible_vocabulary_apply",
-        "output_schema_digest": "sha256:eb7acb6fbf623476c21f6188fd56a4d16a3f85db515892682b5b32a1fb5d5762",
+        "output_schema_digest": "sha256:3b6c094ddf503d97d29513b8a14c38f1987be227e8bbd1823645279cf68fc078",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -3024,7 +3024,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_export",
         "input_schema_digest": "sha256:a73b994de7f5453deb7d674374dece8a8f022d00f907c98542872b81976e49d9",
         "name": "cruxible_vocabulary_export",
-        "output_schema_digest": "sha256:21c1250dfe22f0d272105c801a694127d81557e85c9f10cede63f040711e67d3",
+        "output_schema_digest": "sha256:53700a1b790cb527f680a817d52ca5aa5a9417d54fdab2d6c2ea2108cf940ba8",
         "permission": "READ_ONLY"
       },
       {
@@ -3035,7 +3035,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_plan",
         "input_schema_digest": "sha256:7b3315f361ee4bead1a78d99aeaf95f24a74410e694ff4875ec849807c35a643",
         "name": "cruxible_vocabulary_plan",
-        "output_schema_digest": "sha256:6758a9a2656ac3e0fb7b03f466362f119bfa68aaed8fd7ff6bc279c1a3a3d00f",
+        "output_schema_digest": "sha256:0dfc90fc20e9e1aa7d047fe09daa20bd0096644b6304c1de6cd863b0be72a3df",
         "permission": "READ_ONLY"
       },
       {

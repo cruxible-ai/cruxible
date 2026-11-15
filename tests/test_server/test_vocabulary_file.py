@@ -469,6 +469,12 @@ def test_next_and_orient_name_a_file_behind_accepted_state(world) -> None:  # ty
     assert invalid.reason == "vocabulary_file_baseline_invalid"
     assert cx.orient().vocabulary_file.state == "invalid"
 
+    # Review R4: a malformed OID is an unreadable header, never a request error.
+    _edit(workspace, lambda data: data["based_on"].update(git_oid="not-an-oid"))
+    (malformed,) = rows()
+    assert malformed.detail["cause"] == "unreadable"
+    assert cx.orient().vocabulary_file.state == "invalid"
+
     _file(workspace).write_text("format: [unclosed\n", encoding="utf-8")
     (unreadable,) = rows()
     assert unreadable.detail["cause"] == "unreadable"
