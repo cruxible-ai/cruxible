@@ -9,7 +9,7 @@ here for the daemon's callers.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, MutableMapping
+from collections.abc import MutableMapping
 from typing import Annotated, Literal
 
 from pydantic import Field, ValidationError
@@ -140,38 +140,20 @@ def lint_description(description: str | None) -> tuple[ClaimTypeLintWarningV1, .
     )
 
 
-def accepted_capture_contracts(
-    instance: PlaybillInstance, *, coordinate: AcceptedProjectionCoordinate
-) -> dict[str, str]:
-    """Every accepted CaptureContract at ``coordinate``: digest to qualified identity."""
-
-    with instance.bind_accepted_projection(coordinate) as projection:
-        return {
-            row.artifact_digest: row.identity
-            for row in projection.typed.envelopes(kind="capture-contract")
-        }
-
-
 def _lint_reads(
     instance: PlaybillInstance,
     value: ClaimTypeInputRecord | ClaimType,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    inventory: dict[str, str] | None,
     declared_subject_kinds: frozenset[str],
 ) -> tuple[ClaimTypeInputRecord | ClaimType, str | None, str | None]:
-    """What the lint reads at the coordinate: the effective type, its description
-    and an undeclared inferred kind; fills ``inventory`` when one is passed."""
+    """What the lint reads for an input record: the effective type, its
+    description and an undeclared inferred kind. O(1) indexed reads."""
 
     effective = value
     description = value.description
     undeclared_kind: str | None = None
     with instance.bind_accepted_projection(coordinate) as projection:
-        if inventory is not None:
-            inventory.update(
-                (row.artifact_digest, row.identity)
-                for row in projection.typed.envelopes(kind="capture-contract")
-            )
         if isinstance(value, ClaimTypeInputRecord):
             # Lint what lowering writes: the defaults, or the predecessor's
             # values an edit keeps. One read: this predicate's accepted type.
@@ -206,19 +188,17 @@ def lint_claim_type_input(
     anticipated_source_ids: tuple[str, ...] = (),
     declared_subject_kinds: frozenset[str] = frozenset(),
     key_predicates: frozenset[str] = frozenset(),
-    accepted_contracts: Mapping[str, str] | None = None,
 ) -> ClaimTypeProposalLintV1:
     """Advisory warnings for one authored ClaimType, read at one coordinate.
 
     ``key_predicates`` names the key ClaimTypes the same change set declares:
     a key's Claims are covered by their Subject's creation, so a key with no
-    evidence rules is a deliberate shape and does not warn.
-    ``accepted_contracts`` (digest to identity, from
-    :func:`accepted_capture_contracts`) lets a caller linting several members
-    read the contract inventory once; a whole ClaimType then reads nothing.
+    evidence rules is a deliberate shape and does not warn. Only the contracts
+    this type's rules name are looked up (one indexed read each); the accepted
+    contract inventory is never listed, so the lint does not grow with
+    unrelated contracts.
     """
 
-    inventory: dict[str, str] = {} if accepted_contracts is None else dict(accepted_contracts)
     source_ids = set(anticipated_source_ids)
     if isinstance(value, ClaimTypeInputRecord):
         source_ids.update(value.anticipated_source_ids)
@@ -234,19 +214,16 @@ def lint_claim_type_input(
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
         resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
-    effective = value
+    effective: ClaimTypeInputRecord | ClaimType = value
     description = value.description
     undeclared_kind: str | None = None
-    if accepted_contracts is None or isinstance(value, ClaimTypeInputRecord):
+    if isinstance(value, ClaimTypeInputRecord):
         effective, description, undeclared_kind = _lint_reads(
             instance,
             value,
             coordinate=coordinate,
-            inventory=inventory if accepted_contracts is None else None,
             declared_subject_kinds=declared_subject_kinds,
         )
-    accepted_contracts = inventory
-    resolvable_contracts.update(accepted_contracts)
 
     if isinstance(effective, ClaimTypeInputRecord):
         policy = effective.evidence_admission_policy or {}
@@ -258,14 +235,7 @@ def lint_claim_type_input(
         subject_kinds = effective.allowed_subject_kinds
     raw_rules = policy.get("rules", [])
     rules = raw_rules if isinstance(raw_rules, list | tuple) else []
-    warnings: list[ClaimTypeLintWarningV1] = []
-    admitted: set[str] = set()
-    admitted_identities: set[str] = set()
-    # A family entry's membership is open (the catalog, not this lint, decides
-    # who joins it), so it is tracked by the shape it admits, never by a
-    # specific resolved contract identity or digest.
-    admitted_family_shapes: set[str] = set()
-    resolvable_identities = set(resolvable_contracts.values())
+    named_by_rule: list[tuple[int, list[str], tuple[str, ...]]] = []
     for index, raw_rule in enumerate(rules):
         if not isinstance(raw_rule, dict):
             continue
@@ -275,6 +245,42 @@ def lint_claim_type_input(
                 named.append(_contract_ref(item).target.qualified)
             except (FormatError, ValueError):
                 continue
+        raw_digests = raw_rule.get("capture_contract_digests", [])
+        named_by_rule.append(
+            (index, named, tuple(item for item in raw_digests if isinstance(item, str)))
+        )
+    # Resolve only what the rules name and nothing resolves already.
+    known_identities = set(resolvable_contracts.values())
+    unknown_identities = sorted(
+        {identity for _i, named, _d in named_by_rule for identity in named} - known_identities
+    )
+    unknown_digests = tuple(
+        sorted(
+            {digest for _i, _n, digests in named_by_rule for digest in digests}
+            - set(resolvable_contracts)
+        )
+    )
+    if unknown_identities or unknown_digests:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            for identity in unknown_identities:
+                row = projection.typed.envelope(identity)
+                if row is not None and row.kind == "capture-contract":
+                    resolvable_contracts[row.artifact_digest] = row.identity
+            for row in projection.typed.envelopes_by_digest(
+                kind="capture-contract", digests=unknown_digests
+            ):
+                resolvable_contracts[row.artifact_digest] = row.identity
+
+    warnings: list[ClaimTypeLintWarningV1] = []
+    admitted: set[str] = set()
+    admitted_identities: set[str] = set()
+    # A family entry's membership is open (the catalog, not this lint, decides
+    # who joins it), so it is tracked by the shape it admits, never by a
+    # specific resolved contract identity or digest.
+    admitted_family_shapes: set[str] = set()
+    resolvable_identities = set(resolvable_contracts.values())
+    for index, named, digests in named_by_rule:
+        raw_rule = rules[index]
         admitted_identities.update(named)
         for family in raw_rule.get("capture_contract_families", []) or []:
             shape = CAPTURE_CONTRACT_FAMILY_SHAPES.get(family)
@@ -294,8 +300,6 @@ def lint_claim_type_input(
                         },
                     )
                 )
-        raw_digests = raw_rule.get("capture_contract_digests", [])
-        digests = tuple(item for item in raw_digests if isinstance(item, str))
         admitted.update(digests)
         if digests and not set(digests).intersection(resolvable_contracts):
             for digest in digests:
@@ -333,19 +337,22 @@ def lint_claim_type_input(
         not admitted.intersection(resolvable_contracts)
         and not admitted_identities.intersection(resolvable_identities)
         and not admitted_family_shapes
-        and accepted_contracts
         and not warnings
     ):
-        contract_digest = sorted(accepted_contracts)[0]
-        warnings.append(
-            ClaimTypeLintWarningV1(
-                code="cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
-                field_path="$.evidence_admission_policy.rules",
-                contract_identity=accepted_contracts[contract_digest],
-                contract_digest=contract_digest,
-                replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
+        # Rules that name no contract at all: point at one accepted contract
+        # (one row, the smallest digest), when the instance holds any.
+        with instance.bind_accepted_projection(coordinate) as projection:
+            first = projection.typed.first_envelope(kind="capture-contract")
+        if first is not None:
+            warnings.append(
+                ClaimTypeLintWarningV1(
+                    code="cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+                    field_path="$.evidence_admission_policy.rules",
+                    contract_identity=first.identity,
+                    contract_digest=first.artifact_digest,
+                    replacement_rule_fragment={"capture_contract_digests": [first.artifact_digest]},
+                )
             )
-        )
     warnings.extend(lint_description(description))
     if undeclared_kind is not None:
         warnings.append(
@@ -585,7 +592,6 @@ __all__ = [
     "ClaimTypeProposalLintV1",
     "claim_type_input_defaults",
     "claim_type_input_template",
-    "accepted_capture_contracts",
     "default_evidence_policy",
     "lint_claim_type_input",
     "lint_description",

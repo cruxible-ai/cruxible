@@ -390,3 +390,89 @@ def test_definition_lint_names_ledger_fields_prose_strings_and_enums_of_things(
     assert "cruxible.claim_type.string_holds_prose" in {
         item["code"] for item in proposed.json()["lint"]["warnings"]
     }
+
+
+def test_vocabulary_lint_does_not_grow_with_unrelated_capture_contracts(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Counted at two sizes: linting fields reads only the contracts their rules name."""
+
+    from cruxible_client.contracts.authoring.models import (
+        ChangeSetAuthoringPayload,
+        ClaimTypeAuthoringPayload,
+    )
+    from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
+    from cruxible_core.indexes.typed_state import TypedStateReader
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.authoring.lints import lint_authoring_payload
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    rows = {"read": 0}
+    for name in ("envelopes", "envelopes_by_digest", "envelope", "first_envelope"):
+        original = getattr(TypedStateReader, name)
+
+        def counted(self: object, *args: object, _original=original, **kwargs: object) -> object:
+            result = _original(self, *args, **kwargs)
+            rows["read"] += len(result) if isinstance(result, tuple) else result is not None
+            return result
+
+        monkeypatch.setattr(TypedStateReader, name, counted)
+
+    def add_contracts(start: int, stop: int) -> None:
+        changes = cx.changes(rationale="Unrelated contracts.")
+        for index in range(start, stop):
+            changes.capture_contract(
+                CaptureContractInputRecord(name=f"unrelated.c{index}", shape="http_response")
+            )
+        assert changes.submit().outcome.status == "landed"
+        cx.refresh()
+
+    named = f"CaptureContract:{'unrelated.c0'}"
+    fields = [
+        lower_claim_type_input(
+            ClaimTypeInputRecord(predicate=f"dev.item.f{index}", cardinality="one"), tree={}
+        )
+        for index in range(10)
+    ]
+    # One field also names an accepted contract by identity: one indexed read.
+    rule = fields[0].evidence_admission_policy.rules[0]
+    named_rule = rule.model_copy(
+        update={
+            "capture_contracts": (
+                *rule.capture_contracts,
+                rule.capture_contracts[0].model_copy(
+                    update={
+                        "target": rule.capture_contracts[0].target.model_copy(
+                            update={"name": "unrelated.c0"}
+                        )
+                    }
+                ),
+            )
+        }
+    )
+    fields[0] = fields[0].model_copy(
+        update={
+            "evidence_admission_policy": fields[0].evidence_admission_policy.model_copy(
+                update={"rules": (named_rule,)}
+            )
+        }
+    )
+    payload = ChangeSetAuthoringPayload(
+        members=tuple(ClaimTypeAuthoringPayload(claim_type=item) for item in fields)
+    )
+
+    def lint_rows() -> int:
+        instance = get_playbill_manager().get(instance_id)
+        rows["read"] = 0
+        lint = lint_authoring_payload(instance, payload, coordinate=instance.accepted_coordinate())
+        assert lint is None or all(item.contract_identity != named for item in lint.warnings), lint
+        return rows["read"]
+
+    add_contracts(0, 1)
+    small = lint_rows()
+    add_contracts(1, 50)
+    large = lint_rows()
+    assert small == large == 1, (small, large)

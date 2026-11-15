@@ -1437,6 +1437,35 @@ class TypedStateReader:
         self.work["owners_selected"] += len(rows)
         return tuple(sorted(rows, key=lambda row: row.identity.encode("utf-8")))
 
+    def envelopes_by_digest(
+        self, *, kind: str, digests: tuple[str, ...]
+    ) -> tuple[ArtifactEnvelopeRow, ...]:
+        """The accepted artifacts of ``kind`` whose current digest is one of ``digests``."""
+
+        if not digests:
+            return ()
+        rows = [
+            ArtifactEnvelopeRow(*row)
+            for row in self.connection.execute(
+                f"SELECT {COMMON_COLUMNS} FROM artifact_lookup WHERE kind=? AND artifact_digest "
+                "IN (" + ",".join("?" for _ in digests) + ")",
+                (kind, *digests),
+            )
+        ]
+        self.work["owners_selected"] += len(rows)
+        return tuple(sorted(rows, key=lambda row: row.identity.encode("utf-8")))
+
+    def first_envelope(self, *, kind: str) -> ArtifactEnvelopeRow | None:
+        """The accepted artifact of ``kind`` with the smallest digest, if any: one row."""
+
+        row = self.connection.execute(
+            f"SELECT {COMMON_COLUMNS} FROM artifact_lookup WHERE kind=? "
+            "ORDER BY artifact_digest LIMIT 1",
+            (kind,),
+        ).fetchone()
+        self.work["owners_selected"] += row is not None
+        return None if row is None else ArtifactEnvelopeRow(*row)
+
     def query_artifact_definitions(
         self,
         *,

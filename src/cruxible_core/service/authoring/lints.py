@@ -16,7 +16,6 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeLintWarningV1,
     ClaimTypeProposalLintV1,
-    accepted_capture_contracts,
     lint_claim_type_input,
     lint_description,
 )
@@ -45,9 +44,6 @@ def lint_authoring_payload(
         for predicate in member.keys
     )
     warnings: list[ClaimTypeLintWarningV1] = []
-    # One read of the contract inventory for the whole payload, not one per
-    # member: a vocabulary of N fields lints in O(N + accepted contracts).
-    contracts: dict[str, str] | None = None
     for member in members:
         claim_type = None
         source_ids: tuple[str, ...] = ()
@@ -69,8 +65,6 @@ def lint_authoring_payload(
                 for item in lint_description(member.description)
             )
         if claim_type is not None:
-            if contracts is None:
-                contracts = accepted_capture_contracts(instance, coordinate=coordinate)
             artifact = f"ClaimType:{claim_type.predicate}"
             warnings.extend(
                 item.model_copy(update={"artifact": artifact})
@@ -81,7 +75,6 @@ def lint_authoring_payload(
                     anticipated_source_ids=source_ids,
                     declared_subject_kinds=declared_kinds,
                     key_predicates=key_predicates,
-                    accepted_contracts=contracts,
                 ).warnings
             )
     seen = {
