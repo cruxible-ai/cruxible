@@ -34,11 +34,9 @@ counts. Here, a fitment the shop checked and wrote up, and a fitment cited from
 the supplier's catalog:
 
 ~~~text
-$ cruxible get CLM-a0d72af7… --detail evidence
+$ cruxible get CLM-bd067d59… --detail evidence
 value: catalog.vehicle/honda-civic-2019
-...
-capture CAP-5f31df955084  CaptureContract:cruxible.foreign-source.fitment v1  source=fitment  ...  passage of fitment: admitted
-capture CAP-c8442c467896  CaptureContract:cruxible.coordinator-self-source-v1 v1  ...  own words: admitted
+capture CAP-61bb48f9b6a5  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=doc-docs-fitment.md  ...  own words in doc-docs-fitment.md (104 bytes): admitted
 rationale: Fitment check at the shop.
 
 $ cruxible get CLM-9482bb3b… --detail evidence
@@ -50,7 +48,8 @@ rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 Each line ends with how the verdict reads it. A copy is labeled by where it
 came from (`own words`, `own words in` the file they were written in, each
 with its size in bytes, or `location in` a catalogued file), and anything else
-as `evidence`. Each is then `admitted` (the field's rules accept it), `not
+as `evidence`. A note a write produces and cites is one Capture: your own
+words, located at the section they were written in. Each is then `admitted` (the field's rules accept it), `not
 admitted` (offered as evidence, refused by the field's rules) or `not
 evidence` (a copy the rules don't count).
 
@@ -149,8 +148,10 @@ fields in general.
 
 ## Define captured evidence
 
-A CaptureContract states what evidence is: its shape, grade, replay promise,
-retention, erasure policy and byte budget. Start with the authored form:
+A CaptureContract (a CaptureKind) states what evidence is: its shape, grade,
+replay promise, retention, erasure policy and byte budget, and, for a kind a
+Procedure extracts records from, how its bytes decode and its layout. Start
+with the authored form:
 
 ~~~json
 {"name": "catalog.fetched", "shape": "http_response"}
@@ -168,8 +169,23 @@ The engine supplies the component definitions. An edit keeps omitted fields;
 raise `max_bytes` or retire it with `lifecycle: retired`. A change to what the
 evidence means needs a new name.
 
-A **derive** is a call whose capture output is a `derived` kind. Its operation
-declares `effect: pure`, and a `capture<K>` (or `capture<*>`) input field
+`decoding` says how an extract decodes the bytes (`format`: `json`, `csv`,
+`text` or `bytes`; `encoding`: `identity` or `gzip`; for CSV its dialect; and
+`limits` on decoded bytes, depth and records). `layout` declares the
+document's shape over a `json` or `csv` decoding: its `header` fields and its
+named `records` sets, each with `at`, `key`, `row` (a Contract, `name@N`),
+`fields` and an optional `count_at`. Cruxible never checks a Capture's bytes
+against a layout when it admits the Capture; the layout is read when a
+Procedure is authored, when a Line binds a provider, and when an extract runs.
+A successor may add header fields, record sets and optional row fields, and
+nothing else. [Lines and
+automation](lines-and-automation.md#declare-what-the-file-looks-like) has a
+worked example.
+
+A **derive** is a call whose capture output is a `derived` kind: its
+capability is `pure`, its result names the kind (`capture<K>`), and every
+operation that serves it must carry a copy of that kind's layout that covers
+yours. A `capture<K>` (or `capture<*>`) request field
 receives a Capture this run fetched or was admitted, as Capture wire: the exact
 bytes with the envelope's coordinate. The run's identity commits only the
 Capture digest. The derived Capture records its inputs (the Captures, their
@@ -179,14 +195,15 @@ a derived one covers the Captures it records, while two unrelated Captures are
 still refused. A derived Capture inherits the most restrictive `body_access` of
 its inputs.
 
-A fetch can return a **list of Captures**: its out Contract declares a
-`list<capture<*>>{max_items: N}` field and the call's `captures` names the kind.
+A fetch can return a **list of Captures**: its capability's result Contract
+declares a `list<capture<*>>{max_items: N}` field and the call's `captures`
+names the kind.
 Each member is its own Capture, identified by the `request_digest` its
 coordinate carries; the list's order is the provider's. More than `max_items`
 members, or more bytes than the run's Capture budget, refuses the call with
 nothing kept. A member that is oversized or off the Line's permitted origins is
 dropped and the list is incomplete. An extract over the list merges every
-member's records (it declares no `header` or `complete_when`); each Claim cites
+member's records (it selects no header field and only a record set with no `count_at`); each Claim cites
 the member its record came from, and a key in two members writes nothing.
 Absence over the list infers only when every member is complete, and its
 witness cites all of them. A Trigger never substitutes a list field, and a
