@@ -814,3 +814,17 @@ def test_closing_a_proposal_prunes_its_summary(tmp_path, close):
         instance.retire_settled_candidates()
         with sqlite3.connect(instance.proposal_review_projection_path()) as connection:
             assert connection.execute("SELECT count(*) FROM review_builds").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind,heading", [("capability", "Capability"), ("contract", "Contract")])
+def test_a_versioned_definition_reads_as_its_name_and_version(tmp_path, kind, heading):
+    """A Capability or Contract carries name and version, not an identity: the review
+    showed `capability v1` for each of the base kit's eight."""
+
+    old = {"name": "web.fetch", "version": 1, "description": "before"}
+    new = {**old, "description": "after"}
+    with _project(tmp_path, [(kind, old, new, "authored")]) as connection:
+        definition = json.loads(
+            connection.execute("SELECT data FROM review_definitions").fetchone()[0]
+        )
+    assert (definition["kind"], definition["name"]) == (heading, "web.fetch/v1")

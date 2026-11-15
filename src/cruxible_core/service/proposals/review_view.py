@@ -332,8 +332,14 @@ def _identity(artifact: Mapping[str, Any], path: str, artifact_kind: str) -> tup
     if isinstance(identity, str) and ":" in identity:
         kind, _, name = identity.partition(":")
         return kind[:1].upper() + kind[1:], name
-    name = path.rsplit("/", 1)[-1].removesuffix(".json")
-    return artifact_kind, name
+    # Versioned definitions (Capability, Contract) name themselves NAME/vN.
+    kind = "".join(part.capitalize() for part in artifact_kind.split("-"))
+    stored, version = artifact.get("name"), artifact.get("version")
+    if isinstance(stored, str) and isinstance(version, int):
+        return kind, f"{stored}/v{version}"
+    if isinstance(stored, str):
+        return kind, stored
+    return kind, path.removesuffix(".json").split("/", 1)[-1]
 
 
 def _line_detail(spec: LineSpec) -> ReviewLineDefinition:
