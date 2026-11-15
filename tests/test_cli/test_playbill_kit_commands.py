@@ -927,3 +927,22 @@ def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
     )
     # A proposal no longer open names no next step.
     assert result.output.count("next: cruxible proposal approve") == 1
+
+
+def test_kit_help_says_what_a_default_provider_stands_for_now() -> None:
+    """Providers no longer implement interfaces: operations serve capabilities, and a
+    default provider is skipped when installed operations already serve every slot."""
+
+    import inspect
+
+    from cruxible_core.mcp import tools
+    from cruxible_core.service.kits import service_add_kit
+
+    for command in ("add", "build"):
+        result = CliRunner().invoke(cli, ["kit", command, "--help"])
+        assert result.exit_code == 0, result.output
+        text = " ".join(result.output.split())
+        assert "interfaces" not in text
+        assert "serve every slot's capability" in text
+    assert "with interfaces" not in inspect.getsource(tools)
+    assert "operation Contracts first" not in (service_add_kit.__doc__ or "")

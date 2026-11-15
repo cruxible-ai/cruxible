@@ -2285,10 +2285,11 @@ def service_add_kit(
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
-    A kit first proposes missing operation Contracts for its bundled providers,
-    then installs the missing packages through ``install_provider``; the rest
-    of the definitions follow once they land. An index
-    default another live Provider stands in for is not installed. A commit that
+    A kit first installs its missing bundled provider packages through
+    ``install_provider`` (each carries its own shapes, so nothing is accepted
+    before them); the definitions follow once they land. An index default is
+    not installed when live operations of providers here already serve every
+    slot's capability. A commit that
     stops at ``awaiting_providers`` is recorded, and the activation that lands
     the last awaited install proposes the definitions as this caller
     (``kit_resume``); any other commit of the kit replaces that record.

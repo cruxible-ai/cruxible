@@ -2369,13 +2369,14 @@ def _echo_kit_change(
     multiple=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help=(
-        "A published provider package directory the kit names as the default "
-        "implementation of its interfaces (repeatable): pyproject.toml, uv.lock and the "
+        "A published provider package directory the kit names as the default provider "
+        "for its Procedures' slots (repeatable): pyproject.toml, uv.lock and the "
         "published wheel in dist/ (path dependencies' wheels are not needed). The kit "
         "carries none of its files. kit add installs it by name at exactly this version "
-        "from the provider index, refusing any other build, unless a live Provider already "
-        "implements its interfaces; a daemon with provider_repository configured refuses "
-        "that install (install the repository's build first with provider install)."
+        "from the provider index, refusing any other build, unless live operations of "
+        "providers already installed serve every slot's capability; a daemon with "
+        "provider_repository configured refuses that install (install the repository's "
+        "build first with provider install)."
     ),
 )
 @click.option(
@@ -2521,12 +2522,12 @@ def add_kit(
     stops at proposed. A kit that bundles provider packages installs the missing
     ones first (admin permission, the transfer install; registry dependencies
     resolve from the daemon's provider index, PyPI unless configured), installs a
-    default provider by name from that index unless an installed Provider already
-    implements its interfaces (satisfied), and proposes the definitions once they
-    land; an install awaiting approval stops at awaiting_providers, and its
-    activation proposes the definitions on their own, as you (kit status shows
-    the resume). It previews by default; commit with
-    ``--commit --at OID``.
+    default provider by name from that index unless live operations of installed
+    providers already serve every slot's capability (satisfied), and proposes the
+    definitions once they land (each provider carries its own shapes); an
+    install awaiting approval stops at awaiting_providers, and its activation
+    proposes the definitions on their own, as you (kit status shows the resume).
+    It previews by default; commit with ``--commit --at OID``.
     """
     # ``base`` is the base kit this core bundles, read before any directory or registry.
     bundle, origin = bundled_kit_reference(kit) or resolve_kit(kit)
