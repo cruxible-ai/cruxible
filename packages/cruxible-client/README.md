@@ -1271,10 +1271,10 @@ Signs that the caller examined the exact Claim and appends it once. With neither
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-next(*, expiring_within: Duration) -> NextPage
+next(*, expiring_within: Duration | None = None) -> NextPage
 ```
 
-Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon.
+Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon (`expiring_within` defaults to seven days, as `cruxible next`).
 
 **Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. Each row's `repair.command` is the SDK call that performs it (for example `cx.line('hourly').enable()`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
 

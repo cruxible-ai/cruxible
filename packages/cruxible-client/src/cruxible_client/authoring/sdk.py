@@ -5148,18 +5148,21 @@ class Cruxible:
             ),
         )
 
-    def next(self, *, expiring_within: Duration) -> NextPage:
+    def next(self, *, expiring_within: Duration | None = None) -> NextPage:
         """Read the whole queue of work that needs this caller.
 
         The queue covers accepted state and this workspace. Every page is read, pinned to
         the first page's instant, coordinate and attestation head; ``expiring_within`` says
-        how far ahead expiring evidence counts. Each item names its ``reason``, the thing it
-        is about and its ``repair``, rendered as an SDK call this caller can run
+        how far ahead expiring evidence counts (default seven days, as ``cruxible next``).
+        Each item names its ``reason``, the thing it is about and its ``repair``, rendered
+        as an SDK call this caller can run
         (``repair_requires`` names what a withheld one needs). ``page.status`` reports the
         environment: the floor, the ledger mirror, providers, Line dispatch. Next: run an
         item's ``repair.command``, or ``cx.get(item.subject_identity)`` to look first.
         """
 
+        if expiring_within is None:
+            expiring_within = Duration.days(count=7)
         requested_coordinate = self._read_at()
         access_profile = self._access_profile.model_dump()
         observation, scanned_coordinate = observe_next_workspace_with_coverage(

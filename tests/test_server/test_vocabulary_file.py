@@ -512,6 +512,10 @@ def test_next_and_orient_name_a_file_behind_accepted_state(world) -> None:  # ty
     cx.refresh()
     (row,) = rows()
     assert row.reason == "vocabulary_file_behind"
+    # Walkthrough W10: the SDK takes the CLI's default window (seven days).
+    assert [item.item_id for item in cx.next().items if "vocabulary" in item.reason] == [
+        row.item_id
+    ]
     assert row.detail["definitions_behind"] == 1
     assert row.detail["changed"] == ["ClaimType:dev.item.priority"]
     assert row.repair.command == "cx.vocabulary.export()"
