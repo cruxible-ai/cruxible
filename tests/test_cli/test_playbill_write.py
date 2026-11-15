@@ -326,6 +326,25 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
     assert "not a valid write file" in refused.output and "--schema" in refused.output
 
 
+def test_a_wrong_create_key_answers_with_its_shapes_and_help_shows_them(
+    served: _ServiceClient, tmp_path: Path
+) -> None:
+    """Walkthrough S10/S11: the key's shapes in --help and in the refusal, no union dump."""
+
+    help_text = _run("write", "--help").output
+    assert "{field: value, ...}" in help_text
+    bad = tmp_path / "bad-key.yaml"
+    bad.write_text(
+        "because: x\nchanges:\n  - op: create\n    label: a\n    subject_kind: k.x\n"
+        "    key: [one, two]\n",
+        encoding="utf-8",
+    )
+    refused = _run("write", str(bad))
+    assert refused.exit_code != 0
+    assert "key is one value for a kind with one key" in refused.output
+    assert "valid string" not in refused.output and "tuple" not in refused.output
+
+
 def test_a_write_file_names_its_subject_once(served: _ServiceClient, tmp_path: Path) -> None:
     schema = json.loads(_run("write", "--schema").stdout)
     assert "subject" in schema["properties"]

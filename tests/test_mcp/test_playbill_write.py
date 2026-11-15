@@ -360,3 +360,37 @@ def test_write_doc_ops_advertise_optional_fields_by_type_and_validate_as_the_con
     )
     with pytest.raises(ValueError):
         McpReplaceSection.model_validate({**replace, "expect": "not-a-digest"})
+
+
+def test_a_create_key_by_field_and_a_wrong_key_shape_on_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Walkthrough S10/S11: the mapping key validates; a wrong shape names the shapes."""
+
+    from cruxible_client.contracts.write import CREATE_KEY_SHAPES, CreateKeyPart
+
+    captured = _capture(monkeypatch, "write")
+    handlers.handle_playbill_write(
+        "inst_write",
+        changes=[
+            {
+                "op": "create",
+                "label": "pair",
+                "subject_kind": "sec.exposure",
+                "key": {"component": "sec.component/a", "vulnerability": {"created": "v"}},
+            },
+            {"op": "create", "label": "v", "subject_kind": "sec.vuln", "key": "CVE-2024-1"},
+        ],
+        because="x",
+    )
+    assert captured[0].changes[0].key[0] == CreateKeyPart(
+        predicate="sec.exposure.component", value="sec.component/a"
+    )
+    with pytest.raises(DataValidationError) as caught:
+        handlers.handle_playbill_write(
+            "inst_write",
+            changes=[{"op": "create", "label": "a", "subject_kind": "k.x", "key": ["v"]}],
+            because="x",
+        )
+    (error,) = caught.value.errors
+    assert CREATE_KEY_SHAPES in error

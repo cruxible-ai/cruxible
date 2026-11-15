@@ -6010,8 +6010,10 @@ def write_changes(
     FILE (YAML or JSON; - reads stdin) holds {"because": ..., "changes": [...]},
     or a bare list of changes with --because. Each change is {"op": "set" |
     "add", "subject", "field", "value"}, {"op": "retire", "target"} or {"op":
-    "create", "label", "subject_kind", "key"}; other changes name a created
-    Subject {"created": label}, as subject or value. A top-level "subject" is
+    "create", "label", "subject_kind", "key"}, where key is one value or
+    {field: value, ...} (e.g. {"occurrence": "kind/id", "vulnerability":
+    "kind/id"}); other changes name a created Subject {"created": label}, as
+    subject or value. A top-level "subject" is
     the Subject of every change that names none. --schema prints the schema.
     Optional docs hold append {file, under, text} or replace {file, section,
     text, expect}. Paths are heading lists; [] selects the preamble. Section

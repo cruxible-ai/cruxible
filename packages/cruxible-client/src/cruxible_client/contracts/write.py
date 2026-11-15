@@ -34,7 +34,9 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
     field_validator,
     model_serializer,
     model_validator,
@@ -449,6 +451,58 @@ class CreateKeyPart(_StrictWriteModel):
         return value
 
 
+#: The shapes a create's ``key`` takes, said once for every surface's refusal.
+CREATE_KEY_SHAPES = (
+    'key is one value for a kind with one key (e.g. "web"), or each key field by name or '
+    'predicate (e.g. {"inventory": "web", "component": "kind/id"}; a Subject this write '
+    'creates is {"created": "label"}), or a list of {"predicate", "value"}; leave it out '
+    "for a minted kind"
+)
+
+
+def _key_input(value: object) -> object:
+    return value
+
+
+def _key_branch(value: object) -> str | None:
+    """Which key shape ``value`` is, so a refusal speaks only of that shape."""
+
+    if isinstance(value, str | int | bool):
+        return "value"
+    if isinstance(value, list | tuple):
+        return "parts"
+    return None
+
+
+def _key_shape_known(value: object) -> bool:
+    """Whether ``value`` has a key's shape, so a refusal about it is about its content."""
+
+    if value is None or isinstance(value, str | int | bool):
+        return True
+    return isinstance(value, list | tuple) and all(
+        isinstance(item, Mapping) and set(item) == {"predicate", "value"} for item in value
+    )
+
+
+#: A create's key, as every surface takes it: one value, ``{field: value}`` (lowered
+#: to parts before validation), or parts; a wrong shape refuses with the shapes.
+CreateKey: TypeAlias = Annotated[
+    Annotated[
+        Annotated[SubjectKeyValue, Tag("value")]
+        | Annotated[tuple[CreateKeyPart, ...], Tag("parts")],
+        Discriminator(_key_branch),
+    ]
+    | None,
+    BeforeValidator(
+        _key_input,
+        json_schema_input_type=SubjectKeyValue
+        | dict[str, SubjectKeyValue | CreatedSubject]
+        | list[CreateKeyPart]
+        | None,
+    ),
+]
+
+
 class CreateChange(_StrictWriteModel):
     """Create a Subject by kind and key, or land on its one live holder; core assigns ids."""
 
@@ -457,9 +511,9 @@ class CreateChange(_StrictWriteModel):
     subject_kind: str = Field(
         pattern=rf"^{SUBJECT_KIND_PATTERN}$", description="The kind, as orient names it."
     )
-    key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = Field(
+    key: CreateKey = Field(
         default=None,
-        description=('One key value, or parts {"predicate", "value"}; none for a minted kind.'),
+        description='One value, {field: value}, or [{"predicate", "value"}]; none if minted.',
     )
     create_new: bool = Field(
         default=False,
@@ -481,6 +535,41 @@ class CreateChange(_StrictWriteModel):
             "Default: the write's `because`."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _key_by_field(cls, data: object) -> object:
+        """A key mapping ``{field: value}`` is its parts, each field under the kind."""
+
+        if not isinstance(data, Mapping) or not isinstance(data.get("key"), Mapping):
+            return data
+        key = cast(Mapping[str, object], data["key"])
+        kind = data.get("subject_kind")
+        if set(key) == {"predicate", "value"}:
+            parts: object = [dict(key)]
+        elif set(key) == {"created"}:
+            return data  # a Subject is no key; refused with the key's shapes
+        else:
+            parts = [
+                {
+                    "predicate": name
+                    if "." in name or not isinstance(kind, str)
+                    else f"{kind}.{name}",
+                    "value": value,
+                }
+                for name, value in key.items()
+            ]
+        return {**data, "key": parts}
+
+    @field_validator("key", mode="wrap")
+    @classmethod
+    def _key_shape(cls, value: object, handler: Any) -> object:
+        try:
+            return handler(value)
+        except ValueError:
+            if _key_shape_known(value):
+                raise
+            raise ValueError(CREATE_KEY_SHAPES) from None
 
 
 class SlotRef(_StrictWriteModel):
@@ -1139,6 +1228,8 @@ __all__ = [
     "CreateChange",
     "CreateKeyPart",
     "CreatedSubject",
+    "CreateKey",
+    "CREATE_KEY_SHAPES",
     "NEW_SUBJECT_LABEL_PATTERN",
     "NewSubjectLabel",
     "ClaimId",

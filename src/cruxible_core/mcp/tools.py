@@ -86,6 +86,7 @@ from cruxible_client.contracts.write import (
     ContractEvidence,
     CreateChange,
     CreatedSubject,
+    CreateKey,
     Evidence,
     ExpectedValue,
     FileEvidence,
@@ -244,6 +245,16 @@ class McpAddChange(AddChange):
 class McpCreateChange(CreateChange):
     __doc__ = CreateChange.__doc__
 
+    # Advertised as the value or the {field: value} mapping; parts still validate.
+    key: Annotated[
+        CreateKey,
+        WithJsonSchema(
+            {"anyOf": [{"type": ["string", "integer", "boolean", "object"]}, {"type": "null"}]}
+        ),
+    ] = Field(
+        default=None,
+        description='One value or {field: value}; a pair end may be {"created": label}.',
+    )
     role: McpRole = None
     evidence: McpEvidence = None
 

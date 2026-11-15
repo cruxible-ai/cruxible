@@ -983,3 +983,30 @@ def test_the_sdk_repair_for_an_uncreated_pair_names_batch_create(
         },
     )
     assert '"op": "create"' in _refusal(wire).repair
+
+
+def test_a_create_key_by_field_name_lands_the_pair(instance: PlaybillInstance) -> None:
+    """Walkthrough S10: the repair's mapping, filled in, is a create that lands."""
+
+    occurrence = _occurrence(instance)
+    outcome = accepted(
+        write(
+            instance,
+            {
+                "op": "create",
+                "label": "a",
+                "subject_kind": APP_EXPOSURE,
+                "key": {"occurrence": occurrence, f"{APP_EXPOSURE}.vulnerability": V1},
+            },
+            {
+                "op": "set",
+                "subject": {"created": "a"},
+                "field": "justification",
+                "value": "inline_mitigations_already_exist",
+            },
+        )
+    )
+    assert ends_of(instance, outcome.changes[0].subject) == {
+        f"{APP_EXPOSURE}.occurrence": occurrence,
+        f"{APP_EXPOSURE}.vulnerability": V1,
+    }

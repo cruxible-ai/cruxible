@@ -323,10 +323,7 @@ def test_a_write_creates_only_a_single_key_kind_by_its_key(instance: PlaybillIns
         instance, {"op": "set", "subject": f"{PAIR}/one", "field": "left", "value": "x"}
     ).refusal
     assert pair_repair is not None
-    assert (
-        f'"key": [{{"predicate": "{PAIR}.left", "value": "<value>"}}, '
-        f'{{"predicate": "{PAIR}.right", "value": "<value>"}}]'
-    ) in (pair_repair.repair or "")
+    assert '"key": {"left": "<value>", "right": "<value>"}' in (pair_repair.repair or "")
     # Following the repair lands the write.
     followed = write(
         instance,

@@ -1122,8 +1122,7 @@ class _Planner:
                 change=index,
                 candidates=declared.keys,
                 repair=(
-                    "Give key: the value for a one-key kind, or each key part as "
-                    '{"predicate", "value"}'
+                    "Give key: the value for a one-key kind, or each key field as {field: value}"
                 ),
                 field_path=path,
             )
@@ -1146,7 +1145,7 @@ class _Planner:
                 f"({', '.join(declared.keys)}); a bare key value names only a one-key kind",
                 change=index,
                 candidates=declared.keys,
-                repair='Give each key part as {"predicate", "value"}',
+                repair="Give each key field as {field: value}",
                 field_path=path,
             )
         else:
