@@ -73,7 +73,17 @@ class SectionDocument:
                 "section_ambiguous", f"Section {path!r} occurs on lines {lines}.", lines=lines
             )
         if not matches:
-            raise DocSectionError("section_not_found", f"Section {path!r} was not found.")
+            known = [" > ".join(section.path) for section in self.sections[:10]]
+            raise DocSectionError(
+                "section_not_found",
+                f"Section {path!r} was not found.",
+                repair=(
+                    "Name the section by its full heading path"
+                    + (f"; this file's headings: {'; '.join(known)}" if known else "")
+                    + (" (and more)" if len(self.sections) > 10 else "")
+                    + "."
+                ),
+            )
         return matches[0]
 
     def subtree(self, path: SectionPath) -> bytes:
@@ -83,6 +93,16 @@ class SectionDocument:
     def own_body(self, path: SectionPath) -> bytes:
         section = self.section(path)
         return self.content[section.start : section.own_end]
+
+
+def _missing_parent_repair(under: SectionPath) -> str:
+    """The fix for an append under a heading the file does not have."""
+
+    where = f"under {under[:-1]!r}" if len(under) > 1 else "at the root"
+    return (
+        f"Append the heading {under[-1]!r} first ({where}), then this section under it; "
+        "or leave under= out to append this section at the root."
+    )
 
 
 def parse_sections(content: bytes, *, file: str = "document.md") -> SectionDocument:
@@ -245,7 +265,14 @@ def append_section(
     """
 
     document = parse_sections(content or b"", file=file)
-    parent = document.section(under)
+    try:
+        parent = document.section(under)
+    except DocSectionError as exc:
+        if exc.code != "cruxible.doc.section_not_found":
+            raise
+        raise DocSectionError(
+            "section_not_found", str(exc).rstrip("."), repair=_missing_parent_repair(under)
+        ) from None
     raw = _spaced(_inserted(text, document.newline), document.newline)
     inserted = parse_sections(raw, file=file)
     identical_document = not under and _same_subtree(document.content, raw)
@@ -254,7 +281,11 @@ def append_section(
     ):
         raise DocSectionError("section_invalid", "Append text must start with a heading.")
     if content is None and under:
-        raise DocSectionError("section_not_found", "A new file requires a root append.")
+        raise DocSectionError(
+            "section_not_found",
+            "A new file requires a root append",
+            repair=_missing_parent_repair(under),
+        )
     if content is None and inserted.preamble.end != inserted.preamble.start:
         raise DocSectionError("section_invalid", "Only frontmatter may precede the new heading.")
     first = inserted.sections[0]
