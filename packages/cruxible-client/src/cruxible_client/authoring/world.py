@@ -580,12 +580,17 @@ class _FieldChange:
 
 
 class _Landing:
-    """Where one new Subject landed: shared by a draft and every draft derived from it."""
+    """Where one new Subject landed: shared by a draft and every draft derived from it.
 
-    __slots__ = ("ref",)
+    ``accepted`` holds the changes an accepted write already sent, by identity,
+    so a landed draft reused later sends only what it gained since.
+    """
+
+    __slots__ = ("accepted", "ref")
 
     def __init__(self) -> None:
         self.ref: str | None = None
+        self.accepted: dict[int, _FieldChange] = {}
 
 
 class WorldWritable:
@@ -603,8 +608,10 @@ class WorldNewSubject(WorldWritable):
     ``edit().set``): it is sent as a reference to its own ``create``, so the
     order of drafts never matters. ``w.write`` (or ``draft.write``) creates it,
     or lands on the one live Subject its key already names. Once accepted,
-    ``address`` is the id core assigned. Reads at this World's coordinate still
-    do not see it: ``cx.world()`` again for those.
+    ``address`` is the id core assigned, and the draft (or one derived from it)
+    passed to a later write is a reference to that Subject: its key, fields and
+    sections are not sent again, only changes added after the acceptance. Reads
+    at this World's coordinate still do not see it: ``cx.world()`` again for those.
     """
 
     subject_kind: str
@@ -1143,6 +1150,7 @@ class World:
         changes: list[Change] = []
         docs: list[DocOp] = []
         authored: set[int] = set()
+        landings: dict[int, _Landing] = {}
 
         def mine(item: WorldWritable) -> None:
             if getattr(item, "_world", None) is not self:
@@ -1152,8 +1160,24 @@ class World:
 
         def value(raw: object) -> Any:
             if isinstance(raw, WorldNewSubject):
+                if raw._landing.ref is not None:
+                    return landed(raw)
                 return CreatedSubject(created=label(raw))
             return _write_value(raw)
+
+        def landed(draft: WorldNewSubject) -> str:
+            # An accepted draft is a reference to its Subject: only changes it
+            # gained after that acceptance are sent, under the assigned id.
+            mine(draft)
+            ref = draft._landing.ref
+            assert ref is not None
+            key = id(draft._landing)
+            if key not in landings:
+                landings[key] = draft._landing
+            done = sent.setdefault(key, [])
+            fresh = [c for c in draft._changes if id(c) not in draft._landing.accepted]
+            send(ref, fresh, done)
+            return ref
 
         def send(
             subject: str | CreatedSubject,
@@ -1195,6 +1219,7 @@ class World:
             key = id(draft._landing)
             name = labels.get(key)
             if name is None:
+                landings[key] = draft._landing
                 name = labels[key] = f"new-{len(labels) + 1}"
                 creates.append(
                     (
@@ -1213,7 +1238,10 @@ class World:
 
         for item in items:
             if isinstance(item, WorldNewSubject):
-                label(item)
+                if item._landing.ref is not None:
+                    landed(item)
+                else:
+                    label(item)
             elif isinstance(item, WorldSubjectEdit):
                 mine(item)
                 done = sent.setdefault(id(item), [])
@@ -1234,6 +1262,8 @@ class World:
         if outcome.status == "accepted":
             for position, (landing, _create) in enumerate(creates):
                 landing.ref = outcome.changes[position].subject
+            for key, landing in landings.items():
+                landing.accepted.update((id(change), change) for change in sent.get(key, ()))
         return outcome
 
     def _define(

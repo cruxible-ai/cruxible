@@ -313,6 +313,35 @@ def test_a_define_run_again_lands_on_its_subject_and_expect_new_refuses(typed: C
     assert taken.address == f"{DECISION}/ship-it-{key_digest_hex(['ship-it'])[:8]}"
 
 
+def test_an_accepted_draft_reused_as_a_value_is_a_reference_to_its_subject(
+    typed: Cruxible,
+) -> None:
+    """F28: reusing an accepted draft never resends its create, fields or sections."""
+
+    w = typed.world()
+    items = w.project.work_item
+    parent = items.define("wi-f28-parent", title="Parent")
+    assert parent.write(because="The parent.").status == "accepted"
+    assert parent.address == f"{KIND}/wi-f28-parent"
+
+    child = items.define("wi-f28-child", title="Child").add(governs=parent)
+    preview = child.write(because="The child.", dry_run=True)
+    # create + title + governs: the parent's create and title are not sent again.
+    assert len(preview.changes) == 3, preview.changes
+    assert [change.field for change in preview.changes if change.field] == ["title", "governs"]
+    assert child.write(because="The child.").status == "accepted"
+    governs = typed.world().project.work_item["wi-f28-child"].governs
+    assert [view.value for view in governs] == [f"subjects/{parent.address}.json"]
+
+    # A draft derived from the accepted one sends only what it gained since.
+    later = parent.set(status="ready").write(because="Ready now.")
+    assert later.status == "accepted"
+    assert [change.field for change in later.changes] == ["status"]
+    assert [view.value for view in typed.world().project.work_item["wi-f28-parent"].title] == [
+        "Parent"
+    ]
+
+
 def test_world_lookup_resolves_alias_and_single_key_and_keeps_the_read_coordinate(
     typed: Cruxible,
 ) -> None:
