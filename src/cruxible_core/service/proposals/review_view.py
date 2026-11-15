@@ -281,6 +281,7 @@ class CitedText:
         # Presence comes from the landing index, as reads take it (no stat or hash
         # on the clean path); an absent body is erased when an erasure names it.
         from cruxible_core.evidence.capture_erasures import erased_body
+        from cruxible_core.storage.read_positions import body_present
 
         erasure = erased_body(self._instance, envelope)
         if erasure is not None:
@@ -290,6 +291,10 @@ class CitedText:
                     by=erasure.erased_by, at=erasure.erased_at, because=erasure.because
                 ),
             )
+        # Missing or damaged, whether or not it maps an excerpt: the landing index
+        # answers, without reading the body.
+        if commitment is not None and body_present(self._bodies, str(commitment)) is False:
+            return ReviewCitation(**common, unavailable=True)
         if not ranges or commitment is None:
             return ReviewCitation(**common)
         if not self._access.can_read_body:
