@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import inspect
+import os
 import sys
+from collections.abc import Mapping
 from importlib import metadata
-from typing import Any
+from typing import Any, Literal, cast
 
 import structlog
 from mcp import types as mcp_types
@@ -196,6 +198,24 @@ def _tool_failure_message(name: str, error: ToolError) -> str:
     return message
 
 
+McpLogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+_LOG_LEVELS: tuple[McpLogLevel, ...] = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def mcp_log_level(env: Mapping[str, str] = os.environ) -> McpLogLevel:
+    """How much the MCP server logs on stderr: warnings and errors by default.
+
+    Each daemon request would otherwise log a line at INFO (``HTTP Request:
+    ...``) and each tool call another. ``FASTMCP_LOG_LEVEL`` (the server
+    library's own setting) picks a level; ``CRUXIBLE_DEBUG`` turns on INFO.
+    """
+
+    named = env.get("FASTMCP_LOG_LEVEL", "").strip().upper()
+    if named in _LOG_LEVELS:
+        return cast(McpLogLevel, named)
+    return "INFO" if env.get("CRUXIBLE_DEBUG") else "WARNING"
+
+
 def create_server() -> FastMCP:
     transport_error: str | None = None
     try:
@@ -203,7 +223,7 @@ def create_server() -> FastMCP:
     except ConfigError as exc:
         transport_error = str(exc)
     mode = init_permissions()
-    server = FastMCP(name=f"cruxible v{__version__}", instructions="")
+    server = FastMCP(name=f"cruxible v{__version__}", instructions="", log_level=mcp_log_level())
     # Every tool blocks on the daemon, so each runs off the event loop.
     registered = register_tools(server, offload_sync_calls=True)
     validate_tool_permissions(registered)
