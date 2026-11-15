@@ -347,7 +347,9 @@ def test_definition_lint_names_ledger_fields_prose_strings_and_enums_of_things(
     changes = cx.changes(rationale="A vocabulary with three modelling slips.")
     changes.field("dev.item", "slug", SLUG, description="Its short name.", key=True)
     changes.field("dev.item", "decided_by", SLUG, description="Who decided.")
-    changes.field("dev.item", "criteria", StringType(max_len=256), description="What done means.")
+    changes.field(
+        "dev.item", "criteria", StringType(min_len=1, max_len=240), description="What done means."
+    )
     changes.field(
         "dev.item",
         "release",
@@ -376,7 +378,7 @@ def test_definition_lint_names_ledger_fields_prose_strings_and_enums_of_things(
             "input": {
                 "predicate": "dev.item.criteria",
                 "cardinality": "one",
-                "value": {"kind": "string", "max_len": 256},
+                "value": {"kind": "string", "min_len": 1, "max_len": 240},
                 "description": "What done means.",
                 "allowed_subject_kinds": ["dev.item"],
             },

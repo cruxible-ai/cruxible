@@ -458,8 +458,7 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"inverse": None},
             )
         )
-    stated_value = not isinstance(value, ClaimTypeInputRecord) or value.states("value")
-    warnings.extend(lint_modelling(value.predicate, value_type if stated_value else None))
+    warnings.extend(lint_modelling(value.predicate, value_type))
     warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     return ClaimTypeProposalLintV1(warnings=tuple(warnings))
 
@@ -488,9 +487,10 @@ LEDGER_FIELD_NAMES = frozenset(
 )
 
 #: A string bounded above this holds prose, not an identifier or a label (core
-#: refuses any string over 256). Only a stated value is checked: the short
-#: form's default ``string{max_len: 256}`` is the author's to narrow.
+#: refuses any string over 256). The short form's default value,
+#: ``string{max_len: 256}`` exactly, is not flagged: no author chose it.
 PROSE_STRING_MAX_LEN = 200
+_DEFAULT_STRING = StringType(max_len=256)
 
 #: An enum member that looks like a version, a date or an identifier names a thing.
 _THING_MEMBER = re.compile(
@@ -507,8 +507,8 @@ def lint_modelling(predicate: str, value: FieldType | None) -> tuple[ClaimTypeLi
     - ``field_restates_ledger``: the field's name restates what the ledger
       records about every Claim (writer, approver, time, ``because``, proposals).
     - ``string_holds_prose``: a string bounded above ``PROSE_STRING_MAX_LEN``
-      with no pattern holds prose, which belongs in a Document section a Claim
-      cites.
+      with no pattern (other than the default ``string{max_len: 256}``) holds
+      prose, which belongs in a Document section a Claim cites.
     - ``enum_members_name_things``: an enum member looks like a version, date or
       identifier: a thing with its own facts, which is a kind (``subject<K>``).
     """
@@ -536,6 +536,7 @@ def lint_modelling(predicate: str, value: FieldType | None) -> tuple[ClaimTypeLi
         )
     if (
         isinstance(value, StringType)
+        and value != _DEFAULT_STRING
         and value.pattern is None
         and value.max_len is not None
         and value.max_len > PROSE_STRING_MAX_LEN

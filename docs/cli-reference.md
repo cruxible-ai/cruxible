@@ -1476,7 +1476,8 @@ read column). Three modelling hints come with it, never refusals:
 `cruxible.claim_type.field_restates_ledger` (a field named for what the ledger
 records about every Claim: `decided_by`, `updated_at`, `reason`,
 `recommendation` and the like), `cruxible.claim_type.string_holds_prose` (a
-stated string with no pattern bounded above 200 characters: prose belongs in a
+string with no pattern bounded above 200 characters, other than the default
+`string{max_len: 256}`: prose belongs in a
 Document section the Claim cites) and
 `cruxible.claim_type.enum_members_name_things` (an enum member that looks like
 a version, a date or an identifier, which names a thing that is better a kind
