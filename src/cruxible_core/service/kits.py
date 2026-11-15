@@ -2007,15 +2007,29 @@ KIT_PREVIEW_AWAITING_INSTALL = (
 )
 
 
-#: The bundled base kit (its id and the source its receipt records): never removed,
+#: The bundled base kit's id: never removed while it holds the bundled definitions,
 #: see ``_remove_kit``.
 BASE_KIT_ID = "base"
-BASE_KIT_SOURCE = "bundled"
 KIT_BASE_REQUIRED = "cruxible.kit.base_required"
 KIT_BASE_REQUIRED_REPAIR = (
     "Leave the base kit installed; to stop using one of its definitions, retire that "
     "definition in an authored change (cruxible authoring submit)."
 )
+
+
+def _holds_bundled_base(receipt: KitReceipt) -> bool:
+    """Whether a kit's receipt holds a definition exactly as the bundled base kit ships it.
+
+    What makes it the base kit for removal: the reserved ``web.`` and
+    ``workspace.`` definitions the bundled kit owns, at the bundled digest. That
+    survives an update that rewrites the receipt's source or version, and an
+    unrelated kit merely named base holds none of them.
+    """
+
+    from cruxible_core.kits.base_kit import bundled_base_kit
+
+    bundled = bundled_base_kit().manifest.digests()
+    return any(bundled.get(entry.path) == entry.release_digest for entry in receipt.artifacts)
 
 
 def _required_receipts(
@@ -2828,7 +2842,7 @@ def _remove_kit(
                 operation="cruxible.kit.remove", arguments={"kit_id": dependents[0]}
             ),
         )
-    if request.kit_id == BASE_KIT_ID and receipt.source == BASE_KIT_SOURCE:
+    if request.kit_id == BASE_KIT_ID and _holds_bundled_base(receipt):
         # Its retired definitions could never come back: a retired kind is never
         # revived, so a later `kit add base` would refuse.
         raise RequestRefusedError(

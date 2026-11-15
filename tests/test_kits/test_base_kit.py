@@ -706,3 +706,38 @@ def test_a_refused_kit_change_detail_carries_each_message() -> None:
         "Refused: cruxible.capture_contract.revival_refused: A retired CaptureContract cannot "
         "be revived; propose a new contract identity instead."
     )
+
+
+def test_the_base_kit_stays_protected_after_an_update_rewrites_its_receipt(
+    tmp_path: Path, no_sockets: list[str]
+) -> None:
+    """Review P2: the guard keyed on the receipt's source, which an update rewrites; a
+    re-add as 1.0.1 from another source then let `kit remove base` retire it all."""
+
+    from cruxible_client.contracts.kits import KitRemoveRequest
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.service.kits import service_remove_kit
+
+    instance, _owner, _reviewer = _create(tmp_path)
+    bundle = bundled_base_kit()
+    copy = bundle.model_copy(
+        update={"manifest": bundle.manifest.model_copy(update={"version": "1.0.1"})}
+    )
+    added = service_add_kit(
+        instance,
+        KitAddRequest(bundle=copy, source="local:base-copy", dry_run=False),
+        actor_id="owner",
+        timestamp=STAMP,
+    )
+    assert added.status == "accepted", added
+    (installed,) = service_kit_status(instance).kits
+    assert (installed.version, installed.source) == ("1.0.1", "local:base-copy")
+    with pytest.raises(RequestRefusedError) as refused:
+        service_remove_kit(
+            instance,
+            KitRemoveRequest(kit_id="base", dry_run=False),
+            actor_id="owner",
+            timestamp=STAMP,
+        )
+    assert refused.value.error_code == "cruxible.kit.base_required"
+    assert [kit.kit_id for kit in service_kit_status(instance).kits] == ["base"]
