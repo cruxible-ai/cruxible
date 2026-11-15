@@ -1696,10 +1696,20 @@ class PlaybillInstance:
         *,
         workspace_path: Path | None,
     ) -> None:
-        """Bind the manager-owned advisory Git hook for this process."""
+        """Bind the manager-owned advisory Git hook for this process.
 
-        self._workspace_advertiser = advertiser
-        self._workspace_path = workspace_path
+        A refresh requested before the binding (opening or initializing an
+        instance accepts generations, and the manager binds after) ran, or is
+        running, without this hook: its outcome is stale. One more refresh is
+        queued, so a settle reports what the bound hook advertises.
+        """
+
+        with self._advertisement_condition:
+            self._workspace_advertiser = advertiser
+            self._workspace_path = workspace_path
+            if self._advertisement_requested:
+                self._advertisement_requested += 1
+                self._start_advertiser_locked()
 
     def advertise_workspace(self) -> WorkspaceAdvertisement:
         """Queue the advisory ref refresh and return without waiting for Git.

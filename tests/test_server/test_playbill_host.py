@@ -927,6 +927,62 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
     assert remote_url.endswith("ledger.git")
 
 
+def test_init_reports_the_advertisement_made_after_the_workspace_binds(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Initializing requests refreshes before the manager binds the workspace hook.
+
+    When the advertiser thread finished those first, init settled on their
+    ``not_attached`` outcome (a CI run of the test below). Forced here: the
+    binding waits until every earlier refresh has run.
+    """
+
+    del host_client
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    bind = PlaybillInstance.bind_workspace_advertiser
+    early: list[int] = []
+
+    def late_bind(self: PlaybillInstance, advertiser: Any, *, workspace_path: Path | None) -> None:
+        with self._advertisement_condition:
+            assert self._advertisement_condition.wait_for(
+                lambda: self._advertisement_thread is None, timeout=60
+            )
+            early.append(self._advertisement_completed)
+        bind(self, advertiser, workspace_path=workspace_path)
+
+    monkeypatch.setattr(PlaybillInstance, "bind_workspace_advertiser", late_bind)
+    workspace = tmp_path / "late-bind-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_late_bind",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    owner = generate_client_principal_key(
+        tmp_path / "late-bind-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(workspace,),
+    )
+    initialized = playbill_api.playbill_init(
+        "inst_late_bind",
+        principals=(owner.principal,),
+        workspace_attachment_authorized=True,
+    )
+    assert early and early[0] > 0  # the interleaving happened: refreshes ran unbound
+    assert initialized.workspace_advertisement.status == "updated"
+    assert initialized.workspace_advertisement.advertised_refs == (
+        "refs/remotes/cruxible-ledger/accepted",
+    )
+
+
 def test_propose_document_never_executes_workspace_instead_of_ssh_command(
     host_client: TestClient,
     tmp_path: Path,
