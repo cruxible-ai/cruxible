@@ -17,6 +17,13 @@ from cruxible_client.contracts.get_display import get_value_display
 from cruxible_client.contracts.public_names import public_name as _public_name
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts import (
+        NextHealth,
+        NextItem,
+        NextRepair,
+        NextRepairRequirement,
+        NextStatus,
+    )
     from cruxible_client.contracts.authoring_landing import AuthoringLanded, AuthoringProposed
     from cruxible_client.contracts.vocabulary_file import (
         VocabularyApplyResult,
@@ -576,3 +583,227 @@ def render_vocabulary_apply(result: VocabularyApplyResult) -> str:
     if result.next:
         lines.append(f"Next: {result.next}")
     return "\n".join(lines)
+
+
+# -- next -----------------------------------------------------------------------------
+
+#: What each placeholder a repair command leaves (`operands_to_add`) stands for.
+NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
+    "because": "TEXT (why, in your words)",
+    "file": "FILE#ANCHOR (the file and anchor holding the new text)",
+    "capture": "CAP (the fresh Capture's handle)",
+}
+
+
+def next_input_lines(item: NextItem) -> list[str]:
+    """A missing Line input's row: the file, its parameter, its description as written."""
+
+    detail = item.detail if isinstance(item.detail, dict) else {}
+    if item.reason != "line_input_missing" or not isinstance(detail.get("relative_path"), str):
+        return []
+    parameter = detail.get("parameter")
+    lines = [
+        f"needs file {detail['relative_path']}"
+        + (f" (parameter {parameter})" if isinstance(parameter, str) else "")
+    ]
+    if isinstance(detail.get("description"), str):
+        lines.append(f"  {detail['description']}")
+    return lines
+
+
+def next_run_failure_lines(item: NextItem) -> list[str]:
+    """A failed Line run's row: the run, its failure code and its cause, if recorded."""
+
+    detail = item.detail if isinstance(item.detail, dict) else {}
+    if item.reason != "line_run_failed" or not isinstance(detail.get("run_id"), str):
+        return []
+    lines = [
+        f"run {detail['run_id']} failed"
+        + (f" ({detail['failure_code']})" if detail.get("failure_code") else "")
+        + (f" at {detail['finalized_at']}" if detail.get("finalized_at") else "")
+    ]
+    cause = detail.get("cause")
+    if isinstance(cause, dict):
+        lines.append(
+            f"Cause: {cause.get('node_id')}: "
+            f"{cause.get('kind') or cause.get('provider_code')}: {cause.get('message')}"
+        )
+    return lines
+
+
+def next_claim_about(item: NextItem) -> str | None:
+    """What a Claim row is about, as ``kind/id field``: its Subject and predicate.
+
+    A proposal row names every ``kind/id field`` its Claims would write.
+    """
+
+    touches = item.detail.get("touches") if isinstance(item.detail, dict) else None
+    if isinstance(touches, list) and touches:
+        return "; ".join(str(touch) for touch in touches)
+    predicate = item.detail.get("predicate") if isinstance(item.detail, dict) else None
+    subject = next((ref for ref in item.related_identities if ref.startswith("subjects/")), None)
+    if not isinstance(predicate, str) or subject is None:
+        return None
+    return f"{subject.removeprefix('subjects/').removesuffix('.json')} {predicate}"
+
+
+def next_requirement_hint(
+    requires: NextRepairRequirement | None, *, author: str | None = None
+) -> str:
+    """What running a withheld repair needs, in one phrase.
+
+    ``author`` names the actor an ``author``-gated repair (a stale proposal's
+    readmit) waits on, from the row's ``actor_id``.
+    """
+
+    if requires is None:
+        return "this caller cannot run it"
+    from cruxible_client.contracts.repairs import REPAIR_COMMAND_PATHS
+
+    path = REPAIR_COMMAND_PATHS.get(requires.operation)
+    # Name the verb a CLI caller runs; the MCP tool name only when no verb maps.
+    label = requires.tool if path is None else f"cruxible {path}"
+    needs = []
+    if "tier" in requires.because:
+        needs.append(f"the {requires.tier} tier")
+    if "profile" in requires.because:
+        needs.append(f"the {requires.profile} MCP tool profile")
+    if "author" in requires.because:
+        needs.append(f"the proposal's author ({author or 'unknown actor'})")
+    refusal = requires.authoring_refusal
+    if "authoring" in requires.because and refusal is not None:
+        # The identity repair comes first: no tier helps a caller that cannot author.
+        needs.insert(0, f"a caller that can author ({refusal.code}: {refusal.detail})")
+    return f"{label} needs " + " and ".join(needs)
+
+
+def next_repair_hint(repair: NextRepair) -> str:
+    """The runnable command, or else the operation and the change it must make."""
+
+    if repair.command is not None:
+        return repair.command
+    operation = "hand edit" if repair.operation == "hand_edit" else repair.operation
+    return f"{operation} {repair.target}: {repair.required_change}"
+
+
+#: Facet states the status header shows; healthy and unobserved facets stay quiet.
+NEXT_STATUS_ATTENTION = {
+    "instance": {"decommissioned"},
+    "floor": {"missing", "stale"},
+    "ledger_mirror": {"behind", "never_published"},
+    "provider_lane": {"unavailable"},
+    "procedure_catalog": {"missing"},
+    "compiler": {"upgrade_available"},
+    "line_dispatch": {"due"},
+    "consumers": {"lagging"},
+    "triggers": {"unscheduled"},
+}
+
+
+def next_status_lines(status: NextStatus) -> list[str]:
+    """The environment facets that need attention, above the work rows."""
+
+    lines: list[str] = []
+    if status.blocking:
+        lines.append("BLOCKING: this instance refuses every write.")
+    for facet, states in NEXT_STATUS_ATTENTION.items():
+        health: NextHealth = getattr(status, facet)
+        if health.state not in states:
+            continue
+        repair = health.repair
+        hint = None if repair is None else repair.command or repair.required_change
+        if health.repair_hidden:
+            hint = f"(repair withheld: {next_requirement_hint(health.repair_requires)})"
+        label = facet.replace("_", " ")
+        lines.append(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
+    arms = (
+        status.consumers.detail.get("line_enablements")
+        if isinstance(status.consumers.detail, dict)
+        else None
+    )
+    if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
+        lines.append(
+            f"Status: line enablements stalled={arms.get('stalled', 0)} "
+            f"stopped={arms.get('stopped', 0)}"
+            "  next=cruxible orient --section lines"
+        )
+    return lines
+
+
+def next_lines(
+    *,
+    status: NextStatus,
+    items: Sequence[NextItem],
+    delta_since: str | None = None,
+    removed_item_ids: Iterable[str] = (),
+    unobserved: Sequence[str] = (),
+    brief: bool = False,
+    total_items: int | None = None,
+    next_cursor: str | None = None,
+) -> list[str]:
+    """A ``next`` queue as ``cruxible next`` prints it.
+
+    ``unobserved`` are the workspace-derived reasons for each unobserved domain
+    (the caller reads the workspace; this reads only what it is given).
+    """
+
+    lines = next_status_lines(status)
+    if not items:
+        lines.append(
+            "No changes since the requested queue digest."
+            if delta_since is not None
+            else "No repair work in the observed domains."
+        )
+    removed_ids = frozenset(removed_item_ids)
+    for item in items:
+        change = (
+            "removed  "
+            if delta_since is not None and item.item_id in removed_ids
+            else "added  "
+            if delta_since is not None
+            else ""
+        )
+        row = f"{change}{item.severity}  {item.reason}  {item.subject_identity}"
+        about = next_claim_about(item)
+        if about is not None:
+            row += f"  ({about})"
+        if item.repair is None:
+            author = item.detail.get("actor_id") if isinstance(item.detail, dict) else None
+            needs = next_requirement_hint(
+                item.repair_requires, author=author if isinstance(author, str) else None
+            )
+            lines.append(row + ("" if brief else f"  repair withheld: {needs}"))
+            if not brief:
+                for finding in item.findings:
+                    lines.append(
+                        f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}"
+                    )
+            continue
+        if brief:
+            lines.append(row + (f"  next={item.repair.command}" if item.repair.command else ""))
+            continue
+        lines.append(f"{row}  next={item.repair.operation}")
+        for line in (*next_run_failure_lines(item), *next_input_lines(item)):
+            lines.append(f"  {line}")
+        lines.append(f"  repair: {next_repair_hint(item.repair)}")
+        for alternative in item.repair.alternatives:
+            lines.append(f"  or: {next_repair_hint(alternative)}")
+        operands = dict.fromkeys(
+            (
+                *item.repair.operands_to_add,
+                *(op for alt in item.repair.alternatives for op in alt.operands_to_add),
+            )
+        )
+        if operands:
+            lines.append(
+                "  fill in: " + ", ".join(NEXT_OPERAND_PLACEHOLDER_TEXT[op] for op in operands)
+            )
+        for finding in item.findings:
+            lines.append(
+                f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}"
+            )
+    if unobserved and not brief:
+        lines.append("Unobserved: " + "; ".join(unobserved))
+    if next_cursor is not None:
+        lines.append(f"Showing {len(items)} of {total_items} rows. Next: --cursor {next_cursor}")
+    return lines

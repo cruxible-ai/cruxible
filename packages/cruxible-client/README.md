@@ -944,6 +944,8 @@ Reads one thing by reference; the daemon resolves the reference directly (never 
 
 A Subject card read at the head lists `pending`: the open proposals that would write its fields (`proposal`, `fields`, `by`), while its values stay the accepted ones. Its `next` names `cx.backlinks(subject)` when a note or a cited section points at it, and `cx.get(proposal)` for each pending proposal. In `GetEvidence`, each Capture's `byte_length` says how many bytes it holds.
 
+`print(card)` shows what `cruxible get REF --detail D` prints for the same read, at every detail (next-step lines in SDK syntax); a Claim summary, which the SDK reads as a `ClaimView`, prints that view's subject, value, verdict and revision; a `proof` prints as its repr (the CLI prints it as JSON). `repr()` is the full model, and `str()` makes no request.
+
 **Conditions and effects:** An unknown or ambiguous reference refuses with `cruxible.get.ref_not_found` or `cruxible.get.ref_ambiguous` and the nearest names; a detail that does not apply to the kind refuses naming the ones that do. A Document body over 64 KiB needs `range`. Inspect `kind` before using `value`.
 
 | Parameter | Default | Meaning |
@@ -1276,7 +1278,7 @@ next(*, expiring_within: Duration | None = None) -> NextPage
 
 Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon (`expiring_within` defaults to seven days, as `cruxible next`).
 
-**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. Each row's `repair.command` is the SDK call that performs it (for example `cx.line('hourly').enable()`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
+**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. `print(page)` shows what `cruxible next` prints (status, rows, repairs in SDK syntax, and `page.unobserved`, the reasons read from the workspace when `next()` observed it); `repr()` is the full model, and `str()` makes no request. Each row's `repair.command` is the SDK call that performs it (for example `cx.line('hourly').enable()`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -7927,7 +7929,7 @@ definitions singular.
 
 **`contracts.floor`** — [FloorEntry](src/cruxible_client/contracts/floor.py), [FloorManifest](src/cruxible_client/contracts/floor.py), [FloorHead](src/cruxible_client/contracts/floor.py), [FloorDeltaFile](src/cruxible_client/contracts/floor.py), [FloorDelta](src/cruxible_client/contracts/floor.py), [FloorApplyResult](src/cruxible_client/contracts/floor.py).
 
-**`contracts.text_display`** — the text `str()` and the CLI print for orient results, coordinates, write outcomes, landings, intents and vocabulary-file results: [render_orient](src/cruxible_client/contracts/text_display.py), [write_outcome_lines](src/cruxible_client/contracts/text_display.py), [landing_lines](src/cruxible_client/contracts/text_display.py), [render_intent](src/cruxible_client/contracts/text_display.py), [vocabulary_plan_lines](src/cruxible_client/contracts/text_display.py), [render_vocabulary_export](src/cruxible_client/contracts/text_display.py), [render_vocabulary_apply](src/cruxible_client/contracts/text_display.py). A query page prints the table `cruxible query` prints ([render_query_table](src/cruxible_client/authoring/compact_query.py)).
+**`contracts.text_display`** — the text `str()` and the CLI print for orient results, coordinates, write outcomes, landings, intents and vocabulary-file results: [render_orient](src/cruxible_client/contracts/text_display.py), [write_outcome_lines](src/cruxible_client/contracts/text_display.py), [landing_lines](src/cruxible_client/contracts/text_display.py), [render_intent](src/cruxible_client/contracts/text_display.py), [vocabulary_plan_lines](src/cruxible_client/contracts/text_display.py), [render_vocabulary_export](src/cruxible_client/contracts/text_display.py), [render_vocabulary_apply](src/cruxible_client/contracts/text_display.py). A query page prints the table `cruxible query` prints ([render_query_table](src/cruxible_client/authoring/compact_query.py)). A `next` page prints through [next_lines](src/cruxible_client/contracts/text_display.py) and a `get` card through [render_get](src/cruxible_client/contracts/get_text.py), the renderers `cruxible next` and `cruxible get` print with.
 
 **`contracts.get_display`** — [GetValueDisplay](src/cruxible_client/contracts/get_display.py).
 

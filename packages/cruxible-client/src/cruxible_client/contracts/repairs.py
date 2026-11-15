@@ -281,6 +281,37 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 }
 
 
+#: Each next repair operation's CLI verb path (``cruxible <path>``): what the
+#: daemon renders a CLI command from, and what a withheld repair is named by.
+REPAIR_COMMAND_PATHS: Mapping[str, str] = {
+    "cruxible.authoring.example": "authoring example",
+    "cruxible.authoring.submit": "authoring submit",
+    "cruxible.authoring.bind": "authoring bind",
+    "cruxible.claim.retire": "retire",
+    "cruxible.rebind": "rebind",
+    "cruxible.get": "get",
+    "cruxible.set": "set",
+    "cruxible.write": "write",
+    "cruxible.floor.export": "floor export",
+    "cruxible.block.depublish": "block depublish",
+    "cruxible.block.detach": "block detach",
+    "cruxible.block.repin": "block repin",
+    "cruxible.block.sync": "block sync",
+    "cruxible.files.propose": "files propose",
+    "cruxible.proposal.readmit": "proposal readmit",
+    "cruxible.proposal.approve": "proposal approve",
+    "cruxible.proposal.activate": "proposal activate",
+    "cruxible.compiler.upgrade": "compiler upgrade",
+    "cruxible.line.enable": "line enable",
+    "cruxible.line.evaluate": "line evaluate",
+    "cruxible.line.dispatch": "line dispatch",
+    "cruxible.inbox.list": "inbox list",
+    "cruxible.prediction.settle": "prediction settle",
+    "cruxible.kit.add": "kit add",
+    "cruxible.vocabulary.export": "vocabulary export",
+}
+
+
 # Codes whose repair is one served CLI leaf. The operation is the leaf's dotted
 # path, so the guardrail resolves it against the live lazy command map instead
 # of trusting the string; a repair naming a command that does not exist is worse
@@ -461,6 +492,7 @@ def served_repair_for_refusal(code: str) -> ServedRepair:
 
 __all__ = [
     "DECLARED_HAND_EDIT_CHANGES",
+    "REPAIR_COMMAND_PATHS",
     "RUNNABLE_REFUSAL_REPAIRS",
     "UNDECLARED_HAND_EDIT_CHANGE",
     "HandEditInstruction",

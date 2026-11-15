@@ -71,6 +71,7 @@ from cruxible_client.authoring.workspace import (
     WorkspaceAttachmentError,
     daemon_floor_delivery,
     floor_export_parts,
+    next_unobserved_reasons,
     observe_next_workspace_with_coverage,
     observe_projection_coverage,
     validate_workspace_config_write,
@@ -97,7 +98,6 @@ from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord,
     capture_contract_input_template,
 )
-from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_IDENTITY
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
 )
@@ -119,11 +119,22 @@ from cruxible_client.contracts.errors import (
     SinceRequestInvalid,
 )
 from cruxible_client.contracts.file_catalog import FileCatalog, FileCompilationBundle
-from cruxible_client.contracts.get_display import (
-    GET_CLI_HISTORY_VALUE_WIDTH,
-    GET_CLI_VALUE_WIDTH,
-    get_value_display,
+from cruxible_client.contracts.get_text import attestation_counts_text as _attestation_counts_text
+from cruxible_client.contracts.get_text import backlink_line as _backlink_line
+
+# Re-exported under the names the CLI's tests read them by.
+from cruxible_client.contracts.get_text import (  # noqa: F401
+    get_value_text as _get_value_text,
 )
+from cruxible_client.contracts.get_text import (
+    history_lines,
+    proposed_reason_lines,
+    render_get,
+)
+from cruxible_client.contracts.get_text import (  # noqa: F401
+    provider_operation_line as _provider_operation_line,
+)
+from cruxible_client.contracts.get_text import run_node_line as _run_node_line
 from cruxible_client.contracts.kit_requires import KitRequirement
 from cruxible_client.contracts.kits import (
     KitAddRequest,
@@ -155,12 +166,22 @@ from cruxible_client.contracts.temporal import (
     parse_datetime,
     parse_iso_duration_microseconds,
 )
+from cruxible_client.contracts.text_display import (  # noqa: F401
+    NEXT_STATUS_ATTENTION as _NEXT_STATUS_ATTENTION,
+)
 from cruxible_client.contracts.text_display import (
     awaiting_text,
     landing_lines,
+    next_lines,
     render_orient,
     short_oid,
     write_outcome_lines,
+)
+from cruxible_client.contracts.text_display import (  # noqa: F401
+    next_claim_about as _next_claim_about,
+)
+from cruxible_client.contracts.text_display import (  # noqa: F401
+    next_requirement_hint as _next_requirement_hint,
 )
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
@@ -6226,24 +6247,6 @@ def backlinks(
         click.echo(f"next: cruxible backlinks ... --cursor {result.next_cursor}")
 
 
-def _backlink_line(link: Any) -> str:
-    where = "" if link.file is None else f" {link.file}#{'/'.join(link.section or ())}"
-    extra = [
-        item
-        for item in (
-            link.title,
-            link.subject and f"on {link.subject}",
-            link.field,
-            link.role,
-            link.drift,
-        )
-        if item
-    ]
-    return f"{link.relation} {link.source_kind} {link.source}{where}" + (
-        f"  [{'; '.join(extra)}]" if extra else ""
-    )
-
-
 @playbill_group.command("get")
 @click.argument("ref")
 @click.option(
@@ -6420,124 +6423,6 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
     )
 
 
-def _get_value_text(
-    value: object,
-    *,
-    width: int = GET_CLI_VALUE_WIDTH,
-    evidence_hint: bool = True,
-    claim: object = None,
-) -> str:
-    """A value as the CLI previews it; ``claim`` (one Claim ID) makes a cut name its read."""
-
-    return get_value_display(
-        value,
-        width=width,
-        evidence_hint=evidence_hint,
-        claim=claim if isinstance(claim, str) else None,
-    ).text
-
-
-_WHY_SUMMARY_MAX_ITEMS = 5
-
-
-def _why_scalar_text(value: object) -> str:
-    text = str(value)
-    return _public_name(text) if "playbill." in text else text
-
-
-def _why_summary_lines(value: Any, *, key: str | None = None, depth: int = 0) -> list[str]:
-    """``get --detail why`` as a readable, bounded summary; ``--json`` keeps the whole payload.
-
-    The served explanation is a deeply nested typed envelope (law evidence,
-    verdict detail, admission accounts, source handles, ...); printed as raw
-    JSON it runs to hundreds of lines. This walks it generically -- every key
-    still appears, nothing is renamed -- but bounds each list to a handful of
-    items so the common case is a short, readable summary instead of a dump.
-    """
-
-    indent = "  " * depth
-    if isinstance(value, Mapping):
-        items = [(k, v) for k, v in value.items() if k != "tag" and v not in (None, [], {}, ())]
-        if not items:
-            return []
-        lines = [] if key is None else [f"{indent}{key}:"]
-        for item_key, item_value in items:
-            lines.extend(_why_summary_lines(item_value, key=item_key, depth=depth + 1))
-        return lines
-    if isinstance(value, list | tuple):
-        if not value:
-            return []
-        shown = value[:_WHY_SUMMARY_MAX_ITEMS]
-        overflow = len(value) - len(shown)
-        if all(isinstance(item, Mapping) for item in shown):
-            header = [] if key is None else [f"{indent}{key} ({len(value)}):"]
-            lines = list(header)
-            flat = all(
-                not isinstance(v, Mapping | list | tuple) for item in shown for v in item.values()
-            )
-            for item in shown:
-                if flat:
-                    # Every field is a scalar: one joined line per item, as
-                    # get's other card rendering already does.
-                    lines.append(
-                        f"{indent}  " + "  ".join(_why_scalar_text(v) for v in item.values())
-                    )
-                else:
-                    lines.extend(_why_summary_lines(item, depth=depth + 1))
-            if overflow:
-                lines.append(f"{indent}  ... and {overflow} more")
-            return lines
-        rendered = ", ".join(_why_scalar_text(item) for item in shown)
-        if overflow:
-            rendered += f", ... and {overflow} more"
-        return [f"{indent}{key}: {rendered}" if key is not None else f"{indent}{rendered}"]
-    text = _why_scalar_text(value)
-    return [f"{indent}{key}: {text}" if key is not None else f"{indent}{text}"]
-
-
-_ATTESTATION_COUNT_WORDS = {
-    "cites_admitted_capture": "yes (cites Captures this Claim admits)",
-    "consequence_policy": "yes (consequence policy rule {rule})",
-    "cites_no_capture": "no (cites no Capture)",
-    "capture_not_admitted": "no (cites a Capture this Claim does not admit)",
-    "not_accepted": "no (recorded, not accepted: the verdict reads accepted attestations)",
-    "not_current": "no (not current)",
-}
-
-
-def _attestation_counts_text(attestation: Any) -> str:
-    """Whether one attestation counts toward the Claim's verdict, and why, in words."""
-
-    return _ATTESTATION_COUNT_WORDS[attestation.counts_reason].format(rule=attestation.rule)
-
-
-_UNLOCATED_OWN_WORDS_SOURCES = frozenset({"unknown", COORDINATOR_SELF_SOURCE_IDENTITY})
-
-
-def _citation_label(capture: Any) -> str:
-    """What a cited Capture is, in words, and whether the verdict reads it.
-
-    Own words say how much text they hold, and own words found in a workspace
-    file name it: their source is the file's logical id, where unlocated own
-    words name their producer (a qualified ``Principal:``) or nothing. A copy
-    that only records where cited text sits reads as that location, never as
-    rejected evidence.
-    """
-
-    status = capture.status.replace("_", " ")
-    if capture.origin == "self_source":
-        source = str(capture.source or "")
-        located = bool(source) and ":" not in source
-        located = located and source not in _UNLOCATED_OWN_WORDS_SOURCES
-        where = f" in {_public_name(source)}" if located else ""
-        size = "" if capture.byte_length is None else f" ({capture.byte_length} bytes)"
-        return f"own words{where}{size}: {status}"
-    if capture.role == "copy":
-        where = f"location in {_public_name(capture.source)}"
-        return where if capture.status == "not_evidence" else f"{where}: {status}"
-    return f"{capture.role}: {status}"
-
-
 def _stale_claim_evidence_erased(request: Any, result: Any) -> bool:
     """Whether a stale Claim card reads stale because a cited Capture's body was erased.
 
@@ -6563,309 +6448,37 @@ def _stale_claim_evidence_erased(request: Any, result: Any) -> bool:
 
 
 def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
-    """Values first, per kind; ``--json`` carries the whole structured result.
+    """Print one ``get`` answer through the shared renderer; ``--json`` carries it whole.
 
     ``evidence_erased`` marks a stale Claim's verdict as read from erased evidence.
     """
 
-    if result.card is not None:
-        card = result.card.model_dump(
-            mode="json", by_alias=result.kind in {"procedure", "capability"}
+    text = render_get(result, evidence_erased=evidence_erased)
+    if text is None:
+        _emit_json(result.proof)
+        return
+    body = getattr(result, "body", None)
+    if body is None:
+        click.echo(text)
+        return
+    click.echo(text, nl=False)
+    if body.range is not None and body.range.end < body.size:
+        following = min(body.size, 2 * body.range.end - body.range.start)
+        click.echo(
+            f"\n(bytes {body.range.start}:{body.range.end} of {body.size}; next: "
+            f"--range {body.range.end}:{following})",
+            err=True,
         )
-        if isinstance(card.get("evidence"), list):
-            card["evidence"] = [_public_name(str(name)) for name in card["evidence"]]
-        for rule in card.get("evidence_rules") or ():
-            if isinstance(rule, dict) and isinstance(rule.get("contracts"), list):
-                rule["contracts"] = [_public_name(str(name)) for name in rule["contracts"]]
-        nexts = card.pop("next", [])
-        if result.kind == "claim":
-            click.echo(
-                f"{card['subject']}  {card['predicate']} = "
-                f"{_get_value_text(card['value'], claim=card.get('claim'))}"
-            )
-            click.echo(
-                f"{card['claim']}  verdict={card['verdict']}"
-                + (" (evidence erased)" if evidence_erased else "")
-                + f" status={card['status']} "
-                f"revision={card['revision']}"
-                + (f" accepted={card['accepted']}" if card.get("accepted") else "")
-            )
-            period = _effective_text(result.card.effective_from, result.card.effective_until)
-            if period:
-                click.echo(period)
-            for contender in card.get("contenders", []):
-                click.echo(
-                    f"  contender {contender['claim']} = "
-                    f"{_get_value_text(contender['value'], claim=contender['claim'])} "
-                    f"[{contender['verdict']}]"
-                )
-        elif result.kind == "subject":
-            click.echo(
-                f"{card['subject']}  ({card['lifecycle']}, {card['incoming_count']} incoming)"
-            )
-            # A pair's ends, then its fields, then the pairs it is an end of.
-            ends = card.get("ends", ())
-            rows = card["claims"]
-            width = max(
-                (len(row["predicate"]) for row in rows),
-                default=0,
-            )
-            width = max([width, *(len(end["part"]) for end in ends)])
-            for end in ends:
-                flags = f"  [{', '.join(end['flags'])}]" if end.get("flags") else ""
-                claim = f"  {end['claim']}" if end.get("claim") else ""
-                click.echo(f"  {end['part'].ljust(width)}  -> {end['subject']}{claim}{flags}")
-            for row in rows:
-                flags = f"  [{', '.join(row['flags'])}]" if row["flags"] else ""
-                # A field holding only nones has no value to show; each none
-                # (an inverse Claim) is listed under it, never as a value.
-                shown = (
-                    _get_value_text(row["value"], claim=row["claim"])
-                    if row["claim"]
-                    else "(no value)"
-                )
-                click.echo(f"  {row['predicate'].ljust(width)}  {shown}{flags}")
-                for none in row.get("nones", ()):
-                    unit = "" if none.get("of") is None else f" of {_get_value_text(none['of'])}"
-                    marks = f", {', '.join(none['flags'])}" if none.get("flags") else ""
-                    click.echo(
-                        f"  {''.ljust(width)}  none{unit}  {none['claim']} "
-                        f"[{none['verdict']}{marks}]"
-                    )
-            for group in card.get("pairs", ()):
-                more = ", ..." if group.get("more") else ""
-                hidden = f"  ({group['hidden']} hidden)" if group.get("hidden") else ""
-                click.echo(
-                    f"pairs {group['kind']} by {group['part']}: "
-                    + (", ".join(group["pairs"]) or "-")
-                    + more
-                    + hidden
-                )
-            for item in card.get("pending", ()):
-                # Not accepted yet: the fields above keep their accepted values.
-                click.echo(
-                    f"pending {item['proposal']}: {', '.join(item['fields'])} (by {item['by']})"
-                )
-        else:
-            for key, value in card.items():
-                if key == "nodes" and result.kind == "procedure_run" and value:
-                    click.echo("nodes:")
-                    for node in value:
-                        click.echo("  " + _run_node_line(node))
-                    continue
-                if key == "authored" and result.kind == "procedure" and value is not None:
-                    from cruxible_client.contracts.refs import concise
-
-                    # Review rendering: each typed reference shown as its $... text.
-                    click.echo(json.dumps(concise(value), ensure_ascii=False, indent=2))
-                    continue
-                if value in (None, [], {}):
-                    continue
-                if key == "operations" and result.kind == "provider":
-                    click.echo("operations:")
-                    for row in value:
-                        click.echo("  " + _provider_operation_line(row))
-                    continue
-                if isinstance(value, list) and all(isinstance(item, dict) for item in value):
-                    click.echo(f"{key}:")
-                    for item in value:
-                        click.echo("  " + "  ".join(str(part) for part in item.values()))
-                    continue
-                if isinstance(value, dict):
-                    value = "  ".join(
-                        f"{name}={', '.join(map(str, part)) if isinstance(part, list) else part}"
-                        for name, part in value.items()
-                    )
-                if isinstance(value, list):
-                    # Names are never cut: a truncated name is not a usable reference.
-                    click.echo(f"{key}: {printable(', '.join(map(str, value)))}")
-                    continue
-                click.echo(f"{key}: {_get_value_text(value, width=200, evidence_hint=False)}")
-        if card.get("flags"):
-            click.echo(f"flags: {', '.join(card['flags'])}")
-        for step in nexts:
-            click.echo(f"next: {step}")
-        return
-    if result.evidence is not None:
-        # Evidence carries the whole value; a summary card cuts a long one.
-        whole = result.evidence.model_dump(mode="json")["value"]
-        if isinstance(whole, str):
-            click.echo(f"value: {printable(whole)}")
-        else:
-            click.echo(f"value: {printable(json.dumps(whole, ensure_ascii=False))}")
-        for capture in result.evidence.captures:
-            erased = capture.erased
-            click.echo(
-                f"capture {capture.capture}  {_public_name(capture.contract)} "
-                f"v{capture.version}  source={_public_name(capture.source)}  "
-                f"observed={capture.observed_at.isoformat()}  "
-                f"{_citation_label(capture)}"
-                + (
-                    ""
-                    if erased is None
-                    else f"  body erased {erased.at.isoformat()} by {printable(erased.by)}: "
-                    f"{printable(erased.because)}"
-                )
-            )
-        for attestation in result.evidence.attestations:
-            click.echo(
-                f"attestation {attestation.stance} by {attestation.principal} "
-                f"at {attestation.at.isoformat()}  "
-                f"{'accepted' if attestation.record == 'accepted' else 'recorded'}  "
-                f"counts toward verdict: {_attestation_counts_text(attestation)}"
-            )
-        if result.evidence.rationale:
-            click.echo(f"rationale: {printable(result.evidence.rationale)}")
-        return
-    if result.history is not None:
-        _echo_history(result.history)
-        return
-    if result.runs is not None:
-        if not result.runs.runs:
-            click.echo(f"(no runs of {result.runs.line})")
-        for run in result.runs.runs:
-            click.echo(
-                f"{run.run}  {run.status}  started {run.started_at.isoformat()}  "
-                f"nodes_done={run.nodes_done}  {run.procedure}"
-            )
-        return
-    if result.backlinks is not None:
-        if not result.backlinks.links:
-            click.echo(f"(no backlinks into {result.backlinks.target})")
-        for link in result.backlinks.links:
-            click.echo(_backlink_line(link))
-        return
-    if result.pairs is not None:
-        if not result.pairs.groups:
-            click.echo("(no pairs name this Subject)")
-        for group in result.pairs.groups:
-            for pair in group.pairs:
-                click.echo(f"{pair}  {group.kind}  by {group.part}")
-            if group.hidden:
-                click.echo(f"({group.hidden} hidden {group.kind} by {group.part})")
-        return
-    if result.incoming is not None:
-        if not result.incoming.claims:
-            click.echo("(nothing points at this Subject)")
-        for row in result.incoming.claims:
-            qualifier = "" if row.qualifier is None else f"[{row.qualifier}]"
-            click.echo(f"{row.subject}  {row.predicate}{qualifier}  {row.claim}")
-        return
-    if result.body is not None:
-        body = result.body
-        click.echo(body.text if body.text is not None else body.content_base64 or "", nl=False)
-        if body.range is not None and body.range.end < body.size:
-            following = min(body.size, 2 * body.range.end - body.range.start)
-            click.echo(
-                f"\n(bytes {body.range.start}:{body.range.end} of {body.size}; next: "
-                f"--range {body.range.end}:{following})",
-                err=True,
-            )
-        return
-    if result.why is not None:
-        for line in _why_summary_lines(result.why) or ["(nothing to explain)"]:
-            click.echo(line)
-        if getattr(result, "reason", None) is not None:
-            _echo_proposed_reason(result.reason)
-        return
-    _emit_json(result.proof)
-
-
-def _history_value(value: Any) -> str:
-    return _get_value_text(value, width=GET_CLI_HISTORY_VALUE_WIDTH)
-
-
-def _reason_text(reason: Any) -> str:
-    """One revision's reason on one escaped line: its item's words, else its change set's."""
-
-    if reason.kind == "procedure_item":
-        text = f"{printable(reason.reason)}  (Procedure {reason.procedure}, run {reason.run})"
-    else:
-        text = printable(reason.text)
-    return text + ("  (truncated)" if reason.truncated else "")
-
-
-def _effective_text(start: datetime | None, end: datetime | None) -> str:
-    """A Claim's effective period as ``effective <from>..<until>``; empty when it has none."""
-
-    if start is None and end is None:
-        return ""
-    return "effective " + "..".join("" if at is None else at.isoformat() for at in (start, end))
 
 
 def _echo_history(history: Any) -> None:
-    """Revisions newest first; a Subject's field events grouped by field, each its timeline."""
-
-    for revision in history.revisions:
-        value = "" if revision.value is None else f"  = {_history_value(revision.value)}"
-        change = "" if revision.change is None else f"  {revision.change}"
-        if revision.retirement is not None:
-            change += f" ({revision.retirement})"
-        period = _effective_text(revision.effective_from, revision.effective_until)
-        click.echo(
-            f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
-            f"{revision.accepted}  by {revision.actor or '-'}{change}{value}"
-            + (f"  {period}" if period else "")
-        )
-        if revision.reason is not None:
-            click.echo(f"    reason: {_reason_text(revision.reason)}")
-        for step in revision.next:
-            click.echo(f"next: {step}")
-    for review in getattr(history, "measurement_reviews", ()):
-        click.echo(f"{review.measurement_name}: standing={review.standing_resolution_id or 'none'}")
-        for judgment in review.history:
-            click.echo(
-                f"  {judgment.resolution_id}: {judgment.verdict} by {judgment.reviewer_id} "
-                f"at {judgment.recorded_at.isoformat()}  reason: {judgment.reason}"
-            )
-        if review.history_truncated:
-            click.echo(f"  showing {len(review.history)} of {review.history_total} judgments")
-    if history.kind != "subject":
-        return
-    by_field: dict[str, list[Any]] = {}
-    for event in history.events:
-        by_field.setdefault(event.field, []).append(event)
-    for name, events in by_field.items():
-        click.echo(printable(name))
-        for event in events:
-            if event.change == "changed":
-                what = f"changed  {_history_value(event.before)} -> {_history_value(event.value)}"
-            elif event.change == "retired":
-                ended = "" if event.retirement is None else f" ({event.retirement})"
-                what = f"retired{ended}  {_history_value(event.value)}"
-            elif event.change == "rebound":
-                what = (
-                    f"rebound  {_history_value(event.value)}  "
-                    f"({', '.join(event.replaced) or '-'} -> {', '.join(event.by) or '-'})"
-                )
-            else:
-                what = f"{event.change}  {_history_value(event.value)}"
-                if getattr(event, "contended", False):
-                    what += "  (contends with a live value)"
-            click.echo(
-                f"  seq {event.sequence}  {event.git_oid}  {event.accepted}  "
-                f"by {event.actor or '-'}  {what}  [{event.claim}]"
-            )
-            if event.reason is not None:
-                click.echo(f"      reason: {_reason_text(event.reason)}")
-            for step in event.next:
-                click.echo(f"      next: {step}")
+    for line in history_lines(history):
+        click.echo(line)
 
 
 def _echo_proposed_reason(reason: Any) -> None:
-    """The Procedure item's own reason for the accepted revision, and who proposed it.
-
-    Authored text goes through ``printable``: a reason cannot forge a line of
-    daemon output, and a multi-line reason stays one escaped line.
-    """
-
-    click.echo(
-        f"reason: {printable(reason.reason)}" + ("  (truncated)" if reason.truncated else "")
-    )
-    click.echo(
-        f"proposed by {printable(reason.procedure)} run {printable(reason.run)} "
-        f"terminal {printable(reason.terminal)} in proposal {printable(reason.proposal)}"
-    )
+    for line in proposed_reason_lines(reason):
+        click.echo(line)
 
 
 @playbill_group.group("block")
@@ -7998,128 +7611,6 @@ def _echo_source_observations(result: contracts.ProcedureRunState) -> None:
     for node in result.nodes:
         click.echo("Node " + _run_node_line(node.model_dump(mode="json")))
     _echo_terminal_egress(result)
-
-
-def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}{'' if count == 1 else 's'}"
-
-
-def _node_summary_text(summary: Mapping[str, Any]) -> str:
-    """One node's run summary as a compact phrase: counts only, never values."""
-
-    kind = summary.get("kind")
-    if kind == "extract":
-        parts = [_plural(summary["records"], "record")]
-        for name, noun in (
-            ("invalid_records", "invalid record"),
-            ("duplicates", "duplicate"),
-            ("invalid_fields", "invalid field"),
-        ):
-            if summary.get(name):
-                parts.append(_plural(summary[name], noun))
-        check = summary.get("complete_when")
-        if isinstance(check, Mapping):
-            parts.append(
-                f"complete_when {check.get('observed')}/{check.get('expected')}"
-                + ("" if check.get("held") else " not held")
-            )
-        if not summary.get("complete"):
-            parts.append("incomplete")
-        return ", ".join(parts)
-    if kind == "transform":
-        rows_in, rows_out = summary.get("rows_in"), summary.get("rows_out")
-        return (
-            f"{summary.get('transform_kind')} "
-            f"{'-' if rows_in is None else rows_in} -> "
-            f"{'1 value' if rows_out is None else _plural(rows_out, 'row')}"
-        )
-    if kind == "read":
-        return _plural(summary["rows"], "row")
-    if kind == "call":
-        digests = summary.get("capture_digests", ())
-        shown = " ".join(capture_handle(digest) for digest in digests)
-        return _plural(summary["captures"], "capture") + (f" {shown}" if shown else "")
-    if kind == "guard":
-        operands = []
-        for operand in summary.get("operands", ()):
-            # A side that is not a number or a boolean is never carried: "?".
-            left, right = (
-                json.dumps(operand[side]) if side in operand else "?" for side in ("left", "right")
-            )
-            operator = operand["operator"]
-            operands.append(
-                f"{operator}={left}"
-                if operator in {"present", "absent"}
-                else (f"{left} {operator} {right}")
-            )
-        more = summary.get("operands_truncated", 0)
-        shown = "; ".join(operands) + (f"; +{more} more" if more else "")
-        return f"took {summary['branch']}" + (f" ({shown})" if shown else "")
-    if kind == "claims":
-        parts = [
-            f"{summary[name]} {label}"
-            for name, label in (
-                ("written", "written"),
-                ("revised", "revised"),
-                ("inverse_written", "inverse"),
-                ("subjects_created", "subjects created"),
-                ("re_observed", "re-observed"),
-                ("no_op", "no-op"),
-                ("retired", "retired"),
-                ("surfaced", "surfaced"),
-                ("downgraded", "downgraded"),
-            )
-            if summary.get(name)
-        ]
-        refused = summary.get("reobservations_refused") or {}
-        if refused:
-            parts.append(
-                "re-observation not recorded "
-                + ", ".join(f"{reason}={count}" for reason, count in sorted(refused.items()))
-            )
-        skipped = summary.get("skipped") or {}
-        if skipped:
-            parts.append(
-                "skipped "
-                + ", ".join(f"{reason}={count}" for reason, count in sorted(skipped.items()))
-            )
-        return (", ".join(parts) or "nothing") + f"; {summary.get('delivery')}"
-    if kind in {"emit_capture", "post_inbox"}:
-        unposted = summary.get("unposted", 0)
-        return f"{summary['emitted']} emitted" + (f", {unposted} unposted" if unposted else "")
-    if kind == "halt":
-        return f"halted ({summary['reason']})" if summary.get("reason") else "halted"
-    if kind == "repeat":
-        return _plural(summary["attempts"], "attempt")
-    return str(kind)
-
-
-def _provider_operation_line(row: dict[str, Any]) -> str:
-    """One operation of a Provider card: name, signature, what it serves, where its code is."""
-
-    source = row["source"]
-    where = source["path"]
-    if source.get("repository"):
-        where += f" ({source['repository']}" + (
-            f" at {source['revision'][:12]})" if source.get("revision") else ")"
-        )
-    refusals = ", ".join(
-        code + (" (absorbable)" if code in row.get("absorbable", ()) else "")
-        for code in row.get("refusals", ())
-    )
-    return (
-        f"{row['operation']}  {row['input']} -> {row['output']} ({row['effect']})  "
-        f"serves {', '.join(row['serves'])}\n    {printable(row['description'])}\n"
-        f"    source {where}" + (f"\n    refuses {refusals}" if refusals else "")
-    )
-
-
-def _run_node_line(node: Mapping[str, Any]) -> str:
-    """``<node> <kind> <verdict>: <summary>`` for one finished node."""
-
-    head = f"{node.get('node')} {node.get('kind') or '?'} {node.get('verdict') or '?'}"
-    summary = node.get("summary")
-    return head + (f": {_node_summary_text(summary)}" if isinstance(summary, Mapping) else "")
 
 
 #: A delivered proposal's changed item paths printed before the rest are counted.
@@ -9369,245 +8860,20 @@ def next_work(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    _echo_next_status(result.status)
-    if not result.items:
-        click.echo(
-            "No changes since the requested queue digest."
-            if result.delta_since is not None
-            else "No repair work in the observed domains."
-        )
-    removed_ids = frozenset(result.removed_item_ids)
-    for item in result.items:
-        change = (
-            "removed  "
-            if result.delta_since is not None and item.item_id in removed_ids
-            else "added  "
-            if result.delta_since is not None
-            else ""
-        )
-        row = f"{change}{item.severity}  {item.reason}  {item.subject_identity}"
-        about = _next_claim_about(item)
-        if about is not None:
-            row += f"  ({about})"
-        if item.repair is None:
-            author = item.detail.get("actor_id") if isinstance(item.detail, dict) else None
-            needs = _next_requirement_hint(
-                item.repair_requires, author=author if isinstance(author, str) else None
-            )
-            click.echo(row + ("" if output_brief else f"  repair withheld: {needs}"))
-            if not output_brief:
-                for finding in item.findings:
-                    click.echo(
-                        f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}"
-                    )
-            continue
-        if output_brief:
-            click.echo(row + (f"  next={item.repair.command}" if item.repair.command else ""))
-            continue
-        click.echo(f"{row}  next={item.repair.operation}")
-        for line in (*_next_run_failure_lines(item), *_next_input_lines(item)):
-            click.echo(f"  {line}")
-        click.echo(f"  repair: {_next_repair_hint(item.repair)}")
-        for alternative in item.repair.alternatives:
-            click.echo(f"  or: {_next_repair_hint(alternative)}")
-        operands = dict.fromkeys(
-            (
-                *item.repair.operands_to_add,
-                *(op for alt in item.repair.alternatives for op in alt.operands_to_add),
+    click.echo(
+        "\n".join(
+            next_lines(
+                status=result.status,
+                items=result.items,
+                delta_since=result.delta_since,
+                removed_item_ids=result.removed_item_ids,
+                unobserved=next_unobserved_reasons(result.unobserved_domains, Path(workspace_root)),
+                brief=output_brief,
+                total_items=result.total_items,
+                next_cursor=result.next_cursor,
             )
         )
-        if operands:
-            click.echo(
-                "  fill in: " + ", ".join(_NEXT_OPERAND_PLACEHOLDER_TEXT[op] for op in operands)
-            )
-        for finding in item.findings:
-            click.echo(f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}")
-    unobserved = _next_unobserved_reasons(result.unobserved_domains, Path(workspace_root))
-    if unobserved and not output_brief:
-        click.echo("Unobserved: " + "; ".join(unobserved))
-    if result.next_cursor is not None:
-        click.echo(
-            f"Showing {len(result.items)} of {result.total_items} rows. "
-            f"Next: --cursor {result.next_cursor}"
-        )
-
-
-#: What each placeholder a repair command leaves (`operands_to_add`) stands for.
-_NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
-    "because": "TEXT (why, in your words)",
-    "file": "FILE#ANCHOR (the file and anchor holding the new text)",
-    "capture": "CAP (the fresh Capture's handle)",
-}
-
-
-def _next_unobserved_reasons(domains: Sequence[str], workspace_root: Path) -> list[str]:
-    """Each unobserved domain with why, leaving out a domain there is nothing to observe in.
-
-    Workspace sources are observed through the file catalog (``files.yaml``)
-    and projections through the markers its entries carry: with no catalog,
-    neither has anything to observe and neither is named.
-    """
-
-    from cruxible_client.authoring.selectors import WorkspaceFiles
-    from cruxible_client.contracts.workspace_layout import workspace_path
-
-    workspace = workspace_root.expanduser()
-    catalog_present = any(
-        path.is_file()
-        for path in (workspace_path(workspace, "files.yaml"), workspace / "files.yaml")
     )
-    sources: Any = None
-    if catalog_present:
-        try:
-            sources = WorkspaceFiles(workspace)
-        except (OSError, ValueError):
-            sources = None
-    reasons = []
-    for domain in domains:
-        if domain not in ("workspace_sources", "workspace_projections"):
-            reasons.append(domain)
-        elif not catalog_present:
-            continue
-        elif sources is None:
-            reasons.append(f"{domain} (the file catalog could not be read)")
-        elif domain == "workspace_sources":
-            reasons.append(f"{domain} (the access profile does not cover instance sources)")
-        elif sources.file_entries or sources.procedure_projection_entries:
-            reasons.append(f"{domain} (no projection markers were read at this coordinate)")
-    return reasons
-
-
-def _next_input_lines(item: contracts.NextItem) -> list[str]:
-    """A missing Line input's row: the file, its parameter, its description as written."""
-
-    detail = item.detail if isinstance(item.detail, dict) else {}
-    if item.reason != "line_input_missing" or not isinstance(detail.get("relative_path"), str):
-        return []
-    parameter = detail.get("parameter")
-    lines = [
-        f"needs file {detail['relative_path']}"
-        + (f" (parameter {parameter})" if isinstance(parameter, str) else "")
-    ]
-    if isinstance(detail.get("description"), str):
-        lines.append(f"  {detail['description']}")
-    return lines
-
-
-def _next_run_failure_lines(item: contracts.NextItem) -> list[str]:
-    """A failed Line run's row: the run, its failure code and its cause, if recorded."""
-
-    detail = item.detail if isinstance(item.detail, dict) else {}
-    if item.reason != "line_run_failed" or not isinstance(detail.get("run_id"), str):
-        return []
-    lines = [
-        f"run {detail['run_id']} failed"
-        + (f" ({detail['failure_code']})" if detail.get("failure_code") else "")
-        + (f" at {detail['finalized_at']}" if detail.get("finalized_at") else "")
-    ]
-    cause = detail.get("cause")
-    if isinstance(cause, dict):
-        lines.append(
-            f"Cause: {cause.get('node_id')}: "
-            f"{cause.get('kind') or cause.get('provider_code')}: {cause.get('message')}"
-        )
-    return lines
-
-
-def _next_claim_about(item: contracts.NextItem) -> str | None:
-    """What a Claim row is about, as ``kind/id field``: its Subject and predicate.
-
-    A proposal row names every ``kind/id field`` its Claims would write.
-    """
-
-    touches = item.detail.get("touches") if isinstance(item.detail, dict) else None
-    if isinstance(touches, list) and touches:
-        return "; ".join(str(touch) for touch in touches)
-    predicate = item.detail.get("predicate") if isinstance(item.detail, dict) else None
-    subject = next((ref for ref in item.related_identities if ref.startswith("subjects/")), None)
-    if not isinstance(predicate, str) or subject is None:
-        return None
-    return f"{subject.removeprefix('subjects/').removesuffix('.json')} {predicate}"
-
-
-def _next_requirement_hint(
-    requires: contracts.NextRepairRequirement | None, *, author: str | None = None
-) -> str:
-    """What running a withheld repair needs, in one phrase.
-
-    ``author`` names the actor an ``author``-gated repair (a stale proposal's
-    readmit) waits on, from the row's ``actor_id``.
-    """
-
-    if requires is None:
-        return "this caller cannot run it"
-    from cruxible_core.service.discovery.next import _REPAIR_COMMAND_PATHS
-
-    path = _REPAIR_COMMAND_PATHS.get(requires.operation)
-    # Name the verb a CLI caller runs; the MCP tool name only when no verb maps.
-    label = requires.tool if path is None else f"cruxible {path}"
-    needs = []
-    if "tier" in requires.because:
-        needs.append(f"the {requires.tier} tier")
-    if "profile" in requires.because:
-        needs.append(f"the {requires.profile} MCP tool profile")
-    if "author" in requires.because:
-        needs.append(f"the proposal's author ({author or 'unknown actor'})")
-    refusal = requires.authoring_refusal
-    if "authoring" in requires.because and refusal is not None:
-        # The identity repair comes first: no tier helps a caller that cannot author.
-        needs.insert(0, f"a caller that can author ({refusal.code}: {refusal.detail})")
-    return f"{label} needs " + " and ".join(needs)
-
-
-def _next_repair_hint(repair: contracts.NextRepair) -> str:
-    """The runnable command, or else the operation and the change it must make."""
-
-    if repair.command is not None:
-        return repair.command
-    operation = "hand edit" if repair.operation == "hand_edit" else repair.operation
-    return f"{operation} {repair.target}: {repair.required_change}"
-
-
-#: Facet states the status header shows; healthy and unobserved facets stay quiet.
-_NEXT_STATUS_ATTENTION = {
-    "instance": {"decommissioned"},
-    "floor": {"missing", "stale"},
-    "ledger_mirror": {"behind", "never_published"},
-    "provider_lane": {"unavailable"},
-    "procedure_catalog": {"missing"},
-    "compiler": {"upgrade_available"},
-    "line_dispatch": {"due"},
-    "consumers": {"lagging"},
-    "triggers": {"unscheduled"},
-}
-
-
-def _echo_next_status(status: contracts.NextStatus) -> None:
-    """Print the environment facets that need attention above the work rows."""
-
-    if status.blocking:
-        click.echo("BLOCKING: this instance refuses every write.")
-    for facet, states in _NEXT_STATUS_ATTENTION.items():
-        health: contracts.NextHealth = getattr(status, facet)
-        if health.state not in states:
-            continue
-        repair = health.repair
-        hint = None if repair is None else repair.command or repair.required_change
-        if health.repair_hidden:
-            hint = f"(repair withheld: {_next_requirement_hint(health.repair_requires)})"
-        label = facet.replace("_", " ")
-        click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
-    arms = (
-        status.consumers.detail.get("line_enablements")
-        if isinstance(status.consumers.detail, dict)
-        else None
-    )
-    if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
-        click.echo(
-            f"Status: line enablements stalled={arms.get('stalled', 0)} "
-            f"stopped={arms.get('stopped', 0)}"
-            "  next=cruxible orient --section lines"
-        )
 
 
 @playbill_group.group("curation")

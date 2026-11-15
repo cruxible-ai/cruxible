@@ -1410,6 +1410,40 @@ def workspace_vocabulary_freshness(
     )
 
 
+def next_unobserved_reasons(domains: Sequence[str], workspace_root: Path) -> list[str]:
+    """Each unobserved domain with why, leaving out a domain there is nothing to observe in.
+
+    Workspace sources are observed through the file catalog (``files.yaml``)
+    and projections through the markers its entries carry: with no catalog,
+    neither has anything to observe and neither is named.
+    """
+
+    workspace = workspace_root.expanduser()
+    catalog_present = any(
+        path.is_file()
+        for path in (workspace_path(workspace, "files.yaml"), workspace / "files.yaml")
+    )
+    sources: Any = None
+    if catalog_present:
+        try:
+            sources = WorkspaceFiles(workspace)
+        except (OSError, ValueError):
+            sources = None
+    reasons = []
+    for domain in domains:
+        if domain not in ("workspace_sources", "workspace_projections"):
+            reasons.append(domain)
+        elif not catalog_present:
+            continue
+        elif sources is None:
+            reasons.append(f"{domain} (the file catalog could not be read)")
+        elif domain == "workspace_sources":
+            reasons.append(f"{domain} (the access profile does not cover instance sources)")
+        elif sources.file_entries or sources.procedure_projection_entries:
+            reasons.append(f"{domain} (no projection markers were read at this coordinate)")
+    return reasons
+
+
 def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     """Observe the configured floor and every resolvable installed catalog file.
 
@@ -2205,6 +2239,7 @@ __all__ = [
     "WorkspaceDirectoryConflict",
     "WorkspaceError",
     "configured_floor_path",
+    "next_unobserved_reasons",
     "observe_next_workspace",
     "observe_next_workspace_with_coverage",
     "observe_projection_coverage",

@@ -84,6 +84,7 @@ from cruxible_client.authoring.source_map import (
     entries_for_keywords,
 )
 from cruxible_client.authoring.workspace import (
+    next_unobserved_reasons,
     observe_next_workspace,
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
@@ -615,6 +616,23 @@ class KnowledgeCard:
     identity: str
     coordinate: AcceptedCoordinate
     value: object
+    #: The answer the card was read from, kept for ``str()`` (no read happens there).
+    _result: GetResult | None = field(default=None, repr=False, compare=False)
+
+    def __str__(self) -> str:
+        """The answer as ``cruxible get`` prints it; ``repr()`` stays the model.
+
+        A Claim summary is the typed view the SDK reads from the Claim's proof,
+        so it prints that view's own lines; a proof prints as its repr, as the
+        CLI prints it as JSON. Reads nothing.
+        """
+
+        from cruxible_client.contracts.get_text import claim_view_lines, render_get
+
+        if isinstance(self.value, ClaimView):
+            return "\n".join(claim_view_lines(self.value))
+        text = None if self._result is None else render_get(self._result)
+        return repr(self) if text is None else text
 
     @property
     def ref(self) -> TypedRef:
@@ -657,9 +675,21 @@ class NextPage:
     # cannot perform stays in `items` with `repair_requires` set.
     status: api.NextStatus
     attestation_head_digest: str | None = None
+    #: Why each unobserved domain was not observed, read from the workspace when
+    #: ``cx.next()`` observed it; what ``cruxible next`` prints as "Unobserved:".
+    unobserved: tuple[str, ...] = ()
 
     def __iter__(self):  # type: ignore[no-untyped-def]
         return iter(self.items)
+
+    def __str__(self) -> str:
+        """The queue as ``cruxible next`` prints it; ``repr()`` stays the model. Reads nothing."""
+
+        from cruxible_client.contracts.text_display import next_lines
+
+        return "\n".join(
+            next_lines(status=self.status, items=self.items, unobserved=self.unobserved)
+        )
 
 
 @dataclass(frozen=True)
@@ -4741,7 +4771,7 @@ class Cruxible:
                 )
                 if item is not None
             )
-        return KnowledgeCard(kind, identity, _get_coordinate(result), value)
+        return KnowledgeCard(kind, identity, _get_coordinate(result), value, result)
 
     def read_whole(self, preview: TruncatedText) -> object:
         """The whole value a ``TruncatedText`` previews, read exactly where it was previewed.
@@ -5030,6 +5060,7 @@ class Cruxible:
                 ref.address,
                 _get_coordinate(result),
                 result.card if result.card is not None else result.proof,
+                result,
             )
         return KnowledgeCard(
             RefKind.SOURCE, ref.address, ref.coordinate, entry.model_dump(mode="json")
@@ -5211,6 +5242,10 @@ class Cruxible:
             unobserved_domains=tuple(result.unobserved_domains),
             status=result.status,
             attestation_head_digest=result.attestation_head_digest,
+            # The same workspace this request observed, read here, never in str().
+            unobserved=tuple(
+                next_unobserved_reasons(result.unobserved_domains, self._workspace_root)
+            ),
         )
 
     def since(
