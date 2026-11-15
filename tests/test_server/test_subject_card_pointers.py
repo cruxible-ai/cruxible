@@ -211,6 +211,10 @@ def test_a_card_read_is_flat_in_unrelated_open_proposals(
     from tests.test_scale.test_scale_guard import RATIO, SLACK
 
     cx, instance_id = shop
+    # The app's consumer runner opens the instance through the manager, traced
+    # below, and its SQL beside a window's step-counter installs deadlocks both
+    # (a CI shard hung here to its job timeout). This test measures a card read.
+    get_playbill_manager().consumer_runner.close()
     candidates_read: list[str] = []
     original = ProposalEvidenceStore.read_candidate
 
