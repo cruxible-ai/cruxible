@@ -317,6 +317,18 @@ def test_a_write_catalogues_the_workspace_file_it_cites(playbill_http, tmp_path)
     ]
     # Catalogued now: a later citation names nothing new.
     assert cite(anchor="return None").catalogued == ()
+    # The one-change verb goes through the same workspace write.
+    (workspace / "app" / "views.py").write_text("def index(request):\n    return None\n")
+    single = cx.set(
+        f"{KIND}/wi-2",
+        "status",
+        "ready",
+        because="Read the view",
+        evidence=FileEvidence(file="app/views.py#def index"),
+    )
+    assert single.catalogued == (
+        CataloguedFile(file="app/views.py", name="doc-app-views.py", written=True),
+    )
 
     # Still refused, each with its repair: a missing file, a path outside the
     # workspace, an anchor that is not found exactly once.

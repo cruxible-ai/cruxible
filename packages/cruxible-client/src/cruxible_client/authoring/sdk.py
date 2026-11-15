@@ -264,6 +264,7 @@ from cruxible_client.contracts.write import (
     DocOp,
     Evidence,
     ExpectedValue,
+    FileEvidence,
     NoneValue,
     RebindChange,
     ReplaceSection,
@@ -280,6 +281,7 @@ from cruxible_client.contracts.write import (
     WriteRetireReason,
     WriteRole,
     WriteValue,
+    as_write_request,
     write_accept,
 )
 from cruxible_client.errors import CoreError
@@ -3921,9 +3923,10 @@ class Cruxible:
             surface="sdk",
             full_coordinate=True,
         )
-        if request.evidence is not None:
-            (change,) = observe_changes((request.change(),), workspace=self._workspace_root)
-            request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
+        if isinstance(request.evidence, FileEvidence | SectionEvidence):
+            # Through the workspace write, as add and write: it reads the cited
+            # file here and catalogues a workspace file the catalog did not name.
+            return self._write(as_write_request(request))
         return self._written(self._client.set(self._instance_id, request=request))
 
     def add(

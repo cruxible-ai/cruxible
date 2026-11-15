@@ -39,15 +39,11 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
     if path.is_file() and (
         not catalogued or not workspace_files(workspace).entries_for_path(path.resolve())
     ):
-        # One verb sends no file of its own; a write catalogues what it cites.
+        # Re-binds read a file already cited; a write citing a new file catalogues it.
         raise WriteRefusalError(
             "cruxible.doc.file_uncatalogued",
             f"{cited} is not in the workspace's file catalog",
-            repair_line=(
-                "Cite it through write (cruxible write, cruxible_write, or "
-                "cx.changes(because=...)), which catalogues it, or catalogue it first: "
-                f"cruxible files add {cited}"
-            ),
+            repair_line=f"Catalogue it first: cruxible files add {cited}",
         )
     files = workspace_files(workspace)
     if isinstance(evidence, SectionEvidence):

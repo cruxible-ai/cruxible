@@ -255,7 +255,7 @@ entries:
         encoding="utf-8",
     )
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
-    sets = _capture(monkeypatch, "set")
+    # cruxible_set with file evidence goes through the workspace write too.
     writes = _capture(monkeypatch, "write")
     evidence = {"kind": "file", "file": "notes.md#Status: done"}
 
@@ -281,10 +281,10 @@ entries:
         because="The notes say so.",
     )
 
-    observed = sets[0].evidence
+    observed = writes[0].changes[0].evidence
     assert isinstance(observed, FileEvidence) and observed.observation is not None
     assert observed.observation.source_id == "repo.notes"
-    change = writes[0].changes[0]
+    change = writes[1].changes[0]
     assert isinstance(change, SetChange) and isinstance(change.evidence, FileEvidence)
     assert change.evidence.observation == observed.observation
 
@@ -399,7 +399,6 @@ def test_a_create_key_by_field_and_a_wrong_key_shape_on_mcp(
 def test_mcp_write_catalogues_the_workspace_file_it_cites(monkeypatch, tmp_path):
     """Walkthrough S14: an MCP-only agent cites code with no catalogue step of its own."""
 
-    from cruxible_client.contracts.errors import WriteRefusalError
     from cruxible_client.contracts.write import CataloguedFile
     from cruxible_core.service.authoring.write_verbs import service_playbill_write
     from tests.core_support._write_support import KIND, caller, seed_write_surface
@@ -417,18 +416,6 @@ def test_mcp_write_catalogues_the_workspace_file_it_cites(monkeypatch, tmp_path)
 
     monkeypatch.setattr(handlers, "_get_client", lambda: Client())
     evidence = {"kind": "file", "file": "app/forms.py#def handler"}
-    # The one-change verb sends no file of its own: it names the write that does.
-    with pytest.raises(WriteRefusalError) as caught:
-        handlers.handle_playbill_set(
-            "inst_write",
-            subject=f"{KIND}/wi-1",
-            field="status",
-            value="ready",
-            because="Read the handler",
-            evidence=evidence,
-        )
-    assert caught.value.error_code == "cruxible.doc.file_uncatalogued"
-    assert "cruxible_write" in (caught.value.repair_line or "")
     outcome = handlers.handle_playbill_write(
         "inst_write",
         because="Read the handler",
@@ -447,3 +434,36 @@ def test_mcp_write_catalogues_the_workspace_file_it_cites(monkeypatch, tmp_path)
         CataloguedFile(file="app/forms.py", name="doc-app-forms.py", written=True),
     )
     assert "doc-app-forms.py" in (workspace / ".cruxible/files.yaml").read_text()
+
+
+def test_mcp_set_catalogues_the_workspace_file_it_cites(monkeypatch, tmp_path):
+    """cruxible_set with file evidence goes through the same workspace write."""
+
+    from cruxible_client.contracts.write import CataloguedFile
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+
+    (tmp_path / "state").mkdir()
+    instance, _ = seed_write_surface(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    (workspace / "app").mkdir(parents=True)
+    (workspace / "app" / "forms.py").write_text("def handler(request):\n    return None\n")
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+
+    class Client:
+        def write(self, instance_id, *, request):
+            return service_playbill_write(instance, request=request, caller=caller())
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: Client())
+    outcome = handlers.handle_playbill_set(
+        "inst_write",
+        subject=f"{KIND}/wi-1",
+        field="status",
+        value="ready",
+        because="Read the handler",
+        evidence={"kind": "file", "file": "app/forms.py#def handler"},
+    )
+    assert outcome.status == "accepted", outcome
+    assert outcome.catalogued == (
+        CataloguedFile(file="app/forms.py", name="doc-app-forms.py", written=True),
+    )

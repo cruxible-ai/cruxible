@@ -486,11 +486,29 @@ entries:
         str(workspace),
         "--dry-run",
     )
-    request = served.requests[-1]
-    assert isinstance(request.evidence, FileEvidence)
-    assert request.evidence.observation is not None
-    assert request.evidence.observation.source_id == "repo.notes"
+    # Sent through the workspace write, as write and add are.
+    evidence = served.requests[-1].changes[0].evidence
+    assert isinstance(evidence, FileEvidence)
+    assert evidence.observation is not None
+    assert evidence.observation.source_id == "repo.notes"
     assert "would" in result.output
+    # An uncatalogued workspace file is catalogued by set, as by write.
+    (workspace / "todo.txt").write_text("Title: Tidy the CLI now\n", encoding="utf-8")
+    catalogued = _run(
+        "set",
+        WI1,
+        "title",
+        "Tidy the CLI now",
+        "--because",
+        "The todo names it.",
+        "--evidence-file",
+        "todo.txt#Title: Tidy the CLI now",
+        "--workspace-root",
+        str(workspace),
+    )
+    assert catalogued.exit_code == 0, catalogued.output
+    assert "file todo.txt: catalogued as doc-todo.txt" in catalogued.output
+    assert "doc-todo.txt" in (workspace / ".cruxible" / "files.yaml").read_text()
     both = _run(
         "set",
         WI1,

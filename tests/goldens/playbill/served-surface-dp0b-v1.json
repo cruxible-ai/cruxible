@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-15:vocabulary-file-050",
-    "surface_digest": "sha256:ce3727d8e3aac8bc9b41e1722fd5d1588ce4b45d0612d2fef7960b59ba04fc68"
+    "surface_digest": "sha256:b9443ad29dae1b61850df6334d7fe64d03b89442a6024abeae4fb8985b1b4e19"
   },
   "surface": {
     "cli_leaves": [
@@ -774,7 +774,8 @@
       },
       {
         "client_operations": [
-          "set"
+          "set",
+          "write"
         ],
         "command": "set",
         "delegate": "cruxible_core.cli.commands.playbill.set_value"
@@ -2986,7 +2987,8 @@
       },
       {
         "client_operations": [
-          "set"
+          "set",
+          "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_set",
         "input_schema_digest": "sha256:c4657a8b908962fec6021ec75ef0348b31e034ee66d116362fe0b2609cd3b37f",
