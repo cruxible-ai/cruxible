@@ -50,9 +50,7 @@ def _public_members(cls: type) -> Iterator[str]:
 
 
 def _referenced_names(text: str) -> set[str]:
-    return {
-        name for heading in _HEADING.finditer(text) for name in _NAME.findall(heading["text"])
-    }
+    return {name for heading in _HEADING.finditer(text) for name in _NAME.findall(heading["text"])}
 
 
 @pytest.mark.parametrize("cls", _REFERENCED, ids=lambda cls: cls.__name__)
@@ -81,7 +79,6 @@ def test_no_entry_names_a_member_that_is_gone() -> None:
         name
         for cls in _REFERENCED
         for name in documented
-        if name.startswith(f"{cls.__name__}.")
-        and not hasattr(cls, name.split(".", 1)[1])
+        if name.startswith(f"{cls.__name__}.") and not hasattr(cls, name.split(".", 1)[1])
     )
     assert not stale, stale
