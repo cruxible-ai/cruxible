@@ -16,12 +16,17 @@ It writes the kit directory ``src/cruxible_core/kits/base/`` (``cruxible-kit.jso
 and ``artifacts/``) and ``src/cruxible_core/kits/base_kit_pin.py``, the one
 constant holding the bundled version and content digest that core checks the
 directory against. ``--check`` renders in memory and exits 1 when anything on
-disk differs; CI runs it.
+disk differs, or when the bundle breaks the record of released base kits
+(``src/cruxible_core/kits/base_kit_releases.py``: a released artifact never
+changes or disappears, and a released kit version keeps its content); CI runs
+it. Writing refuses such a bundle too. ``--release`` appends the bundle to that
+record; the release cut runs it.
 
 Usage::
 
-    python scripts/build_base_kit.py          # write the directory and the constant
-    python scripts/build_base_kit.py --check  # fail when they differ from the sources
+    python scripts/build_base_kit.py            # write the directory and the constant
+    python scripts/build_base_kit.py --check    # fail when they differ from the sources
+    python scripts/build_base_kit.py --release  # record the bundle as released
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = REPO_ROOT / "scripts" / "base_kit"
 KIT_DIRECTORY = REPO_ROOT / "src" / "cruxible_core" / "kits" / "base"
 PIN_MODULE = REPO_ROOT / "src" / "cruxible_core" / "kits" / "base_kit_pin.py"
+RELEASES_MODULE = REPO_ROOT / "src" / "cruxible_core" / "kits" / "base_kit_releases.py"
 
 PIN_TEMPLATE = '''"""The bundled base kit's version and content digest.
 
@@ -211,13 +217,61 @@ def _on_disk(directory: Path) -> dict[str, bytes]:
     }
 
 
+def _manifest_of(manifest: bytes) -> Any:
+    from cruxible_client.contracts.kits import KitManifest
+
+    return KitManifest.model_validate_json(manifest)
+
+
+def release_differences(source: Path = SOURCE) -> list[str]:
+    """How the rendered bundle breaks the record of released base kits (empty when it holds).
+
+    A released artifact never changes or disappears, and a released kit version keeps
+    its content (``cruxible_core.kits.base_kit_releases``).
+    """
+
+    from cruxible_core.kits.base_kit_releases import release_problems
+
+    _artifacts, manifest, _pin = render(source)
+    kit = _manifest_of(manifest)
+    return release_problems(kit.version, kit.content_digest, kit.digests())
+
+
+def release(source: Path = SOURCE, releases_module: Path = RELEASES_MODULE) -> str:
+    """Append the rendered bundle to the record of released base kits; the release cut's step."""
+
+    from cruxible_core.kits.base_kit_releases import (
+        BASE_KIT_RELEASES,
+        ReleasedBaseKit,
+        render_releases_module,
+    )
+
+    problems = release_differences(source)
+    if problems:
+        raise SystemExit("cannot record the release:\n  " + "\n  ".join(problems))
+    _artifacts, manifest, _pin = render(source)
+    kit = _manifest_of(manifest)
+    if any(item.version == kit.version for item in BASE_KIT_RELEASES):
+        return kit.version
+    entry = ReleasedBaseKit(
+        version=kit.version,
+        content_digest=kit.content_digest,
+        artifacts=tuple(sorted(kit.digests().items())),
+    )
+    releases_module.write_text(
+        render_releases_module((*BASE_KIT_RELEASES, entry)), encoding="utf-8"
+    )
+    return kit.version
+
+
 def differences(
     source: Path = SOURCE, directory: Path = KIT_DIRECTORY, pin_module: Path = PIN_MODULE
 ) -> list[str]:
-    """What on disk differs from what the sources render to (empty when in step)."""
+    """What on disk differs from what the sources render to, and every break of the
+    released record (empty when in step)."""
 
     artifacts, manifest, pin_text = render(source)
-    found = []
+    found = list(release_differences(source))
     held = _on_disk(directory)
     for path in sorted(set(artifacts) | set(held)):
         if path not in held:
@@ -257,7 +311,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check", action="store_true", help="Fail when the bundled kit differs from its sources."
     )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Record the bundle as released (the release cut's step): its artifacts are fixed.",
+    )
     args = parser.parse_args(argv)
+    if args.release:
+        version = release()
+        print(f"base kit {version}: recorded as released in {RELEASES_MODULE.name}")
+        return 0
     if args.check:
         found = differences()
         if found:
@@ -268,6 +331,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("base kit: in step with its sources")
         return 0
+    problems = release_differences()
+    if problems:
+        print("the base kit sources break the released record:", file=sys.stderr)
+        for line in problems:
+            print(f"  {line}", file=sys.stderr)
+        return 1
     write()
     artifacts, _manifest, _pin = render()
     print(f"base kit: {len(artifacts)} artifacts written to {KIT_DIRECTORY}")

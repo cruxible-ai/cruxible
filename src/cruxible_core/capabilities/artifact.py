@@ -5,7 +5,7 @@ The model, path, digest, parse and law live in
 core decides: the pin roles a capability's Contract pins carry in the
 projection and the dependency closure, the capability names core's builtin
 serves (the only names the law admits under ``workspace.``), and that version 1
-of a name under ``workspace.`` is exactly the bundled base kit's.
+of a name under ``workspace.`` is exactly a base kit core ships.
 """
 
 from __future__ import annotations
@@ -54,18 +54,21 @@ def capability_pins(capability: Capability) -> tuple[ArtifactPin, ...]:
 
 
 def bundled_version_problems(capability: Capability) -> tuple[LawProblem, ...]:
-    """Version 1 of a name under ``workspace.`` is accepted only as the bundled base kit's.
+    """Version 1 of a name under ``workspace.`` is accepted only as a base kit core ships.
 
-    Compared by digest with the base kit this core ships, so no caller-supplied
-    kit id stands in for it. Later versions are the adopter's to author.
+    Compared by digest with the bundled base kit and with every released one, so no
+    caller-supplied kit id stands in for it, and replaying an acceptance holds
+    whichever bundle is newest. Later versions are the adopter's to author.
     """
 
     if capability.version != 1 or not is_reserved_capability_name(capability.name):
         return ()
     from cruxible_core.kits.base_kit import bundled_base_artifact_digest
+    from cruxible_core.kits.base_kit_releases import released_artifact_digests
 
-    bundled = bundled_base_artifact_digest(capability_path(capability.name, 1))
-    if bundled is not None and capability_digest(capability).tagged == bundled:
+    path = capability_path(capability.name, 1)
+    digest = capability_digest(capability).tagged
+    if digest == bundled_base_artifact_digest(path) or digest in released_artifact_digests(path):
         return ()
     return (
         LawProblem(
