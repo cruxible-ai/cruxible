@@ -694,7 +694,14 @@ def test_evidence_capture_source_renders_its_public_name(
     [
         ("copy", "self_source", "admitted", "Principal:owner", None, "own words: admitted"),
         # Which text the own words hold: their size (a section's, or a short because).
-        ("copy", "self_source", "admitted", "Principal:owner", 722, "own words (722 bytes): admitted"),
+        (
+            "copy",
+            "self_source",
+            "admitted",
+            "Principal:owner",
+            722,
+            "own words (722 bytes): admitted",
+        ),
         # Own words found in a file name it; unlocated own words name their writer.
         ("copy", "self_source", "admitted", "docs.page", None, "own words in docs.page: admitted"),
         (

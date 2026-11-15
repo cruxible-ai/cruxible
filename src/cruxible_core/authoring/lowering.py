@@ -5177,7 +5177,12 @@ def _stage_subject_creation(
             role=role,
         )
         # The author's own words lower as a write's ``--because`` does, so the
-        # key Claim is self-asserted evidence its ClaimType admits.
+        # key Claim is self-asserted evidence its ClaimType admits. Own words
+        # found in a file stand there, as a Claim member's do: one located
+        # own-words Capture (set only when given: absent and null differ).
+        located: dict[str, Any] = (
+            {} if member.located_at is None else {"located_at": member.located_at}
+        )
         payload = (
             ClaimAuthoringPayload(
                 statement=statement,
@@ -5193,10 +5198,7 @@ def _stage_subject_creation(
                 or SelfSourceBody(
                     content_base64=base64.b64encode(rationale.encode("utf-8")).decode("ascii")
                 ),
-                # Own words found in a file stand there, as a Claim member's
-                # do: one located own-words Capture (set only when given, as
-                # absent and null are different statements).
-                **({} if member.located_at is None else {"located_at": member.located_at}),
+                **located,
             )
         )
         lowered = _lower_claim(
