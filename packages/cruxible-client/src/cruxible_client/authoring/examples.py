@@ -256,7 +256,7 @@ def procedure_mandate_example() -> ProcedureMandateInput:
     """A propose grant over the `--example line` Line, within its Procedure's caps.
 
     Only a Line that proposes or settles needs a mandate; an observe-only Line
-    (like the example Procedure's) runs without one.
+    runs without one.
     """
 
     return ProcedureMandateInput(
@@ -273,15 +273,26 @@ def procedure_mandate_example() -> ProcedureMandateInput:
 def line_example() -> LineInput:
     """A Line over the `--example procedure` Procedure.
 
-    That Procedure has no Source nodes, so the Line names no acquisition
-    rule, and it declares no params, so `parameters` is `{}` (a Line supplies
-    a Procedure's parameters; a Line run's input is empty). It only
-    observes, so it runs without a ProcedureMandate. It runs when run explicitly
-    (`line run`); `--example trigger` schedules it, and the Trigger runs it only
-    once the Line is enabled (`line enable`).
+    `parameters` supplies the Procedure's params (a Line run's input is
+    empty). Its `read` slot is left out of `bindings`, so it binds by
+    capability: core serves `workspace.file@1`. `acquisition` accepts a file
+    read at most a day ago. It states Claims, so it proposes, and needs a live
+    ProcedureMandate (`--example procedure-mandate`) before it runs or is
+    enabled. It runs when run explicitly (`line run`); `--example trigger`
+    schedules it, and the Trigger runs it only once the Line is enabled
+    (`line enable`).
     """
 
-    return LineInput(kind="line", name="replace-me", procedure_name="replace-me", parameters={})
+    return LineInput.model_validate(
+        {
+            "kind": "line",
+            "name": "replace-me",
+            "procedure_name": "replace-me",
+            "parameters": {"path": "tracker/work-items.json"},
+            "acquisition": {"listing.capture": {"max_age": "P1D"}},
+            "max_authority": "propose",
+        }
+    )
 
 
 def trigger_example() -> TriggerInput:
@@ -397,101 +408,73 @@ def claim_subject_relation_example() -> ClaimInput:
 
 
 def procedure_example() -> ProcedureInput:
-    """Shape, filter, dedupe, join and count typed records with closed transforms.
+    """Read a file, extract its records through their CaptureKind's layout, state Claims.
 
-    The one authoring form: a typed ProcedureSpec. References are ``{"$ref":
-    ...}`` objects and predicates are typed structures, never strings.
+    Every Procedure has one shape: read accepted state, call providers through
+    capability slots (fetch, then derive), extract records, and end in claims,
+    with filter/dedupe narrowing and inbox posts. This one calls the
+    ``workspace.file@1`` slot, which core serves on every instance, so its Line
+    binds with no provider installed; a ``web.fetch@1`` slot, or a derive
+    through a pure capability, is the same call step naming another slot.
+
+    The extract is thin: it names the Capture and a record set of its
+    CaptureKind's layout, which declares where the records are, their key and
+    their row Contract. It needs that CaptureKind (``project.work-items`` with a
+    layout record set ``items`` keyed by ``slug`` with a ``status`` field), a
+    ClaimType ``project.work_item.status`` that admits its Captures as
+    evidence, and the SubjectKind (``authoring example subject-kind``).
     """
 
-    def step(name: str, *path: str) -> dict[str, object]:
-        return {"$ref": "step", "step": name, **({"path": list(path)} if path else {})}
-
-    def field(name: str) -> dict[str, object]:
-        return {"$ref": "item", "path": ["fields", name]}
+    def ref(kind: str, *path: str, step: str | None = None) -> dict[str, object]:
+        return {"$ref": kind, **({"step": step} if step else {}), "path": list(path)}
 
     return ProcedureInput.model_validate(
         {
             "kind": "procedure",
             "procedure": "replace-me",
-            "description": (
-                "Shape, filter, dedupe, join and count typed records with closed transforms."
-            ),
-            "input": {},
-            "output": {"count": "int"},
+            "description": "Read the work-item file and state each item's status.",
+            "params": {"path": "string{min_len: 1, max_len: 1024}"},
+            # A slot names a capability; the Line binds it to an operation.
+            "slots": {"read": {"capability": "workspace.file@1"}},
             # Every run fits these caps; the Line's operating budget may narrow
             # them. They are a safety factor against an obviously bad run, not
             # compute management, so they stay generous.
             "hard_caps": {
-                "wall_clock": "PT30M",
-                "provider_calls": 0,
-                "capture_bytes": 0,
-                "items": 200,
+                "wall_clock": "PT10M",
+                "provider_calls": 1,
+                "capture_bytes": 1048576,
+                "items": 1000,
             },
             "steps": [
                 {
-                    "project": "adapted",
-                    "id": "adapt",
-                    "literal": {
-                        "items": [
-                            {"id": "one", "keep": True},
-                            {"id": "two", "keep": False},
-                        ]
+                    "call": "listing",
+                    "slot": "read",
+                    "input": {
+                        "logical_source": "project.tracker",
+                        "relative_path": ref("param", "path"),
                     },
-                    # The records flow as data: an intermediate step pins no Contract.
+                    "captures": {"capture": "project.work-items"},
                 },
                 {
-                    "transform": "shaped",
-                    "id": "shape",
-                    "kind": "shape",
-                    "spec": {
-                        "input": step("adapted", "items"),
-                        "fields": {
-                            "id": {"from": field("id")},
-                            "keep": {"from": field("keep")},
-                            "label": {"from": field("id")},
-                        },
+                    "extract": "items",
+                    "capture": ref("step", "capture", step="listing"),
+                    "records": "items",
+                },
+                {
+                    "claims": [
+                        {
+                            "type": "project.work_item.status",
+                            "value": ref("item", "fields", "status"),
+                            "rationale": "Stated in the work-item file.",
+                        }
+                    ],
+                    "for_each": ref("step", "records", step="items"),
+                    "subject": {
+                        "kind": "project.work_item",
+                        "key": {"slug": ref("item", "key", "slug")},
                     },
-                },
-                {
-                    "transform": "filtered",
-                    "id": "filter",
-                    "kind": "filter",
-                    "spec": {
-                        "input": step("shaped"),
-                        "where": {"op": "eq", "left": field("keep"), "right": {"literal": True}},
-                    },
-                },
-                {
-                    "transform": "deduped",
-                    "id": "dedupe",
-                    "kind": "dedupe",
-                    "spec": {"input": step("filtered"), "keys": ["id"]},
-                },
-                {
-                    "transform": "joined",
-                    "id": "join",
-                    "kind": "join",
-                    "spec": {
-                        "left": step("deduped"),
-                        "right": [{"id": "one", "rank": 1}, {"id": "two", "rank": 2}],
-                        "left_field": "id",
-                        "right_field": "id",
-                        "right_fields": {"rank": "rank"},
-                    },
-                },
-                {
-                    "transform": "counted",
-                    "id": "aggregate",
-                    "kind": "aggregate",
-                    "spec": {"input": step("joined"), "op": "count"},
-                },
-                {
-                    "project": "result",
-                    "fields": {"count": step("counted", "result")},
-                    "output": {"count": "int"},
                 },
             ],
-            "returns": "result",
         }
     )
 

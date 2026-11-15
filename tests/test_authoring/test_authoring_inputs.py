@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.authoring.bind import bind_working_selection_input
-from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
+from cruxible_client.authoring.examples import query_claims_by_type_example
 from cruxible_client.authoring.inputs import (
     AuthoringInputError,
     ChangeSetInput,
@@ -52,6 +52,7 @@ from tests.core_support._claim_type_support import claim_type_input_example
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._retirement_support import retire_claim
 from tests.core_support._support import initialize_local
+from tests.support.procedures import closed_transform_procedure
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
@@ -156,7 +157,7 @@ def test_existing_capture_input_requires_an_explicit_admitted_citation_role() ->
 
 
 def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity() -> None:
-    procedure = procedure_example()
+    procedure = closed_transform_procedure()
     query = query_claims_by_type_example()
 
     lowered = lower_authoring_input(

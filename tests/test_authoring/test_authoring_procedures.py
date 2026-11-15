@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
+from cruxible_client.authoring.examples import query_claims_by_type_example
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
@@ -57,6 +57,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from tests.core_support._support import initialize_local
 from tests.support.procedures import (
     MAX_WALL_CLOCK,
+    closed_transform_procedure,
     procedure_limits,
     procedure_spec_data,
     ref,
@@ -289,8 +290,8 @@ def test_a_procedure_can_be_authored_in_a_world_that_governs_a_document(
     assert compiled.frontier.diagnostics == ()
 
 
-def test_served_procedure_example_reaches_the_closed_transforms(tmp_path: Path) -> None:
-    example = procedure_example()
+def test_the_closed_transform_procedure_compiles_for_the_executor(tmp_path: Path) -> None:
+    example = closed_transform_procedure()
     kinds = {step.kind for step in example.spec.steps if hasattr(step, "transform")}
     assert kinds == {"aggregate", "dedupe", "filter", "join", "shape"}
 

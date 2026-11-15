@@ -685,18 +685,13 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         else:
             assert "tag" not in payload
         if name == "procedure":
-            # A literal project feeds closed transforms; a project returns the count.
-            # The one typed authoring form: a ProcedureSpec of typed steps.
-            literal, *transforms, returned = payload["spec"]["steps"]
-            assert sorted(literal["literal"]) == ["items"]
-            assert [step["kind"] for step in transforms] == [
-                "shape",
-                "filter",
-                "dedupe",
-                "join",
-                "aggregate",
-            ]
-            assert returned["project"] == "result"
+            # The template: a call through a capability slot, a thin extract over
+            # the CaptureKind's layout, and claims.
+            call, extract, claims = payload["spec"]["steps"]
+            assert call["slot"] == "read" and call["captures"]
+            assert payload["spec"]["slots"]["read"]["capability"]["name"] == "workspace.file"
+            assert set(extract) == {"extract", "capture", "records"}
+            assert claims["claims"]
         note = authoring_example_note(name)
         assert result.stderr == ("" if note is None else f"# {note}\n")
 
