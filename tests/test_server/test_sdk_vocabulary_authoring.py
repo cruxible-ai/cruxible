@@ -304,3 +304,13 @@ def test_cli_retires_fields_in_one_command_and_migrate_lands_when_allowed(
     predicates = set(cx.world().predicates)
     assert "dev.item.state" not in predicates and "dev.item.title" not in predicates
 
+
+def test_an_enum_spelling_that_cannot_hold_a_member_names_the_fix() -> None:
+    """F14: `enum[0.5.0, next]` failed with "cannot read the type ... at 8" and no hint."""
+
+    with pytest.raises(ContractFormatError, match=r"EnumType\(members=") as refused:
+        coerce_field_type("enum[0.5.0, next]")
+    assert 'enum["0.5.0", next]' in str(refused.value)
+    # Both repairs it names read.
+    assert coerce_field_type('enum["0.5.0", next]') == EnumType(members=("0.5.0", "next"))
+
