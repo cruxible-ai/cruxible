@@ -1430,7 +1430,9 @@ cruxible claim-type propose --template
 cruxible claim-type propose --input FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
 cruxible claim-type propose --builtin semantic.alias|semantic.distinct_from [--name NAME]
   [--dry-run|--commit] [--json]
-cruxible claim-type migrate REQUEST_FILE|- [--json]
+cruxible claim-type retire PREDICATE... --because TEXT [--reason superseded|was-wrong|was-rescinded]
+  [--dry-run] [--no-accept] [--json]
+cruxible claim-type migrate REQUEST_FILE|- [--no-accept] [--json]
 ~~~
 
 Read the accepted ClaimTypes with `cruxible orient --section
@@ -1470,14 +1472,33 @@ and returns nonblocking policy/source lint beside the proposal, among it
 `cruxible.claim_type.permitted_role_unadmitted` (a permitted role no evidence
 rule admits, so every write in it lands `uncovered`) and
 `cruxible.claim_type.field_name_reserved` (a field name that collides with a
-read column). The optional,
+read column). Three modelling hints come with it, never refusals:
+`cruxible.claim_type.field_restates_ledger` (a field named for what the ledger
+records about every Claim: `decided_by`, `updated_at`, `reason`,
+`recommendation` and the like), `cruxible.claim_type.string_holds_prose` (a
+stated string with no pattern bounded above 200 characters: prose belongs in a
+Document section the Claim cites) and
+`cruxible.claim_type.enum_members_name_things` (an enum member that looks like
+a version, a date or an identifier, which names a thing that is better a kind
+and a `subject<K>` field). A change set's preflight (`authoring compile`,
+`authoring submit`, the SDK's `prepare()`) returns the same lint for every
+ClaimType it defines, each warning naming its definition in `artifact`. The optional,
 sorted `anticipated_source_ids` input supplies
 source-specific repair suggestions without entering the governed ClaimType.
 Expert proposals, migration preflight and submission, and SDK cold-dependency
 preflight deliver the same typed lint; advisories never enter candidate identity,
 the approval frontier, or its certificate. `migrate` atomically succeeds the
 ClaimType and disposes every dependent the request names; it never authors
-retirement decisions from diagnostics.
+retirement decisions from diagnostics. A submitted migration lands when policy
+and the caller's tier allow, like a change set (`--no-accept`, or `accept:
+never` in the request, keeps the proposal).
+
+`retire` retires one or more fields as one change set: each successor is the
+accepted ClaimType marked retired, and each field's live Claims retire with it
+under `--reason` (default `superseded`); retired Claims and Documents in the
+closure are carried. It lands when policy and the caller's tier allow. The
+change-set member is a `claim_type_succession` with `retire_dependents: REASON`;
+the SDK spelling is `cx.changes(rationale=...).retire_claim_type(predicate)`.
 
 Cruxible ships builtin ClaimTypes, and a new instance starts with every one of them.
 `semantic.alias` states another name a Subject is known by (any kind; many

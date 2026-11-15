@@ -8,6 +8,7 @@ here for the daemon's callers.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, MutableMapping
 from typing import Annotated, Literal
 
@@ -43,7 +44,7 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import CAPTURE_CONTRACT_FAMILY_SHAPES
-from cruxible_client.contracts.shapes import BoolType, EnumType
+from cruxible_client.contracts.shapes import BoolType, EnumType, FieldType, StringType
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -53,6 +54,18 @@ from cruxible_core.service.discovery.field_names import is_reserved_field_name
 #: What a lint warning means, for surfaces that print more than its code.
 CLAIM_TYPE_LINT_TEXT: dict[str, str] = {
     "cruxible.claim_type.description_missing": "state what one value of this field means",
+    "cruxible.claim_type.field_restates_ledger": (
+        "the ledger already records who wrote and approved each value, when, why and what "
+        "was proposed: drop the field and read those from the Claim"
+    ),
+    "cruxible.claim_type.string_holds_prose": (
+        "a long free string holds prose: keep strings to identifiers and one short label, "
+        "and put prose in a Document section the Claim cites"
+    ),
+    "cruxible.claim_type.enum_members_name_things": (
+        "members that look like versions, dates or identifiers name things with their own "
+        "facts: make the thing a kind and the field subject<K>"
+    ),
     "cruxible.claim_type.evidence_policy_admits_no_accepted_contract": (
         "no evidence rule admits a contract this instance holds, so every value written "
         "lands uncovered: add the own-words rule (the replacement names it) or a source rule"
@@ -83,6 +96,9 @@ class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
             "cruxible.claim_type.stale_eligible_never_current",
             "cruxible.claim_type.description_missing",
             "cruxible.claim_type.subject_kind_undeclared",
+            "cruxible.claim_type.field_restates_ledger",
+            "cruxible.claim_type.string_holds_prose",
+            "cruxible.claim_type.enum_members_name_things",
         ],
         CurrentCode,
     ]
@@ -442,8 +458,113 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"inverse": None},
             )
         )
+    stated_value = not isinstance(value, ClaimTypeInputRecord) or value.states("value")
+    warnings.extend(lint_modelling(value.predicate, value_type if stated_value else None))
     warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     return ClaimTypeProposalLintV1(warnings=tuple(warnings))
+
+
+#: Field names that restate what the ledger already records about every Claim:
+#: who wrote and approved it, when, why (``because``) and what was proposed.
+LEDGER_FIELD_NAMES = frozenset(
+    {
+        "approved_at",
+        "approved_by",
+        "author",
+        "created_at",
+        "created_by",
+        "decided_at",
+        "decided_by",
+        "decided_on",
+        "modified_at",
+        "modified_by",
+        "rationale",
+        "reason",
+        "recommendation",
+        "recommended_by",
+        "updated_at",
+        "updated_by",
+    }
+)
+
+#: A string bounded above this holds prose, not an identifier or a label (core
+#: refuses any string over 256). Only a stated value is checked: the short
+#: form's default ``string{max_len: 256}`` is the author's to narrow.
+PROSE_STRING_MAX_LEN = 200
+
+#: An enum member that looks like a version, a date or an identifier names a thing.
+_THING_MEMBER = re.compile(
+    r"\d+\.\d+"  # a version: 0.5, 0.5.0, post-0.5.0
+    r"|\d{4}-\d{2}"  # a date: 2026-11, 2026-11-14
+    r"|^[A-Za-z]+-\d+$"  # an identifier: CVE-1234, PROJ-12
+    r"|^(?=.*\d)[0-9a-f]{7,}$"  # a commit or digest
+)
+
+
+def lint_modelling(predicate: str, value: FieldType | None) -> tuple[ClaimTypeLintWarningV1, ...]:
+    """Three definition-time modelling warnings (advisory; never a refusal).
+
+    - ``field_restates_ledger``: the field's name restates what the ledger
+      records about every Claim (writer, approver, time, ``because``, proposals).
+    - ``string_holds_prose``: a string bounded above ``PROSE_STRING_MAX_LEN``
+      with no pattern holds prose, which belongs in a Document section a Claim
+      cites.
+    - ``enum_members_name_things``: an enum member looks like a version, date or
+      identifier: a thing with its own facts, which is a kind (``subject<K>``).
+    """
+
+    warnings: list[ClaimTypeLintWarningV1] = []
+    name = predicate.rpartition(".")[2]
+    if name in LEDGER_FIELD_NAMES:
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="cruxible.claim_type.field_restates_ledger",
+                field_path="$.predicate",
+                replacement_rule_fragment={
+                    "field": name,
+                    "ledger_records": [
+                        "writer",
+                        "approver",
+                        "time",
+                        "because",
+                        "evidence",
+                        "earlier values",
+                        "pending proposals",
+                    ],
+                },
+            )
+        )
+    if (
+        isinstance(value, StringType)
+        and value.pattern is None
+        and value.max_len is not None
+        and value.max_len > PROSE_STRING_MAX_LEN
+    ):
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="cruxible.claim_type.string_holds_prose",
+                field_path="$.value.max_len",
+                replacement_rule_fragment={
+                    "max_len": PROSE_STRING_MAX_LEN,
+                    "prose": "a Document section the Claim cites",
+                },
+            )
+        )
+    if isinstance(value, EnumType):
+        things = [
+            member
+            for member in value.members
+            if isinstance(member, str) and _THING_MEMBER.search(member)
+        ]
+        if things:
+            warnings.append(
+                ClaimTypeLintWarningV1(
+                    code="cruxible.claim_type.enum_members_name_things",
+                    field_path="$.value.members",
+                    replacement_rule_fragment={"members": things, "value": "subject<K>"},
+                )
+            )
+    return tuple(warnings)
 
 
 __all__ = [
@@ -467,6 +588,7 @@ __all__ = [
     "default_evidence_policy",
     "lint_claim_type_input",
     "lint_description",
+    "lint_modelling",
     "lower_claim_type_input",
 ]
 

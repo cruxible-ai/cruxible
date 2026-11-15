@@ -1285,6 +1285,11 @@ ClaimTypeLintCode: TypeAlias = Literal[
     "cruxible.claim_type.stale_eligible_never_current",
     "cruxible.claim_type.description_missing",
     "cruxible.claim_type.subject_kind_undeclared",
+    # Definition-time modelling hints: a field naming what the ledger records, a
+    # long free string (prose), an enum whose members name things (a kind).
+    "cruxible.claim_type.field_restates_ledger",
+    "cruxible.claim_type.string_holds_prose",
+    "cruxible.claim_type.enum_members_name_things",
 ]
 
 

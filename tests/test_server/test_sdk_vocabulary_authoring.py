@@ -336,3 +336,55 @@ def test_describe_shows_types_keys_member_meanings_and_the_kinds_description(
         "    title: string{min_len: 1, max_len: 120}, one -- Its label.",
     ]
 
+
+def test_definition_lint_names_ledger_fields_prose_strings_and_enums_of_things(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F17/F19: warnings, not refusals, from prepare and the propose route alike."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    changes = cx.changes(rationale="A vocabulary with three modelling slips.")
+    changes.field("dev.item", "slug", SLUG, description="Its short name.", key=True)
+    changes.field("dev.item", "decided_by", SLUG, description="Who decided.")
+    changes.field("dev.item", "criteria", StringType(max_len=256), description="What done means.")
+    changes.field(
+        "dev.item",
+        "release",
+        EnumType(members=("0.5.0", "post-0.5.0", "unscheduled")),
+        description="The release it is planned for.",
+    )
+    changes.subject_kind(name="dev.item", description="An item.")
+    intent = changes.prepare()
+    assert not intent.refused, intent.diagnostics
+    found = {(item.artifact, item.code) for item in intent.warnings}
+    expected = {
+        ("ClaimType:dev.item.decided_by", "cruxible.claim_type.field_restates_ledger"),
+        ("ClaimType:dev.item.criteria", "cruxible.claim_type.string_holds_prose"),
+        ("ClaimType:dev.item.release", "cruxible.claim_type.enum_members_name_things"),
+    }
+    assert found == expected
+    release = next(
+        item for item in intent.warnings if item.artifact == "ClaimType:dev.item.release"
+    )
+    assert release.replacement_rule_fragment["members"] == ["0.5.0", "post-0.5.0"]
+
+    # The propose route (claim-type propose) lints the same definition the same.
+    proposed = http.post(
+        f"/api/v1/{instance_id}/claim-types/proposals",
+        json={
+            "input": {
+                "predicate": "dev.item.criteria",
+                "cardinality": "one",
+                "value": {"kind": "string", "max_len": 256},
+                "description": "What done means.",
+                "allowed_subject_kinds": ["dev.item"],
+            },
+            "proposal_name": "criteria",
+            "dry_run": True,
+        },
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert "cruxible.claim_type.string_holds_prose" in {
+        item["code"] for item in proposed.json()["lint"]["warnings"]
+    }
