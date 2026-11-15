@@ -2786,10 +2786,11 @@ class _Planner:
         Core reads the statement, so the author never restates it. The named
         citation (by default the Claim's one citation of the evidence's file;
         for a re-bind expanded from ``from_capture``, its citation of that
-        Capture) is replaced by the new text's: a section that is a located copy
-        also replaces its paired own-words citation (the same bytes). Claim law
-        v2 revision 10 admits the result as a revision of the same Claim. Cost:
-        this Claim and its citations.
+        Capture) is replaced by the new text's: located own words are replaced
+        by one new located own-words citation, and an older pair's located copy
+        takes its own-words half with it (the same bytes). Claim law v4
+        (revision 3 for a pair's collapse) admits the result as a revision of
+        the same Claim. Cost: this Claim and its citations.
         """
 
         prefix = f"changes[{index}]"
@@ -2858,12 +2859,22 @@ class _Planner:
             ]
         else:
             # The Claim's one citation of that file: a file anchor replaces an
-            # evidence citation, a section a located copy or a section citation.
+            # evidence citation, a section a section citation or the Claim's own
+            # words located there (one located own-words Capture, or the located
+            # copy of an older pair).
             named = [
                 item
                 for item in citations
-                if item.origin == "independent"
-                and (isinstance(evidence, SectionEvidence) or item.role == "evidence")
+                if (
+                    (item.origin == "independent" and item.role == "evidence")
+                    or (
+                        isinstance(evidence, SectionEvidence)
+                        and (
+                            item.origin == "independent"
+                            or (item.origin, item.role) == ("self_source", "copy")
+                        )
+                    )
+                )
                 and self._citation_source(item.capture_digest) == file_source
             ]
         shown = tuple(item.citation_id.partition(":")[2][:12] for item in citations)
@@ -2908,7 +2919,9 @@ class _Planner:
         subject = subject_path_value.removeprefix("subjects/").removesuffix(".json")
         kind = subject.partition("/")[0]
         field_name = self.field_name(info, kind)
-        own_words = replaced.role == "copy" and replaced.origin == "independent"
+        # Own words: one located own-words citation, or the located copy of an
+        # older pair whose own-words half moves with it.
+        own_words = replaced.role == "copy"
         replaces = {replaced.citation_id}
         source: Any
         citation_role: Literal["evidence", "copy"] | None
@@ -2926,8 +2939,9 @@ class _Planner:
             source = ExistingCaptureCitationSource(capture_digest=fresh)
             citation_role = "evidence"
         elif own_words:
-            # A located copy rests on the writer's own words, which cite the
-            # same bytes: both move to the section's text now.
+            # Own words move to the section's text now. A located copy of an
+            # older pair rests on the writer's own words, which cite the same
+            # bytes: both are replaced by the one new citation.
             if not isinstance(evidence, SectionEvidence):
                 raise _refuse(
                     "cruxible.write.rebind_needs_section",
@@ -2945,14 +2959,15 @@ class _Planner:
                     repair="Cite a Capture under a contract the field admits",
                     field_path=f"{prefix}.evidence",
                 )
-            content = self._content_of(replaced.capture_digest)
-            replaces.update(
-                item.citation_id
-                for item in citations
-                if item.origin == "self_source"
-                and content is not None
-                and self._content_of(item.capture_digest) == content
-            )
+            if replaced.origin == "independent":
+                content = self._content_of(replaced.capture_digest)
+                replaces.update(
+                    item.citation_id
+                    for item in citations
+                    if item.origin == "self_source"
+                    and content is not None
+                    and self._content_of(item.capture_digest) == content
+                )
             assert isinstance(evidence, SectionEvidence) and evidence.observation is not None
             source = SelfSourceBody(content_base64=evidence.observation.selected_content_base64)
             values["located_at"] = evidence.observation

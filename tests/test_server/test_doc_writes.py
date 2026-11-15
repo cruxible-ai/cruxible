@@ -45,7 +45,8 @@ def test_sdk_create_catalog_citation_retry_and_hand_edit_drift(playbill_http, tm
     assert result.status == "accepted" and result.docs[0].written, result
     assert result.hint is None
     assert result.changes[0].verdict == "supported"
-    assert len(cited_captures(instance, result.changes[0].claim)) == 2
+    # Located own words are one Capture: the own words, sourced at their file.
+    assert len(cited_captures(instance, result.changes[0].claim)) == 1
     assert cx.file("notes.md").section("Decision").observation().selector.section.path == (
         "Decision",
     )
@@ -216,7 +217,7 @@ def test_typed_set_carries_new_section_and_catalogues_after_admission(
     assert result.status == "accepted" and result.docs[0].written, result
     claim = next(change for change in result.changes if change.op == "set")
     assert claim.verdict == "supported"
-    assert len(cited_captures(instance, claim.claim)) == 2
+    assert len(cited_captures(instance, claim.claim)) == 1
     assert (workspace / "decisions.md").read_text() == "# Decision\nThe checks passed.\n"
     assert len(yaml.safe_load((workspace / ".cruxible/files.yaml").read_text())["entries"]) == 1
 
