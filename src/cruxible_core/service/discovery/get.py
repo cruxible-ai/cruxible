@@ -100,6 +100,7 @@ from cruxible_client.contracts.get_reads import (
     GetNone,
     GetPairEnd,
     GetPairs,
+    GetPendingProposal,
     GetPrincipalCard,
     GetProcedureCard,
     GetProcedureNode,
@@ -1388,7 +1389,16 @@ def _subject_card(
     *,
     evaluation_time: datetime,
     surface: ReadSurface,
+    at_head: bool = False,
 ) -> GetSubjectCard:
+    """One Subject's fields, ends and pairs, and the reads that go further.
+
+    ``at_head`` (a card read with no ``at``) adds the open proposals that would
+    write its fields: proposals are operational state, read only at the head.
+    """
+
+    from cruxible_core.service.discovery.backlinks import subject_has_backlinks
+
     subject = _name(resolved.identity)
     kind = subject.split("/", 1)[0]
     path = resolved.path or f"subjects/{subject}.json"
@@ -1420,6 +1430,9 @@ def _subject_card(
         ]
         examined = [(group, pair) for group, found in scanned for pair in found[:CARD_SCAN]]
         fact_paths = fact_claim_paths(projection.typed.connection, examined)
+        # Whether `backlinks` has anything for it: two point seeks on the index.
+        linked = subject_has_backlinks(projection.typed.connection, subject)
+    pending = _pending_proposals(instance, coordinate, path) if at_head else ()
     # Candidates only propose: each is listed when one of its facts is visible.
     visible = visible_pairs(
         instance,
@@ -1569,6 +1582,7 @@ def _subject_card(
         claims=tuple(entries),
         incoming_count=incoming,
         pairs=tuple(end_groups),
+        pending=pending,
         next=(
             *dict.fromkeys(evidence_steps),
             # See the matching note in _claim_card: suggest ``why`` only when
@@ -1577,6 +1591,10 @@ def _subject_card(
             _render_get(surface, subject, "history"),
             # What points at it: the edges stored on other Subjects.
             *((_render_get(surface, subject, "incoming"),) if incoming else ()),
+            # The notes about it and the sections its Claims cite.
+            *((_render_backlinks(surface, subject, at=None),) if linked else ()),
+            # What a pending proposal would change, before anyone accepts it.
+            *(_render_get(surface, item.proposal) for item in pending),
             # The rest of its pairs, when the card cut a group.
             *(
                 (_render_get(surface, subject, "pairs"),)
@@ -1584,6 +1602,38 @@ def _subject_card(
                 else ()
             ),
         ),
+    )
+
+
+def _pending_proposals(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, path: str
+) -> tuple[GetPendingProposal, ...]:
+    """The open proposals with a Claim member about the Subject at ``path``.
+
+    Read from the proposal index's open locators (O(open proposals), each one's
+    Subjects memoized per proposal), never from the Claims or the history.
+    """
+
+    from cruxible_core.service.proposals.proposals import open_proposals_about
+
+    kind = path.removeprefix("subjects/").split("/", 1)[0]
+    found = open_proposals_about(
+        instance, AcceptedCoordinate.from_internal(coordinate), subject_path=path
+    )
+    if not found:
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        accepted_predicates = _live_predicates(projection)
+    return tuple(
+        GetPendingProposal(
+            proposal=item.proposal_id,
+            fields=tuple(
+                short_field_name(predicate, kind, accepted_predicates)
+                for predicate in item.predicates
+            ),
+            by=item.actor_id,
+        )
+        for item in found
     )
 
 
@@ -3555,6 +3605,8 @@ def service_playbill_get(
                 resolved,
                 evaluation_time=evaluation_time,
                 surface=surface,
+                at_head=request.at is None
+                or coordinate.git_oid == instance.accepted_coordinate().git_oid,
             )
         elif resolved.kind == "claim_type":
             card = _claim_type_card(instance, coordinate, resolved, surface=surface, pinned=pinned)

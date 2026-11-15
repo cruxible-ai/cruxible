@@ -378,6 +378,14 @@ class GetLineRuns(_StrictGetModel):
     runs: tuple[RunRow, ...]
 
 
+class GetPendingProposal(_StrictGetModel):
+    """An open proposal that would write fields of the Subject: not accepted state yet."""
+
+    proposal: str = Field(description="The proposal's ID; get and proposal review read it.")
+    fields: tuple[str, ...] = Field(description="The Subject's fields it writes.")
+    by: str = Field(description="The principal who proposed it.")
+
+
 class GetSubjectCard(_StrictGetModel):
     subject: str
     kind: str
@@ -389,6 +397,9 @@ class GetSubjectCard(_StrictGetModel):
     incoming_count: int
     #: The pairs this Subject is an end of, at most ``GET_CARD_PAIRS`` per group.
     pairs: tuple[GetEndPairs, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Open proposals that would write its fields (a card read at the head only):
+    #: the values above stay the accepted ones until one is accepted.
+    pending: tuple[GetPendingProposal, ...] = Field(default=(), exclude_if=lambda value: not value)
     next: tuple[str, ...] = ()
 
 
@@ -1200,6 +1211,7 @@ __all__ = [
     "GetRequest",
     "GetResult",
     "GetRevision",
+    "GetPendingProposal",
     "GetSubjectCard",
     "GetNone",
     "GetSubjectClaim",

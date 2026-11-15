@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1054,6 +1055,69 @@ def proposals_awaiting_activation(
             )
         )
     return tuple(ready)
+
+
+def proposal_touches(
+    instance: PlaybillInstance, *, proposal_id: str, candidate_digest: str
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The Subjects one proposal's Claim members are about, each with the fields it writes.
+
+    ``(subject path, predicates)`` pairs, sorted; empty for a proposal with no
+    Claim member (a definition, a policy). Read from the proposal's own change
+    keys, derived once per process from its immutable candidate.
+    """
+
+    from cruxible_core.service.proposals.staleness import proposal_change_keys
+
+    keys = proposal_change_keys(
+        instance, proposal_id=proposal_id, candidate_digest=candidate_digest
+    )
+    fields: dict[str, set[str]] = defaultdict(set)
+    for subject, predicate, _qualifier in keys.slots:
+        fields[subject].add(predicate)
+    return tuple((subject, tuple(sorted(fields[subject]))) for subject in sorted(fields))
+
+
+@dataclass(frozen=True)
+class PendingProposal:
+    """An open proposal that would write fields of one Subject."""
+
+    proposal_id: str
+    actor_id: str
+    #: The Subject's fields it writes, by predicate.
+    predicates: tuple[str, ...]
+
+
+def open_proposals_about(
+    instance: PlaybillInstance, coordinate: AcceptedCoordinate, *, subject_path: str
+) -> tuple[PendingProposal, ...]:
+    """Open proposals at ``coordinate`` with a Claim member about ``subject_path``.
+
+    The open candidates are the ones ``proposal list`` and ``next`` read (the
+    open locators: O(open candidates), never the settled history); each one's
+    Subjects come from ``proposal_touches``, memoized per proposal. Nothing here
+    grows with the instance's Claims, Subjects or generations.
+    """
+
+    rows = _open_rows(instance, coordinate, columns="proposal_id,actor_id,candidate_digest")
+    pending = []
+    for row in rows:
+        touched = dict(
+            proposal_touches(
+                instance,
+                proposal_id=row["proposal_id"],
+                candidate_digest=row["candidate_digest"],
+            )
+        )
+        if subject_path in touched:
+            pending.append(
+                PendingProposal(
+                    proposal_id=row["proposal_id"],
+                    actor_id=row["actor_id"],
+                    predicates=touched[subject_path],
+                )
+            )
+    return tuple(pending)
 
 
 def service_resolve_playbill_proposal_selector(

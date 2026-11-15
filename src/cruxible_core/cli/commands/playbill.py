@@ -6540,6 +6540,11 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                     + more
                     + hidden
                 )
+            for item in card.get("pending", ()):
+                # Not accepted yet: the fields above keep their accepted values.
+                click.echo(
+                    f"pending {item['proposal']}: {', '.join(item['fields'])} (by {item['by']})"
+                )
         else:
             for key, value in card.items():
                 if key == "nodes" and result.kind == "procedure_run" and value:
@@ -9408,8 +9413,14 @@ def _next_run_failure_lines(item: contracts.NextItem) -> list[str]:
 
 
 def _next_claim_about(item: contracts.NextItem) -> str | None:
-    """What a Claim row is about, as ``kind/id field``: its Subject and predicate."""
+    """What a Claim row is about, as ``kind/id field``: its Subject and predicate.
 
+    A proposal row names every ``kind/id field`` its Claims would write.
+    """
+
+    touches = item.detail.get("touches") if isinstance(item.detail, dict) else None
+    if isinstance(touches, list) and touches:
+        return "; ".join(str(touch) for touch in touches)
     predicate = item.detail.get("predicate") if isinstance(item.detail, dict) else None
     subject = next((ref for ref in item.related_identities if ref.startswith("subjects/")), None)
     if not isinstance(predicate, str) or subject is None:

@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-13:file-read-request",
-    "surface_digest": "sha256:a9304c44b9c8fc118469569874255d4a835e3d8686b567ac596d956090e0f35c"
+    "register_entry": "2026-11-14:surface-discovery-printing-050",
+    "surface_digest": "sha256:26f4a0f2970220da9b9a1674983d698dd2a20a2209e0052d6ffc78085aa81718"
   },
   "surface": {
     "cli_leaves": [
@@ -1379,7 +1379,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
         "request_schema_digest": "sha256:225e6febd38c1cf6ba12bcfa91d6783eedb37004f415c445b11064471d1101b3",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
-        "response_schema_digest": "sha256:1c0b66f12286c08cabb82f15837aa8d37bc9deca1349e3f490588f08a5bfcca2"
+        "response_schema_digest": "sha256:56098d8fe4ee28e869d100520fe5947c6ea6796514e1065b3d140d96eacd1844"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.get_batch",
@@ -1391,7 +1391,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
         "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
-        "response_schema_digest": "sha256:6d5fab176492ed96ba36c6c411fd7bbe6bc75eae619354b32e83b8bd93034d4c"
+        "response_schema_digest": "sha256:015c37b8da40a2c9f5b381aca23475ea6c109a038db11b8226afc0804183b90d"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.head",
@@ -2506,7 +2506,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
         "input_schema_digest": "sha256:181b54480af5b96e180a267b9efd3f7426df530154df37c60b1382ce9326f5d8",
         "name": "cruxible_get",
-        "output_schema_digest": "sha256:7fc01f8969d6efce503bcb484c701c76fa98b71e2be20496624d30b8fa4ad15e",
+        "output_schema_digest": "sha256:e64370a9b24c7c5652ca0a102ecfa7574d25c75b8a71e33c03b85c02362baf49",
         "permission": "READ_ONLY"
       },
       {
