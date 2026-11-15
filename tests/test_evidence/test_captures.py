@@ -548,3 +548,33 @@ def test_unlocated_own_words_keep_their_exact_bytes(tmp_path: Path) -> None:
     _store, _location_used, located = _located(tmp_path / "located")
     assert located.capture_digest != unlocated.capture_digest
     assert located.commitment_digest == unlocated.commitment_digest
+
+
+def test_located_own_words_reproduce_their_commitment_length(tmp_path: Path) -> None:
+    """A located envelope claiming another length than its retained bytes refuses.
+
+    The unlocated (CAS) form already refuses the same forgery; the located form
+    holds the same exact bytes and refuses alike.
+    """
+
+    from cruxible_client.contracts.captures import CaptureFormatError, render_capture_envelope
+
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    store, _location_used, result = _located(tmp_path)
+    for forged_from in (
+        result.envelope,
+        build_coordinator_self_source_capture(
+            store=store,
+            actor_id="owner",
+            claim_id=_LOCATED_CLAIM,
+            body=_LOCATED_BODY,
+            observed_at=NOW,
+            accepted_coordinate=_accepted_coordinate(),
+        ).envelope,
+    ):
+        forged = forged_from.model_copy(
+            update={"commitment": forged_from.commitment.model_copy(update={"byte_length": 0})}
+        )
+        digest = store.store(render_capture_envelope(forged)).digest
+        with pytest.raises(CaptureFormatError, match="byte length does not reproduce"):
+            verify_capture(digest, store=store, contract=contract)

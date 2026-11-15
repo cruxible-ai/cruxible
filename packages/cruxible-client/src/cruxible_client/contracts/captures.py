@@ -4065,6 +4065,10 @@ def _verify_capture_once(
             )
             if len(material) > contract.selection_budget.max_bytes:
                 raise CaptureFormatError("external Capture material exceeds its contract")
+            # Located own words are exact retained bytes, as their CAS form is:
+            # the commitment's length must reproduce from them too.
+            if located_self_source and len(material) != envelope.commitment.byte_length:
+                raise CaptureFormatError("Capture source byte length does not reproduce")
             material_evidence = (
                 envelope.production_evidence if isinstance(envelope, CaptureEnvelope) else None
             )
