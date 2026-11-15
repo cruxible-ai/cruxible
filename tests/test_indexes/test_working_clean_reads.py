@@ -106,6 +106,11 @@ def _finalizer_world(tmp_path):  # type: ignore[no-untyped-def]
     instance, _ = initialize_local(tmp_path)
     _submit(instance, "one")
     service_list_playbill_proposals(instance)
+    # The submit queued a workspace refresh, whose thread reads the proposal index
+    # and writes beside it. Settled here, so it never runs while a test below has
+    # swapped the evidence root (it once left a file in the stand-in root, whose
+    # rmdir then failed on that test's thread).
+    instance.settled_workspace_advertisement()
     evidence = instance.proposal_evidence()
     marker = ProposalIndex._marker(evidence.root)
     return evidence, marker, sqlite3.connect(evidence.index.path, check_same_thread=False)
