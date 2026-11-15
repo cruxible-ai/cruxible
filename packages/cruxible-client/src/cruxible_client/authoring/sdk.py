@@ -1448,6 +1448,7 @@ class ChangeSetDraft:
 
         from cruxible_client.contracts.claim_type_inputs import (
             ClaimTypeInputRecord,
+            default_resolution_policy,
             lower_claim_type_input,
         )
 
@@ -1458,7 +1459,13 @@ class ChangeSetDraft:
         stated: dict[str, object] = {"predicate": predicate, "value": coerce_field_type(value_type)}
         # Left out (None), an edit keeps the accepted cardinality; a new field is one-valued.
         if many is not None or predecessor is None:
-            stated["cardinality"] = "many" if many else "one"
+            cardinality: Literal["one", "many"] = "many" if many else "one"
+            stated["cardinality"] = cardinality
+            if predecessor is not None and predecessor.cardinality != cardinality:
+                # A stated change of cardinality takes the resolution policy the
+                # short form gives a new field of that cardinality; the law then
+                # decides whether the field's Claims allow it.
+                stated["resolution_policy"] = default_resolution_policy(cardinality)
         if description is not None:
             stated["description"] = description
         if members is not None:

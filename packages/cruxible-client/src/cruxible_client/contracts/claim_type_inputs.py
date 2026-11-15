@@ -431,6 +431,19 @@ def _inherited_policy(policy: dict[str, object]) -> dict[str, object]:
     }
 
 
+def default_resolution_policy(cardinality: Literal["one", "many"]) -> dict[str, object]:
+    """The resolution policy a new ClaimType of this cardinality takes when it states none."""
+
+    return {
+        "cardinality": cardinality,
+        "eligible_verdicts": ["supported"],
+        "required_basis_kinds": [],
+        "require_current": True,
+        "selector": "all" if cardinality == "many" else "only_contender",
+        "conflict_result": "unresolved",
+    }
+
+
 def claim_type_input_defaults(
     value: ClaimTypeInputRecord, predecessor: ClaimType | None
 ) -> ClaimTypeInputRecord:
@@ -492,15 +505,9 @@ def claim_type_input_defaults(
     if "admission_policy" not in stated:
         data["admission_policy"] = {"corroboration_requirements": [], "freeze_requirements": []}
     if "resolution_policy" not in stated:
-        many = value.cardinality == "many"
-        data["resolution_policy"] = {
-            "cardinality": value.cardinality,
-            "eligible_verdicts": ["supported"],
-            "required_basis_kinds": [],
-            "require_current": True,
-            "selector": "all" if many else "only_contender",
-            "conflict_result": "unresolved",
-        }
+        data["resolution_policy"] = default_resolution_policy(
+            cast(Literal["one", "many"], value.cardinality)
+        )
     return ClaimTypeInputRecord.model_validate(data)
 
 
@@ -779,6 +786,7 @@ __all__ = [
     "claim_type_input_defaults",
     "claim_type_input_template",
     "default_evidence_policy",
+    "default_resolution_policy",
     "identity_evidence_policy",
     "lower_claim_type_input",
 ]

@@ -241,6 +241,29 @@ def test_editing_a_field_keeps_what_the_edit_leaves_out(
     assert edited.description == "Other items this one blocks."
 
 
+def test_a_stated_cardinality_change_takes_the_short_forms_resolution_policy(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """Review F-001 (round 2): many=False on an empty many-valued field raised before prepare."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    _field_vocabulary(cx)
+
+    for many, cardinality, selector in ((False, "one", "only_contender"), (True, "many", "all")):
+        edit = cx.changes(rationale=f"blocks becomes {cardinality}-valued.")
+        edit.field("dev.item", "blocks", "subject<dev.item>", many=many)
+        assert edit.submit().outcome.status == "landed"
+        cx.refresh()
+        edited = ClaimType.model_validate(
+            cx.get("ClaimType:dev.item.blocks", detail="proof").value["envelope"]
+        )
+        assert edited.cardinality == cardinality
+        assert edited.resolution_policy.cardinality == cardinality
+        assert edited.resolution_policy.selector == selector
+        assert edited.description == "Items it blocks."
+
+
 def test_retiring_fields_is_a_change_set_step_that_retires_their_claims(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
