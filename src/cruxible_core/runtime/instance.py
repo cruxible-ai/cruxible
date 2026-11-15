@@ -424,6 +424,9 @@ class PlaybillInstance:
         self._advertisement_condition = threading.Condition()
         self._advertisement_thread: threading.Thread | None = None
         self._advertisement_requested = 0
+        # Whether a refresh was requested while no workspace hook was bound: its
+        # outcome is stale once one is, so the binding queues one more.
+        self._requested_unbound = False
         self._advertisement_completed = 0
         self._last_advertisement: WorkspaceAdvertisement | None = None
         self._receive_limits = ProposalReceiveLimits()
@@ -1698,17 +1701,20 @@ class PlaybillInstance:
     ) -> None:
         """Bind the manager-owned advisory Git hook for this process.
 
-        A refresh requested before the binding (opening or initializing an
+        A refresh requested while no hook was bound (opening or initializing an
         instance accepts generations, and the manager binds after) ran, or is
-        running, without this hook: its outcome is stale. One more refresh is
-        queued, so a settle reports what the bound hook advertises.
+        running, without one: its outcome is stale. One more refresh is queued,
+        so a settle reports what the bound hook advertises. Replacing a bound
+        hook queues nothing: its caller (``rebind_workspace``) requests the
+        refresh itself.
         """
 
         with self._advertisement_condition:
             self._workspace_advertiser = advertiser
             self._workspace_path = workspace_path
-            if self._advertisement_requested:
-                self._advertisement_requested += 1
+            if self._requested_unbound:
+                self._requested_unbound = False
+                self._request_advertisement_locked()
                 self._start_advertiser_locked()
 
     def advertise_workspace(self) -> WorkspaceAdvertisement:
@@ -1720,7 +1726,7 @@ class PlaybillInstance:
         """
 
         with self._advertisement_condition:
-            self._advertisement_requested += 1
+            self._request_advertisement_locked()
             self._start_advertiser_locked()
         if self._workspace_advertiser is None or self._workspace_path is None:
             return NOT_ATTACHED_ADVERTISEMENT
@@ -1731,7 +1737,7 @@ class PlaybillInstance:
 
         with self._advertisement_condition:
             if self._last_advertisement is None:
-                self._advertisement_requested += 1
+                self._request_advertisement_locked()
             target = self._advertisement_requested
             self._start_advertiser_locked()
             while self._advertisement_completed < target:
@@ -1749,6 +1755,11 @@ class PlaybillInstance:
                 self._last_advertisement = result
             self._advertisement_condition.notify_all()
         return result
+
+    def _request_advertisement_locked(self) -> None:
+        self._advertisement_requested += 1
+        if self._workspace_advertiser is None:
+            self._requested_unbound = True
 
     def _start_advertiser_locked(self) -> None:
         if self._advertisement_thread is not None:
