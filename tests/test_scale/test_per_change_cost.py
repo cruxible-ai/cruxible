@@ -226,7 +226,7 @@ def _build(directory: Path, name: str, items: int) -> World:
 _CURRENT: list[Counter[str]] = []
 
 
-def _caller(counter: str) -> None:
+def _caller(counter: str, *, weight: int = 1, detail: str = "") -> None:
     """Note the innermost product frames of a counted call, for a failing case's message."""
 
     if not _CURRENT:
@@ -238,7 +238,8 @@ def _caller(counter: str) -> None:
         if "/src/cruxible_core/" in name:
             frames.append(f"{name.split('/src/')[-1]}:{frame.f_lineno}")
         frame = frame.f_back
-    _CURRENT[-1][f"{counter} <- " + " <- ".join(frames)] += 1
+    label = f"{counter}({detail})" if detail else counter
+    _CURRENT[-1][f"{label} <- " + " <- ".join(frames)] += weight
 
 
 def _measuring() -> _counters.Window | None:
@@ -292,7 +293,7 @@ def _extra_counters() -> Iterator[None]:
             window = _measuring()
             if window is not None:
                 window.counts["git_listed_names"] += len(names)
-                _caller("git_listed_names")
+                _caller("git_listed_names", weight=len(names), detail=directory)
             return names
 
         patch.setattr(GitLedger, "tree_child_names", counted_names)
@@ -410,7 +411,7 @@ def _measure(session: Session, run: Callable[[World], object]) -> dict[str, dict
         measured[world.shape.name] = {
             **{name: window.counts[name] for name in ALL},
             "statements": dict(window.statements.most_common(20)),
-            "callers": dict(callers.most_common(20)),
+            "callers": dict(callers),
         }
     return measured
 
@@ -462,6 +463,24 @@ def session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session]:
             reset_permissions()
 
 
+def _callers(callers: dict[str, int], counter: str) -> str:
+    """The failing counter's own callers, heaviest first (all counters' when it notes none).
+
+    Weighted by what the counter adds (names for ``git_listed_names``, else calls),
+    so a counter with few heavy calls is never crowded out by another's many.
+    """
+
+    own = Counter(
+        {
+            key: count
+            for key, count in callers.items()
+            if key.split(" <- ")[0].split("(")[0] == counter
+        }
+    )
+    shown = own if own else Counter(callers)
+    return json.dumps(dict(shown.most_common(20)), indent=1)[:3000]
+
+
 def _cases() -> list[Any]:
     return [
         pytest.param(
@@ -490,7 +509,7 @@ def test_one_change_costs_the_same_at_ten_times_the_instance(
     assert large <= small * RATIO + SLACK[counter], (
         f"{route} {counter}: SMALL {small}, LARGE {large} "
         f"(allowed {small * RATIO + SLACK[counter]:g}); LARGE callers and heaviest statements: "
-        + json.dumps(measured["large"]["callers"], indent=1)[:1500]
+        + _callers(measured["large"]["callers"], counter)
         + json.dumps(measured["large"]["statements"], indent=1)[:1500]
     )
 
@@ -520,6 +539,15 @@ CEILINGS: dict[str, dict[str, int]] = {
         "sql_vm_steps": 2 * 1_115_454,  # unfixed 7,362,786
     },
 }
+# A warm successor never lists a ledger directory: the case-fold check carries
+# every touched directory's folds from its parent (compiler/projection_tree.py
+# _carry_folds). Unfixed, a directory a generation only edited or removed from
+# went cold, and the next one adding a name there listed it whole: all 256
+# ``cards/claims`` shards on a run where a random Claim ID opened a new shard, and
+# a flat directory such as ``cards/subjects/<kind>`` grows with the instance.
+for _route in ROUTES:
+    if _route != "tick.facts":
+        CEILINGS.setdefault(_route, {})["git_listed_names"] = 0
 assert all(set(counters) <= set(ALL) for counters in CEILINGS.values())
 
 
@@ -535,5 +563,5 @@ def test_one_change_stays_under_its_measured_ceiling(
     large = session.measured[route]["large"][counter]
     assert large <= CEILINGS[route][counter], (
         f"{route} {counter}: LARGE {large} over its ceiling {CEILINGS[route][counter]}; "
-        + json.dumps(session.measured[route]["large"]["callers"], indent=1)[:1500]
+        + _callers(session.measured[route]["large"]["callers"], counter)
     )

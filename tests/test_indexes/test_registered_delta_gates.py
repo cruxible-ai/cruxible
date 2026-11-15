@@ -331,22 +331,29 @@ def _counting_listings(monkeypatch):
     return listed
 
 
-def _raw_tree(ledger, files: dict[str, bytes]) -> str:
+def _raw_tree(ledger, files: dict[str, bytes], _objects: dict[bytes, str] | None = None) -> str:
     """A tree Git writes without the ledger's own collision refusal."""
 
-    blob = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b"card").decode().strip()
+    objects = {} if _objects is None else _objects  # content or listing -> object ID
     children: dict[str, dict[str, bytes]] = {}
     rows = []
-    for path in files:
+    for path, content in files.items():
         head, _sep, rest = path.partition("/")
         if rest:
-            children.setdefault(head, {})[rest] = b"card"
-        else:
-            rows.append(f"100644 blob {blob}\t{head}")
+            children.setdefault(head, {})[rest] = content
+            continue
+        key = b"blob " + content
+        if key not in objects:
+            objects[key] = (
+                ledger._git(["hash-object", "-w", "--stdin"], input_bytes=content).decode().strip()
+            )
+        rows.append(f"100644 blob {objects[key]}\t{head}")
     for name, nested in children.items():
-        rows.append(f"040000 tree {_raw_tree(ledger, nested)}\t{name}")
+        rows.append(f"040000 tree {_raw_tree(ledger, nested, objects)}\t{name}")
     listing = "".join(f"{row}\n" for row in rows).encode()
-    return ledger._git(["mktree"], input_bytes=listing).decode().strip()
+    if listing not in objects:
+        objects[listing] = ledger._git(["mktree"], input_bytes=listing).decode().strip()
+    return objects[listing]
 
 
 def _ledger_delta(ledger, base: dict[str, bytes], head: dict[str, bytes]):
@@ -385,6 +392,43 @@ def test_an_open_directory_carries_its_folds_from_the_parent_generation(
         _ledger_delta(ledger, successor, {**successor, "cards/flat/S00003.md": b"card"})
         with pytest.raises(ProjectionFormatError, match="collision-free"):
             _ledger_delta(ledger, successor, {**successor, "cards/flat/N001.md": b"card"})
+    assert warm == [0, 0]
+
+
+def test_edit_only_and_removal_only_generations_keep_their_directories_warm(
+    tmp_path, monkeypatch
+) -> None:
+    """A generation that adds no name to a directory still carries its folds.
+
+    It gives the directory a new tree object ID; with the folds left cold under
+    it, the next generation that adds a name there listed the whole directory.
+    The per-change scale guard caught it on one CI run: a LARGE activation added
+    the last missing ``cards/claims`` shard after one that only filled existing
+    shards, and listed all 256 (Claim IDs are random, so whether a shard is new
+    varies run to run).
+    """
+
+    listed = _counting_listings(monkeypatch)
+    warm = []
+    for width in (100, 1_000):
+        ledger = _git_ledger(tmp_path / f"ledger-{width}.git")
+        tree = {f"cards/claims/s{index:04d}/c.md": b"card" for index in range(width)}
+        grown = {**tree, "cards/claims/first/c.md": b"card"}
+        _ledger_delta(ledger, tree, grown)  # cold: one listing, then remembered
+        listed[0] = 0
+        edited = {**grown, "cards/claims/s0001/c.md": b"edited"}
+        _ledger_delta(ledger, grown, edited)  # no name added anywhere
+        shrunk = dict(edited)
+        del shrunk["cards/claims/s0002/c.md"]
+        _ledger_delta(ledger, edited, shrunk)  # a name removed, none added
+        successor = {**shrunk, **{f"cards/claims/n{i:03d}/c.md": b"card" for i in range(20)}}
+        _ledger_delta(ledger, shrunk, successor)
+        warm.append(listed[0])
+        # The carried folds are exact: the removed name may return in another
+        # case, and a name still held refuses its other spelling.
+        _ledger_delta(ledger, successor, {**successor, "cards/claims/S0002/c.md": b"card"})
+        with pytest.raises(ProjectionFormatError, match="collision-free"):
+            _ledger_delta(ledger, successor, {**successor, "cards/claims/N001/c.md": b"card"})
     assert warm == [0, 0]
 
 
