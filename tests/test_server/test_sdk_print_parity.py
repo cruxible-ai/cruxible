@@ -10,6 +10,7 @@ the same repair in each surface's own syntax; every other line is the same text.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -77,7 +78,16 @@ def test_a_next_page_prints_what_cruxible_next_prints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     http, instance_id, cx, _claim = world
+    # Two reads, so both must see one state: the daemon's consumers follow
+    # the last write in the background, and status says "consumers lagging"
+    # until they catch up (CI caught one read on each side of that). Nothing
+    # is written after this, so once caught up both reads see the same queue.
+    deadline = time.monotonic() + 30
     page = cx.next()
+    while page.status.consumers.state == "lagging" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        page = cx.next()
+    assert page.status.consumers.state != "lagging", page.status.consumers
     assert page.items, "the world needs a page with items"
     workspace = str(cx._workspace)
 
