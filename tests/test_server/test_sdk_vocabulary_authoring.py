@@ -314,3 +314,25 @@ def test_an_enum_spelling_that_cannot_hold_a_member_names_the_fix() -> None:
     # Both repairs it names read.
     assert coerce_field_type('enum["0.5.0", next]') == EnumType(members=("0.5.0", "next"))
 
+
+def test_describe_shows_types_keys_member_meanings_and_the_kinds_description(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F10: every non-relation field read `literal`; no key, member meanings or kind text."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    _field_vocabulary(cx)
+
+    described = cx.world().describe().splitlines()
+    start = described.index("  dev.item -- A planned piece of work.")
+    assert described[start + 1 : start + 7] == [
+        "    blocks: -> dev.item, many -- Items it blocks.",
+        '    slug: string{pattern: "^[a-z0-9][a-z0-9-]*$", min_len: 1, max_len: 80}, one, key'
+        " -- The item's short name.",
+        "    state: enum, one [open, done] -- Whether it is done.",
+        "      done: Done.",
+        "      open: Not done.",
+        "    title: string{min_len: 1, max_len: 120}, one -- Its label.",
+    ]
+

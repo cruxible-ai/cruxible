@@ -213,6 +213,8 @@ class OrientSubjectKind(_StrictOrientModel):
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_is_none)
     ends: tuple[OrientKindEnd, ...] = Field(default=(), exclude_if=_is_empty)
     kit: str | None = Field(default=None, exclude_if=_is_none)
+    #: What one Subject of the kind is, as authored.
+    description: str | None = Field(default=None, exclude_if=_is_none)
 
 
 class OrientContract(_StrictOrientModel):
