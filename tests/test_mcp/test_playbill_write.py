@@ -338,3 +338,25 @@ def test_docs_only_hint_in_mcp_structured_and_text_results(monkeypatch, tmp_path
     assert structured["hint"] == DOCS_ONLY_HINT
     assert any(json.loads(block.text).get("hint") == DOCS_ONLY_HINT for block in content)
     assert not structured.get("warnings")
+
+
+def test_write_doc_ops_advertise_optional_fields_by_type_and_validate_as_the_contract() -> None:
+    """The MCP doc ops cost less to read; what they accept and send is the contract's."""
+
+    from cruxible_client.contracts.write import AppendSection, ReplaceSection
+    from cruxible_core.mcp.tools import McpAppendSection, McpReplaceSection
+
+    props = McpAppendSection.model_json_schema()["properties"]
+    assert {props[name]["type"] for name in ("id", "heading", "name")} == {"string"}
+    assert McpReplaceSection.model_json_schema()["properties"]["expect"]["type"] == "string"
+    sent = {"file": "n.md", "id": None, "heading": None, "text": "# Basis\n"}
+    append = McpAppendSection.model_validate(sent)
+    assert append.model_dump(mode="json") == AppendSection.model_validate(sent).model_dump(
+        mode="json"
+    )
+    replace = {"file": "n.md", "section": ["Basis"], "text": "Body.\n", "heading": "Basis"}
+    assert McpReplaceSection.model_validate(replace).model_dump(mode="json") == (
+        ReplaceSection.model_validate(replace).model_dump(mode="json")
+    )
+    with pytest.raises(ValueError):
+        McpReplaceSection.model_validate({**replace, "expect": "not-a-digest"})

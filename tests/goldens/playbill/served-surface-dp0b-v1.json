@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-14:sdk-writes-documents.sdk-vocabulary-authoring.surface-discovery-printing-050",
-    "surface_digest": "sha256:b5a8259125292481b7b6c52edbc717e4c907043d9c7350828a27f6f888a49a9a"
+    "surface_digest": "sha256:bd60cc01526d710cd6c8f5abed6998048bb88332a4c6e455e96d79e9b40361ce"
   },
   "surface": {
     "cli_leaves": [
@@ -3006,7 +3006,7 @@
           "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_write",
-        "input_schema_digest": "sha256:bd940d888a107b6a12e940d707d0390b06090c2e41b27843570edf3ab190ccfe",
+        "input_schema_digest": "sha256:1f3cf06f41eb62be942454ae53b1fc2ec506db341ebaa0ae25668dcdd3ab42e8",
         "name": "cruxible_write",
         "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
         "permission": "GOVERNED_WRITE"

@@ -35,6 +35,7 @@ from cruxible_client.contracts.compact_query import (
     QueryReceiptDetail,
 )
 from cruxible_client.contracts.declared_blocks import BlockRepinResult
+from cruxible_client.contracts.doc_sections import HeadingText
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_DEFAULT_LIMIT,
@@ -71,19 +72,21 @@ from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
     _EXPECT_DESCRIPTION,
+    CAPTURE_DIGEST_PATTERN,
     AboutChange,
     AddChange,
+    AppendSection,
     CaptureEvidence,
     ClaimValue,
     ContractEvidence,
     CreateChange,
     CreatedSubject,
-    DocOp,
     Evidence,
     ExpectedValue,
     FileEvidence,
     NoneValue,
     RebindChange,
+    ReplaceSection,
     RetireChange,
     SectionEvidence,
     SelfEvidence,
@@ -288,6 +291,40 @@ McpChange = Annotated[
     | McpAboutChange,
     Field(discriminator="op"),
 ]
+
+
+# The write tool's doc operations: the client contract's, with optional fields
+# advertised by their one useful type (leaving one out is how to say none) and
+# a shorter heading text. Validation and the values sent are the contract's.
+_McpOptionalId = Annotated[str, Field(min_length=1)] | SkipJsonSchema[None]
+_MCP_HEADING = "Heading text; text is its body."
+
+
+def _omit_none(value: object) -> bool:
+    return value is None
+
+
+class McpAppendSection(AppendSection):
+    __doc__ = AppendSection.__doc__
+
+    id: _McpOptionalId = Field(default=None, exclude_if=_omit_none)
+    heading: HeadingText | SkipJsonSchema[None] = Field(
+        default=None, exclude_if=_omit_none, description=_MCP_HEADING
+    )
+    name: _McpOptionalId = Field(default=None, description="Catalog name for a new file.")
+
+
+class McpReplaceSection(ReplaceSection):
+    __doc__ = ReplaceSection.__doc__
+
+    id: _McpOptionalId = Field(default=None, exclude_if=_omit_none)
+    heading: HeadingText | SkipJsonSchema[None] = Field(
+        default=None, exclude_if=_omit_none, description=_MCP_HEADING
+    )
+    expect: Annotated[str, Field(pattern=CAPTURE_DIGEST_PATTERN)] | SkipJsonSchema[None] = None
+
+
+McpDocOp = Annotated[McpAppendSection | McpReplaceSection, Field(discriminator="op")]
 
 
 def _observed_rebinds(changes: list[Any]) -> list[Any]:
@@ -1434,7 +1471,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         changes: Annotated[
-            list[McpChange] | None,
+            list[McpChange] | SkipJsonSchema[None],
             Field(
                 description=(
                     'Refer to a create\'s Subject as {"created": label} in subject or value, '
@@ -1443,15 +1480,10 @@ def register_tools(
             ),
         ] = None,
         because: Annotated[str, Field(description="Why: the change set's rationale.")],
-        docs: list[DocOp] | None = None,
+        docs: list[McpDocOp] | SkipJsonSchema[None] = None,
         subject: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "The Subject (kind/id) of every change that names none; a change's own "
-                    "subject overrides it."
-                )
-            ),
+            str | SkipJsonSchema[None],
+            Field(description="The Subject (kind/id) of each change that names none."),
         ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
@@ -1461,8 +1493,8 @@ def register_tools(
             Field(description="if_allowed: accept now when policy lets you; never: propose only."),
         ] = "if_allowed",
         at: Annotated[
-            str | None,
-            Field(description="The coordinate you read at; default: current head."),
+            str | SkipJsonSchema[None],
+            Field(description="The coordinate you read at; default: head."),
         ] = None,
     ) -> WriteOutcome:
         """Write doc sections and Claims together. Cite prose with kind=section evidence."""
