@@ -228,7 +228,8 @@ coordinate: AcceptedCoordinate
 The pinned coordinate, or the live client's last observed coordinate.
 
 This property performs no I/O. Live reads resolve current head in their
-own request, so this value is not a freshness check.
+own request, so this value is not a freshness check. `print()` shows its short
+Git OID; `repr()` keeps every digest.
 
 <a id="api-cruxible-at"></a>
 
@@ -982,6 +983,8 @@ orient(
 Maps accepted state in one call at the context’s coordinate: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (whether this caller can author, and why not), `attention` from the `next` queue, and `next` suggestions written as SDK calls. `kind` reads one kind in full with sample Subject IDs and the predicates that point at it (`incoming`). `section` pages one family: `documents`, `procedures`, `claim_types`, `queries`, `interfaces`, `principals` or `policies`, or an operational one (`runs`, `running`, `lines`, `captures`, `capture_contracts`, `predictions`, `mandates`). An `interfaces` row carries provider names, build selection metadata and `operation_contract`; read one in full with `get("ProviderInterface:<name>")`. When the workspace holds an exported floor, `floor` says its coordinate and how many generations it is behind; a connection without a workspace reports no floor.
 
 There is no cross-kind name search: grep the exported floor under `.cruxible/floor/`, then `get` the reference you found.
+
+`print(result)` shows the map as `cruxible orient` prints it; `repr()` is the full model.
 
 **Conditions and effects:** Follow `next_cursor` while `truncated`. A wrong kind is refused with the nearest kinds.
 
@@ -2045,7 +2048,7 @@ submit(*, accept: Literal['if_allowed', 'never'] = 'if_allowed') -> Intent
 Compiles and submits the whole set as one intent in one request. It lands when
 the approval policy and the caller allow; `accept="never"` keeps the proposal.
 `intent.outcome` says which; a refused set returns the same diagnostics
-`prepare` reports.
+`prepare` reports (`print(intent)` shows them).
 
 <a id="api-changesetdraft-prepare"></a>
 
@@ -2204,6 +2207,11 @@ Returns the proposal handle (`.proposal`) and its typed lint (`.lint`, an
 ## `Intent`
 
 Import: `cruxible_client.authoring.sdk.Intent`. [Source](src/cruxible_client/authoring/sdk.py)
+
+`print(intent)` shows its state, proposal and outcome and, when refused, each
+diagnostic with its repair; `repr()` stays one line. A `WriteOutcome` and an
+`intent.outcome` print as the CLI prints them, through
+`contracts.text_display`.
 
 <a id="api-intent-from-preflight"></a>
 
@@ -7842,6 +7850,8 @@ definitions singular.
 **`contracts.errors`** — [CruxibleError](src/cruxible_client/contracts/errors.py), [CanonicalEncodingError](src/cruxible_client/contracts/errors.py), [MerkleIntegrityError](src/cruxible_client/contracts/errors.py), [FormatError](src/cruxible_client/contracts/errors.py), [SinceRequestInvalid](src/cruxible_client/contracts/errors.py), [ClaimAttestationRequestInvalid](src/cruxible_client/contracts/errors.py), [InstanceIncompatiblePrereleaseContent](src/cruxible_client/contracts/errors.py), [ReseedRequired](src/cruxible_client/contracts/errors.py), [InstanceDecommissioned](src/cruxible_client/contracts/errors.py), [SemanticDeltaLimitError](src/cruxible_client/contracts/errors.py), [BootstrapError](src/cruxible_client/contracts/errors.py), [ObjectFormatConflict](src/cruxible_client/contracts/errors.py), [GitError](src/cruxible_client/contracts/errors.py), [SigningKeyError](src/cruxible_client/contracts/errors.py), [CasError](src/cruxible_client/contracts/errors.py), [JournalError](src/cruxible_client/contracts/errors.py), [JournalConflictError](src/cruxible_client/contracts/errors.py), [JournalIntegrityError](src/cruxible_client/contracts/errors.py), [ExecutionError](src/cruxible_client/contracts/errors.py), [DocumentFormatError](src/cruxible_client/contracts/errors.py), [DocumentNotFoundError](src/cruxible_client/contracts/errors.py), [SubjectFormatError](src/cruxible_client/contracts/errors.py), [SubjectNotFoundError](src/cruxible_client/contracts/errors.py), [ClaimNotFoundError](src/cruxible_client/contracts/errors.py), [ProposalAdmissionError](src/cruxible_client/contracts/errors.py), [ProposalWithdrawnError](src/cruxible_client/contracts/errors.py), [ProposalRejectedError](src/cruxible_client/contracts/errors.py), [ProposalNotFoundError](src/cruxible_client/contracts/errors.py), [ProposalSelectorAmbiguousError](src/cruxible_client/contracts/errors.py), [ProposalContentUnavailable](src/cruxible_client/contracts/errors.py), [ProposalReadmitAlreadyAccepted](src/cruxible_client/contracts/errors.py), [ProposalReadmitNotStale](src/cruxible_client/contracts/errors.py), [ProposalStale](src/cruxible_client/contracts/errors.py), [ProposalReadmitRequiresResubmission](src/cruxible_client/contracts/errors.py), [ProposalActivationRequestInvalid](src/cruxible_client/contracts/errors.py), [ProposalIntegrityError](src/cruxible_client/contracts/errors.py), [ProposalEvaluationIntegrityError](src/cruxible_client/contracts/errors.py), [ApprovalIntegrityError](src/cruxible_client/contracts/errors.py), [PrincipalIntegrityError](src/cruxible_client/contracts/errors.py), [SettlementIntegrityError](src/cruxible_client/contracts/errors.py), [SettlementEvidenceUnproven](src/cruxible_client/contracts/errors.py), [ReplayCheckpointError](src/cruxible_client/contracts/errors.py), [ReadRefusalError](src/cruxible_client/contracts/errors.py), [WriteRefusalError](src/cruxible_client/contracts/errors.py), [ProjectionError](src/cruxible_client/contracts/errors.py), [ProjectionCoordinateError](src/cruxible_client/contracts/errors.py), [ProjectionFormatError](src/cruxible_client/contracts/errors.py), [ProjectionPublicationError](src/cruxible_client/contracts/errors.py), [ProjectionIntegrityError](src/cruxible_client/contracts/errors.py).
 
 **`contracts.floor`** — [FloorEntry](src/cruxible_client/contracts/floor.py), [FloorManifest](src/cruxible_client/contracts/floor.py), [FloorHead](src/cruxible_client/contracts/floor.py), [FloorDeltaFile](src/cruxible_client/contracts/floor.py), [FloorDelta](src/cruxible_client/contracts/floor.py), [FloorApplyResult](src/cruxible_client/contracts/floor.py).
+
+**`contracts.text_display`** — the text `str()` and the CLI print for orient results, coordinates, write outcomes, landings and intents: [render_orient](src/cruxible_client/contracts/text_display.py), [write_outcome_lines](src/cruxible_client/contracts/text_display.py), [landing_lines](src/cruxible_client/contracts/text_display.py), [render_intent](src/cruxible_client/contracts/text_display.py).
 
 **`contracts.get_display`** — [GetValueDisplay](src/cruxible_client/contracts/get_display.py).
 

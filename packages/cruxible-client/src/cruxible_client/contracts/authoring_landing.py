@@ -16,6 +16,13 @@ class AuthoringLanded(BaseModel):
     proposal_id: str | None = None
     accepted_coordinate: AcceptedCoordinate
 
+    def __str__(self) -> str:
+        """``landed: accepted at <short oid>``; ``repr()`` stays the full model."""
+
+        from cruxible_client.contracts.text_display import landing_lines
+
+        return "\n".join(landing_lines(self))
+
 
 class AuthoringProposed(BaseModel):
     """Why submit stopped; a refused preflight has no proposal yet."""
@@ -34,6 +41,13 @@ class AuthoringProposed(BaseModel):
     ]
     message: str
     next: str | None = None
+
+    def __str__(self) -> str:
+        """Why it stopped and what to run; ``repr()`` stays the full model."""
+
+        from cruxible_client.contracts.text_display import landing_lines
+
+        return "\n".join(landing_lines(self))
 
 
 AuthoringLanding: TypeAlias = Annotated[

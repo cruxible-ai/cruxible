@@ -878,6 +878,13 @@ class OrientResult(_StrictOrientModel):
     live: LiveView | None = Field(default=None, exclude_if=_is_none)
     next: tuple[str, ...] = ()
 
+    def __str__(self) -> str:
+        """The map as ``cruxible orient`` prints it; ``repr()`` stays the full model."""
+
+        from cruxible_client.contracts.text_display import render_orient
+
+        return render_orient(self.model_dump(mode="json"))
+
 
 __all__ = [
     "ORIENT_ATTENTION_TOP",
