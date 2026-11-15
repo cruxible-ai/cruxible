@@ -51,10 +51,9 @@ from cruxible_client.authoring.examples import (
 )
 from cruxible_client.authoring.files import (
     FileCatalogEdit,
-    add_catalog_entry,
+    catalog_file,
     compile_client_file_context,
     load_file_catalog,
-    media_type_for,
     remove_catalog_entry,
     root_aliases,
 )
@@ -3620,28 +3619,18 @@ def add_file(
     target refuses. Writes only the catalog file (commit it with Git, if you use Git).
     """
 
-    fields: dict[str, object] = {
-        key: value
-        for key, value in {
-            "document_id": document_id,
-            "document_kind": document_kind,
-            "title": title,
-            "media_type": media_type,
-            "required_tier": required_tier,
-            "public_uri": public_uri,
-        }.items()
-        if value is not None
-    }
-    if document_id is not None:
-        fields.setdefault("media_type", media_type_for(path))
-        fields["governance_scope"] = tuple(
-            sorted(set(governance_scope), key=lambda item: item.encode("utf-8"))
-        )
-        fields = {key: value for key, value in fields.items() if value is not None}
-    elif governance_scope:
-        fields["governance_scope"] = governance_scope
-    result = add_catalog_entry(
-        _catalog_edit_root(repository_root), name=name, path=path, fields=fields, replace=replace
+    result = catalog_file(
+        _catalog_edit_root(repository_root),
+        name=name,
+        path=path,
+        document_id=document_id,
+        document_kind=document_kind,
+        title=title,
+        media_type=media_type,
+        governance_scope=governance_scope,
+        required_tier=cast(Any, required_tier),
+        public_uri=public_uri,
+        replace=replace,
     )
     _echo_catalog_edit(result, output_json=output_json)
 

@@ -257,6 +257,30 @@ def test_typed_section_names_its_heading_once_and_leaves_a_blank_line(playbill_h
         cx.section("notes.md", ("Notes", "x"), heading="x", body="both forms")
 
 
+def test_sdk_catalogues_an_existing_file_and_cites_it(playbill_http, tmp_path):
+    """F23: a file written outside Cruxible is catalogued from the SDK, then cited."""
+
+    cx, _, workspace = _context(playbill_http, tmp_path)
+    (workspace / "notes").mkdir()
+    (workspace / "notes" / "roadmap.md").write_text("# Roadmap\n\n## wi-1\n\nReady.\n")
+    w = cx.world()
+    with pytest.raises(WriteRefusalError, match="file_uncatalogued"):
+        w.project.work_item["wi-1"].set(
+            status="ready",
+            because="Ready",
+            evidence=SectionEvidence(file="notes/roadmap.md", section=("Roadmap", "wi-1")),
+        )
+    edit = cx.files.add("roadmap-notes", "notes/roadmap.md")
+    assert (edit.status, edit.entry.locator) == ("added", "notes/roadmap.md")
+    result = w.project.work_item["wi-1"].set(
+        status="ready",
+        because="Ready",
+        evidence=SectionEvidence(file="notes/roadmap.md", section=("Roadmap", "wi-1")),
+    )
+    # Cited as file evidence of the catalogued source (its policy decides the verdict).
+    assert result.status == "accepted" and result.changes[0].claim, result
+
+
 def test_typed_carried_replace_and_stale_expect(playbill_http, tmp_path):
     cx, _, workspace = _context(playbill_http, tmp_path)
     w = cx.world()

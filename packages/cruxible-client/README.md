@@ -694,6 +694,23 @@ Reads a cataloged workspace file into a FileSelector using .cruxible/files.yaml 
 |---|---|---|
 | `path` | Required | Workspace/source path or destination; interpretation is stated by its owning operation. |
 
+<a id="api-cruxible-files"></a>
+
+### `Cruxible.files`
+
+[Source](src/cruxible_client/authoring/files.py)
+
+```text
+files.add(name: str, path: str | Path, *, document_id=None, document_kind=None, title=None,
+          media_type=None, governance_scope=(), required_tier=None, public_uri=None,
+          replace=False) -> FileCatalogEdit
+files.remove(name: str) -> FileCatalogEdit
+```
+
+Catalogues a workspace file under a source name in `.cruxible/files.yaml`, or removes its entry: the same edits as `cruxible files add` and `cruxible files remove`, through the same code.
+
+**Conditions and effects:** Writes only the catalog file. A relative path is read from the workspace root. An existing name refuses (`entry_exists`) unless `replace=True`; a partial Document or a duplicate Document target refuses.
+
 ## Reads and discovery
 
 <a id="api-cruxible-capture"></a>

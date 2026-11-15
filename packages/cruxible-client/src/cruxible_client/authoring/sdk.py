@@ -276,6 +276,7 @@ from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient, configured_principal_id
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_client.authoring.files import WorkspaceCatalog
     from cruxible_client.authoring.world import World
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -2916,6 +2917,18 @@ class Cruxible:
         self._observe_read(_coordinate(head.coordinate.model_dump(mode="json")), expected=requested)
         self._coordinate = _coordinate(head.coordinate.model_dump(mode="json"))
         return head
+
+    @property
+    def files(self) -> WorkspaceCatalog:
+        """The workspace's file catalog: ``cx.files.add(name, path)``, ``cx.files.remove(name)``.
+
+        The same edits as ``cruxible files add``/``remove``. Next: ``cx.file(path)``
+        selects text from a catalogued file.
+        """
+
+        from cruxible_client.authoring.files import WorkspaceCatalog
+
+        return WorkspaceCatalog(self._workspace_root)
 
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
