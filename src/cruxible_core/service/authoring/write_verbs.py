@@ -3707,10 +3707,17 @@ class _Planner:
                 touched[claim] = index
             if isinstance(change, SetChange) and planned.slot is not None:
                 if planned.slot in slots:
+                    subject = planned.outcome["subject"]
+                    if subject is None and isinstance(change.subject, CreatedSubject):
+                        # Not named until lowering: the create it names, by label and kind.
+                        bound = self.plan.labels.get(change.subject.created)
+                        subject = f"{{created: {change.subject.created}}}" + (
+                            f" ({bound.kind})" if bound is not None else ""
+                        )
                     raise _refuse(
                         "cruxible.write.slot_set_twice",
                         f"changes {slots[planned.slot]} and {index} both set "
-                        f"{planned.outcome['subject']} {planned.outcome['field']}",
+                        f"{subject} {planned.outcome['field']}",
                         change=index,
                         repair="Keep one set per field in a write",
                     )

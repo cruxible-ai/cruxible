@@ -1010,3 +1010,21 @@ def test_a_create_key_by_field_name_lands_the_pair(instance: PlaybillInstance) -
         f"{APP_EXPOSURE}.occurrence": occurrence,
         f"{APP_EXPOSURE}.vulnerability": V1,
     }
+
+
+def test_setting_a_created_subject_s_field_twice_names_the_create(
+    instance: PlaybillInstance,
+) -> None:
+    occurrence = _occurrence(instance)
+    justification = {"op": "set", "subject": {"created": "a"}, "field": "justification"}
+    refusal = _refusal(
+        write(
+            instance,
+            create("a", APP_EXPOSURE, {"occurrence": occurrence, "vulnerability": V1}),
+            {**justification, "value": "inline_mitigations_already_exist"},
+            {**justification, "value": "component_not_present"},
+        )
+    )
+    assert refusal.code == "cruxible.write.slot_set_twice"
+    assert f"{{created: a}} ({APP_EXPOSURE}) justification" in refusal.message
+    assert "None" not in refusal.message
