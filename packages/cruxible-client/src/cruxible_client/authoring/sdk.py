@@ -1276,7 +1276,7 @@ class ChangeSetDraft:
         defined earlier in this same set) and binds every slot to one exact
         ``{build, operation}``: ``bindings`` maps a slot (or
         ``<invoke node>.<slot>``) to ``provider[/build]#operation``; a slot left
-        out is fitted, and exactly one live operation must serve its signature. A Line
+        out is fitted, and exactly one live operation must serve its capability. A Line
         runs when run explicitly, or, once it is enabled, when a Trigger aimed
         at it fires (:meth:`trigger`; a Trigger does nothing until then), and
         inherits the Procedure's hard caps as its budget unless one is given.
@@ -1292,8 +1292,9 @@ class ChangeSetDraft:
         ``acquisition`` maps a capture output, ``<alias>.<field>``, to
         ``{max_age, on_unavailable, ...}`` and replaces the Procedure's default
         for it.
-        ``parameters`` is the Procedure's input record; lowering checks it
-        against the Procedure's input contract. ``max_authority`` (observe,
+        ``parameters`` are the Procedure's params: values over its params
+        defaults, checked against its params Contract (a field of its input
+        refuses ``cruxible.authoring.line_parameters_refused``). ``max_authority`` (observe,
         propose or settle) caps this Line below its Procedure's own capability
         and defaults to it. A Line that proposes or settles also needs a live
         ProcedureMandate covering its Procedure before it can run or be enabled;
