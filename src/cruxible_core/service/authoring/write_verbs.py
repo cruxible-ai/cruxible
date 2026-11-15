@@ -349,6 +349,19 @@ def _render_get(surface: ReadSurface, ref: str) -> str:
     return f"cruxible_get(ref={json.dumps(ref)})"
 
 
+def _sdk_create_repair(kind: str, keys: Sequence[str], named: str) -> str:
+    """How the SDK creates a Subject of ``kind`` in the same write batch."""
+
+    parts = ", ".join(
+        f"{json.dumps(predicate.removeprefix(kind + '.'))}: <value>" for predicate in keys
+    )
+    key = f", key={{{parts}}}" if keys else ""
+    return (
+        f"Create it in this write: new = batch.create({json.dumps(kind)}{key}), and pass new "
+        f"where this change names {named} (or pass a cx.new_subject(...) draft there)"
+    )
+
+
 def _render_commit(surface: ReadSurface, git_oid: str) -> str:
     if surface == "cli":
         return f"Run the same command without --dry-run, adding --at {git_oid}"
@@ -1037,7 +1050,9 @@ class _Planner:
                 "create one from a reference",
                 change=index,
                 repair=(
-                    f"Create it in this write: add the change {shape}"
+                    _sdk_create_repair(kind, declared.keys, f"{kind}/{subject_id}")
+                    if self.request.surface == "sdk"
+                    else f"Create it in this write: add the change {shape}"
                     + ("" if declared.minted else " with each key value filled in")
                     + ', and name it {"created": "new"} where this change names '
                     f"{kind}/{subject_id}"

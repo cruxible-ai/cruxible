@@ -27,6 +27,8 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
+from tests.core_support._identity_support import OWNER
 from tests.core_support._pair_world import (
     ADVISORY,
     APP_EXPOSURE,
@@ -835,3 +837,149 @@ def test_an_end_creation_landing_through_an_alias_holds_no_requested_key(
         ),
     )
     assert ends_of(instance, E11)[f"{EXPOSURE}.component"] == C1
+
+
+# -- the SDK write batch creates a keyed Subject (walkthrough S9) -----------------------
+
+
+class _BatchWriter:
+    """Just what a write batch calls on ``cx``: the request lands on ``instance``."""
+
+    def __init__(self, instance: PlaybillInstance) -> None:
+        self.instance = instance
+        self.requests: list[Any] = []
+
+    def _write_at(self, _at: object) -> None:
+        return None
+
+    def _write(self, request: Any) -> Any:
+        self.requests.append(request)
+        return service_playbill_write(
+            self.instance,
+            request=request,
+            caller=WriteCaller(actor=OWNER, may_activate=True, may_approve=True),
+        )
+
+
+def _sdk_batch(instance: PlaybillInstance, **kwargs: Any) -> tuple[Any, _BatchWriter]:
+    from cruxible_client.authoring.sdk import WriteBatch
+
+    writer = _BatchWriter(instance)
+    return WriteBatch(writer, because="Judged by hand.", **kwargs), writer  # type: ignore[arg-type]
+
+
+def _occurrence(instance: PlaybillInstance) -> str:
+    _ends(instance)
+    made = accepted(
+        write(
+            instance,
+            create("i", INVENTORY, "web"),
+            create("o", OCCURRENCE, {"inventory": {"created": "i"}, "component": C1}),
+        )
+    )
+    return made.changes[1].subject
+
+
+def test_the_sdk_batch_creates_a_pair_and_sets_its_fact_in_one_write(
+    instance: PlaybillInstance,
+) -> None:
+    occurrence = _occurrence(instance)
+    batch, writer = _sdk_batch(instance)
+
+    pair = batch.create(APP_EXPOSURE, key={"occurrence": occurrence, "vulnerability": V1})
+    batch.set(pair, "justification", "inline_mitigations_already_exist")
+    outcome = batch.write()
+
+    assert outcome.status == "accepted", outcome.refusal
+    (request,) = writer.requests
+    assert [change.op for change in request.changes] == ["create", "set"]
+    assert request.changes[1].subject == pair
+    app = outcome.changes[0].subject
+    assert ends_of(instance, app) == {
+        f"{APP_EXPOSURE}.occurrence": occurrence,
+        f"{APP_EXPOSURE}.vulnerability": V1,
+    }
+    assert f"{APP_EXPOSURE}.justification" in {p for _c, p in _claims(instance, app)}
+
+
+def test_a_new_subject_draft_is_a_batch_subject_and_a_pair_end(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.authoring.sdk import Cruxible
+
+    _ends(instance)
+    stub = object.__new__(Cruxible)
+    inventory = Cruxible.new_subject(stub, INVENTORY, key="api")
+    occurrence = Cruxible.new_subject(
+        stub, OCCURRENCE, key={"inventory": inventory, "component": C1}
+    )
+    pair = Cruxible.new_subject(
+        stub,
+        APP_EXPOSURE,
+        key={"occurrence": occurrence, "vulnerability": V1},
+        rationale="The api inventory ships requests.",
+    )
+    # The draft is the default subject; the same draft named twice is one create.
+    batch, writer = _sdk_batch(instance, subject=pair)
+    batch.set("justification", "inline_mitigations_already_exist")
+    assert batch._created(pair) == batch._default
+    request_ops = [change.op for change in batch.changes]
+    assert request_ops.count("create") == 3
+
+    outcome = batch.write()
+
+    assert outcome.status == "accepted", outcome.refusal
+    creates = [change for change in writer.requests[0].changes if change.op == "create"]
+    assert creates[-1].evidence.self == "The api inventory ships requests."
+    assert len(live_subjects(instance, APP_EXPOSURE)) == 1
+    assert live_subjects(instance, INVENTORY) == [f"{INVENTORY}/api"]
+
+
+def test_a_subject_value_may_be_a_create_handle_or_a_draft(instance: PlaybillInstance) -> None:
+    from cruxible_client.authoring.sdk import Cruxible
+
+    _ends(instance)
+    batch, _writer = _sdk_batch(instance)
+    vuln = batch.create(VULN, key="CVE-2024-0001")
+    batch.add(C1, "affected_by", vuln)
+    batch.add(
+        C1, "affected_by", Cruxible.new_subject(object.__new__(Cruxible), VULN, key="CVE-2024-0002")
+    )
+
+    outcome = batch.write()
+
+    assert outcome.status == "accepted", outcome.refusal
+    assert len(_affected_values(instance)) == 2
+
+
+def test_the_sdk_repair_for_an_uncreated_pair_names_batch_create(
+    instance: PlaybillInstance,
+) -> None:
+    occurrence = _occurrence(instance)
+    batch, _writer = _sdk_batch(instance)
+    batch.set(f"{APP_EXPOSURE}/missing", "justification", "inline_mitigations_already_exist")
+    from cruxible_client.contracts.write import WriteRequest as _Request
+
+    refused = service_playbill_write(
+        instance,
+        request=_Request(because="x", changes=tuple(batch.changes), surface="sdk"),
+        caller=WriteCaller(actor=OWNER, may_activate=True, may_approve=True),
+    )
+    refusal = _refusal(refused)
+    assert refusal.code == "cruxible.write.subject_not_found"
+    assert refusal.repair.startswith(
+        'Create it in this write: new = batch.create("sec.app_exposure", '
+        'key={"occurrence": <value>, "vulnerability": <value>})'
+    ), refusal.repair
+    assert occurrence  # the ends exist; only the pair is missing
+    # The wire surfaces keep the change they take.
+    wire = write(
+        instance,
+        {
+            "op": "set",
+            "subject": f"{APP_EXPOSURE}/missing",
+            "field": "justification",
+            "value": "inline_mitigations_already_exist",
+        },
+    )
+    assert '"op": "create"' in _refusal(wire).repair
