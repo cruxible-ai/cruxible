@@ -1331,6 +1331,7 @@ def playbill_orient(
     evaluation_time: datetime | None = None,
     surface: OrientSurface = "cli",
     caller_tools: tuple[str, ...] | None = None,
+    vocabulary_at: str | None = None,
 ) -> OrientResult:
     """The orient map; the caller is whoever ``whoami`` resolves the transport to."""
 
@@ -1367,6 +1368,7 @@ def playbill_orient(
             state=lane_state, code=lane_code, detail=lane_detail
         ),
         consumers_running=get_playbill_manager().consumer_runner.running,
+        vocabulary_at=vocabulary_at,
     )
 
 

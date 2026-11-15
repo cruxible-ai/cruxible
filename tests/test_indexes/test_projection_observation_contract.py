@@ -143,6 +143,9 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "subject_kind_undeclared",
         # A recorded kit add whose resume refused at the head it ran on.
         "kit_resume_blocked",
+        # The workspace's vocabulary file is behind, or names an unknown export.
+        "vocabulary_file_behind",
+        "vocabulary_file_baseline_invalid",
     }
     assert set(get_args(NextRepairOperation)) == {
         "cruxible.authoring.example",
@@ -175,6 +178,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.prediction.settle",
         # A blocked kit resume: preview the kit add again at the head.
         "cruxible.kit.add",
+        # A vocabulary file behind accepted state: export it again.
+        "cruxible.vocabulary.export",
         "hand_edit",
         "cruxible.line.evaluate",
         # A drifted citation on an unchanged statement: re-bind beside retire.

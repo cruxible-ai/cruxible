@@ -345,6 +345,51 @@ def test_a_file_naming_an_unknown_export_refuses(world) -> None:  # type: ignore
         cx.vocabulary.plan()
 
 
+def test_next_and_orient_name_a_file_behind_accepted_state(world) -> None:  # type: ignore[no-untyped-def]
+    from cruxible_client.authoring.sdk_types import Duration
+
+    _http, _instance_id, workspace, cx = world
+    within = Duration.days(count=7)
+
+    def rows():  # type: ignore[no-untyped-def]
+        return [
+            item for item in cx.next(expiring_within=within).items if "vocabulary" in item.reason
+        ]
+
+    cx.vocabulary.export()
+    assert rows() == []
+    assert cx.orient().vocabulary_file.state == "current"
+
+    later = cx.changes(rationale="One more field.")
+    later.field("dev.item", "priority", EnumType(members=("p0", "p1")))
+    assert later.submit().outcome.status == "landed"
+    cx.refresh()
+    (row,) = rows()
+    assert row.reason == "vocabulary_file_behind"
+    assert row.detail["definitions_behind"] == 1
+    assert row.detail["changed"] == ["ClaimType:dev.item.priority"]
+    assert row.repair.command == "cx.vocabulary.export()"
+    status = cx.orient().vocabulary_file
+    assert status.state == "behind" and status.definitions_behind == 1
+
+    # A Claim write moves the head, not the vocabulary: still one behind.
+    _claim(cx, "dev.item/a", "dev.item.state", "open")
+    assert rows()[0].detail["definitions_behind"] == 1
+
+    _edit(workspace, lambda data: data["based_on"].update(git_oid="0" * 40))
+    (invalid,) = rows()
+    assert invalid.reason == "vocabulary_file_baseline_invalid"
+    assert cx.orient().vocabulary_file.state == "invalid"
+
+    _file(workspace).write_text("format: [unclosed\n", encoding="utf-8")
+    (unreadable,) = rows()
+    assert unreadable.detail["cause"] == "unreadable"
+    assert cx.orient().vocabulary_file.state == "invalid"
+
+    cx.vocabulary.export(force=True)
+    assert rows() == []
+
+
 def test_plan_is_the_same_on_the_sdk_the_cli_and_mcp(
     world,  # type: ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,

@@ -288,6 +288,10 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 # every served refusal producer -- core service, client authoring, CLI -- reads
 # the same one instead of re-inventing prose at its own boundary.
 RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
+    # The vocabulary file is behind accepted state, or names an export this
+    # instance lacks: export it again (the author merges any local edits).
+    "vocabulary_file_behind": RepairOperation(operation="cruxible.vocabulary.export"),
+    "vocabulary_file_baseline_invalid": RepairOperation(operation="cruxible.vocabulary.export"),
     "line_mandate_required": RepairOperation(
         operation="cruxible.authoring.example",
         arguments={"example": "procedure-mandate"},

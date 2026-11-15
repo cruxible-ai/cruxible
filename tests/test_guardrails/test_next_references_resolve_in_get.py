@@ -73,6 +73,9 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace", "kit_status"]] = {
     "line_input_missing": "get",
     # A kit is read with kit status, not get.
     "kit_resume_blocked": "kit_status",
+    # The workspace's vocabulary file.
+    "vocabulary_file_behind": "workspace",
+    "vocabulary_file_baseline_invalid": "workspace",
 }
 
 

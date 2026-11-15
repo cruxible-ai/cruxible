@@ -829,6 +829,35 @@ class HistoryReader:
         ).fetchone()
         return row is not None
 
+    def touched_paths_under(
+        self, prefixes: Sequence[str], low: int, high: int, *, sample: int = 20
+    ) -> tuple[int, tuple[str, ...]]:
+        """How many distinct member paths under ``prefixes`` the records in ``(low, high]``
+        touched, and the first ``sample`` of them in path order.
+
+        Like :meth:`touched_under`, it reads only the change records of that
+        range (the primary key orders them by generation): the cost is the
+        changes in the range, never the instance.
+        """
+
+        if not 0 <= low <= high <= self.sequence:
+            raise FormatError("generation is outside requested accepted history")
+        if not prefixes:
+            return 0, ()
+        matches = " OR ".join("substr(member_path,1,?)=?" for _ in prefixes)
+        arguments: list[object] = [low, high]
+        for prefix in prefixes:
+            arguments.extend((len(prefix), prefix))
+        paths = sorted(
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT DISTINCT member_path FROM accepted_member_locations "
+                f"WHERE sequence>? AND sequence<=? AND ({matches})",
+                arguments,
+            )
+        )
+        return len(paths), tuple(paths[:sample])
+
     def latest_member(self, path: str) -> AcceptedMemberLocation | None:
         row = self._connection.execute(
             "SELECT * FROM accepted_member_locations WHERE member_path=? AND sequence<=? "

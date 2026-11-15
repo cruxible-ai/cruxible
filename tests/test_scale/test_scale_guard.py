@@ -510,6 +510,38 @@ def _next(*, sources: bool = False) -> Callable[[World], object]:
     return run
 
 
+def _vocabulary_baseline(world: World) -> None:
+    """A vocabulary file exported here, then one ClaimType accepted after it."""
+
+    world.prepared = world.instance.accepted_coordinate().git_oid
+    _accept_type(world, "vocab_note")
+    # Every consumer part catches up first, so the window counts the read alone.
+    for part in _worlds.TICK_PARTS:
+        _worlds.tick(world, part)
+
+
+def _vocabulary_next(world: World) -> object:
+    from cruxible_core.service.discovery.next import NextVocabularyFileObservation
+
+    return playbill_api.playbill_next(
+        world.instance_id,
+        request=NextRequest(
+            evaluation_time=_now(),
+            access_profile=_ACCESS,
+            workspace_observation=NextWorkspaceObservation(
+                vocabulary_file=NextVocabularyFileObservation(git_oid=world.prepared)
+            ),
+        ),
+    )
+
+
+def _vocabulary_behind_by_one(world: World, result: Any) -> None:
+    """The check ran: the file is one definition behind, in SMALL and LARGE alike."""
+
+    rows = [item for item in result.items if item.reason == "vocabulary_file_behind"]
+    assert [row.detail["definitions_behind"] for row in rows] == [1], (world.shape.name, rows)
+
+
 def _observe_reports(world: World) -> None:
     """The workspace's ``reports.md``, observed client-side through its file catalog."""
 
@@ -962,6 +994,13 @@ def _routes() -> list[Route]:
         Route("cold.write", _write(lambda w: _creates(w, "cold")), prepare=_reopen),
         Route(
             "cold.dry_run", _write(lambda w: _creates(w, "colddry"), dry_run=True), prepare=_reopen
+        ),
+        # The vocabulary file's next check: the change records since its export.
+        Route(
+            "read.next.vocabulary_file",
+            _vocabulary_next,
+            prepare=_vocabulary_baseline,
+            verify=_vocabulary_behind_by_one,
         ),
     ]
 

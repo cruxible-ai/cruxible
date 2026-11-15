@@ -88,6 +88,8 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
     workspace_floor_freshness,
+    workspace_vocabulary_at,
+    workspace_vocabulary_freshness,
 )
 from cruxible_client.authoring.write_evidence import observe_changes, rebind_evidence
 from cruxible_client.contracts.artifacts import (
@@ -5083,6 +5085,9 @@ class Cruxible:
             at=requested,
             evaluation_time=self._evaluation_time(),
             surface="sdk",
+            vocabulary_at=(
+                None if self._workspace is None else workspace_vocabulary_at(self._workspace)
+            ),
         )
         self._observe_read(
             result.coordinate,
@@ -5091,7 +5096,9 @@ class Cruxible:
         if self._workspace is None:
             # No workspace, no floor to compare: the floor is unknown, not stale.
             return result
-        return workspace_floor_freshness(self._workspace, result)
+        return workspace_vocabulary_freshness(
+            self._workspace, workspace_floor_freshness(self._workspace, result)
+        )
 
     def attest(
         self,

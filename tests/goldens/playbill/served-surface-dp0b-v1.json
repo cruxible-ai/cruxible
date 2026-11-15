@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-15:vocabulary-file-050",
-    "surface_digest": "sha256:8a9283497bba110bcfb368d56ed497fe816522c40971e7ce93a5434818f83ad0"
+    "surface_digest": "sha256:9b6f9759b964f937a16381194765c7bf61806f55b443aed855854af01f20da56"
   },
   "surface": {
     "cli_leaves": [
@@ -1679,7 +1679,7 @@
         "request_model": "cruxible_core.server.playbill_request_models.NextRequest",
         "request_schema_digest": "sha256:14d072eede4cb2410b6556b1c72f72f8a62476ce192771692a1530eb499fe73b",
         "response_model": "cruxible_client.contracts.NextResult",
-        "response_schema_digest": "sha256:cb1b6fe8757ff9b4e33c528521726d52ee9c91104d5b7a9a20503db6b0704a0c"
+        "response_schema_digest": "sha256:ff6bd60cc8f31af274bdde78ec32cd5071f00e9412687bbeef39add180561ffe"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.orient",
@@ -1691,7 +1691,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.orient.OrientResult",
-        "response_schema_digest": "sha256:b4a48a9835080b2512533bf0cd6b2c46d9ca5ccdc48e90b27048b49ba7b65b50"
+        "response_schema_digest": "sha256:648e94480b93f8effb31b01e1ba82cdbeaedfd1d77737a8bb947d882ce593b4c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.predict",
@@ -2698,7 +2698,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_next",
         "input_schema_digest": "sha256:822dc04c16064413474f2632b8758500c7aa6db30bbe675a5ea7584518b5602f",
         "name": "cruxible_next",
-        "output_schema_digest": "sha256:4594b3559c27f56527748d5dab749e7c0ccbe1020161b5c3c58510a758e107c1",
+        "output_schema_digest": "sha256:6c592c059cb22e0ab5aa99195646ef36c93dceeafba140a03da56645aa0521cc",
         "permission": "READ_ONLY"
       },
       {
@@ -2708,7 +2708,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_orient",
         "input_schema_digest": "sha256:603232f2a3e158425ddb2c294f3d9be3c304f93841cf5f3b9fed04adff3fd68f",
         "name": "cruxible_orient",
-        "output_schema_digest": "sha256:9935bf71db4b9961182aa56ab84b3b2f92389447f4d3f43e0a3b2b054cf1acf8",
+        "output_schema_digest": "sha256:5148d74ca498f0372aa00dc9f92927ff5bda528cbc19f42d1c720d7c1562ecb4",
         "permission": "READ_ONLY"
       },
       {

@@ -49,6 +49,8 @@ from cruxible_client.authoring.workspace import (
     inspect_workspace_floor,
     observe_next_workspace_with_coverage,
     workspace_floor_freshness,
+    workspace_vocabulary_at,
+    workspace_vocabulary_freshness,
     write_workspace_floor,
     write_workspace_floor_delta,
 )
@@ -708,6 +710,11 @@ def handle_playbill_orient(
     from cruxible_core.mcp.curation import session_tool_names
 
     tools = tuple(sorted(session_tool_names()))
+    try:
+        workspace = optional_mcp_workspace_root()
+    except ConfigError:
+        workspace = None
+    vocabulary_at = None if workspace is None else workspace_vocabulary_at(workspace)
     result = _daemon_call(
         lambda client: client.orient(
             instance_id,
@@ -719,14 +726,13 @@ def handle_playbill_orient(
             evaluation_time=evaluation_time,
             surface="mcp",
             caller_tools=tools,
+            vocabulary_at=vocabulary_at,
         ),
         operation_name="cruxible_orient",
     )
-    try:
-        workspace = optional_mcp_workspace_root()
-    except ConfigError:
-        workspace = None
-    return result if workspace is None else workspace_floor_freshness(workspace, result)
+    if workspace is None:
+        return result
+    return workspace_vocabulary_freshness(workspace, workspace_floor_freshness(workspace, result))
 
 
 def handle_playbill_list_proposals(

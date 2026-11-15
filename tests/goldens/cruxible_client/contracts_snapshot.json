@@ -173,7 +173,9 @@
         "prediction_settleable",
         "prediction_window_unbindable",
         "subject_kind_undeclared",
-        "kit_resume_blocked"
+        "kit_resume_blocked",
+        "vocabulary_file_behind",
+        "vocabulary_file_baseline_invalid"
       ]
     },
     "NextRefusalCode": {
@@ -222,6 +224,7 @@
         "cruxible.inbox.list",
         "cruxible.prediction.settle",
         "cruxible.kit.add",
+        "cruxible.vocabulary.export",
         "hand_edit"
       ]
     },
@@ -39742,7 +39745,9 @@
               "prediction_settleable",
               "prediction_window_unbindable",
               "subject_kind_undeclared",
-              "kit_resume_blocked"
+              "kit_resume_blocked",
+              "vocabulary_file_behind",
+              "vocabulary_file_baseline_invalid"
             ],
             "title": "Reason",
             "type": "string"
@@ -39978,6 +39983,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -40054,6 +40060,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -40167,7 +40174,9 @@
               "prediction_settleable",
               "prediction_window_unbindable",
               "subject_kind_undeclared",
-              "kit_resume_blocked"
+              "kit_resume_blocked",
+              "vocabulary_file_behind",
+              "vocabulary_file_baseline_invalid"
             ],
             "title": "Reason",
             "type": "string"
@@ -40465,6 +40474,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -40541,6 +40551,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -40741,7 +40752,9 @@
               "prediction_settleable",
               "prediction_window_unbindable",
               "subject_kind_undeclared",
-              "kit_resume_blocked"
+              "kit_resume_blocked",
+              "vocabulary_file_behind",
+              "vocabulary_file_baseline_invalid"
             ],
             "title": "Reason",
             "type": "string"
@@ -40977,7 +40990,9 @@
                   "prediction_settleable",
                   "prediction_window_unbindable",
                   "subject_kind_undeclared",
-                  "kit_resume_blocked"
+                  "kit_resume_blocked",
+                  "vocabulary_file_behind",
+                  "vocabulary_file_baseline_invalid"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -41105,6 +41120,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -41181,6 +41197,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -41304,7 +41321,9 @@
               "prediction_settleable",
               "prediction_window_unbindable",
               "subject_kind_undeclared",
-              "kit_resume_blocked"
+              "kit_resume_blocked",
+              "vocabulary_file_behind",
+              "vocabulary_file_baseline_invalid"
             ],
             "title": "Reason",
             "type": "string"
@@ -41681,6 +41700,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -41783,6 +41803,7 @@
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "cruxible.kit.add",
+              "cruxible.vocabulary.export",
               "hand_edit"
             ],
             "title": "Operation",
@@ -42001,6 +42022,7 @@
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
               "cruxible.kit.add",
+              "cruxible.vocabulary.export",
               "hand_edit"
             ],
             "title": "Operation",
@@ -42393,7 +42415,9 @@
                   "prediction_settleable",
                   "prediction_window_unbindable",
                   "subject_kind_undeclared",
-                  "kit_resume_blocked"
+                  "kit_resume_blocked",
+                  "vocabulary_file_behind",
+                  "vocabulary_file_baseline_invalid"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -42562,7 +42586,9 @@
                   "prediction_settleable",
                   "prediction_window_unbindable",
                   "subject_kind_undeclared",
-                  "kit_resume_blocked"
+                  "kit_resume_blocked",
+                  "vocabulary_file_behind",
+                  "vocabulary_file_baseline_invalid"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -42703,6 +42729,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -42779,6 +42806,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -43405,6 +43433,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -43481,6 +43510,7 @@
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
                   "cruxible.kit.add",
+                  "cruxible.vocabulary.export",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -44785,6 +44815,25 @@
             "default": false,
             "title": "Truncated",
             "type": "boolean"
+          }
+        },
+        "vocabulary_file": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "vocabulary_file",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientVocabularyFile"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "you": {
@@ -47867,6 +47916,44 @@
             "title": "OrientSubjectKind",
             "type": "object"
           },
+          "OrientVocabularyFile": {
+            "additionalProperties": false,
+            "description": "The workspace's vocabulary file against this answer's coordinate.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) asks for it, naming the\ngeneration the file's header was exported at; the daemon counts the\nClaimTypes and SubjectKinds accepted since. ``invalid``: the header cannot be\nread, or names an export this instance does not hold.",
+            "properties": {
+              "at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "At"
+              },
+              "definitions_behind": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Definitions Behind",
+                "type": "integer"
+              },
+              "state": {
+                "enum": [
+                  "current",
+                  "behind",
+                  "invalid"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "required": [
+              "at",
+              "state"
+            ],
+            "title": "OrientVocabularyFile",
+            "type": "object"
+          },
           "OrientYou": {
             "additionalProperties": false,
             "description": "The caller as the daemon resolved it, and whether it can author.",
@@ -48745,6 +48832,17 @@
             "title": "Truncated",
             "type": "boolean"
           },
+          "vocabulary_file": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientVocabularyFile"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "you": {
             "anyOf": [
               {
@@ -48773,6 +48871,98 @@
         "evaluation_time",
         "generation",
         "instance"
+      ]
+    },
+    "OrientVocabularyFile": {
+      "fields": {
+        "at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          }
+        },
+        "definitions_behind": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "definitions_behind",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Definitions Behind",
+            "type": "integer"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "current",
+              "behind",
+              "invalid"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The workspace's vocabulary file against this answer's coordinate.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) asks for it, naming the\ngeneration the file's header was exported at; the daemon counts the\nClaimTypes and SubjectKinds accepted since. ``invalid``: the header cannot be\nread, or names an export this instance does not hold.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "definitions_behind": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Definitions Behind",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "current",
+              "behind",
+              "invalid"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "state"
+        ],
+        "title": "OrientVocabularyFile",
+        "type": "object"
+      },
+      "required_fields": [
+        "at",
+        "state"
       ]
     },
     "OriginatingLine": {

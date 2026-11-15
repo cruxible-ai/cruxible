@@ -4395,6 +4395,14 @@ floor exported before generations were stamped). The text output prints
 floor export --force`. It reads only the floor's `manifest.json` (its
 coordinate and generation); it never re-exports.
 
+When the workspace holds a vocabulary file (see [vocabulary](#vocabulary)),
+orient also reports `vocabulary_file: {at, state, definitions_behind}`: the
+Git OID its header was exported at, and how many ClaimTypes and SubjectKinds
+were accepted since (`state` is `current`, `behind`, or `invalid` for a header
+that cannot be read or names an export this instance does not hold). The client
+sends only the header's Git OID; the daemon counts the definition changes since
+that generation (one ranged read of the change records, never the vocabulary).
+
 ## vocabulary
 
 ~~~text
@@ -4464,7 +4472,9 @@ changed since then refuses at preflight
 (`cruxible.authoring.claim_type_succession_invalid`, naming the member); a
 SubjectKind changed since then refuses before submitting. Re-export, merge the
 edits, and apply again. After it lands, `vocabulary export` moves the file's
-baseline to the new head.
+baseline to the new head; `next` names a file behind accepted state as
+`vocabulary_file_behind` and a header naming an unknown export as
+`vocabulary_file_baseline_invalid`, both repaired by `vocabulary export`.
 
 ## stub
 

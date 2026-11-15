@@ -75,6 +75,8 @@ from cruxible_client.authoring.workspace import (
     observe_projection_coverage,
     validate_workspace_config_write,
     workspace_floor_freshness,
+    workspace_vocabulary_at,
+    workspace_vocabulary_freshness,
     write_workspace_config,
     write_workspace_floor,
     write_workspace_floor_delta,
@@ -10163,6 +10165,8 @@ def orient(
     --kind prints one kind's every field, and --json carries everything.
     """
 
+    workspace_root = _local_workspace_root(fallback_to_start=False).workspace_root
+    vocabulary_at = None if workspace_root is None else workspace_vocabulary_at(workspace_root)
     result = _server_call(
         lambda client, instance_id: client.orient(
             instance_id,
@@ -10173,12 +10177,14 @@ def orient(
             at=at_oid,
             evaluation_time=evaluation_time,
             surface="cli",
+            vocabulary_at=vocabulary_at,
         ),
         command_name="cruxible orient",
     )
-    workspace_root = _local_workspace_root(fallback_to_start=False).workspace_root
     if workspace_root is not None:
-        result = workspace_floor_freshness(workspace_root, result)
+        result = workspace_vocabulary_freshness(
+            workspace_root, workspace_floor_freshness(workspace_root, result)
+        )
     rendered = result.model_dump(mode="json")
     if output_json:
         _emit_json(rendered)

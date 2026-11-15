@@ -110,6 +110,23 @@ def render_orient(result: Mapping[str, Any]) -> str:
             )
             + ("" if behind == 0 else "; refresh: cruxible floor export --force")
         )
+    vocabulary = result.get("vocabulary_file")
+    if vocabulary is not None:
+        at = vocabulary.get("at")
+        state = vocabulary["state"]
+        lines.append(
+            "Vocabulary file: .cruxible/vocabulary.yaml"
+            + ("" if at is None else f" at {at[:12]}")
+            + ", "
+            + (
+                "current"
+                if state == "current"
+                else f"behind by {vocabulary.get('definitions_behind', 0)} definition(s)"
+                if state == "behind"
+                else "baseline invalid"
+            )
+            + ("" if state == "current" else "; refresh: cruxible vocabulary export")
+        )
     you = result.get("you")
     if you is not None:
         refusal = you.get("authoring_refusal") or {}

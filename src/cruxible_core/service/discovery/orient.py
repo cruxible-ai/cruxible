@@ -935,12 +935,16 @@ def service_playbill_orient(
     caller_tools: tuple[str, ...] | None = None,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
+    vocabulary_at: str | None = None,
 ) -> OrientResult:
     """Answer one orient read at one accepted coordinate.
 
     The runtime supplies its effective authenticated ``caller_rung``, just as
     for next; ``None`` is an unrestricted in-process read. ``surface`` and
     ``caller_tools`` select that same caller's repair view for attention.
+    ``vocabulary_at`` is the Git OID a workspace's vocabulary file was exported
+    at; the answer then says how many definitions it is behind (one ranged read
+    of the change records since, never the vocabulary).
     """
 
     if kind is not None and section is not None:
@@ -966,6 +970,13 @@ def service_playbill_orient(
         "mirror_url": instance.ledger_mirror_url(),
         "retention_generations": instance.retention.generations,
     }
+    if vocabulary_at is not None:
+        from cruxible_core.service.discovery.vocabulary_drift import vocabulary_file_drift
+
+        drift = vocabulary_file_drift(instance, baseline=vocabulary_at, coordinate=served)
+        base["vocabulary_file"] = contracts.OrientVocabularyFile(
+            at=drift.at, state=drift.state, definitions_behind=drift.behind
+        )
     calls: list[_Call] = []
     if section == "subject_kinds":
         # One read of the SubjectKind index: it grows with the vocabulary,
