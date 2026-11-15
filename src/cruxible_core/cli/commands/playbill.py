@@ -3619,8 +3619,9 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
 
 
 @files_group.command("add")
-@click.argument("name")
-@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.argument(
+    "path", nargs=-1, required=True, metavar="[NAME] PATH", type=click.Path(dir_okay=False)
+)
 @click.option("--document-id", default=None, help="The Document this file compiles to.")
 @click.option("--document-kind", default=None, help="The Document's kind (with --document-id).")
 @click.option("--title", default=None, help="The Document's title (with --document-id).")
@@ -3652,8 +3653,7 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
 @json_option
 @handle_errors
 def add_file(
-    name: str,
-    path: Path,
+    path: tuple[str, ...],
     document_id: str | None,
     document_kind: str | None,
     title: str | None,
@@ -3668,7 +3668,8 @@ def add_file(
     """Catalogue PATH under NAME in the workspace's .cruxible/files.yaml.
 
     NAME is the stable source name evidence is cited under (`--evidence-file
-    PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
+    PATH#ANCHOR` resolves through it); left out, it is doc-<path>, the name a
+    write citing the file gives it. With --document-id, --document-kind,
     --title and --scope the entry also declares the Document it compiles to
     (files compile, files propose); without them the file is still a source
     to cite and a page to project blocks into, just not a Document. The
@@ -3677,10 +3678,13 @@ def add_file(
     target refuses. Writes only the catalog file (commit it with Git, if you use Git).
     """
 
+    # NAME is optional and comes first: one argument is PATH, two are NAME PATH.
+    if len(path) > 2:
+        raise click.UsageError("files add takes PATH, or NAME PATH")
     result = catalog_file(
         _catalog_edit_root(repository_root),
-        name=name,
-        path=path,
+        name=path[0] if len(path) == 2 else None,
+        path=Path(path[-1]),
         document_id=document_id,
         document_kind=document_kind,
         title=title,

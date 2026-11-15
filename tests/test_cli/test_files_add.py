@@ -93,7 +93,7 @@ def test_a_duplicate_name_refuses_unless_replace(workspace: Path) -> None:
     ("fields", "reason"),
     [
         ({"document_id": "status"}, "entry_invalid"),
-        ({"name": "Bad Name"}, "entry_invalid"),
+        ({"name": "Bad Name"}, "name_invalid"),
     ],
     ids=["partial-document", "malformed-name"],
 )
@@ -295,3 +295,27 @@ def test_the_sdk_catalogues_a_file_exactly_as_the_cli_does(workspace: Path, tmp_
         cx.files.add("status-page", "notes/status.md")
     assert refused.value.reason == "entry_exists"
     assert cx.files.remove("status-page").catalog_removed
+
+
+def test_name_is_optional_and_a_bad_one_refuses_with_a_valid_example(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Walkthrough S15: PATH alone takes the name a citing write gives it."""
+
+    from cruxible_client.authoring.files import WorkspaceCatalog
+
+    refused = _add(workspace, "notes/standup.md", str(workspace / "notes" / "standup.md"))
+    assert refused.exit_code != 0
+    assert "'notes/standup.md' is not a catalog name" in refused.output
+    assert "e.g. doc-notes-standup.md" in refused.output
+    assert "pattern" not in refused.output and "pydantic" not in refused.output
+    assert not (workspace / ".cruxible" / "files.yaml").exists()
+
+    added = _add(workspace, str(workspace / "notes" / "standup.md"))
+    assert added.exit_code == 0, added.output
+    assert "Added file doc-notes-standup.md -> notes/standup.md" in added.output
+    assert _add(workspace, "a", "b", "c").exit_code != 0
+
+    # The SDK takes the same one-argument form.
+    edit = WorkspaceCatalog(workspace).add("notes/status.md")
+    assert (edit.name, edit.entry.locator) == ("doc-notes-status.md", "notes/status.md")

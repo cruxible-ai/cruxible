@@ -105,6 +105,7 @@ FileCatalogEditRefusal = Literal[
     "entry_exists",
     "entry_missing",
     "entry_invalid",
+    "name_invalid",
     "catalog_invalid",
     "catalog_ambiguous",
     "path_outside_workspace",
@@ -231,6 +232,10 @@ def _workspace_locator(root: Path, path: Path) -> str:
     return resolved.relative_to(root).as_posix()
 
 
+#: A catalog name, as ``FileCatalogEntry.name`` takes it.
+_CATALOG_NAME = re.compile(r"[a-z][a-z0-9_.-]{0,127}")
+
+
 def default_catalog_name(root: Path, path: Path) -> str:
     """The catalog name a workspace file takes when none is given: ``doc-`` and its path.
 
@@ -262,10 +267,16 @@ def add_catalog_entry(
     root = root.expanduser().resolve()
     catalog_path = _portable_catalog_path(root)
     entries = _read_portable(catalog_path)
-    try:
-        entry = FileCatalogEntry.model_validate(
-            {"name": name, "locator": _workspace_locator(root, path), **fields}
+    locator = _workspace_locator(root, path)
+    if not _CATALOG_NAME.fullmatch(name):
+        raise FileCatalogEditError(
+            "name_invalid",
+            f"{name!r} is not a catalog name: lowercase letters, digits, '_', '.' and '-', "
+            f"starting with a letter, at most 128; e.g. "
+            f"{default_catalog_name(root, root / locator)} (leave the name out to use that one)",
         )
+    try:
+        entry = FileCatalogEntry.model_validate({"name": name, "locator": locator, **fields})
     except ValidationError as exc:
         raise FileCatalogEditError("entry_invalid", str(exc)) from exc
     existing = tuple(
@@ -290,7 +301,7 @@ def add_catalog_entry(
 def catalog_file(
     root: Path,
     *,
-    name: str,
+    name: str | None = None,
     path: Path,
     document_id: str | None = None,
     document_kind: str | None = None,
@@ -306,6 +317,7 @@ def catalog_file(
     With ``document_id`` (and its kind, title and scope) the entry also declares
     the Document the file compiles to; its media type defaults from the file
     suffix and its scopes are sorted. Without one the file is a source to cite.
+    ``name`` None names the file as a write that cites it would (``doc-<path>``).
     """
 
     scopes = tuple(governance_scope)
@@ -329,6 +341,9 @@ def catalog_file(
         fields = {key: value for key, value in fields.items() if value is not None}
     elif scopes:
         fields["governance_scope"] = scopes
+    if name is None:
+        root = root.expanduser().resolve()
+        name = default_catalog_name(root, root / _workspace_locator(root, path))
     return add_catalog_entry(root, name=name, path=path, fields=fields, replace=replace)
 
 
@@ -373,8 +388,8 @@ class WorkspaceCatalog:
 
     def add(
         self,
-        name: str,
-        path: str | Path,
+        name: str | Path | None = None,
+        path: str | Path | None = None,
         *,
         document_id: str | None = None,
         document_kind: str | None = None,
@@ -387,6 +402,8 @@ class WorkspaceCatalog:
     ) -> FileCatalogEdit:
         """Catalogue PATH under NAME, the source name evidence is cited under.
 
+        ``add(path)`` alone names the file ``doc-<path>``, as a write citing it would.
+
         With ``document_id``, ``document_kind``, ``title`` and ``governance_scope``
         the entry also declares the Document the file compiles to. An existing
         NAME refuses (``cruxible.files.catalog_edit_refused``, ``entry_exists``)
@@ -394,10 +411,15 @@ class WorkspaceCatalog:
         Next: ``cx.file(path).section("Heading")`` to cite it.
         """
 
+        if path is None:
+            if name is None:
+                raise TypeError("files.add() takes (path) or (name, path)")
+            name, path = None, name
+        assert path is not None
         target = Path(path).expanduser()
         return catalog_file(
             self._root,
-            name=name,
+            name=None if name is None else str(name),
             path=target if target.is_absolute() else self._root / target,
             document_id=document_id,
             document_kind=document_kind,
