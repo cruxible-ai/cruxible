@@ -104,9 +104,11 @@ def absence_enumeration(
         producer = aliases.get(parts[1])
         if isinstance(producer, CallNode):
             raise ClaimsTypingRefused(
-                "claims_expect_provider_enumeration_unsupported: expect over a provider "
-                "call's records is not supported yet (roadmap item "
-                "provider-declared-enumeration); extract the source's Capture instead",
+                "claims_expect_provider_enumeration_unsupported: expect judges absence "
+                "only over an extract's records, and for_each reaches a call's output. "
+                "Declare the records as a record set of the Capture's CaptureKind layout "
+                "(with count_at when the document states its count), extract that record "
+                "set, and point for_each at the extract's records",
                 code="cruxible.procedure.claims_expect_provider_enumeration_unsupported",
             )
         if len(parts) > 3 or (len(parts) == 3 and parts[2] != "records"):

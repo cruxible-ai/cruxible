@@ -58,9 +58,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
         "then rerun the Line."
     ),
     "claims_expect_provider_enumeration_unsupported": (
-        "Absence over a provider call's records is not yet supported (roadmap item "
-        "provider-declared-enumeration): emit the source as a Capture and extract it, "
-        "or drop expect and when_absent, then rerun the Line."
+        "Declare the call's records as a record set of its Capture's CaptureKind layout "
+        "(with count_at when the document states its count), extract that record set and "
+        "point for_each at the extract's records; or drop expect and when_absent."
     ),
     # Binding by capability: the producer names the slot and capability in its
     # message's last sentence; this is what a carrier that kept only the code shows.
