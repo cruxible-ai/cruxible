@@ -549,7 +549,15 @@ def review_change_lines(item: ReviewChange, *, why: str | None = None) -> list[s
             where += "#" + citation.anchor
         origin = " (own words)" if citation.origin == "self_source" else ""
         lines.append(f"    cites {citation.capture} {printable(where)}{origin}")
-        if citation.text_withheld:
+        if citation.erased is not None:
+            erased = citation.erased
+            lines.append(
+                f"      erased by {printable(erased.by)} at {_instant(erased.at)}: "
+                f"{printable(erased.because)}"
+            )
+        elif citation.unavailable:
+            lines.append("      unavailable: the cited body is missing or damaged here")
+        elif citation.text_withheld:
             lines.append("      (cited text withheld: needs body read)")
         elif citation.text is not None and why is not None and citation.text == why.strip():
             lines[-1] += ": the Why text above"

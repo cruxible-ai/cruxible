@@ -895,3 +895,50 @@ def test_withholding_covers_definition_fields_on_every_surface():
     # A reader with the key still sees them.
     keyed = BodyAccessContext(principal_id="key", can_read_body=True, can_read_restricted=True)
     assert secret in str(withhold_summary_values(None, summary, None, keyed))
+
+
+def test_an_erased_citation_says_erased_not_just_no_excerpt(tmp_path):
+    """Review P2: after an authorized erasure of the cited Capture, the review showed the
+    citation's handle and source with no text and no sign the evidence was destroyed."""
+
+    from unittest.mock import patch
+
+    from tests.test_service.test_capture_erasure import BECAUSE, _erase
+
+    original = claims.file_contract
+    with patch.object(claims, "file_contract", lambda **kw: original(erasure=True, **kw)):
+        instance, workspace = claims.claims_world(
+            tmp_path, {"entries": [{"id": "item-1", "status": "open"}]}
+        )
+    claims.install(instance, claims.claims_spec())
+    state = claims.run(instance, workspace)
+    proposal_id = state.terminal_egress[0].proposal_id
+    before = _review(instance, proposal_id, groups=False)
+    (cited,) = [c for change in before.changes for c in change.citations]
+    assert cited.text and cited.erased is None and not cited.unavailable
+
+    world = SimpleNamespace(instance=instance, capture=cited.capture)
+    preview = _erase(world)
+    assert _erase(world, dry_run=False, at=preview.coordinate.digest).status == "erased"
+
+    after = _review(instance, proposal_id, groups=False)
+    (gone,) = [c for change in after.changes for c in change.citations]
+    assert gone.text is None and not gone.unavailable
+    assert gone.erased is not None and gone.erased.because == BECAUSE
+    lines = str(after).splitlines()
+    assert any(line.startswith("      erased by ") and BECAUSE in line for line in lines)
+
+
+def test_a_missing_cited_body_reads_as_unavailable(tmp_path, monkeypatch):
+    """A body missing or damaged (not erased) reads as unavailable, by the landing index."""
+
+    instance, _owner, root, line, _procedure = delivery.proposal_world(tmp_path)
+    state = delivery.run_line(instance, root, line)
+    proposal_id = state.terminal_egress[0].proposal_id
+    from cruxible_core.storage import read_positions
+
+    monkeypatch.setattr(read_positions, "body_present", lambda *_a, **_k: False)
+    summary = _review(instance, proposal_id, groups=False)
+    citations = [c for change in summary.changes for c in change.citations]
+    assert citations and all(c.unavailable and c.text is None for c in citations)
+    assert "unavailable: the cited body is missing or damaged here" in str(summary)

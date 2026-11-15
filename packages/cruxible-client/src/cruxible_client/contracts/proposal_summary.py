@@ -14,7 +14,7 @@ from cruxible_client.contracts.governance import (
     ApprovalRequirement,
     PermissionTier,
 )
-from cruxible_client.contracts.operational_reads import MandateScope
+from cruxible_client.contracts.operational_reads import GetCaptureErasure, MandateScope
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import OriginatingLine
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
@@ -98,7 +98,8 @@ class ReviewCitation(_SummaryModel):
     feed); ``section`` and ``anchor`` locate a file citation. ``text`` is the
     cited bytes, cut at ``REVIEW_CITED_TEXT_MAX_CHARS`` (``text_truncated``).
     It is absent when this reader may not read Capture bodies
-    (``text_withheld``), or when the Capture commits to no exact bytes.
+    (``text_withheld``), when the body was erased (``erased``) or is missing or
+    damaged (``unavailable``), or when the Capture commits to no exact bytes.
     """
 
     capture: str = Field(description="CAP-<12 hex>; get and read_capture accept it.")
@@ -109,6 +110,11 @@ class ReviewCitation(_SummaryModel):
     text: str | None = Field(default=None, exclude_if=_omit_none)
     text_truncated: bool = Field(default=False, exclude_if=lambda value: not value)
     text_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: The Capture's retained body was erased: who, when and why. Its bytes are gone,
+    #: so nothing it said can be shown; destroyed evidence, not a missing excerpt.
+    erased: GetCaptureErasure | None = Field(default=None, exclude_if=_omit_none)
+    #: The body is missing or damaged here (not erased), as reads report it.
+    unavailable: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class ReviewChange(_SummaryModel):

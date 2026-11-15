@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import claim_type_path
-from cruxible_client.contracts.operational_reads import MandateScope
+from cruxible_client.contracts.operational_reads import GetCaptureErasure, MandateScope
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import LineSpec
@@ -228,6 +228,7 @@ class CitedText:
     """Reads the text shown changes cite: one verified body read per Capture body, per page."""
 
     def __init__(self, instance: Any, access: BodyAccessContext, *, withheld: bool) -> None:
+        self._instance = instance
         self._bodies = instance.body_store()
         self._access = access
         self._withheld = withheld
@@ -254,7 +255,7 @@ class CitedText:
         try:
             envelope = capture_envelope(self._bodies, digest, access=_SERVICE_ACCESS)
         except Exception:  # noqa: BLE001 - an unavailable Capture shows only its handle
-            return ReviewCitation(capture=handle, origin=origin)
+            return ReviewCitation(capture=handle, origin=origin, unavailable=True)
         source_ref = envelope.source
         source = getattr(source_ref, "source_identity", None)
         if source is None:
@@ -277,13 +278,25 @@ class CitedText:
             "section": section or None,
             "anchor": None if section else anchor,
         }
+        # Presence comes from the landing index, as reads take it (no stat or hash
+        # on the clean path); an absent body is erased when an erasure names it.
+        from cruxible_core.evidence.capture_erasures import erased_body
+
+        erasure = erased_body(self._instance, envelope)
+        if erasure is not None:
+            return ReviewCitation(
+                **common,
+                erased=GetCaptureErasure(
+                    by=erasure.erased_by, at=erasure.erased_at, because=erasure.because
+                ),
+            )
         if not ranges or commitment is None:
             return ReviewCitation(**common)
         if not self._access.can_read_body:
             return ReviewCitation(**common, text_withheld=True)
         body = self._body(str(commitment))
         if body is None:
-            return ReviewCitation(**common)
+            return ReviewCitation(**common, unavailable=True)
         text = " ... ".join(
             body[start:end].decode("utf-8", "replace").strip() for start, end in ranges
         )

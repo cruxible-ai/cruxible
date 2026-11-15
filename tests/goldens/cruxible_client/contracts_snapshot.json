@@ -78518,6 +78518,32 @@
             "title": "ChangeOutcome",
             "type": "object"
           },
+          "GetCaptureErasure": {
+            "additionalProperties": false,
+            "description": "Who erased a Capture's retained body, when and why.",
+            "properties": {
+              "at": {
+                "format": "date-time",
+                "title": "At",
+                "type": "string"
+              },
+              "because": {
+                "title": "Because",
+                "type": "string"
+              },
+              "by": {
+                "title": "By",
+                "type": "string"
+              }
+            },
+            "required": [
+              "by",
+              "at",
+              "because"
+            ],
+            "title": "GetCaptureErasure",
+            "type": "object"
+          },
           "JsonValue": {},
           "MandateChangeScope": {
             "additionalProperties": false,
@@ -78814,7 +78840,7 @@
           },
           "ReviewCitation": {
             "additionalProperties": false,
-            "description": "One Capture a proposed Claim cites, where in it, and the text it cites.\n\n``source`` is the Capture's logical source (a catalogued file's name, a\nfeed); ``section`` and ``anchor`` locate a file citation. ``text`` is the\ncited bytes, cut at ``REVIEW_CITED_TEXT_MAX_CHARS`` (``text_truncated``).\nIt is absent when this reader may not read Capture bodies\n(``text_withheld``), or when the Capture commits to no exact bytes.",
+            "description": "One Capture a proposed Claim cites, where in it, and the text it cites.\n\n``source`` is the Capture's logical source (a catalogued file's name, a\nfeed); ``section`` and ``anchor`` locate a file citation. ``text`` is the\ncited bytes, cut at ``REVIEW_CITED_TEXT_MAX_CHARS`` (``text_truncated``).\nIt is absent when this reader may not read Capture bodies\n(``text_withheld``), when the body was erased (``erased``) or is missing or\ndamaged (``unavailable``), or when the Capture commits to no exact bytes.",
             "properties": {
               "anchor": {
                 "anyOf": [
@@ -78832,6 +78858,17 @@
                 "description": "CAP-<12 hex>; get and read_capture accept it.",
                 "title": "Capture",
                 "type": "string"
+              },
+              "erased": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GetCaptureErasure"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "origin": {
                 "description": "independent, self_source (own words) or legacy.",
@@ -78885,6 +78922,11 @@
               "text_withheld": {
                 "default": false,
                 "title": "Text Withheld",
+                "type": "boolean"
+              },
+              "unavailable": {
+                "default": false,
+                "title": "Unavailable",
                 "type": "boolean"
               }
             },
