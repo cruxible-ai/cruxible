@@ -102,6 +102,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
+from cruxible_client.contracts.repairs import REPAIR_COMMAND_PATHS
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
@@ -847,33 +848,7 @@ class PlaybillNextResultV2(_StrictNextModel):
         return self.delta_since is None and len(self.items) == self.total_items
 
 
-_REPAIR_COMMAND_PATHS: Mapping[str, str] = {
-    "cruxible.authoring.example": "authoring example",
-    "cruxible.authoring.submit": "authoring submit",
-    "cruxible.authoring.bind": "authoring bind",
-    "cruxible.claim.retire": "retire",
-    "cruxible.rebind": "rebind",
-    "cruxible.get": "get",
-    "cruxible.set": "set",
-    "cruxible.write": "write",
-    "cruxible.floor.export": "floor export",
-    "cruxible.block.depublish": "block depublish",
-    "cruxible.block.detach": "block detach",
-    "cruxible.block.repin": "block repin",
-    "cruxible.block.sync": "block sync",
-    "cruxible.files.propose": "files propose",
-    "cruxible.proposal.readmit": "proposal readmit",
-    "cruxible.proposal.approve": "proposal approve",
-    "cruxible.proposal.activate": "proposal activate",
-    "cruxible.compiler.upgrade": "compiler upgrade",
-    "cruxible.line.enable": "line enable",
-    "cruxible.line.evaluate": "line evaluate",
-    "cruxible.line.dispatch": "line dispatch",
-    "cruxible.inbox.list": "inbox list",
-    "cruxible.prediction.settle": "prediction settle",
-    "cruxible.kit.add": "kit add",
-    "cruxible.vocabulary.export": "vocabulary export",
-}
+_REPAIR_COMMAND_PATHS: Mapping[str, str] = REPAIR_COMMAND_PATHS
 
 # Each of these needs a local file. The queue knows the path only if the row
 # carried it, so the placeholder is filled from the arguments when they name it

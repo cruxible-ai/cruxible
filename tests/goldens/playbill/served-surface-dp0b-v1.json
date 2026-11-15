@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-15:vocabulary-file-050",
-    "surface_digest": "sha256:04cc0c97518f4cc3e40928404d5111d393dc58342dce50de6de8703969066e66"
+    "surface_digest": "sha256:666968d89e0d63427128118b2f5c3e9066efb5066b2237126cefd45e20fa0ae9"
   },
   "surface": {
     "cli_leaves": [
@@ -523,7 +523,6 @@
       },
       {
         "client_operations": [
-          "get",
           "next"
         ],
         "command": "next",

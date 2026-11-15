@@ -222,3 +222,123 @@ def test_a_query_page_prints_the_cli_table() -> None:
     assert str(result) == render_query_table(page)
     assert "dev.item/a" in str(result) and "open" in str(result)
     assert repr(result).startswith("<QueryResult rows=1")
+
+
+def _health(state: str, **extra: object) -> dict[str, object]:
+    return {"state": state, **extra}
+
+
+def test_a_next_page_prints_what_cruxible_next_prints() -> None:
+    """Walkthrough W20: print(cx.next()) was one 4 kB line of repr."""
+
+    from cruxible_client import contracts as api
+    from cruxible_client.contracts.text_display import next_lines
+
+    status = api.NextStatus.model_validate(
+        {
+            "blocking": False,
+            **{
+                facet: _health("current")
+                for facet in (
+                    "instance",
+                    "ledger_mirror",
+                    "provider_lane",
+                    "procedure_catalog",
+                    "compiler",
+                    "line_dispatch",
+                    "consumers",
+                    "triggers",
+                )
+            },
+            "floor": _health(
+                "stale",
+                repair={
+                    "operation": "cruxible.floor.export",
+                    "target": "inst_demo",
+                    "required_change": "replace_installed_floor",
+                    "command": "cruxible floor export",
+                },
+            ),
+        }
+    )
+    item = api.NextItem.model_validate(
+        {
+            "item_id": "sha256:" + "6" * 64,
+            "severity": "repair",
+            "reason": "claim_uncovered",
+            "subject_identity": "Claim:CLM-" + "a" * 32,
+            "related_identities": ["subjects/dev.item/a.json"],
+            "detail": {"predicate": "dev.item.state"},
+            "repair": {
+                "operation": "cruxible.set",
+                "target": "dev.item/a",
+                "required_change": "restate_on_admitted_evidence",
+                "command": 'cx.set("dev.item/a", "dev.item.state", "open", because="TEXT")',
+                "operands_to_add": ["because"],
+            },
+        }
+    )
+    page = sdk.NextPage(
+        coordinate=_COORDINATE,
+        evaluation_time="2026-11-15T00:00:00Z",
+        items=(item,),
+        result_digest="sha256:" + "7" * 64,
+        observed_domains=("accepted_state",),
+        unobserved_domains=("workspace_floor",),
+        status=status,
+        unobserved=("workspace_floor",),
+    )
+
+    assert str(page).splitlines() == [
+        "Status: floor stale  next=cruxible floor export",
+        f"repair  claim_uncovered  Claim:CLM-{'a' * 32}  (dev.item/a dev.item.state)"
+        "  next=cruxible.set",
+        '  repair: cx.set("dev.item/a", "dev.item.state", "open", because="TEXT")',
+        "  fill in: TEXT (why, in your words)",
+        "Unobserved: workspace_floor",
+    ]
+    assert str(page) == "\n".join(
+        next_lines(status=status, items=page.items, unobserved=page.unobserved)
+    )
+    assert repr(page).startswith("NextPage(")
+
+
+def test_a_get_card_prints_what_cruxible_get_prints() -> None:
+    """Walkthrough W20: print(cx.get(ref)) was a 1 kB repr."""
+
+    from cruxible_client.contracts.get_reads import GetResult
+    from cruxible_client.contracts.get_text import render_get
+
+    result = GetResult.model_validate(
+        {
+            "ref": "SubjectKind:dev.item",
+            "kind": "subject_kind",
+            "detail": "summary",
+            "coordinate": {"git_oid": _OID[:12], "generation": 3},
+            "evaluation_time": "2026-11-15T00:00:00Z",
+            "card": {
+                "subject_kind": "SubjectKind:dev.item",
+                "description": "An item.",
+                "lifecycle": "live",
+                "rule": "keys",
+                "keys": ["dev.item.slug"],
+                "uniqueness": "unique",
+                "live_subjects": 1,
+                "next": ["cruxible get SubjectKind:dev.item --detail history"],
+            },
+        }
+    )
+    card = sdk.KnowledgeCard(sdk.RefKind.SUBJECT_KIND, "dev.item", _COORDINATE, result.card, result)
+
+    assert str(card) == render_get(result)
+    assert str(card).splitlines() == [
+        "subject_kind: SubjectKind:dev.item",
+        "description: An item.",
+        "lifecycle: live",
+        "rule: keys",
+        "keys: dev.item.slug",
+        "uniqueness: unique",
+        "live_subjects: 1",
+        "next: cruxible get SubjectKind:dev.item --detail history",
+    ]
+    assert repr(card).startswith("KnowledgeCard(")
