@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import faulthandler
 import sys
+import time
 from collections.abc import Generator
 
 import pytest
@@ -61,15 +62,38 @@ def _stderr_descriptor(config: pytest.Config) -> int:
 
 
 class HangDumpPlugin:
+    def __init__(self) -> None:
+        #: The running test's watchdog deadline (``time.monotonic``) and output, or None.
+        self._deadline: float | None = None
+        self._descriptor = -1
+
+    def _arm(self) -> None:
+        assert self._deadline is not None
+        faulthandler.dump_traceback_later(
+            max(self._deadline - time.monotonic(), 0.001), exit=True, file=self._descriptor
+        )
+
     @pytest.hookimpl(wrapper=True)
     def pytest_runtest_protocol(self, item: pytest.Item) -> Generator[None, object, object]:
         timeout = item_timeout(item)
         if timeout is None or float(item.config.getini("faulthandler_timeout") or 0) > 0:
             return (yield)
-        faulthandler.dump_traceback_later(
-            timeout + GRACE_SECONDS, exit=True, file=_stderr_descriptor(item.config)
-        )
+        self._deadline = time.monotonic() + timeout + GRACE_SECONDS
+        self._descriptor = _stderr_descriptor(item.config)
+        self._arm()
         try:
             return (yield)
         finally:
+            self._deadline = None
             faulthandler.cancel_dump_traceback_later()
+
+    @pytest.hookimpl(trylast=True)
+    def pytest_exception_interact(self) -> None:
+        """Re-arm at the same deadline: pytest's own hook cancels the watchdog on any failure.
+
+        Its faulthandler plugin cancels for interactive debugging; a failure in
+        setup or the body must still leave the teardown that follows covered.
+        """
+
+        if self._deadline is not None:
+            self._arm()
