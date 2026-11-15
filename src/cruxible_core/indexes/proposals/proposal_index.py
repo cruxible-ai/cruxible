@@ -109,6 +109,28 @@ CREATE INDEX IF NOT EXISTS proposals_by_acceptance ON proposals(accepted_sequenc
  WHERE accepted_sequence IS NOT NULL;"""
     + _PROPOSALS_LOCATORS
 )
+# The Subjects each OPEN proposal's Claim members are about, and the fields they
+# write: a Subject card's pending proposals are one range of this table, never a
+# walk of the open proposals. A row exists only while its proposal is open -- a
+# candidate, unwithdrawn, unsettled and not superseded by a readmission -- so
+# `_put` adds a proposal's rows when it opens and drops them when it closes, and
+# `refresh_acceptance` drops them when history settles it. `proposal_readmissions`
+# records each readmission's source, which a readmission supersedes whatever the
+# order its rows are put in. Both rebuild with the rest of the index.
+_SUBJECTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS proposal_subjects (
+ subject_path TEXT NOT NULL, proposal_id TEXT NOT NULL, predicate TEXT NOT NULL,
+ PRIMARY KEY(subject_path,proposal_id,predicate)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS proposal_subjects_by_proposal ON proposal_subjects(proposal_id);
+CREATE TABLE IF NOT EXISTS proposal_readmissions (
+ source_proposal_id TEXT NOT NULL, proposal_id TEXT NOT NULL,
+ PRIMARY KEY(source_proposal_id,proposal_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS proposal_readmissions_by_proposal
+ ON proposal_readmissions(proposal_id);"""
+_PRE_SUBJECTS_SCHEMA_SQL = _SCHEMA
+_SCHEMA = _PRE_SUBJECTS_SCHEMA_SQL + ";" + _SUBJECTS_SCHEMA
 # The schema before acceptance was carried. Its rows are derived, so a working
 # file still holding it drops the table and reconstructs from evidence.
 _PRE_ACCEPTANCE_SCHEMA_SQL = (
@@ -125,10 +147,20 @@ CREATE INDEX IF NOT EXISTS proposals_by_open_parent
 )
 
 
+#: Every table this component owns in the shared working database.
+PROPOSAL_TABLES = (
+    "proposals",
+    "proposal_progress",
+    "proposal_subjects",
+    "proposal_readmissions",
+)
+_TABLES_SQL = ",".join(f"'{name}'" for name in PROPOSAL_TABLES)
+
+
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[Any, ...]]:
     return connection.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master "
-        "WHERE tbl_name IN ('proposals','proposal_progress') ORDER BY type,name"
+        f"WHERE tbl_name IN ({_TABLES_SQL}) ORDER BY type,name"
     ).fetchall()
 
 
@@ -140,6 +172,33 @@ def _expected_schema(schema: str) -> list[tuple[Any, ...]]:
 
 _EXPECTED_SCHEMA = _expected_schema(_SCHEMA)
 _PRE_ACCEPTANCE_SCHEMA = _expected_schema(_PRE_ACCEPTANCE_SCHEMA_SQL)
+_PRE_SUBJECTS_SCHEMA = _expected_schema(_PRE_SUBJECTS_SCHEMA_SQL)
+#: Earlier schemas of these derived rows: the writer drops and reconstructs them.
+_OLDER_SCHEMAS = (_PRE_ACCEPTANCE_SCHEMA, _PRE_SUBJECTS_SCHEMA)
+
+
+def _needs_recreate(schema: list[tuple[Any, ...]]) -> bool:
+    """No tables yet, an earlier schema, or tables left without their proposal rows."""
+
+    return (
+        not schema
+        or schema in _OLDER_SCHEMAS
+        or not any(row[0] == "table" and row[1] == "proposals" for row in schema)
+    )
+
+
+def _recreate(connection: sqlite3.Connection) -> None:
+    """Replace an earlier schema's derived tables with the current, empty ones.
+
+    Progress goes too, so no checkpoint certifies the emptied tables: the next
+    read rebuilds them from evidence.
+    """
+
+    for name in PROPOSAL_TABLES:
+        connection.execute(f"DROP TABLE IF EXISTS {name}")
+    for statement in _SCHEMA.split(";"):
+        if statement.strip():
+            connection.execute(statement)
 
 
 def file_digest(raw: bytes) -> str:
@@ -226,18 +285,11 @@ class ProposalIndex:
             self._connection.execute("PRAGMA foreign_keys=ON")
             self._connection.execute("PRAGMA journal_mode=WAL")
             schema = _schema_rows(self._connection)
-            if not schema or schema == _PRE_ACCEPTANCE_SCHEMA:
+            if _needs_recreate(schema):
                 self._connection.execute("BEGIN IMMEDIATE")
                 before = self._file_stamp()
                 try:
-                    if schema:
-                        # Clearing progress as well leaves no checkpoint the
-                        # emptied table could satisfy: the next read rebuilds.
-                        self._connection.execute("DROP TABLE proposals")
-                        self._connection.execute("DELETE FROM proposal_progress")
-                    for statement in _SCHEMA.split(";"):
-                        if statement.strip():
-                            self._connection.execute(statement)
+                    _recreate(self._connection)
                     after = commit_working_write(
                         self._connection, self._file_stamp, before, snapshots=self._snapshots
                     )
@@ -501,16 +553,57 @@ class ProposalIndex:
             evaluated_at_us=_micros(evaluation.evaluated_at) if evaluation else None,
             source_epoch=epoch,
             verified_sequence=sequence,
+            # Not a column: the proposal a readmission supersedes, for `_put`.
+            _readmits=admission.readmits.source_proposal_id
+            if admission is not None and admission.readmits is not None
+            else None,
         )
 
-    def _put(self, connection: sqlite3.Connection, row: dict[str, Any]) -> None:
+    def _put(
+        self, connection: sqlite3.Connection, row: dict[str, Any], evidence: ProposalEvidenceStore
+    ) -> None:
         row = dict(row, accepted_sequence=_accepted_sequence(connection, row["candidate_digest"]))
+        readmits = row.pop("_readmits", None)
         names = ",".join(row)
         connection.execute(
             f"INSERT OR REPLACE INTO proposals ({names}) VALUES ({','.join('?' for _ in row)})",
             tuple(row.values()),
         )
         self.rows_written += 1
+        proposal_id = row["proposal_id"]
+        if readmits is not None:
+            # A readmission supersedes its source: the source is no longer pending.
+            connection.execute(
+                "INSERT OR IGNORE INTO proposal_readmissions VALUES (?,?)", (readmits, proposal_id)
+            )
+            connection.execute("DELETE FROM proposal_subjects WHERE proposal_id=?", (readmits,))
+        is_open = (
+            row["evaluation_status"] == "candidate"
+            and row["admission_path"] is not None
+            and row["withdrawal_path"] is None
+            and row["accepted_sequence"] is None
+            and connection.execute(
+                "SELECT 1 FROM proposal_readmissions WHERE source_proposal_id=? LIMIT 1",
+                (proposal_id,),
+            ).fetchone()
+            is None
+        )
+        if not is_open:
+            connection.execute("DELETE FROM proposal_subjects WHERE proposal_id=?", (proposal_id,))
+            return
+        if connection.execute(
+            "SELECT 1 FROM proposal_subjects WHERE proposal_id=? LIMIT 1", (proposal_id,)
+        ).fetchone():
+            return  # Its candidate is immutable: rows already derived stay right.
+        connection.executemany(
+            "INSERT OR IGNORE INTO proposal_subjects VALUES (?,?,?)",
+            [
+                (subject, proposal_id, predicate)
+                for subject, predicate in _claim_slots(
+                    evidence, row["candidate_digest"], row["evaluated_tree_oid"]
+                )
+            ],
+        )
 
     def _rebuild(
         self, evidence: ProposalEvidenceStore, connection: sqlite3.Connection, context: str | None
@@ -549,6 +642,8 @@ class ProposalIndex:
             review_context=context,
         )
         connection.execute("DELETE FROM proposals")
+        connection.execute("DELETE FROM proposal_subjects")
+        connection.execute("DELETE FROM proposal_readmissions")
         for pid in sorted(set(admissions) | set(evaluations) | set(withdrawals)):
             self._put(
                 connection,
@@ -560,6 +655,7 @@ class ProposalIndex:
                     marker["epoch"],
                     0,
                 ),
+                evidence,
             )
         if self._inventory(evidence) != inventory:
             raise ProposalIntegrityError("proposal source changed during reconstruction")
@@ -652,7 +748,7 @@ class ProposalIndex:
             return None
         try:
             schema = _schema_rows(connection)
-            if schema == _PRE_ACCEPTANCE_SCHEMA:
+            if _needs_recreate(schema):
                 # The writer migrates it; a snapshot cannot.
                 self._snapshots.release(connection)
                 return None
@@ -775,8 +871,8 @@ class ProposalIndex:
             # History may have initialized the shared file before its first
             # proposal read, or there may be no working file yet. Prepare only
             # this private copy; never open the durable writer from a preview.
-            if not _schema_rows(memory):
-                memory.executescript(_SCHEMA)
+            if _needs_recreate(_schema_rows(memory)):
+                _recreate(memory)
             if _schema_rows(memory) != _EXPECTED_SCHEMA:
                 raise ProposalIntegrityError("proposal index schema differs; rebuild required")
             marker = self._marker(evidence.root)
@@ -850,7 +946,7 @@ class ProposalIndex:
                         raise ProposalIntegrityError(
                             "proposal evidence contains conflicting admissions"
                         )
-                    self._put(writer, row)
+                    self._put(writer, row, evidence)
                 self._progress(writer, evidence, marker)
                 self._finish(evidence, writer, marker, before)
                 writer.rollback()
@@ -877,6 +973,35 @@ class ProposalIndex:
         if not rows:
             raise ProposalIntegrityError("proposal admission evidence is missing")
         return rows[0]
+
+
+def _claim_slots(
+    evidence: ProposalEvidenceStore, candidate_digest: str | None, tree_oid: str | None
+) -> set[tuple[str, str]]:
+    """(Subject path, predicate) for each Claim member of one candidate: O(its members).
+
+    Read once, when its proposal opens (or the index rebuilds), from the candidate
+    record and the Claim blobs of the tree it was evaluated into.
+    """
+
+    from cruxible_client.contracts.claims import parse_claim
+
+    if candidate_digest is None or tree_oid is None or evidence.transport is None:
+        return set()
+    try:
+        candidate = evidence.read_candidate(candidate_digest)
+    except ProposalIntegrityError:
+        # Partial evidence (its candidate not written yet, or unreadable): no rows
+        # now; the publication that writes the candidate puts this proposal again.
+        return set()
+    paths = [member.path for member in candidate.members if member.path.startswith("claims/")]
+    if not paths:
+        return set()
+    slots = set()
+    for path, content in evidence.transport.blobs_at(tree_oid, paths).items():
+        statement = parse_claim(content, path=path).statement
+        slots.add((statement.subject.artifact_path, statement.predicate))
+    return slots
 
 
 def _accepted_sequence(connection: sqlite3.Connection, candidate_digest: str | None) -> int | None:
@@ -911,6 +1036,13 @@ def refresh_acceptance(connection: sqlite3.Connection, *, from_sequence: int) ->
 
     if _schema_rows(connection) != _EXPECTED_SCHEMA:
         return
+    # Rows history had settled at or past `from_sequence`: a rewind may reopen them.
+    settled_before = {
+        row[0]
+        for row in connection.execute(
+            "SELECT proposal_id FROM proposals WHERE accepted_sequence>=?", (from_sequence,)
+        )
+    }
     acceptance = (
         "(SELECT min(g.sequence) FROM accepted_generations g "
         "WHERE g.candidate_digest=proposals.candidate_digest)"
@@ -922,6 +1054,24 @@ def refresh_acceptance(connection: sqlite3.Connection, *, from_sequence: int) ->
         f"AND accepted_sequence IS NOT {acceptance}",
         (from_sequence, from_sequence),
     )
+    # A settled proposal is no longer pending: drop its Subject rows.
+    connection.execute(
+        "DELETE FROM proposal_subjects WHERE proposal_id IN "
+        "(SELECT proposal_id FROM proposals WHERE accepted_sequence>=?)",
+        (from_sequence,),
+    )
+    if (
+        settled_before
+        and connection.execute(
+            f"SELECT 1 FROM proposals WHERE accepted_sequence IS NULL AND proposal_id IN "
+            f"({','.join('?' for _ in settled_before)}) LIMIT 1",
+            tuple(settled_before),
+        ).fetchone()
+    ):
+        # History rewound past a settlement: the reopened proposal's Subject rows
+        # come from its candidate, which only the proposal writer reads. Clearing
+        # progress makes the next proposal read reconstruct the index once.
+        connection.execute("DELETE FROM proposal_progress")
 
 
 def close_working_database(

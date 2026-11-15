@@ -6162,7 +6162,7 @@ def _approval_items(
                 "eligible_approvals": proposal.eligible_approvals,
                 "minimum_distinct_signers": proposal.minimum_distinct_signers,
                 "target_ref": proposal.target_ref,
-                **_touches_detail(instance, proposal.proposal_id, proposal.candidate_digest),
+                **_touches_detail(instance, proposal.proposal_id),
                 **_prior_refusal_detail(instance, proposal.proposal_id),
             },
             repair=PlaybillNextRepairV1(
@@ -6189,23 +6189,19 @@ def _approval_items(
     )
 
 
-def _touches_detail(
-    instance: PlaybillInstance, proposal_id: str, candidate_digest: str
-) -> dict[str, object]:
+def _touches_detail(instance: PlaybillInstance, proposal_id: str) -> dict[str, object]:
     """``touches``: each Subject a proposal's Claims are about and the fields they write.
 
     As ``kind/id predicate`` strings, so a row names what the proposal would
-    change without a review; absent for a proposal with no Claim member. From
-    the proposal's own change keys, memoized per proposal.
+    change without a review; absent for a proposal with no Claim member. One
+    range of the proposal index's maintained Subject rows, by proposal.
     """
 
     from cruxible_core.service.proposals.proposals import proposal_touches
 
     touched = [
         f"{subject.removeprefix('subjects/').removesuffix('.json')} {predicate}"
-        for subject, predicates in proposal_touches(
-            instance, proposal_id=proposal_id, candidate_digest=candidate_digest
-        )
+        for subject, predicates in proposal_touches(instance, proposal_id=proposal_id)
         for predicate in predicates
     ]
     return {"touches": touched} if touched else {}
@@ -6307,7 +6303,7 @@ def _activation_items(
                 "candidate_digest": proposal.candidate_digest,
                 "approvals": proposal.approvals,
                 "target_ref": proposal.target_ref,
-                **_touches_detail(instance, proposal.proposal_id, proposal.candidate_digest),
+                **_touches_detail(instance, proposal.proposal_id),
                 **_prior_refusal_detail(instance, proposal.proposal_id),
             },
             repair=PlaybillNextRepairV1(

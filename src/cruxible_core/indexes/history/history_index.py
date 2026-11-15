@@ -168,7 +168,11 @@ def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
     return [
         row
         for row in rows
-        if not (row[0] in {"table", "index"} and row[2] in {"proposals", "proposal_progress"})
+        if not (
+            row[0] in {"table", "index"}
+            and row[2]
+            in {"proposals", "proposal_progress", "proposal_subjects", "proposal_readmissions"}
+        )
     ]
 
 

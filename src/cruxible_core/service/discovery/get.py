@@ -1610,16 +1610,14 @@ def _pending_proposals(
 ) -> tuple[GetPendingProposal, ...]:
     """The open proposals with a Claim member about the Subject at ``path``.
 
-    Read from the proposal index's open locators (O(open proposals), each one's
-    Subjects memoized per proposal), never from the Claims or the history.
+    One range of the proposal index's maintained Subject rows (a point lookup),
+    never a walk of the open proposals, the Claims or the history.
     """
 
     from cruxible_core.service.proposals.proposals import open_proposals_about
 
     kind = path.removeprefix("subjects/").split("/", 1)[0]
-    found = open_proposals_about(
-        instance, AcceptedCoordinate.from_internal(coordinate), subject_path=path
-    )
+    found = open_proposals_about(instance, subject_path=path)
     if not found:
         return ()
     with instance.bind_accepted_projection(coordinate) as projection:

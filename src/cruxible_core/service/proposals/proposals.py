@@ -1058,23 +1058,25 @@ def proposals_awaiting_activation(
 
 
 def proposal_touches(
-    instance: PlaybillInstance, *, proposal_id: str, candidate_digest: str
+    instance: PlaybillInstance, *, proposal_id: str
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    """The Subjects one proposal's Claim members are about, each with the fields it writes.
+    """The Subjects one open proposal's Claim members are about, each with the fields it writes.
 
     ``(subject path, predicates)`` pairs, sorted; empty for a proposal with no
-    Claim member (a definition, a policy). Read from the proposal's own change
-    keys, derived once per process from its immutable candidate.
+    Claim member (a definition, a policy) or one no longer open. One range of
+    the proposal index's maintained ``proposal_subjects`` rows, by proposal.
     """
 
-    from cruxible_core.service.proposals.staleness import proposal_change_keys
-
-    keys = proposal_change_keys(
-        instance, proposal_id=proposal_id, candidate_digest=candidate_digest
-    )
-    fields: dict[str, set[str]] = defaultdict(set)
-    for subject, predicate, _qualifier in keys.slots:
-        fields[subject].add(predicate)
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    fields: dict[str, list[str]] = defaultdict(list)
+    with evidence.index.read(evidence) as connection:
+        for subject, predicate in connection.execute(
+            "SELECT subject_path,predicate FROM proposal_subjects INDEXED BY "
+            "proposal_subjects_by_proposal WHERE proposal_id=?",
+            (proposal_id,),
+        ):
+            fields[str(subject)].append(str(predicate))
     return tuple((subject, tuple(sorted(fields[subject]))) for subject in sorted(fields))
 
 
@@ -1089,35 +1091,31 @@ class PendingProposal:
 
 
 def open_proposals_about(
-    instance: PlaybillInstance, coordinate: AcceptedCoordinate, *, subject_path: str
+    instance: PlaybillInstance, *, subject_path: str
 ) -> tuple[PendingProposal, ...]:
-    """Open proposals at ``coordinate`` with a Claim member about ``subject_path``.
+    """Open proposals with a Claim member about ``subject_path``, oldest first.
 
-    The open candidates are the ones ``proposal list`` and ``next`` read (the
-    open locators: O(open candidates), never the settled history); each one's
-    Subjects come from ``proposal_touches``, memoized per proposal. Nothing here
-    grows with the instance's Claims, Subjects or generations.
+    One range of the proposal index's ``proposal_subjects`` rows for this
+    Subject, which hold only open proposals (candidates, unwithdrawn, unsettled
+    and not superseded by a readmission): a point lookup, flat in the number of
+    other open proposals and in the instance.
     """
 
-    rows = _open_rows(instance, coordinate, columns="proposal_id,actor_id,candidate_digest")
-    pending = []
-    for row in rows:
-        touched = dict(
-            proposal_touches(
-                instance,
-                proposal_id=row["proposal_id"],
-                candidate_digest=row["candidate_digest"],
-            )
-        )
-        if subject_path in touched:
-            pending.append(
-                PendingProposal(
-                    proposal_id=row["proposal_id"],
-                    actor_id=row["actor_id"],
-                    predicates=touched[subject_path],
-                )
-            )
-    return tuple(pending)
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    found: dict[str, tuple[str, list[str]]] = {}
+    with evidence.index.read(evidence) as connection:
+        for proposal_id, predicate, actor_id in connection.execute(
+            "SELECT s.proposal_id,s.predicate,p.actor_id FROM proposal_subjects s "
+            "JOIN proposals p ON p.proposal_id=s.proposal_id WHERE s.subject_path=? "
+            "ORDER BY p.admitted_at_us,s.proposal_id,s.predicate",
+            (subject_path,),
+        ):
+            found.setdefault(str(proposal_id), (str(actor_id), []))[1].append(str(predicate))
+    return tuple(
+        PendingProposal(proposal_id=proposal_id, actor_id=actor, predicates=tuple(predicates))
+        for proposal_id, (actor, predicates) in found.items()
+    )
 
 
 def service_resolve_playbill_proposal_selector(

@@ -135,3 +135,135 @@ def test_the_own_words_row_says_how_many_bytes_it_holds(shop: tuple[Cruxible, st
     assert evidence is not None
     (own_words,) = [item for item in evidence.captures if item.origin == "self_source"]
     assert own_words.byte_length is not None and own_words.byte_length > 0
+
+
+def _pending(instance_id: str) -> list[tuple[str, tuple[str, ...]]]:
+    card = _card(instance_id, "sdk")
+    return [(item.proposal, item.fields) for item in card.pending]
+
+
+def test_a_proposal_leaves_the_card_when_it_is_withdrawn_or_accepted(
+    shop: tuple[Cruxible, str],
+) -> None:
+    cx, instance_id = shop
+    held = cx.set(SUBJECT, "status", "discontinued", because="Supplier stopped.", accept="never")
+    assert held.proposal is not None
+    assert _pending(instance_id) == [(held.proposal.proposal_id, ("status",))]
+
+    cx._client.withdraw_proposal(instance_id, held.proposal.proposal_id, reason="Not yet.")  # noqa: SLF001
+    assert _pending(instance_id) == []
+
+    again = cx.set(SUBJECT, "status", "discontinued", because="Supplier stopped.", accept="never")
+    assert again.proposal is not None
+    assert _pending(instance_id) == [(again.proposal.proposal_id, ("status",))]
+    cx.activate(again.proposal.proposal_id)
+    assert _pending(instance_id) == []
+
+
+def test_a_readmission_supersedes_its_stale_source_on_the_card(
+    shop: tuple[Cruxible, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.core_support._support import every_moved_base_overlaps
+
+    cx, instance_id = shop
+    held = cx.set(SUBJECT, "status", "discontinued", because="Supplier stopped.", accept="never")
+    assert held.proposal is not None
+    source = held.proposal.proposal_id
+    # The head moves (elsewhere); the readmission machinery treats the source as stale.
+    every_moved_base_overlaps(monkeypatch)
+    moved = cx.set("shop.part/p1", "status", "in_stock", because="Stocked.", at=None)
+    assert moved.status == "accepted", moved
+
+    readmitted = cx.proposal(source).readmit()
+    (successor,) = [proposal for proposal, _fields in _pending(instance_id)]
+    assert successor != source
+    assert successor in repr(readmitted)
+
+
+def test_an_index_from_before_the_subject_rows_reconstructs_once(
+    shop: tuple[Cruxible, str],
+) -> None:
+    import sqlite3
+
+    cx, instance_id = shop
+    held = cx.set(SUBJECT, "status", "discontinued", because="Supplier stopped.", accept="never")
+    assert held.proposal is not None
+    evidence = get_playbill_manager().get(instance_id).proposal_evidence()
+    assert evidence.index is not None
+    path = evidence.index.path
+    get_playbill_manager().clear()
+    with sqlite3.connect(path) as old:
+        old.execute("DROP TABLE proposal_subjects")
+        old.execute("DROP TABLE proposal_readmissions")
+
+    assert _pending(instance_id) == [(held.proposal.proposal_id, ("status",))]
+
+
+def test_a_card_read_is_flat_in_unrelated_open_proposals(
+    shop: tuple[Cruxible, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding: every card walked every open proposal (1 vs 9 derivations)."""
+
+    import cruxible_core.service.proposals.proposals as proposals
+    import cruxible_core.service.proposals.staleness as staleness
+    from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+    from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
+    from tests.test_scale.test_scale_guard import RATIO, SLACK
+
+    cx, instance_id = shop
+    candidates_read: list[str] = []
+    original = ProposalEvidenceStore.read_candidate
+
+    def read_candidate(self: ProposalEvidenceStore, digest: str) -> Any:
+        candidates_read.append(digest)
+        return original(self, digest)
+
+    # The metric the finding counted: per-proposal derivations during one card read.
+    derived: list[str] = []
+    for module, name in (
+        (proposals, "proposal_touches"),
+        (proposals, "_open_rows"),
+        (staleness, "proposal_change_keys"),
+    ):
+        real = getattr(module, name)
+        monkeypatch.setattr(
+            module,
+            name,
+            lambda *args, _real=real, _name=name, **kwargs: (
+                derived.append(_name),
+                _real(*args, **kwargs),
+            )[1],
+        )
+
+    measured: dict[int, dict[str, int]] = {}
+    written = 0
+    for size in (1, 9):
+        while written < size:
+            held = cx.set(
+                f"shop.part/other-{written}",
+                "status",
+                "discontinued",
+                because="Held.",
+                accept="never",
+            )
+            assert held.proposal is not None
+            written += 1
+        with trace_sqlite(tmp_path):
+            get_playbill_manager().clear()
+            assert _pending(instance_id) == []  # warm: the instance reopens traced
+            monkeypatch.setattr(ProposalEvidenceStore, "read_candidate", read_candidate)
+            candidates_read.clear()
+            derived.clear()
+            with counting(tmp_path) as window:
+                assert _pending(instance_id) == []
+            monkeypatch.setattr(ProposalEvidenceStore, "read_candidate", original)
+            assert window.unexplained == [], window.unexplained
+            assert candidates_read == []
+            assert derived == [], derived
+            measured[size] = {name: window.counts[name] for name in COUNTERS}
+    grown = {
+        name: (measured[1][name], measured[9][name])
+        for name in COUNTERS
+        if measured[9][name] > measured[1][name] * RATIO + SLACK[name]
+    }
+    assert not grown, grown
