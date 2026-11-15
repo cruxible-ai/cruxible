@@ -326,6 +326,12 @@ def render_orient(result: Mapping[str, Any]) -> str:
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
+        vocabulary_file = result.get("vocabulary_file")
+        if vocabulary_file is not None and vocabulary_file["state"] != "current":
+            # next= counts accepted state; the workspace's own rows are next's.
+            lines.append(
+                "  note: next= counts accepted state; the vocabulary file row is in `cruxible next`"
+            )
         enablements = attention.get("enablements")
         if enablements is not None:
             lines.append(

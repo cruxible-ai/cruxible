@@ -418,6 +418,10 @@ class OrientAttention(_StrictOrientModel):
     ``next_items`` counts the queue's problems and ``top`` names the first of
     them; ``setup_items`` counts its setup rows apart (choices the operator
     owns, such as a Line accepted but not yet enabled), absent when none.
+    These count accepted state only: rows about the caller's workspace (its
+    floor, sources, projection blocks, vocabulary file) need the workspace
+    and appear in ``next``; orient reports the floor and the vocabulary file
+    as status beside this (``floor``, ``vocabulary_file``), as it always has.
     """
 
     next_items: int = Field(ge=0)

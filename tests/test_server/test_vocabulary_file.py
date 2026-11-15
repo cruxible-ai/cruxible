@@ -521,6 +521,12 @@ def test_next_and_orient_name_a_file_behind_accepted_state(world) -> None:  # ty
     assert row.repair.command == "cx.vocabulary.export()"
     status = cx.orient().vocabulary_file
     assert status.state == "behind" and status.definitions_behind == 1
+    # Walkthrough W9: next= counts accepted state; the text says where the row is.
+    from cruxible_client.contracts.text_display import render_orient
+
+    assert "the vocabulary file row is in `cruxible next`" in render_orient(
+        cx.orient().model_dump(mode="json")
+    )
 
     # A Claim write moves the head, not the vocabulary: still one behind.
     _claim(cx, "dev.item/a", "dev.item.state", "open")

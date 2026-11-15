@@ -46204,7 +46204,7 @@
           },
           "OrientAttention": {
             "additionalProperties": false,
-            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.",
+            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.\nThese count accepted state only: rows about the caller's workspace (its\nfloor, sources, projection blocks, vocabulary file) need the workspace\nand appear in ``next``; orient reports the floor and the vocabulary file\nas status beside this (``floor``, ``vocabulary_file``), as it always has.",
             "properties": {
               "enablements": {
                 "anyOf": [
