@@ -207,6 +207,7 @@ from cruxible_core.indexes.subject_identity import (
     IdentityOverlay,
     IdentityView,
     KeyReader,
+    KeyRules,
     KeyTuple,
     PendingEnd,
     PendingKey,
@@ -628,6 +629,7 @@ class _Planner:
         self._retired_here: dict[str, bool] | None = None
         self._pending_members: set[str] = set()
         self._key_reader: KeyReader | None = None
+        self._key_rules: KeyRules | None = None
         # Each re-bind a ``from_capture`` expanded into, by its position in the
         # expanded changes: the Capture whose citation it replaces.
         self._rebind_from: dict[int, str] = {}
@@ -966,6 +968,20 @@ class _Planner:
                 declared if declared is not None and declared.lifecycle.state == "live" else None
             )
         return self._kinds[kind]
+
+    @property
+    def key_rules(self) -> KeyRules:
+        """The head's SubjectKind identity rules, read per kind as a value names it: what
+        a ``key<K>`` or ``key_part<K:p>`` value is checked by, as acceptance checks it."""
+
+        if self._key_rules is None:
+
+            def claim_type_of(predicate: str) -> ClaimType | None:
+                info = self.vocabulary.predicates.get(predicate)
+                return None if info is None else info.claim_type
+
+            self._key_rules = KeyRules(self.declared_kind, claim_type_of)
+        return self._key_rules
 
     def _single_key(self, kind: str) -> SubjectKind | None:
         """The kind when it has one literal key: ``kind/<text>`` may then read as that key.
@@ -1664,7 +1680,7 @@ class _Planner:
                     repair=f"Use one of: {spelled}",
                     field_path=path,
                 )
-        violated = claim_literal_problem(value, info.claim_type.value)
+        violated = claim_literal_problem(value, info.claim_type.value, keys=self.key_rules)
         if violated is not None:
             violated = claim_literal_detail(value, info.claim_type.value, violated)
             expected = info.value_type if info.value_type != "json" else "value"

@@ -3,8 +3,8 @@
 Both pass ClaimType preflight, and on purpose: a ``capture<K>`` field holds a
 Capture digest, and a ``key<K>`` (or ``key_part<K:p>``) field holds a canonical
 key of kind ``K``, checked with that kind's identity rules when the Claim is
-accepted. Each is written and read back here, so a decision to refuse them at
-authoring has to start by changing this test.
+accepted, by authoring and by ``set`` alike. Each is written and read back here,
+so a decision to refuse them at authoring has to start by changing this test.
 """
 
 from __future__ import annotations
@@ -135,24 +135,32 @@ def test_set_writes_a_capture_valued_field(work_item: tuple[CruxibleClient, str]
     assert outcome.status == "accepted", outcome
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "set checks a literal without the SubjectKind's key rules "
-        "(service/authoring/write_verbs.py, claim_literal_problem with no keys), so a "
-        "key<K> value refuses key_unparseable there while authoring and Procedure claims "
-        "accept it. Found by s20; not in its scope."
-    ),
-)
-def test_set_writes_a_key_valued_field(work_item: tuple[CruxibleClient, str]) -> None:
+def test_set_writes_key_valued_fields(work_item: tuple[CruxibleClient, str]) -> None:
+    """``set`` checks a key value with the kind's identity rules, as acceptance does."""
+
     transport, instance_id = work_item
-    outcome = transport.set(
+    for field in ("project.work_item.parent", "project.work_item.parent_slug"):
+        outcome = transport.set(
+            instance_id,
+            request=SetRequest(
+                subject="project.work_item/replace-me",
+                field=field,
+                value="replace-me",
+                because="Its parent item.",
+            ),
+        )
+        assert outcome.status == "accepted", outcome
+    # A key not in the kind's canonical form (its slug is casefolded) is refused.
+    refused = transport.set(
         instance_id,
         request=SetRequest(
             subject="project.work_item/replace-me",
             field="project.work_item.parent",
-            value="replace-me",
+            value="Replace-Me",
             because="Its parent item.",
         ),
     )
-    assert outcome.status == "accepted", outcome
+    assert refused.status == "refused"
+    assert refused.refusal is not None
+    assert refused.refusal.code == "cruxible.write.value_type_mismatch"
+    assert "canonical_form_failed" in refused.refusal.message
