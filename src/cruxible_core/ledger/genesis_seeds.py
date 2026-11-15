@@ -110,38 +110,6 @@ GENESIS_SEED_HISTORY: tuple[GenesisSeedSet, ...] = (
             ),
             GenesisSeed(
                 "providers/cruxible-builtin.json",
-                "8923dca4680ed083b6f6f3062f3c2ed2910ca3ed91d42cfc0d5358d0ddae760c",
-            ),
-            GenesisSeed(
-                "triggers/evidence-sweep.json",
-                "473ad17889ae652b598e7aecbba13d624e67d45c0234550632501e8fb6f18e46",
-            ),
-            GenesisSeed(
-                "triggers/floor-refresh.json",
-                "0fb93d991ae564c3748f70c021023a3ac50815a23dc21b314586140c8e9e9ba7",
-            ),
-            GenesisSeed(
-                "triggers/prediction-anchor-retry.json",
-                "37fc9529405131805d568c39a63f78ed4401583edc1308a9b26589eda850dea4",
-            ),
-        ),
-    ),
-    # The builtin Provider's operation descriptions rewritten for adopters. Entry 1
-    # stays so instances created under it during 0.5.0 development keep opening.
-    GenesisSeedSet(
-        ordinal=2,
-        name="0.5.0-wording",
-        seeds=(
-            GenesisSeed(
-                "claim-types/semantic/alias.json",
-                "072ad267e8c90f817528e15d9d6ccb182852154e7cfda8ca320918064c4ed14a",
-            ),
-            GenesisSeed(
-                "claim-types/semantic/distinct_from.json",
-                "db8e0d864ae122bf57fb3cdb891aba33819c7f0029326b7f83d82b17fca69cc6",
-            ),
-            GenesisSeed(
-                "providers/cruxible-builtin.json",
                 "d98d67536ae5c7a3a548b7d3ed6afff999e436aac19ee36ede10fd7134db2cfc",
             ),
             GenesisSeed(

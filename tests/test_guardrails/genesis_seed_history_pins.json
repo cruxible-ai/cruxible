@@ -3,11 +3,6 @@
     {
       "name": "0.5.0",
       "ordinal": 1,
-      "set_digest": "sha256:3db7152393b241c00726c38aebe8f7af7fd85a1c900437ce083965b0e19269f7"
-    },
-    {
-      "name": "0.5.0-wording",
-      "ordinal": 2,
       "set_digest": "sha256:4500be0d9e3707603c72c3dc0c8bd90b26792f43e34dc86d4cb1b268e997e7f0"
     }
   ]
