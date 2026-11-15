@@ -1097,6 +1097,17 @@ KitAddRefusal = Annotated[
 ]
 
 
+class KitRequirementStatus(_Strict):
+    """One kit an installed kit requires, and whether this instance meets it."""
+
+    kit_id: str
+    min_version: str
+    #: The required kit's installed version; absent when it is not installed.
+    installed_version: str | None = None
+    #: Installed at ``min_version`` or later.
+    met: bool
+
+
 class KitChangeResult(_Strict):
     """What a kit add or remove changed, or why it changed nothing."""
 
@@ -1129,6 +1140,11 @@ class KitChangeResult(_Strict):
     provenance: KitProvenance | None = None
     #: The bundled provider packages, installed before the definitions.
     providers: tuple[KitProviderStep, ...] = ()
+    #: Each kit this release requires, as this instance holds it (an add whose
+    #: requirement is not met refuses cruxible.kit.requires_missing instead).
+    requires: tuple[KitRequirementStatus, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     plan: tuple[KitPathPlan, ...] = ()
     #: Each live Procedure bound to another build of a provider the kit ships,
     #: moved to the kit's build in this change set (or kept, with keep_build).
@@ -1179,17 +1195,6 @@ class KitProviderStatus(_Strict):
     #: The live Provider's package version: this build's when ``installed``,
     #: the other build's when ``differs``; absent when none is live.
     installed_version: str | None = None
-
-
-class KitRequirementStatus(_Strict):
-    """One kit an installed kit requires, and whether this instance meets it."""
-
-    kit_id: str
-    min_version: str
-    #: The required kit's installed version; absent when it is not installed.
-    installed_version: str | None = None
-    #: Installed at ``min_version`` or later.
-    met: bool
 
 
 class InstalledKit(_Strict):

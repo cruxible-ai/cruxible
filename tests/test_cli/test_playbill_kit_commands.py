@@ -479,6 +479,56 @@ def test_kit_status_shows_each_required_kit_and_whether_it_is_met(
     assert "  requires other >= 2.0.0: not met (not installed)\n" in result.output
 
 
+def test_kit_add_preview_shows_requires_met_and_one_heading_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S1-S3: the preview says what a commit does now, shows requires and whether it is
+    met, and spells every heading one way (``Document:`` beside ``ClaimType:``)."""
+
+    from cruxible_core.service.kits import KIT_PREVIEW_AWAITING_INSTALL
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status="would_propose",
+                requires=(
+                    KitRequirementStatus(
+                        kit_id="base", min_version="1.0.0", installed_version="1.0.0", met=True
+                    ),
+                ),
+                plan=(
+                    KitPathPlan(
+                        path="claim-types/acme/plan.json",
+                        action="add",
+                        identity="ClaimType:acme.plan",
+                    ),
+                    KitPathPlan(
+                        path="documents/acme.guide.json",
+                        action="add",
+                        identity="document:acme.guide",
+                    ),
+                ),
+                detail=KIT_PREVIEW_AWAITING_INSTALL,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme-1.0.0")
+    )
+
+    result = CliRunner().invoke(cli, [*BASE, "add", "acme-1.0.0"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "  requires base >= 1.0.0: met (installed 1.0.0)" in lines
+    assert "  requires: base >= 1.0.0" not in lines
+    assert "ClaimType:" in lines and "Document:" in lines and "document:" not in lines
+    assert "Contracts first" not in result.output
+    assert KIT_PREVIEW_AWAITING_INSTALL in lines
+
+
 def test_a_registry_refusal_prints_its_code_without_the_class_name() -> None:
     import click
 

@@ -1657,6 +1657,7 @@ def _submit(
     installed_version: str | None = None,
     provenance: KitProvenance | None = None,
     providers: tuple[KitProviderStep, ...] = (),
+    requires: tuple[KitRequirementStatus, ...] = (),
     repins: tuple[ProviderRepinV1, ...] = (),
     stops: tuple[StoppedAutomationV1, ...] = (),
     automation_carries: tuple[AutomationCarryV1, ...] = (),
@@ -1668,6 +1669,7 @@ def _submit(
         "installed_version": installed_version,
         "provenance": provenance,
         "providers": providers,
+        "requires": requires,
         "repins": repins,
         "stops": stops,
         "automation_carries": automation_carries,
@@ -1994,6 +1996,14 @@ def _provider_steps(
                 )
             )
     return steps, missing
+
+
+#: What a commit of a kit whose bundled providers are missing does: each provider
+#: carries its own shapes, so nothing is accepted before the installs.
+KIT_PREVIEW_AWAITING_INSTALL = (
+    "a commit installs the bundled providers first, then proposes these definitions, "
+    "which are checked against the installed providers"
+)
 
 
 def _required_receipts(
@@ -2438,6 +2448,16 @@ def _add_kit(
         "installed_version": installed_version,
         "provenance": manifest.provenance,
         "providers": tuple(steps),
+        # Each required kit is met here, or the add refused above.
+        "requires": tuple(
+            KitRequirementStatus(
+                kit_id=item.kit_id,
+                min_version=item.min_version,
+                installed_version=required[item.kit_id].version,
+                met=True,
+            )
+            for item in manifest.requires
+        ),
     }
     # The definitions pin what the bundled providers register, so they are
     # proposed only once those are live. A preview cannot install, so it plans
@@ -2706,9 +2726,7 @@ def _add_kit(
             version=manifest.version,
             status="would_propose",
             plan=plan,
-            detail="a commit accepts missing bundled operation Contracts first, installs "
-            "the providers, then proposes the remaining definitions, which are evaluated "
-            "once those are installed",
+            detail=KIT_PREVIEW_AWAITING_INSTALL,
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )

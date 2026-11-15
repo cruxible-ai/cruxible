@@ -142,6 +142,7 @@ from cruxible_client.contracts.kits import (
     KitBuildRequest,
     KitChangeResult,
     KitRemoveRequest,
+    KitRequirementStatus,
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
@@ -2237,6 +2238,27 @@ def _echo_kit_requires(requires: tuple[KitRequirement, ...]) -> None:
         )
 
 
+def _echo_kit_requirements(requires: Sequence[KitRequirementStatus]) -> None:
+    """Each kit a release requires and whether this instance meets it (add and status)."""
+
+    for required in requires:
+        held = (
+            "not installed"
+            if required.installed_version is None
+            else f"installed {required.installed_version}"
+        )
+        click.echo(
+            f"  requires {required.kit_id} >= {required.min_version}: "
+            f"{'met' if required.met else 'not met'} ({held})"
+        )
+
+
+def _kit_plan_heading(kind: str) -> str:
+    """A kit plan group's heading: every identity kind capitalized (``document`` too)."""
+
+    return kind[:1].upper() + kind[1:]
+
+
 def _echo_kit_change(
     result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
 ) -> None:
@@ -2256,6 +2278,7 @@ def _echo_kit_change(
         if step.detail is not None:
             line += f" ({printable(step.detail)})"
         click.echo(line)
+    _echo_kit_requirements(result.requires)
     _echo_provider_repins(result.repins, result.stops, result.automation_carries)
     if result.provenance is not None:
         provenance = result.provenance
@@ -2267,7 +2290,7 @@ def _echo_kit_change(
     for item in result.plan:
         if item.action == "unchanged":
             continue
-        kind = (item.identity or item.path).partition(":")[0]
+        kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
         line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
         notes = []
         if item.consequence is not None:
@@ -2539,7 +2562,6 @@ def add_kit(
             template_on_disk=_kit_directory_file(kit, result.automation_template),
             source=_pull_reference(kit, origin),
         )
-        _echo_kit_requires(bundle.manifest.requires)
 
 
 @kit_group.command("pull")
@@ -2641,16 +2663,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
                 f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
                 f"{state}"
             )
-        for required in kit.requires:
-            held = (
-                "not installed"
-                if required.installed_version is None
-                else f"installed {required.installed_version}"
-            )
-            click.echo(
-                f"  requires {required.kit_id} >= {required.min_version}: "
-                f"{'met' if required.met else 'not met'} ({held})"
-            )
+        _echo_kit_requirements(kit.requires)
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
         for kept in kit.kept:
