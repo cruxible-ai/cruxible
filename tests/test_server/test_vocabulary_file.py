@@ -206,6 +206,30 @@ def test_export_keeps_a_new_definition_another_writer_accepted_differently(world
     assert cx.vocabulary.export().status == "written"
 
 
+def test_export_keeps_a_retirement_of_a_definition_accepted_after_the_export(world) -> None:  # type: ignore[no-untyped-def]
+    """Review R6: a retirement is applied only once the head no longer holds the definition."""
+
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    later = cx.changes(rationale="Accepted after the export.")
+    later.field("dev.item", "late", "string{max_len: 40}")
+    later.subject_kind(name="dev.later", minted=True)
+    assert later.submit().outcome.status == "landed"
+    cx.refresh()
+
+    def retire(data):  # type: ignore[no-untyped-def]
+        data["kinds"]["dev.item"]["fields"]["late"] = {"retired": True}
+        data["kinds"]["dev.later"] = {"retired": True}
+
+    _edit(workspace, retire)
+    with pytest.raises(VocabularyExportRefused) as refused:
+        cx.vocabulary.export()
+    assert "ClaimType:dev.item.late" in str(refused.value)
+    assert "SubjectKind:dev.later" in str(refused.value)
+    text = _file(workspace).read_text(encoding="utf-8")
+    assert "late:\n        retired: true" in text
+
+
 def test_export_keeps_a_file_whose_header_does_not_match_and_reads_no_claim(
     world,  # type: ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,

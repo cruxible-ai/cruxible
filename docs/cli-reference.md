@@ -4427,7 +4427,8 @@ replaces an existing file only when nothing in it would be lost: the file
 parses and, planned against accepted state, states no change of its own (an
 edit already applied, or a definition someone else changed since the file's
 export and the file restates unedited, is not lost; definitions it leaves out
-never count). Otherwise it refuses, naming the pending changes;
+never count; a retirement counts as applied only once the head no longer
+holds the definition). Otherwise it refuses, naming the pending changes;
 `--force` replaces it. A file whose header does not match the export it names
 is kept too: restore the header, or `--force` replaces it with accepted
 state. Git is not consulted, so edit, apply, export works in any folder.

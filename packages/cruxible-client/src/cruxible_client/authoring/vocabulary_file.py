@@ -1169,7 +1169,7 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
     the defaults of a new one (its omissions are never edits to whatever the
     head holds under that name). The entry is pending unless that intended
     definition equals the export's (unedited) or the head's (applied); a
-    retirement is applied once the head no longer holds the definition.
+    retirement is applied only once the head no longer holds the definition.
     ``not_in_file`` never counts. An unreadable file is one pending change.
     When the header cannot establish what the file meant (its export cannot be
     read, or its vocabulary digest does not match), the file is kept: export
@@ -1205,7 +1205,8 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
         before_kind = exported.subject_kinds.get(kind)
         head_kind = head.subject_kinds.get(kind)
         if entry.retired:
-            if before_kind is not None and head_kind is not None:
+            # Applied only once the head no longer holds it.
+            if head_kind is not None:
                 pending.append(f"SubjectKind:{kind}")
         elif entry.states_subject_kind:
             try:
@@ -1222,7 +1223,8 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
             before = exported.claim_types.get(predicate)
             now = head.claim_types.get(predicate)
             if item.retired:
-                if before is not None and now is not None:
+                # Applied only once the head no longer holds it.
+                if now is not None:
                     pending.append(f"ClaimType:{predicate}")
                 continue
             try:
