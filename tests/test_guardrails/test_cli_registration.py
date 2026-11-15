@@ -103,8 +103,9 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     # registration group whose children are the root's; the read cut removed the
     # subject, policy and query groups (query is one command), and the stub leaf
     # replaced the world group; the Claude Code hook group is cut. The Line inbox
-    # group adds one. `action` (manual internal-action fire) adds one more.
-    assert len(groups) == 31, f"expected 31 Cruxible/host groups, found {len(groups)}"
+    # group adds one. `action` (manual internal-action fire) adds one more, and
+    # `vocabulary` (the vocabulary file) one more.
+    assert len(groups) == 32, f"expected 32 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -139,9 +140,10 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # `action run` adds one more; `files add|remove` add two and `curation observe` left;
     # `authoring rebase` and `claim recover-attestation` left.
     # Multi-build adds provider move and provider retire; measurement review adds procedure dispose.
-    # First-run adds rebind; Capture erasure adds capture erase; `console` adds one.
-    assert len(leaf_claims) == 117, (
-        f"expected 117 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # First-run adds rebind; Capture erasure adds capture erase; `console` adds one;
+    # the vocabulary file adds `vocabulary export|plan|apply`.
+    assert len(leaf_claims) == 120, (
+        f"expected 120 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

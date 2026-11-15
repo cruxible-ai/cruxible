@@ -969,6 +969,22 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "playbill", "orient", "Map accepted state: kinds, attention and next commands."
     ),
     "stub": _command("playbill", "world_stub", "Write a .pyi typing the accepted world."),
+    "vocabulary": _group(
+        "Export, plan and apply the vocabulary file (.cruxible/vocabulary.yaml).",
+        {
+            "export": _command(
+                "playbill", "export_vocabulary", "Write the accepted vocabulary to the file."
+            ),
+            "plan": _command(
+                "playbill", "plan_vocabulary", "Show what applying the file would change."
+            ),
+            "apply": _command(
+                "playbill", "apply_vocabulary", "Submit the file's changes as one change set."
+            ),
+        },
+        module="playbill",
+        attr="vocabulary_group",
+    ),
     "floor": _group(
         "Export the greppable floor, and choose who delivers it.",
         {

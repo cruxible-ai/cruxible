@@ -4395,6 +4395,77 @@ floor exported before generations were stamped). The text output prints
 floor export --force`. It reads only the floor's `manifest.json` (its
 coordinate and generation); it never re-exports.
 
+## vocabulary
+
+~~~text
+cruxible vocabulary export [--force] [--json]
+cruxible vocabulary plan [FILE] [--json]
+cruxible vocabulary apply [FILE] [--rationale TEXT] [--no-accept] [--json]
+~~~
+
+The vocabulary file, `.cruxible/vocabulary.yaml`, states every kind and its
+fields (ClaimTypes) in one YAML file, committed beside `files.yaml`. It is an
+authoring input, never the authority: the signed ledger stays the record.
+
+`export` writes it from the accepted vocabulary at the head, and is its only
+writer. A field states what differs from the defaults
+(`cruxible claim-type propose --template --expanded` shows them), in shorthand
+where shorthand says the same thing and in the full ClaimType input form
+otherwise (evidence rules, multi-kind predicates); every entry is checked by
+lowering it back to the accepted digest, and export refuses rather than write
+one that would change what it means. Its header, `based_on`, records the
+accepted coordinate it was read at and a digest of that vocabulary. Export
+refuses to replace a file whose bytes are not committed (`--force` replaces
+it). A kit-owned kind or field carries a `# kit: <id>` comment.
+
+~~~yaml
+kinds:
+  dev.item:
+    description: A planned piece of work.
+    fields:
+      slug:
+        key: true
+        value: 'string{pattern: "^[a-z0-9-]+$", max_len: 80}'
+      state:
+        enum: {open: Not done., done: Done., wontfix: {becomes: done}}
+      blocks: {link: dev.item, many: true}
+      title: {retired: true}
+~~~
+
+A field takes these shorthands beside any ClaimType input field: `enum`
+(members as a list, or `{member: meaning}`), `link` (a Subject-valued field:
+`link: KIND` or a list of kinds), `many: true`, `key: true` (a key of the kind,
+in file order) and `retired: true` (with an optional `reason`). A kind states
+its SubjectKind with `description`, `minted: true`, `keys` (the full form, when
+its keys are not its own fields), `uniqueness`, `normalizers` and
+`retired: true`; a kind with only `fields` changes no SubjectKind. The loader
+is strict: a duplicate key, an unknown key, an alias or merge key, an empty
+value, a decimal number, a date or a `yes`/`no` boolean refuses with its line.
+
+What the file leaves out is untouched: a kind or field it does not name is
+listed by `plan` as left as it is, never retired, and a property an existing
+field's entry leaves out keeps its accepted value (`null` clears one that may
+be empty). Only `retired: true` retires; the field's live Claims retire with
+it.
+
+`plan` reads the vocabulary at the export the file names, diffs the file
+against it, and lists each definition added, replaced (with the properties
+that change) or retired, `kit=<id>` on kit-owned ones, then the daemon's
+write-free preflight and lint (a read-only caller sees the plan without it).
+It writes nothing. An enum member written `{becomes: other}` leaves the enum
+and each of its live Claims is said again with `other`, keeping its identity,
+Subject and role and citing its own Capture again; `{retire: <reason>}` retires
+them instead. `plan` lists those Claims first.
+
+`apply` submits the same members as one ordinary change set, landing when the
+approval policy and the caller allow (`--no-accept` keeps the proposal). An
+edited field's successor pins the digest the export read, so a field someone
+changed since then refuses at preflight
+(`cruxible.authoring.claim_type_succession_invalid`, naming the member); a
+SubjectKind changed since then refuses before submitting. Re-export, merge the
+edits, and apply again. After it lands, `vocabulary export` moves the file's
+baseline to the new head.
+
 ## stub
 
 ~~~text

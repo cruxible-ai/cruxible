@@ -382,6 +382,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need the accepted floor as greppable files: return the bytes, write "
         "them to the workspace, or check that copy's status."
     ),
+    "cruxible_vocabulary_export": (
+        "Write the accepted kinds and fields to .cruxible/vocabulary.yaml in the workspace, "
+        "to read or edit the whole vocabulary as one file."
+    ),
+    "cruxible_vocabulary_plan": (
+        "What applying .cruxible/vocabulary.yaml would add, replace and retire; writes nothing."
+    ),
+    "cruxible_vocabulary_apply": (
+        "Submit .cruxible/vocabulary.yaml's changes as one change set; lands when policy allows."
+    ),
     "cruxible_coverage_resolve": (
         "Use when you have read or changed working files and need what they have to do with "
         "accepted state; the file catalog binds files to their sources."

@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-14:sdk-writes-documents.sdk-vocabulary-authoring.surface-discovery-printing-050",
-    "surface_digest": "sha256:bd60cc01526d710cd6c8f5abed6998048bb88332a4c6e455e96d79e9b40361ce"
+    "register_entry": "2026-11-15:vocabulary-file-050",
+    "surface_digest": "sha256:8a9283497bba110bcfb368d56ed497fe816522c40971e7ce93a5434818f83ad0"
   },
   "surface": {
     "cli_leaves": [
@@ -791,6 +791,21 @@
         "client_operations": [],
         "command": "stub",
         "delegate": "cruxible_core.cli.commands.playbill.world_stub"
+      },
+      {
+        "client_operations": [],
+        "command": "vocabulary apply",
+        "delegate": "cruxible_core.cli.commands.playbill.apply_vocabulary"
+      },
+      {
+        "client_operations": [],
+        "command": "vocabulary export",
+        "delegate": "cruxible_core.cli.commands.playbill.export_vocabulary"
+      },
+      {
+        "client_operations": [],
+        "command": "vocabulary plan",
+        "delegate": "cruxible_core.cli.commands.playbill.plan_vocabulary"
       },
       {
         "client_operations": [
@@ -2988,6 +3003,39 @@
         "input_schema_digest": "sha256:c370dfc5750663d330304f47f24b3464c2b8b275410df9524a4620a6e33d6a24",
         "name": "cruxible_since",
         "output_schema_digest": "sha256:8b8e98678acc7ac953c981be03f221f548b5952903cf56dd27fa0a7e1428843a",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "get_batch",
+          "orient"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_apply",
+        "input_schema_digest": "sha256:923365bb0eeb3d4aaa411f9faa7a60e7809fc4a77be910b14a6c59d2263fc873",
+        "name": "cruxible_vocabulary_apply",
+        "output_schema_digest": "sha256:174690e107fd4c49cf19ace334cefb38e076eddc928f510a6e4d6b74ee46791a",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
+          "get_batch",
+          "orient"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_export",
+        "input_schema_digest": "sha256:528dd536689cfc34db5c942960404ed61476f7179f282e4cca20b2e0b04f4753",
+        "name": "cruxible_vocabulary_export",
+        "output_schema_digest": "sha256:21c1250dfe22f0d272105c801a694127d81557e85c9f10cede63f040711e67d3",
+        "permission": "READ_ONLY"
+      },
+      {
+        "client_operations": [
+          "get_batch",
+          "orient"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_plan",
+        "input_schema_digest": "sha256:7b3315f361ee4bead1a78d99aeaf95f24a74410e694ff4875ec849807c35a643",
+        "name": "cruxible_vocabulary_plan",
+        "output_schema_digest": "sha256:5066ea9a5713343268c9127f32f47ae78d2651a4a6f214d7ee35ea6b48b9ef1e",
         "permission": "READ_ONLY"
       },
       {

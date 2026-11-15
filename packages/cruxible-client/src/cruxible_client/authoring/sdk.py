@@ -280,6 +280,7 @@ from cruxible_client.transport.http import CruxibleClient, configured_principal_
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.files import WorkspaceCatalog
+    from cruxible_client.authoring.vocabulary_file import Vocabulary
     from cruxible_client.authoring.world import World
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -1656,6 +1657,18 @@ class ChangeSetDraft:
         )
         return self
 
+    def _member(self, payload: AuthoringChangeSetMember, decisions: dict[str, object]) -> None:
+        """Stage one member already lowered elsewhere (the vocabulary file's apply)."""
+
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions=decisions,
+            )
+        )
+
     def prepare(self) -> Intent:
         """Compile and preflight the whole changeset as one intent.
 
@@ -2786,6 +2799,18 @@ class Cruxible:
             raise ValueError("accepted read returned a different requested coordinate")
         if not self._pinned:
             self._coordinate = coordinate
+
+    @property
+    def vocabulary(self) -> Vocabulary:
+        """The workspace's vocabulary file (``.cruxible/vocabulary.yaml``).
+
+        Next: ``cx.vocabulary.export()``, edit the file, then ``cx.vocabulary.plan()`` and
+        ``cx.vocabulary.apply()``.
+        """
+
+        from cruxible_client.authoring.vocabulary_file import Vocabulary
+
+        return Vocabulary(self)
 
     @property
     def block(self) -> ProjectionBlocks:

@@ -38,6 +38,11 @@ from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
+from cruxible_client.authoring.vocabulary_file import (
+    vocabulary_apply_for,
+    vocabulary_export_for,
+    vocabulary_plan_for,
+)
 from cruxible_client.authoring.workspace import (
     daemon_floor_delivery,
     floor_export_parts,
@@ -101,6 +106,11 @@ from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_lines
+from cruxible_client.contracts.vocabulary_file import (
+    VocabularyApplyResult,
+    VocabularyExportResult,
+    VocabularyPlan,
+)
 from cruxible_client.contracts.write import (
     AboutChange,
     FileEvidence,
@@ -2268,6 +2278,48 @@ def _workspace_observations(
             grep_text=grep_results,
             whole_working_set=whole_working_set,
         )
+    )
+
+
+def handle_playbill_vocabulary_export(
+    instance_id: str, *, force: bool = False
+) -> VocabularyExportResult:
+    """Write the accepted vocabulary to the MCP workspace's ``.cruxible/vocabulary.yaml``."""
+
+    root = mcp_workspace_root()
+    return _daemon_call(
+        lambda client: vocabulary_export_for(client, instance_id, workspace=root, force=force),
+        operation_name="cruxible_vocabulary_export",
+    )
+
+
+def handle_playbill_vocabulary_plan(instance_id: str, *, file: str | None = None) -> VocabularyPlan:
+    """Plan the MCP workspace's vocabulary file; the daemon receives no path."""
+
+    root = mcp_workspace_root()
+    path = None if file is None else resolve_workspace_path(file, root=root, kind="file")
+    return _daemon_call(
+        lambda client: vocabulary_plan_for(client, instance_id, workspace=root, path=path),
+        operation_name="cruxible_vocabulary_plan",
+    )
+
+
+def handle_playbill_vocabulary_apply(
+    instance_id: str,
+    *,
+    file: str | None = None,
+    rationale: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> VocabularyApplyResult:
+    """Apply the MCP workspace's vocabulary file as one change set."""
+
+    root = mcp_workspace_root()
+    path = None if file is None else resolve_workspace_path(file, root=root, kind="file")
+    return _daemon_call(
+        lambda client: vocabulary_apply_for(
+            client, instance_id, workspace=root, path=path, rationale=rationale, accept=accept
+        ),
+        operation_name="cruxible_vocabulary_apply",
     )
 
 

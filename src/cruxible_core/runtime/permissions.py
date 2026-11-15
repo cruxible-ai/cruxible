@@ -127,6 +127,11 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_curation_suppress": PermissionMode.GOVERNED_WRITE,
     "cruxible_curation_unsuppress": PermissionMode.GOVERNED_WRITE,
     "cruxible_floor_export": PermissionMode.READ_ONLY,
+    # The vocabulary file: export writes the workspace file (no state) and plan
+    # previews write-free; apply submits an ordinary change set.
+    "cruxible_vocabulary_export": PermissionMode.READ_ONLY,
+    "cruxible_vocabulary_plan": PermissionMode.READ_ONLY,
+    "cruxible_vocabulary_apply": PermissionMode.GOVERNED_WRITE,
     "cruxible_coverage_resolve": PermissionMode.READ_ONLY,
     "cruxible_files_compile": PermissionMode.READ_ONLY,
     "cruxible_whoami": PermissionMode.READ_ONLY,

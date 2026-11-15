@@ -62,6 +62,11 @@ from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
+from cruxible_client.authoring.vocabulary_file import (
+    vocabulary_apply_for,
+    vocabulary_export_for,
+    vocabulary_plan_for,
+)
 from cruxible_client.authoring.workspace import (
     WorkspaceAttachmentError,
     daemon_floor_delivery,
@@ -157,6 +162,7 @@ from cruxible_client.contracts.text_display import (
 )
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
+from cruxible_client.contracts.vocabulary_file import VocabularyPlan
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_client.contracts.write import (
     Change,
@@ -10216,6 +10222,155 @@ def world_stub(out_path: str | None) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered, encoding="utf-8")
     click.echo(f"Wrote {target}")
+
+
+@playbill_group.group("vocabulary")
+def vocabulary_group() -> None:
+    """The vocabulary file: every kind and field in .cruxible/vocabulary.yaml.
+
+    `export` writes it from accepted state; edit it, `plan` shows what would
+    change, `apply` submits that as one change set. A kind or field left out is
+    untouched; only `retired: true` retires.
+    """
+
+
+def _vocabulary_workspace(command_name: str) -> Path:
+    resolution = _local_workspace_root(required=command_name)
+    _emit_git_workspace_note(resolution)
+    assert resolution.workspace_root is not None
+    return Path(resolution.workspace_root)
+
+
+def _vocabulary_path(file: str | None) -> Path | None:
+    """A FILE argument as the shell meant it: relative to the current directory."""
+
+    return None if file is None else Path(file).expanduser().resolve()
+
+
+def _vocabulary_plan_lines(plan: VocabularyPlan) -> list[str]:
+    lines = [f"Vocabulary plan: {plan.path} (based on {plan.based_on.git_oid[:12]})"]
+    if plan.claims:
+        lines.append("Claims:")
+        for claim in plan.claims:
+            change = (
+                f"becomes {claim.becomes}"
+                if claim.action == "re_author"
+                else f"retires ({claim.reason})"
+            )
+            lines.append(f"  {claim.claim} {claim.subject} {claim.field}: {claim.value} {change}")
+    changes = plan.changes
+    lines.append("Changes:" if changes else "Changes: none")
+    for entry in changes:
+        lines.append(
+            f"  {entry.action} {entry.definition}"
+            + (f" ({', '.join(entry.changed)})" if entry.changed else "")
+            + (f" kit={entry.kit}" if entry.kit else "")
+        )
+    left = [entry for entry in plan.entries if entry.action == "not_in_file"]
+    if left:
+        lines.append(f"Not in file (left as they are): {len(left)}")
+        for entry in left:
+            lines.append(f"  {entry.definition}" + (f" kit={entry.kit}" if entry.kit else ""))
+    preflight = plan.preflight
+    verdict = preflight.verdict.replace("_", " ")
+    lines.append(f"Preflight: {verdict}" + (f": {preflight.note}" if preflight.note else ""))
+    for item in () if preflight.frontier is None else preflight.frontier.diagnostics:
+        lines.append(f"  {item.code} at {item.offending_element}: {item.message}")
+    for warning in () if preflight.lint is None else preflight.lint.warnings:
+        lines.append(f"  lint {warning.code} ({warning.artifact})")
+    return lines
+
+
+@vocabulary_group.command("export")
+@click.option("--force", is_flag=True, help="Replace a file whose edits are not committed.")
+@json_option
+@handle_errors
+def export_vocabulary(force: bool, output_json: bool) -> None:
+    """Write the accepted vocabulary to .cruxible/vocabulary.yaml.
+
+    Shorthand where it says the same thing, the full ClaimType input form
+    otherwise; every entry is checked by lowering it back. The header records the
+    accepted coordinate it was read at, which plan and apply read against.
+    """
+
+    workspace = _vocabulary_workspace("cruxible vocabulary export")
+    result = _server_call(
+        lambda client, instance_id: vocabulary_export_for(
+            client, instance_id, workspace=workspace, force=force
+        ),
+        command_name="cruxible vocabulary export",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    state = "Wrote" if result.status == "written" else "Already current:"
+    click.echo(
+        f"{state} {result.path} ({result.kinds} kind(s), {result.fields} field(s)) "
+        f"at {result.based_on.git_oid[:12]}"
+    )
+
+
+@vocabulary_group.command("plan")
+@click.argument("file", required=False)
+@json_option
+@handle_errors
+def plan_vocabulary(file: str | None, output_json: bool) -> None:
+    """Show what applying the vocabulary file would add, replace and retire.
+
+    Reads at the export the file names; writes nothing. Claims an enum mapping
+    moves are listed first; definitions the file leaves out are listed as left
+    as they are.
+    """
+
+    workspace = _vocabulary_workspace("cruxible vocabulary plan")
+    plan = _server_call(
+        lambda client, instance_id: vocabulary_plan_for(
+            client, instance_id, workspace=workspace, path=_vocabulary_path(file)
+        ),
+        command_name="cruxible vocabulary plan",
+    )
+    if output_json:
+        _emit_json(plan.model_dump(mode="json"))
+        return
+    click.echo("\n".join(_vocabulary_plan_lines(plan)))
+
+
+@vocabulary_group.command("apply")
+@click.argument("file", required=False)
+@click.option("--rationale", default=None, help="Why the vocabulary changes.")
+@click.option("--no-accept", is_flag=True, help="Keep the proposal instead of landing it.")
+@json_option
+@handle_errors
+def apply_vocabulary(
+    file: str | None, rationale: str | None, no_accept: bool, output_json: bool
+) -> None:
+    """Submit the vocabulary file's changes as one change set; lands when policy allows."""
+
+    workspace = _vocabulary_workspace("cruxible vocabulary apply")
+    result = _server_call(
+        lambda client, instance_id: vocabulary_apply_for(
+            client,
+            instance_id,
+            workspace=workspace,
+            path=_vocabulary_path(file),
+            rationale=rationale,
+            accept="never" if no_accept else "if_allowed",
+        ),
+        command_name="cruxible vocabulary apply",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    lines = _vocabulary_plan_lines(result.plan)
+    if result.status == "unchanged":
+        lines.append("Nothing to apply.")
+    elif result.status == "refused":
+        lines.append("Refused: nothing was submitted.")
+    elif result.outcome is not None:
+        lines.append(str(result.outcome))
+    if result.next:
+        lines.append(f"Next: {result.next}")
+    click.echo("\n".join(lines))
 
 
 @playbill_group.group("floor")
