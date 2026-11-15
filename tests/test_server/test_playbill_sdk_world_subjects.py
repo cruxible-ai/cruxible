@@ -342,6 +342,23 @@ def test_an_accepted_draft_reused_as_a_value_is_a_reference_to_its_subject(
     ]
 
 
+def test_a_key_starting_with_a_digit_names_its_x_prefixed_id(typed: Cruxible) -> None:
+    """F22: the outcome says why a release keyed 0.5.0 is x0.5.0, and the key still names it."""
+
+    draft = typed.world().dev.decision.define("0.5.0", title="Release")
+    outcome = draft.write(because="The release.")
+    assert draft.address == f"{DECISION}/x0.5.0"
+    assert outcome.hint is not None
+    assert f"{DECISION}/x0.5.0" in outcome.hint and "start with a letter" in outcome.hint
+    assert f"{DECISION}/0.5.0" in outcome.hint
+    read = typed.world()
+    assert read.dev.decision["0.5.0"].address == f"{DECISION}/x0.5.0"
+    later = typed.set(f"{DECISION}/0.5.0", "title", "Release 0.5.0", because="Renamed.")
+    assert later.changes[0].subject == f"{DECISION}/x0.5.0"
+    plain = typed.world().dev.decision.define("ship-later", title="Later")
+    assert plain.write(because="Plain key.").hint is None
+
+
 def test_world_lookup_resolves_alias_and_single_key_and_keeps_the_read_coordinate(
     typed: Cruxible,
 ) -> None:

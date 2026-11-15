@@ -142,6 +142,7 @@ from cruxible_client.contracts.subject_kinds import (
     SubjectKind,
     key_predicate,
     parse_subject_kind,
+    render_key_part,
     subject_kind_path,
 )
 from cruxible_client.contracts.subjects import (
@@ -4488,6 +4489,40 @@ def _coordinator(
 @timed_operation("write")
 @unpositioned_operation
 @projection_request
+def _prefixed_id_hint(request: WriteRequest, outcome: WriteOutcome) -> str | None:
+    """Why a created Subject's id is not its key as typed, when the rendering prefixed it.
+
+    A Subject id begins with a letter (the Subject grammar every ledger path,
+    reference and digest is spelled in), so a key whose readable rendering does
+    not gets an ``x`` in front, and one with nothing readable is ``x-`` and 8 hex
+    of its key digest. Only the creates of this write are read.
+    """
+
+    if len(outcome.changes) != len(request.changes):
+        return None
+    lines: list[str] = []
+    for change, done in zip(request.changes, outcome.changes, strict=True):
+        if not isinstance(change, CreateChange) or done.resolved != "created" or not done.subject:
+            continue
+        first = change.key[0].value if isinstance(change.key, tuple) else change.key
+        if first is None or isinstance(first, CreatedSubject):
+            continue
+        rendered = render_key_part(first)
+        if rendered and "a" <= rendered[0] <= "z":
+            continue
+        typed = json.dumps(first) if not isinstance(first, str) else first
+        why = (
+            "has no readable character, so its id is x- and 8 hex of the key digest"
+            if not rendered.strip("-")
+            else "does not start with a letter, and a Subject id does, so its id starts with x"
+        )
+        lines.append(
+            f"{done.subject}: the key {typed!r} {why}; the key still names it "
+            f"({change.subject_kind}/{typed} in a write, or w.<kind>[{typed!r}])."
+        )
+    return " ".join(lines) or None
+
+
 def service_playbill_write(
     instance: PlaybillInstance,
     *,
@@ -4557,6 +4592,14 @@ def service_playbill_write(
                     ),
                 }
             )
+        if not outcome.refused:
+            spelled = _prefixed_id_hint(request, outcome)
+            if spelled is not None:
+                outcome = outcome.model_copy(
+                    update={
+                        "hint": spelled if outcome.hint is None else f"{outcome.hint} {spelled}"
+                    }
+                )
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
             outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
