@@ -2345,13 +2345,14 @@ def _echo_kit_change(
     multiple=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help=(
-        "A published provider package directory the kit names as the default "
-        "implementation of its interfaces (repeatable): pyproject.toml, uv.lock and the "
+        "A published provider package directory the kit names as the default provider "
+        "for its Procedures' slots (repeatable): pyproject.toml, uv.lock and the "
         "published wheel in dist/ (path dependencies' wheels are not needed). The kit "
         "carries none of its files. kit add installs it by name at exactly this version "
-        "from the provider index, refusing any other build, unless a live Provider already "
-        "implements its interfaces; a daemon with provider_repository configured refuses "
-        "that install (install the repository's build first with provider install)."
+        "from the provider index, refusing any other build, unless live operations of "
+        "other providers already serve and fit every slot the kit carries; a daemon with "
+        "provider_repository configured refuses that install (install the repository's "
+        "build first with provider install)."
     ),
 )
 @click.option(

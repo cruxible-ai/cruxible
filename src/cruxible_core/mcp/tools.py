@@ -407,7 +407,7 @@ def register_tools(
     def cruxible_provider_list(
         instance_id: InstanceId = None,
     ) -> ProviderCatalog:
-        """List installed Providers, then the configured repository's packages, with interfaces."""
+        """List installed Providers and their operations, then the repository's packages."""
         return handlers.handle_playbill_provider_catalog(require_instance_id(instance_id))
 
     @_tool

@@ -746,7 +746,7 @@ def refuse_unserved_procedure_nodes(
                 raise AuthoringInputError(
                     "cruxible.authoring.call_contract_from_interface",
                     location,
-                    "Call input and output contracts come from its slot's signature.",
+                    "Call input and output contracts come from its slot's capability.",
                     "Remove the Call's contract_in/contract_out and any unused owned Contracts.",
                 )
 

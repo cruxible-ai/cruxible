@@ -883,7 +883,7 @@ def binding_undeclared_repair(slot: str, capability: str) -> str:
     name = capability.partition("@")[0]
     return (
         f"Bind `{slot}` to an operation that serves {name} (`cruxible provider "
-        "list` shows what each serves), or " + _UNBOUND.format(slot=slot) + "."
+        "list` shows each build's operations), or " + _UNBOUND.format(slot=slot) + "."
     )
 
 

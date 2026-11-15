@@ -679,7 +679,10 @@ class ProcedureSpec(_Model):
     )
     slots: dict[str, ProcedureSlot] = Field(
         default_factory=dict,
-        description="Each slot's signature {in: name@N, out: name@N, effect}; a Line binds it.",
+        description=(
+            "Each slot's capability, {capability: name@N} (and may_truncate); a Line binds "
+            "it to an operation that serves and fits it."
+        ),
     )
     steps: tuple[Step, ...] = Field(min_length=1)
     # A governed Contract named name@N instead of inline fields: the Procedure
