@@ -37,13 +37,11 @@ from cruxible_client.contracts.proposal_summary import (
 )
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
 from cruxible_client.contracts.runbooks import Runbook
+from cruxible_client.contracts.text_display import short_provider_build
 from cruxible_client.contracts.triggers import ActionTarget, LineTarget, RunbookTarget, Trigger
 from cruxible_client.contracts.write import ChangeOutcome, capture_handle
 from cruxible_core.indexes.subject_identity import subject_kind_of
 from cruxible_core.service.discovery.field_names import is_reserved_field_name
-
-#: How a provider build shows in text: its name and the first 12 hex of its build id.
-PROVIDER_BUILD_HEX = 12
 
 _ACTION: dict[str, Literal["created", "revised", "retired"]] = {
     "create": "created",
@@ -54,16 +52,6 @@ _ACTION: dict[str, Literal["created", "revised", "retired"]] = {
 #: Definitions with a text block come first, in this order; the rest by kind.
 _DETAIL_ORDER = {"line": 0, "procedure-mandate": 1, "runbook": 2, "trigger": 3}
 _SERVICE_ACCESS = BodyAccessContext(principal_id="playbill-review-view", can_read_body=True)
-
-
-def short_provider_build(name: str) -> str:
-    """``Provider:NAME/<64 hex>`` (or ``NAME/<64 hex>``) as ``NAME/<12 hex>``."""
-
-    bare = name.removeprefix("Provider:")
-    head, separator, build = bare.rpartition("/")
-    if not separator or len(build) <= PROVIDER_BUILD_HEX:
-        return bare
-    return f"{head}/{build[:PROVIDER_BUILD_HEX]}"
 
 
 def _value(value: Any, limit: int = 1024) -> ReviewSummaryValue:
@@ -494,7 +482,6 @@ __all__ = [
     "claim_type_cardinality",
     "definition_row",
     "review_change",
-    "short_provider_build",
     "subject_change_row",
     "subject_revision_row",
 ]

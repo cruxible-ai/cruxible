@@ -48,6 +48,17 @@ def short_oid(git_oid: str) -> str:
     return git_oid[:SHORT_OID]
 
 
+def short_provider_build(name: str) -> str:
+    """A provider build as text shows it: ``NAME/<64 hex>`` (or ``Provider:NAME/...``)
+    as ``NAME/<12 hex>``, as coordinates show a Git OID."""
+
+    bare = name.removeprefix("Provider:")
+    head, separator, build = bare.rpartition("/")
+    if not separator or len(build) <= SHORT_OID:
+        return bare
+    return f"{head}/{build[:SHORT_OID]}"
+
+
 # -- orient --------------------------------------------------------------------
 
 

@@ -176,6 +176,7 @@ from cruxible_client.contracts.text_display import (
     next_lines,
     render_orient,
     short_oid,
+    short_provider_build,
     write_outcome_lines,
 )
 from cruxible_client.contracts.text_display import (  # noqa: F401
@@ -8714,8 +8715,13 @@ def _echo_runbook_preview(preview: Any) -> None:
         for write in step.writes:
             click.echo(f"      writes {write.subject_kind}: {', '.join(write.claim_types)}")
         for call in step.calls:
-            bound = f" -> {call.build} {call.operation}" if call.build else ""
-            click.echo(f"      calls  {call.slot}{bound}")
+            bound = (
+                f" -> Provider:{short_provider_build(call.build)} {call.operation}"
+                if call.build
+                else ""
+            )
+            capability = f"  (capability {call.capability})" if call.capability else ""
+            click.echo(f"      calls  {call.slot}{bound}{capability}")
         for item in step.inputs:
             for line in _runbook_input_lines(item):
                 click.echo(f"      {line}")
