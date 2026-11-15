@@ -276,6 +276,7 @@ from cruxible_client.contracts.write import (
     WriteRetireReason,
     WriteRole,
     WriteValue,
+    write_accept,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient, configured_principal_id
@@ -782,7 +783,7 @@ class _IntentDraft:
                 item.model_dump(mode="json") for item in self.reference_expectations
             ],
             program_stamp=self.program_stamp.model_dump(mode="json"),
-            accept=accept,
+            accept=write_accept(accept),
         )
         self._playbill._observe_authoring_submit(result)
         return Intent(
@@ -2076,7 +2077,7 @@ class WriteBatch:
                 changes=tuple(self.changes),
                 docs=tuple(self.docs),
                 dry_run=dry_run,
-                accept=accept,
+                accept=write_accept(accept),
                 at=self._playbill._write_at(at),
                 surface="sdk",
                 full_coordinate=True,
@@ -2377,7 +2378,7 @@ class Intent:
         self._candidate_status = None
         self.outcome = None
         result = self._playbill._client.submit_authoring_intent(
-            self._playbill._instance_id, self.intent_id, accept=accept
+            self._playbill._instance_id, self.intent_id, accept=write_accept(accept)
         )
         self._playbill._observe_authoring_submit(result)
         self._raw = result.intent
@@ -3632,7 +3633,7 @@ class Cruxible:
                 ),
                 changes=(AboutChange(ref="note", subjects=subjects),),
                 dry_run=dry_run,
-                accept=accept,
+                accept=write_accept(accept),
                 at=self._write_at(at),
                 surface="sdk",
                 full_coordinate=True,
@@ -3729,7 +3730,7 @@ class Cruxible:
                         ),
                     ),
                     dry_run=dry_run,
-                    accept=accept,
+                    accept=write_accept(accept),
                     at=self._write_at(at),
                     surface="sdk",
                     full_coordinate=True,
@@ -3745,7 +3746,7 @@ class Cruxible:
             contend=contend,
             expect=_write_expect(expect),
             dry_run=dry_run,
-            accept=accept,
+            accept=write_accept(accept),
             at=self._write_at(at),
             surface="sdk",
             full_coordinate=True,
@@ -3799,7 +3800,7 @@ class Cruxible:
                 ),
             ),
             dry_run=dry_run,
-            accept=accept,
+            accept=write_accept(accept),
             at=self._write_at(at),
             surface="sdk",
             full_coordinate=True,
@@ -3863,7 +3864,7 @@ class Cruxible:
                     because=because,
                     changes=(observed,),
                     dry_run=dry_run,
-                    accept=accept,
+                    accept=write_accept(accept),
                     at=self._write_at(at),
                     surface="sdk",
                     full_coordinate=True,
@@ -3903,7 +3904,7 @@ class Cruxible:
             expect=_write_expect(expect),
             with_claims=with_claims,
             dry_run=dry_run,
-            accept=accept,
+            accept=write_accept(accept),
             at=self._write_at(at),
             surface="sdk",
             full_coordinate=True,

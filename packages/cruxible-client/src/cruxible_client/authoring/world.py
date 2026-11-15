@@ -74,6 +74,7 @@ from cruxible_client.contracts.shapes import (
     subject_value_kinds,
     value_members,
 )
+from cruxible_client.contracts.write import write_accept
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
@@ -1302,7 +1303,7 @@ class World:
             docs=docs,
             because=because,
             dry_run=dry_run,
-            accept=accept,
+            accept=write_accept(accept),
         )
         if outcome.status == "accepted":
             for position, (landing, _create) in enumerate(creates):
@@ -1453,7 +1454,7 @@ class World:
                 changes=tuple(changes),
                 docs=tuple(docs),
                 dry_run=dry_run,
-                accept=accept,
+                accept=write_accept(accept),
                 at=self._write_basis,
                 surface="sdk",
                 full_coordinate=True,

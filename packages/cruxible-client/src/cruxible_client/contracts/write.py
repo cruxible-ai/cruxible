@@ -122,6 +122,24 @@ _EXPECT_DESCRIPTION = "Compare-and-set: the value(s) you read, [] for none; else
 
 WriteRole = Literal["normative", "observation", "environment_binding"]
 WriteAccept = Literal["if_allowed", "never"]
+
+
+def write_accept(value: object) -> WriteAccept:
+    """``accept`` as the wire spells it: ``if_allowed`` or ``never``; a bool maps to them.
+
+    ``True`` means land when allowed and ``False`` keep the proposal, so a
+    caller passing a bool gets what it meant instead of a daemon refusal.
+    """
+
+    if value is True:
+        return "if_allowed"
+    if value is False:
+        return "never"
+    if value in ("if_allowed", "never"):
+        return cast(WriteAccept, value)
+    raise ValueError(f"accept is 'if_allowed' or 'never' (or True / False), not {value!r}")
+
+
 WriteRetireReason = Literal["was-rescinded", "was-wrong", "superseded"]
 WriteStatus = Literal[
     "accepted",
@@ -1146,6 +1164,7 @@ __all__ = [
     "subject_reference",
     "VerdictNotSupportedWarning",
     "WriteAccept",
+    "write_accept",
     "WriteOp",
     "WriteOutcome",
     "WriteProposalRef",

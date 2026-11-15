@@ -94,6 +94,7 @@ from cruxible_client.contracts.workspace_layout import (
     ensure_workspace_directory,
     workspace_directory_conflict,
 )
+from cruxible_client.contracts.write import write_accept
 from cruxible_client.errors import PermissionDeniedError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1377,7 +1378,7 @@ def apply_vocabulary(
     draft = pinned.changes(rationale=planned.change_set.rationale)
     for member in lowered.members:
         draft._member(member, {"kind": "vocabulary_file", "member": member.model_dump(mode="json")})
-    intent = draft.submit(accept=accept)
+    intent = draft.submit(accept=write_accept(accept))
     preflight = intent._preflight
     plan = planned.plan.model_copy(
         update={

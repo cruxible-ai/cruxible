@@ -570,3 +570,23 @@ def test_vocabulary_lint_does_not_grow_with_unrelated_capture_contracts(
     assert small_steps[:2] == large_steps[:2], (small_steps, large_steps)
     assert "capture_contracts_by_digest" in large_steps[2], large_steps
     assert "TEMP B-TREE" not in large_steps[2], large_steps
+
+
+def test_accept_takes_a_bool_and_refuses_other_values_before_the_wire(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """Walkthrough W8: `intent.submit(accept=True)` failed at the daemon."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    kept = cx.changes(rationale="Kept as a proposal.")
+    kept.field("dev.item", "slug", SLUG, key=True)
+    kept.subject_kind(name="dev.item")
+    assert kept.prepare().submit(accept=False).outcome.status == "proposed"
+
+    landed = cx.changes(rationale="Landed.")
+    landed.field("dev.other", "slug", SLUG, key=True)
+    landed.subject_kind(name="dev.other")
+    with pytest.raises(ValueError, match="accept is 'if_allowed' or 'never'"):
+        landed.prepare().submit(accept="yes")  # type: ignore[arg-type]
+    assert landed.prepare().submit(accept=True).outcome.status == "landed"  # type: ignore[arg-type]
