@@ -63,7 +63,10 @@ from tests.test_scale.test_per_change_cost import RATIO
 from tests.test_scale.test_per_change_cost import SLACK as _PER_CHANGE_SLACK
 
 #: The worlds are seeded through Line runs (about 15 per world): allow the build its time.
-pytestmark = pytest.mark.timeout(3600)
+#: The first case builds them inside its timeout: 1,100-1,350 s on CI's 3.11/3.12 runners.
+#: Under the CI job's 45 minutes and its faulthandler backstop (2,400 s, ci.yml), so a
+#: stall fails here with every thread's stack, taken safely under the GIL.
+pytestmark = pytest.mark.timeout(2100)
 
 SMALL, LARGE = (
     tuple(int(size) for size in os.environ["CRUXIBLE_PAIR_PROCEDURE_SIZES"].split(","))
