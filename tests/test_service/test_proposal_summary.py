@@ -942,3 +942,45 @@ def test_a_missing_cited_body_reads_as_unavailable(tmp_path, monkeypatch):
     citations = [c for change in summary.changes for c in change.citations]
     assert citations and all(c.unavailable and c.text is None for c in citations)
     assert "unavailable: the cited body is missing or damaged here" in str(summary)
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_a_citation_without_excerpt_ranges_still_reads_unavailable(tmp_path, monkeypatch, present):
+    """Review r2 P2: with no span mappings the citation returned before its availability
+    check, so a missing body looked like an ordinary citation. Presence comes from the
+    landing index, independently of excerpt ranges, and no body is read."""
+
+    import sqlite3
+
+    from cruxible_core.service.proposals import review_view
+    from cruxible_core.storage import read_positions
+
+    instance, _owner, root, line, _procedure = delivery.proposal_world(tmp_path)
+    state = delivery.run_line(instance, root, line)
+    _review(instance, state.terminal_egress[0].proposal_id, groups=False)
+    with sqlite3.connect(instance.proposal_review_projection_path()) as connection:
+        rows = [
+            json.loads(data) for (data,) in connection.execute("SELECT data FROM review_changes")
+        ]
+    row = next(item for item in rows if item["citations"])
+    # An admitted Claim with no byte-span mappings: its citations map no excerpt.
+    row = {**row, "spans": []}
+    original = read_positions.body_present
+    monkeypatch.setattr(
+        read_positions,
+        "body_present",
+        lambda store, digest: original(store, digest) and present,
+    )
+    reads: list[str] = []
+    monkeypatch.setattr(review_view.CitedText, "_body", lambda self, digest: reads.append(digest))
+    cited = review_view.CitedText(instance, ACCESS, withheld=False)
+    change = review_view.review_change(row, cited=cited, reason=lambda _path: None, withheld=False)
+    (citation,) = change.citations[:1]
+    assert citation.text is None and citation.erased is None
+    assert citation.unavailable is (not present)
+    assert ("unavailable" in citation.model_dump_json()) is (not present)
+    from cruxible_client.contracts.text_display import review_change_lines
+
+    text = "\n".join(review_change_lines(change))
+    assert ("unavailable: the cited body is missing or damaged here" in text) is (not present)
+    assert reads == []
