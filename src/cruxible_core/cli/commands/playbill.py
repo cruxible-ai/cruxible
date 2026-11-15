@@ -2374,9 +2374,8 @@ def _echo_kit_change(
         "carries none of its files. kit add installs it by name at exactly this version "
         "from the provider index, refusing any other build, unless live operations of "
         "other providers already installed serve every slot's capability and fit it; "
-        "a daemon with "
-        "provider_repository configured refuses that install (install the repository's "
-        "build first with provider install)."
+        "a daemon with provider_repository configured refuses that install (install "
+        "the repository's build first with provider install)."
     ),
 )
 @click.option(
