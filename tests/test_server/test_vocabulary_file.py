@@ -180,6 +180,32 @@ def test_export_replaces_the_file_only_when_nothing_in_it_would_be_lost(world) -
     assert cx.vocabulary.export().status == "written"
 
 
+def test_export_keeps_a_new_definition_another_writer_accepted_differently(world) -> None:  # type: ignore[no-untyped-def]
+    """Review R2: a new field's omissions are not edits to the head's same-named field."""
+
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"].update(
+            collision={"value": "string{max_len: 100}"}
+        ),
+    )
+    other = cx.changes(rationale="Someone else defines it first.")
+    other.field("dev.item", "collision", "string{max_len: 100}", many=True)
+    assert other.submit().outcome.status == "landed"
+    cx.refresh()
+
+    with pytest.raises(VocabularyExportRefused, match=r"ClaimType:dev\.item\.collision"):
+        cx.vocabulary.export()
+    # Accepted with the same meaning, the new definition is applied.
+    same = cx.changes(rationale="Make it one-valued, as the file says.")
+    same.field("dev.item", "collision", "string{max_len: 100}", many=False)
+    assert same.submit().outcome.status == "landed"
+    cx.refresh()
+    assert cx.vocabulary.export().status == "written"
+
+
 def test_apply_adds_and_edits_and_never_retires_what_the_file_leaves_out(world) -> None:  # type: ignore[no-untyped-def]
     _http, _instance_id, workspace, cx = world
     cx.vocabulary.export()

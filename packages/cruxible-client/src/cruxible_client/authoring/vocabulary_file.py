@@ -1164,11 +1164,15 @@ def _plan_members(
 def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> list[str]:
     """The changes a vocabulary file states that accepted state does not hold.
 
-    A change counts when the file's plan against the head has it (applied
-    edits do not) and, when the file's own export can still be read, its plan
-    against that export has it too (a definition someone changed since the
-    export, which the file still restates unedited, is not the file's edit).
+    Each entry means what it means against the file's own export: an edit is
+    lowered onto the definition that export held, and a new definition takes
+    the defaults of a new one (its omissions are never edits to whatever the
+    head holds under that name). The entry is pending unless that intended
+    definition equals the export's (unedited) or the head's (applied); a
+    retirement is applied once the head no longer holds the definition.
     ``not_in_file`` never counts. An unreadable file is one pending change.
+    When the export itself cannot be read, the file is planned against the
+    head instead.
     """
 
     try:
@@ -1177,40 +1181,57 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
         return [f"the file cannot be read: {exc}"]
     if file.instance != cx._instance_id:
         return [f"the file was exported from instance {file.instance}"]
-
-    def changes(accepted: AcceptedVocabulary, *, applied_ok: bool) -> set[str]:
-        planned = _plan_members(
-            cx.at(accepted.coordinate),
-            file,
-            accepted,
-            applied_ok=applied_ok,
-            claims_at=head.coordinate,
-        )
-        found = {entry.definition for entry in planned.changes_only}
-        found.update(f"Claim:{claim.claim}" for claim in planned.claims)
-        return found
-
     try:
-        pending = changes(head, applied_ok=True)
-    except (VocabularyFileError, FormatError, ValueError) as exc:
-        return [str(exc)]
-    if not pending:
-        return []
-    try:
-        exported = read_accepted_vocabulary(
+        exported: AcceptedVocabulary | None = read_accepted_vocabulary(
             cx._client,
             cx._instance_id,
             at=file.based_on.coordinate,
             evaluation_time=cx._evaluation_time(),
         )
     except CoreError:
-        return sorted(pending)
-    if exported.digest == file.based_on.vocabulary_digest:
+        exported = None
+    if exported is None or exported.digest != file.based_on.vocabulary_digest:
         try:
-            pending &= changes(exported, applied_ok=False)
-        except (VocabularyFileError, FormatError, ValueError):
-            pass
-    return sorted(pending)
+            planned = _plan_members(
+                cx.at(head.coordinate), file, head, applied_ok=True, claims_at=head.coordinate
+            )
+        except (VocabularyFileError, FormatError, ValueError) as exc:
+            return [str(exc)]
+        return sorted({entry.definition for entry in planned.changes_only})
+    pending: list[str] = []
+    for kind in sorted(file.kinds, key=lambda item: item.encode("utf-8")):
+        entry = file.kinds[kind]
+        before_kind = exported.subject_kinds.get(kind)
+        head_kind = head.subject_kinds.get(kind)
+        if entry.retired:
+            if before_kind is not None and head_kind is not None:
+                pending.append(f"SubjectKind:{kind}")
+        elif entry.states_subject_kind:
+            try:
+                intended = _merged_subject_kind(kind, entry, before_kind)
+            except VocabularyFileError as exc:
+                pending.append(str(exc))
+            else:
+                views = [_subject_kind_view(item) for item in (before_kind, head_kind) if item]
+                if intended not in views:
+                    pending.append(f"SubjectKind:{kind}")
+        for name in sorted(entry.fields, key=lambda item: item.encode("utf-8")):
+            item = entry.fields[name]
+            predicate = f"{kind}.{name}"
+            before = exported.claim_types.get(predicate)
+            now = head.claim_types.get(predicate)
+            if item.retired:
+                if before is not None and now is not None:
+                    pending.append(f"ClaimType:{predicate}")
+                continue
+            try:
+                lowered = _content_digest(lower_entry(predicate, item, before))
+            except (FormatError, ValidationError, ValueError) as exc:
+                pending.append(f"kinds.{kind}.fields.{name}: {exc}")
+                continue
+            if lowered not in {_content_digest(held) for held in (before, now) if held}:
+                pending.append(f"ClaimType:{predicate}")
+    return pending
 
 
 def _read_file(root: Path, path: str | Path | None) -> tuple[str, bytes]:
