@@ -137,8 +137,8 @@ class CallNode(_StrictProcedureModel):
 
     ``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,
     the accepted CaptureContract the field's bytes are committed as (``K``
-    itself, or any CaptureContract for the generic ``capture<workspace.file>``
-    of the core-served read). A call with captures acquires: its capture
+    itself, or any CaptureContract for a generic ``capture<*>``, such as a
+    workspace read's). A call with captures acquires: its capture
     fields are committed byte-exact as Captures and its other fields are
     normalized, and its value names each Capture by digest.
     """

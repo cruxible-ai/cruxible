@@ -695,7 +695,111 @@ def spec_payload(spec: Mapping[str, Any]) -> Any:
     return lower_authoring_input(spec_input(spec))
 
 
+def closed_transform_procedure() -> Any:
+    """A self-contained Procedure over closed steps (project, shape, join, aggregate).
+
+    Authoring refuses these steps (``procedure_step_closed``); executor-only tests
+    author it to cover their handlers, and because it needs no prerequisite
+    (no slot, CaptureKind or ClaimType) and returns ``{count: 1}``.
+    """
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+
+    def step(name: str, *path: str) -> dict[str, object]:
+        return {"$ref": "step", "step": name, **({"path": list(path)} if path else {})}
+
+    def field(name: str) -> dict[str, object]:
+        return {"$ref": "item", "path": ["fields", name]}
+
+    return ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            "procedure": "replace-me",
+            "description": (
+                "Shape, filter, dedupe, join and count typed records with closed transforms."
+            ),
+            "input": {},
+            "output": {"count": "int"},
+            # Every run fits these caps; the Line's operating budget may narrow
+            # them. They are a safety factor against an obviously bad run, not
+            # compute management, so they stay generous.
+            "hard_caps": {
+                "wall_clock": "PT30M",
+                "provider_calls": 0,
+                "capture_bytes": 0,
+                "items": 200,
+            },
+            "steps": [
+                {
+                    "project": "adapted",
+                    "id": "adapt",
+                    "literal": {
+                        "items": [
+                            {"id": "one", "keep": True},
+                            {"id": "two", "keep": False},
+                        ]
+                    },
+                    # The records flow as data: an intermediate step pins no Contract.
+                },
+                {
+                    "transform": "shaped",
+                    "id": "shape",
+                    "kind": "shape",
+                    "spec": {
+                        "input": step("adapted", "items"),
+                        "fields": {
+                            "id": {"from": field("id")},
+                            "keep": {"from": field("keep")},
+                            "label": {"from": field("id")},
+                        },
+                    },
+                },
+                {
+                    "transform": "filtered",
+                    "id": "filter",
+                    "kind": "filter",
+                    "spec": {
+                        "input": step("shaped"),
+                        "where": {"op": "eq", "left": field("keep"), "right": {"literal": True}},
+                    },
+                },
+                {
+                    "transform": "deduped",
+                    "id": "dedupe",
+                    "kind": "dedupe",
+                    "spec": {"input": step("filtered"), "keys": ["id"]},
+                },
+                {
+                    "transform": "joined",
+                    "id": "join",
+                    "kind": "join",
+                    "spec": {
+                        "left": step("deduped"),
+                        "right": [{"id": "one", "rank": 1}, {"id": "two", "rank": 2}],
+                        "left_field": "id",
+                        "right_field": "id",
+                        "right_fields": {"rank": "rank"},
+                    },
+                },
+                {
+                    "transform": "counted",
+                    "id": "aggregate",
+                    "kind": "aggregate",
+                    "spec": {"input": step("joined"), "op": "count"},
+                },
+                {
+                    "project": "result",
+                    "fields": {"count": step("counted", "result")},
+                    "output": {"count": "int"},
+                },
+            ],
+            "returns": "result",
+        }
+    )
+
+
 __all__ = [
+    "closed_transform_procedure",
     "procedure_spec",
     "procedure_spec_data",
     "procedure_limits",

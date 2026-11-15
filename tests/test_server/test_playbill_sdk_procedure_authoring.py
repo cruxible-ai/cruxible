@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
-from cruxible_client.authoring.examples import procedure_example
 from cruxible_client.authoring.inputs import ProcedureInput, QueryDefinitionInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.get_reads import GetProcedureCard
@@ -15,6 +14,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEv
 from cruxible_client.contracts.query.grammar import QueryBudgets, QueryEntry
 from cruxible_client.transport.http import CruxibleClient
 from tests.core_support._light_capture_support import file_contract as capture_contract
+from tests.support.procedures import closed_transform_procedure
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 # Executor-only fixtures: these tests author Procedure step kinds the template
@@ -31,7 +31,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
     transport._client = http  # type: ignore[assignment]
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
 
-    definition = procedure_example()
+    definition = closed_transform_procedure()
     if state_tap:
         steps = list(definition.spec.steps)
         steps.insert(0, ReadStep(read="inventory", query="inventory"))
@@ -98,7 +98,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
 
 
 def test_sdk_program_identity_follows_the_authored_spec() -> None:
-    definition = procedure_example()
+    definition = closed_transform_procedure()
     revised = definition.model_copy(
         update={"spec": definition.spec.model_copy(update={"description": "Revised."})}
     )
@@ -125,7 +125,7 @@ def test_sdk_capture_terminal_prepares_but_cannot_continue(
     _approve_and_activate(http, instance_id, reviewer_key, submitted.proposal_id)
     pb.refresh()
 
-    definition = procedure_example()
+    definition = closed_transform_procedure()
     result = {"$ref": "step", "step": str(definition.spec.returns)}
     steps: list[dict[str, object]] = [
         step.model_dump(mode="json", by_alias=True) for step in definition.spec.steps

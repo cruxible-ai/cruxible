@@ -1207,6 +1207,9 @@ class InstalledKit(_Strict):
     providers: tuple[KitProviderStatus, ...] = ()
     #: Filled by the CLI and MCP adapters from the registry's tags.
     latest_available: str | None = None
+    #: The content digest of ``latest_available``, when known (the bundled base kit's):
+    #: at the installed version, a different digest means the installed content differs.
+    latest_content_digest: str | None = None
     update_check: KitUpdateCheck = "not_checked"
 
 

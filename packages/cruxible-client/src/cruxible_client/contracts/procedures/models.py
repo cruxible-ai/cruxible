@@ -169,8 +169,9 @@ class ProcedureDefinition(_StrictProcedureModel):
     Every dependency field names a governed identity; an execution plan
     resolves each to its exact pin at the run's accepted coordinate.
     ``slots`` names, for each provider-calling node, the capability it needs
-    (``{capability, may_truncate}``). The Procedure never names a provider; a
-    Line binds every slot to one exact build and operation serving that
+    (``{capability, may_truncate}``; its request and result Contracts and
+    effect come from that capability). The Procedure never names a provider;
+    a Line binds every slot to one exact build and operation serving that
     capability when it is accepted.
     """
 

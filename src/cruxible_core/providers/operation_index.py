@@ -39,17 +39,21 @@ from cruxible_client.contracts.capability_fit import (
     EffectUnequal,
     Fits,
     slot_ambiguous_message,
+    slot_ambiguous_repair,
     slot_unfilled_message,
+    slot_unfilled_repair,
 )
 from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.procedures.line_specs import (
     BindingSide,
     SlotFitter,
     SlotNeed,
+    binding_problem_repair,
     declared_kind,
     judge_slot_binding,
     operation_spelling,
     slot_fit,
+    with_repair,
 )
 from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
 from cruxible_client.contracts.provider_registration import DeclaredOperation
@@ -418,7 +422,12 @@ def _repair(required_change: str) -> HandEditRepair:
 
 
 def _refuse(code: str, message: str, required_change: str) -> RequestRefusedError:
-    return RequestRefusedError(code, message, repair=_repair(required_change))
+    """A binding refusal whose message ends with its repair, served as the hand edit too,
+    so the CLI prints it on its own Repair line and MCP and the SDK read it in place."""
+
+    return RequestRefusedError(
+        code, with_repair(message, required_change), repair=_repair(required_change)
+    )
 
 
 #: ``(spelling, binding, build, operation)``: one operation offered for a slot.
@@ -470,8 +479,7 @@ def _choose(
                 unfit=rejected[:FIT_CANDIDATE_LIMIT],
                 within=within,
             ),
-            f"Install a build whose operation serves {need.spelling} and fits it, "
-            f"or bind {slot} to one explicitly.",
+            slot_unfilled_repair(slot, need.spelling, declared=bool(rejected), within=within),
         )
     raise _refuse(
         "cruxible.line.slot_ambiguous",
@@ -483,7 +491,13 @@ def _choose(
             more=len(fitting) > FIT_CANDIDATE_LIMIT,
             within=within,
         ),
-        f"Bind {slot} to one of them: build#operation.",
+        slot_ambiguous_repair(slot),
+    )
+
+
+def _verdict_repair(code: str, slot: str, need: SlotNeed) -> str:
+    return binding_problem_repair(code, slot, need.spelling, builtin=need.builtin) or (
+        f"Bind `{slot}` to an operation that serves {need.pin.name}."
     )
 
 
@@ -552,10 +566,17 @@ def _bind_named(
     )
     provider = None if row is None or not row.live else builds(row.identity, row.artifact_digest)
     if row is None or provider is None:
+        named_capability = name in (need.pin.name, need.spelling)
         raise _refuse(
             "cruxible.line.binding_unavailable",
-            f"Slot {slot!r} names {reference!r}, which is not an installed live build.",
-            "Bind a live installed build (provider list).",
+            f"Slot {slot!r} names {reference!r}, which is "
+            + (
+                "the slot's capability, not a provider."
+                if named_capability
+                else "not an installed live build."
+            ),
+            f"Bind `{slot}` to an installed provider by name (`cruxible provider list` "
+            f"shows them), or leave `{slot}` out of the bindings to bind it by capability.",
         )
     build_name = row.identity.removeprefix("Provider:")
     pin = binding_pin(provider.identity, row.artifact_digest)
@@ -566,7 +587,7 @@ def _bind_named(
                 "cruxible.line.binding_unavailable",
                 f"Slot {slot!r} names {reference!r}; {build_name} declares no operation "
                 f"{operation_name!r}.",
-                f"Name an operation of {build_name} (provider list).",
+                f"Name an operation of {build_name} (`cruxible provider list` shows them).",
             )
     else:
         serving = [item for item in provider.operations if need.pin.name in item.serves]
@@ -581,9 +602,7 @@ def _bind_named(
         )
         if verdict.problem is not None:
             code, message = verdict.problem
-            raise _refuse(
-                code, message, f"Bind {slot} to an operation that serves {need.spelling}."
-            )
+            raise _refuse(code, message, _verdict_repair(code, slot, need))
         return LineBinding(build=pin, operation=operation.name)
     for operation in offered:
         problem = judge_slot_binding(
@@ -597,9 +616,7 @@ def _bind_named(
         ).problem
         if problem is not None:
             code, message = problem
-            raise _refuse(
-                code, message, f"Bind {slot} to an operation that serves {need.spelling}."
-            )
+            raise _refuse(code, message, _verdict_repair(code, slot, need))
     return _choose(
         slot,
         need,

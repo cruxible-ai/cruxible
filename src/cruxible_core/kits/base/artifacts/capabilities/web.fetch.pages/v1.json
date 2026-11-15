@@ -9,7 +9,7 @@
   },
   "name": "web.fetch.pages",
   "out": {
-    "digest": "sha256:106bc80e150787fdcd299bdb17ff777e3bd2b3ca100c729de9dd2ae6fbe97db9",
+    "digest": "sha256:2806571377493c90b9d2e99520630b192c2408fb2ae5e8f37ced9e6eec2e97fb",
     "name": "web.fetch.pages.result",
     "version": 1
   },

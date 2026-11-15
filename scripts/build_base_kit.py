@@ -16,12 +16,20 @@ It writes the kit directory ``src/cruxible_core/kits/base/`` (``cruxible-kit.jso
 and ``artifacts/``) and ``src/cruxible_core/kits/base_kit_pin.py``, the one
 constant holding the bundled version and content digest that core checks the
 directory against. ``--check`` renders in memory and exits 1 when anything on
-disk differs; CI runs it.
+disk differs, when the record of released base kits
+(``src/cruxible_core/kits/base_kit_releases.py``) breaks its pins
+(``tests/test_guardrails/base_kit_release_pins.json``: a frozen entry is never
+edited, reordered or removed, and every entry has its pin), or when the bundle
+breaks the record (a released artifact never changes or disappears, and a
+released kit version keeps its content); CI runs it. Writing refuses such a
+bundle too. ``--release`` appends the bundle to the record and its pin to the
+pins file; the release cut runs it, then raises ``frozen_through``.
 
 Usage::
 
-    python scripts/build_base_kit.py          # write the directory and the constant
-    python scripts/build_base_kit.py --check  # fail when they differ from the sources
+    python scripts/build_base_kit.py            # write the directory and the constant
+    python scripts/build_base_kit.py --check    # fail when they differ from the sources
+    python scripts/build_base_kit.py --release  # record the bundle as released
 """
 
 from __future__ import annotations
@@ -37,6 +45,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = REPO_ROOT / "scripts" / "base_kit"
 KIT_DIRECTORY = REPO_ROOT / "src" / "cruxible_core" / "kits" / "base"
 PIN_MODULE = REPO_ROOT / "src" / "cruxible_core" / "kits" / "base_kit_pin.py"
+RELEASES_MODULE = REPO_ROOT / "src" / "cruxible_core" / "kits" / "base_kit_releases.py"
+RELEASE_PINS = REPO_ROOT / "tests" / "test_guardrails" / "base_kit_release_pins.json"
 
 PIN_TEMPLATE = '''"""The bundled base kit's version and content digest.
 
@@ -211,13 +221,98 @@ def _on_disk(directory: Path) -> dict[str, bytes]:
     }
 
 
+def _manifest_of(manifest: bytes) -> Any:
+    from cruxible_client.contracts.kits import KitManifest
+
+    return KitManifest.model_validate_json(manifest)
+
+
+def release_differences(
+    source: Path = SOURCE,
+    *,
+    releases: Any = None,
+    pins_path: Path = RELEASE_PINS,
+) -> list[str]:
+    """How the record of released base kits breaks its pins, else how the rendered
+    bundle breaks the record (empty when both hold).
+
+    The record is checked first: a frozen entry edited, reordered or removed, or an
+    entry without its pin, is refused before any bundle comparison. Then a released
+    artifact never changes or disappears, and a released kit version keeps its
+    content (``cruxible_core.kits.base_kit_releases``). ``releases`` defaults to the
+    record module's.
+    """
+
+    from cruxible_core.kits.base_kit_releases import (
+        BASE_KIT_RELEASES,
+        load_release_pins,
+        record_problems,
+        release_problems,
+    )
+
+    held = BASE_KIT_RELEASES if releases is None else releases
+    problems = record_problems(load_release_pins(pins_path), held)
+    if problems:
+        return problems
+    _artifacts, manifest, _pin = render(source)
+    kit = _manifest_of(manifest)
+    return release_problems(kit.version, kit.content_digest, kit.digests(), held)
+
+
+def release(
+    source: Path = SOURCE,
+    releases_module: Path = RELEASES_MODULE,
+    pins_path: Path = RELEASE_PINS,
+) -> tuple[str, int]:
+    """Append the rendered bundle to the record of released base kits, and its pin to
+    the pins file: the release cut's step. Returns ``(version, ordinal)``; the cut
+    then raises ``frozen_through`` in the pins file to that ordinal.
+    """
+
+    from cruxible_core.kits.base_kit_releases import (
+        BASE_KIT_RELEASES,
+        ReleasedBaseKit,
+        load_release_pins,
+        pin_of,
+        render_release_pins,
+        render_releases_module,
+    )
+
+    problems = release_differences(source, pins_path=pins_path)
+    if problems:
+        raise SystemExit("cannot record the release:\n  " + "\n  ".join(problems))
+    _artifacts, manifest, _pin = render(source)
+    kit = _manifest_of(manifest)
+    for ordinal, item in enumerate(BASE_KIT_RELEASES, start=1):
+        if item.version == kit.version:
+            return kit.version, ordinal
+    entry = ReleasedBaseKit(
+        version=kit.version,
+        content_digest=kit.content_digest,
+        artifacts=tuple(sorted(kit.digests().items())),
+    )
+    ordinal = len(BASE_KIT_RELEASES) + 1
+    pins = load_release_pins(pins_path)
+    pins_path.write_text(
+        render_release_pins(
+            pins.model_copy(update={"entries": (*pins.entries, pin_of(ordinal, entry))})
+        ),
+        encoding="utf-8",
+    )
+    releases_module.write_text(
+        render_releases_module((*BASE_KIT_RELEASES, entry)), encoding="utf-8"
+    )
+    return kit.version, ordinal
+
+
 def differences(
     source: Path = SOURCE, directory: Path = KIT_DIRECTORY, pin_module: Path = PIN_MODULE
 ) -> list[str]:
-    """What on disk differs from what the sources render to (empty when in step)."""
+    """What on disk differs from what the sources render to, and every break of the
+    released record (empty when in step)."""
 
     artifacts, manifest, pin_text = render(source)
-    found = []
+    found = list(release_differences(source))
     held = _on_disk(directory)
     for path in sorted(set(artifacts) | set(held)):
         if path not in held:
@@ -257,7 +352,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check", action="store_true", help="Fail when the bundled kit differs from its sources."
     )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Record the bundle as released (the release cut's step): its artifacts are fixed.",
+    )
     args = parser.parse_args(argv)
+    if args.release:
+        version, ordinal = release()
+        print(
+            f"base kit {version}: recorded as released entry {ordinal} in "
+            f"{RELEASES_MODULE.name}, pinned in {RELEASE_PINS.name}. At the release cut, set "
+            f"frozen_through to {ordinal} in {RELEASE_PINS.name} so the entry is frozen."
+        )
+        return 0
     if args.check:
         found = differences()
         if found:
@@ -268,6 +376,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("base kit: in step with its sources")
         return 0
+    problems = release_differences()
+    if problems:
+        print("the base kit sources or its released record break the rules:", file=sys.stderr)
+        for line in problems:
+            print(f"  {line}", file=sys.stderr)
+        return 1
     write()
     artifacts, _manifest, _pin = render()
     print(f"base kit: {len(artifacts)} artifacts written to {KIT_DIRECTORY}")

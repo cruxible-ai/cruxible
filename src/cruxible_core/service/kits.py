@@ -3004,7 +3004,11 @@ def _bundled_comparison(kit: InstalledKit) -> InstalledKit:
     if kit.kit_id != BASE_KIT_PIN.kit_id:
         return kit
     return kit.model_copy(
-        update={"latest_available": BASE_KIT_PIN.version, "update_check": "checked"}
+        update={
+            "latest_available": BASE_KIT_PIN.version,
+            "latest_content_digest": BASE_KIT_PIN.content_digest,
+            "update_check": "checked",
+        }
     )
 
 

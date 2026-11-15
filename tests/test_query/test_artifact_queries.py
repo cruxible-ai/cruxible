@@ -278,12 +278,12 @@ def accept_input(instance, owner, input):
 
 
 def test_procedure_selection_retains_versions_and_uses_name_scope(tmp_path):
-    from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.contracts.procedures.artifacts import (
         procedure_artifact_digest,
         procedure_path,
         render_procedure,
     )
+    from tests.support.procedures import closed_transform_procedure
 
     instance, owner = initialize_local(tmp_path)
     query = definition("Procedure", prefixes=("security.",))
@@ -292,7 +292,7 @@ def test_procedure_selection_retains_versions_and_uses_name_scope(tmp_path):
     assert run(instance, query).result.rows == ()
 
     def procedure(name):
-        example = procedure_example()
+        example = closed_transform_procedure()
         return example.model_copy(
             update={"spec": example.spec.model_copy(update={"procedure": name})}
         )

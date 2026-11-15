@@ -2344,13 +2344,14 @@ def _echo_kit_change(
     multiple=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help=(
-        "A published provider package directory the kit names as the default "
-        "implementation of its interfaces (repeatable): pyproject.toml, uv.lock and the "
+        "A published provider package directory the kit names as the default provider "
+        "for its Procedures' slots (repeatable): pyproject.toml, uv.lock and the "
         "published wheel in dist/ (path dependencies' wheels are not needed). The kit "
         "carries none of its files. kit add installs it by name at exactly this version "
-        "from the provider index, refusing any other build, unless a live Provider already "
-        "implements its interfaces; a daemon with provider_repository configured refuses "
-        "that install (install the repository's build first with provider install)."
+        "from the provider index, refusing any other build, unless live operations of "
+        "other providers already serve and fit every slot the kit carries; a daemon with "
+        "provider_repository configured refuses that install (install the repository's "
+        "build first with provider install)."
     ),
 )
 @click.option(
@@ -2620,10 +2621,25 @@ def kit_status(offline: bool, output_json: bool) -> None:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
             newer = kit_version_key(kit.latest_available) > kit_version_key(kit.version)
-            available = f"; latest {kit.latest_available} available" if newer else "; up to date"
+            differs = (
+                kit.latest_available == kit.version
+                and kit.latest_content_digest is not None
+                and kit.latest_content_digest != kit.content_digest
+            )
+            if newer:
+                available = f"; latest {kit.latest_available} available"
+            elif differs:
+                # Same version, other content: not up to date, whatever the version says.
+                available = (
+                    f"; differs from the available {kit.latest_available}, content "
+                    f"{kit.latest_content_digest}"
+                )
+            else:
+                available = "; up to date"
         elif kit.update_check != "checked":
             available = f"; update check {kit.update_check.replace('_', ' ')}"
-        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}{available}")
+        # The content digest (what kit add pins), not an OCI image digest.
+        click.echo(f"{kit.kit_id} {kit.version} content {kit.content_digest}{available}")
         if kit.source is not None:
             click.echo(f"  source: {kit.source}")
         if kit.provenance is not None:

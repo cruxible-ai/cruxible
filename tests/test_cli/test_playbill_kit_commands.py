@@ -825,3 +825,39 @@ def test_kit_status_compares_the_base_kit_with_the_bundled_copy_offline(
     assert "base 0.9.0" in result.output
     assert "latest 1.0.0 available" in result.output
     assert "source: bundled" in result.output
+
+
+@pytest.mark.parametrize(
+    ("available", "shown"),
+    [
+        ("sha256:" + "2" * 64, "; differs from the available 1.0.0, content sha256:" + "2" * 64),
+        ("sha256:" + "1" * 64, "; up to date"),
+    ],
+)
+def test_kit_status_says_a_same_version_receipt_differs_from_the_bundled_content(
+    monkeypatch: pytest.MonkeyPatch, available: str, shown: str
+) -> None:
+    """Base 1.0.0 installed with other content than the bundled 1.0.0 is not up to date."""
+
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="base",
+                        version="1.0.0",
+                        content_digest="sha256:" + "1" * 64,
+                        source="bundled",
+                        latest_available="1.0.0",
+                        latest_content_digest=available,
+                        update_check="checked",
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert f"base 1.0.0 content sha256:{'1' * 64}{shown}\n" in result.output

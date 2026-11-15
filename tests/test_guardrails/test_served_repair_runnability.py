@@ -21,7 +21,7 @@ from cruxible_core.service.refusals import (
     undeclared_refusal_codes,
 )
 
-# Explicit inventory: B1 adds the three cruxible.procedure.slot_* codes.
+# Explicit inventory of codes whose repair is not yet declared.
 EXPECTED_UNDECLARED_REFUSAL_CODES = frozenset(
     {
         "acceptance_divergence",
@@ -57,9 +57,6 @@ EXPECTED_UNDECLARED_REFUSAL_CODES = frozenset(
         "cruxible.acquisition.replayability_ineligible",
         "cruxible.acquisition.stale",
         "cruxible.acquisition.unavailable",
-        "cruxible.line.slot_ambiguous",
-        "cruxible.line.slot_unfilled",
-        "cruxible.procedure.slot_undeclared",
         "effect_dispatch_requires_actor",
         "effect_dispatch_requires_authenticated_actor",
         "effect_grant_unrecognized",
