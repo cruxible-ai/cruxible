@@ -6035,7 +6035,16 @@ def write_changes(
 
 @playbill_group.command("note")
 @click.argument("file")
-@click.option("--text", required=True, help="The section to append; it starts with its heading.")
+@click.option(
+    "--text",
+    required=True,
+    help="The section to append; it starts with its heading, or is the body under --heading.",
+)
+@click.option(
+    "--heading",
+    default=None,
+    help="The new heading's text, once; written at the depth --under needs.",
+)
 @click.option(
     "--under",
     default=None,
@@ -6061,6 +6070,7 @@ def write_changes(
 def note(
     file: str,
     text: str,
+    heading: str | None,
     under: str | None,
     subjects: tuple[str, ...],
     because: str,
@@ -6087,6 +6097,7 @@ def note(
                     "file": file,
                     "under": [] if under is None else [p for p in under.split("/") if p],
                     "text": text,
+                    **({} if heading is None else {"heading": heading}),
                 }
             ],
             "changes": [{"op": "about", "ref": "note", "subjects": list(subjects)}],

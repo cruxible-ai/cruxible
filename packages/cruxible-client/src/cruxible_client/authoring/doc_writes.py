@@ -30,6 +30,8 @@ from cruxible_client.contracts.doc_sections import (
     DocSectionError,
     SectionEdit,
     append_section,
+    heading_level,
+    heading_text,
     parse_sections,
     replace_section,
     section_digest,
@@ -88,15 +90,22 @@ def _read(path: Path) -> bytes | None:
 
 def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
     document = parse_sections(content or b"", file=op.file)
+    text = op.text
     if isinstance(op, AppendSection):
         parent = document.section(op.under)
         start = end = parent.end if op.under else len(content or b"")
-        result = append_section(content, under=op.under, text=op.text, file=op.file)
+        if op.heading is not None:
+            level = heading_level(document, under=op.under)
+            text = heading_text(op.heading, op.text, level=level)
+        result = append_section(content, under=op.under, text=text, file=op.file)
     else:
         if content is None:
             raise DocSectionError("section_not_found", "Replace requires an existing file.")
+        if op.heading is not None:
+            level = heading_level(document, under=op.section, replaces=True)
+            text = heading_text(op.heading, op.text, level=level)
         result = replace_section(
-            content, section=op.section, text=op.text, expect=op.expect, file=op.file
+            content, section=op.section, text=text, expect=op.expect, file=op.file
         )
         target = document.section(op.section if result.changed else result.section)
         start, end = target.start, target.end
@@ -106,7 +115,7 @@ def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
         if (start < w.end_byte and end > w.start_byte)
         or (start == end and w.start_byte <= start < w.end_byte)
     ]
-    if declares_projection_block(op.text.encode()) or overlapping:
+    if declares_projection_block(text.encode()) or overlapping:
         raise DocSectionError(
             "projection_edit",
             "A doc write edits prose only; a projection block changes through its backing",

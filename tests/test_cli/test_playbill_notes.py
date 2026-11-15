@@ -42,7 +42,7 @@ def test_note_appends_and_links_then_backlinks_list_it_with_drift(
         "note",
         "notes.md",
         "--text",
-        "# Triage\nNot reachable.\n",
+        "# Triage\nNot reachable.\n\n",
         "--about",
         WI1,
         "--because",
@@ -50,7 +50,7 @@ def test_note_appends_and_links_then_backlinks_list_it_with_drift(
     )
     assert noted.exit_code == 0, noted.output
     assert f"note doc-notes.md#Triage about {WI1}" in noted.output
-    assert (tmp_path / "notes.md").read_text() == "# Triage\nNot reachable.\n"
+    assert (tmp_path / "notes.md").read_text() == "# Triage\nNot reachable.\n\n"
     shown = _run("backlinks", WI1, "--json")
     assert shown.exit_code == 0, shown.output
     result: dict[str, Any] = json.loads(shown.stdout)

@@ -1683,14 +1683,21 @@ class WriteBatch:
     def append_section(
         self,
         file: str,
-        text: str,
+        text: str = "",
         *,
+        heading: str | None = None,
         under: tuple[str, ...] = (),
         name: str | None = None,
         id: str | None = None,
     ) -> WriteBatch:
-        """Append a child, creating a missing file with your text. Next: .write()."""
-        self.docs.append(AppendSection(id=id, file=file, under=under, text=text, name=name))
+        """Append a child, creating a missing file. Next: .write().
+
+        ``heading=`` names the heading once (``text`` is then its body);
+        without it ``text`` starts with the heading line.
+        """
+        self.docs.append(
+            AppendSection(id=id, file=file, under=under, text=text, heading=heading, name=name)
+        )
         return self
 
     def replace_section(
@@ -3311,29 +3318,58 @@ class Cruxible:
     def section(
         self,
         file: str,
-        heading_path: tuple[str, ...],
+        heading_path: tuple[str, ...] | None = None,
         *,
-        text: str,
+        text: str | None = None,
+        heading: str | None = None,
+        body: str = "",
         under: tuple[str, ...] = (),
         replace: bool = False,
         expect: str | None = None,
     ) -> AuthoredSection:
         """Carry a new section's text as evidence for one typed write.
 
-        Append a heading subtree, or ``replace=True`` to replace ``heading_path``
-        (empty: preamble). ``expect`` checks the prior subtree digest on replace.
-        The heading path cites the resulting section, so a renamed heading must
-        be cited explicitly through a batch instead.
+        ``cx.section(file, heading="slug", body="...", under=("Notes",))`` names
+        the heading once: the heading line is written at the depth its place
+        needs, and the cited path is ``(*under, heading)``. With
+        ``replace=True`` it replaces that section's body. The longer form
+        gives the cited ``heading_path`` and ``text`` starting with the heading
+        line. ``replace=True`` with ``heading_path`` replaces it (empty:
+        preamble). ``expect`` checks the prior subtree digest on replace. An
+        appended section leaves one blank line after it.
         Next: ``subject.set(status=..., evidence=section, because=...)``; inspect
         ``outcome.docs`` for file conflicts even after a Claim was admitted.
         """
         if expect is not None and not replace:
             raise ValueError("expect is only available for a replacement")
-        operation: DocOp = (
-            ReplaceSection(file=file, section=heading_path, text=text, expect=expect)
-            if replace
-            else AppendSection(file=file, under=under, text=text)
-        )
+        operation: DocOp
+        if heading is not None:
+            if heading_path is not None or text is not None:
+                raise TypeError(
+                    "section() takes heading= and body= (the path is under + heading), "
+                    "or heading_path and text=, not both"
+                )
+            heading_path = (*under, heading)
+            operation = (
+                ReplaceSection(
+                    file=file, section=heading_path, heading=heading, text=body, expect=expect
+                )
+                if replace
+                else AppendSection(file=file, under=under, heading=heading, text=body)
+            )
+        else:
+            if heading_path is None or text is None:
+                raise TypeError(
+                    "section() needs heading= (and body=), or heading_path and text= "
+                    "starting with the heading line"
+                )
+            if body:
+                raise TypeError("body= goes with heading=; with heading_path, pass text=")
+            operation = (
+                ReplaceSection(file=file, section=heading_path, text=text, expect=expect)
+                if replace
+                else AppendSection(file=file, under=under, text=text)
+            )
         return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
 
     def note(
@@ -3344,6 +3380,7 @@ class Cruxible:
         about: Sequence[str | SubjectRef],
         because: str,
         under: tuple[str, ...] = (),
+        heading: str | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -3352,8 +3389,9 @@ class Cruxible:
 
         One write: the append plus an about change on the new section, under
         the same governance as any write; the file is written once admitted.
-        ``text`` starts with the section's heading. Backlinks on each Subject
-        list the note, and say when the section changes after it.
+        ``text`` starts with the section's heading, or ``heading=`` names it
+        once and ``text`` is its body. Backlinks on each Subject list the note,
+        and say when the section changes after it.
         Next: ``cx.backlinks(subject)``.
         """
 
@@ -3361,7 +3399,9 @@ class Cruxible:
         return self._write(
             WriteRequest(
                 because=because,
-                docs=(AppendSection(id="note", file=file, under=under, text=text),),
+                docs=(
+                    AppendSection(id="note", file=file, under=under, text=text, heading=heading),
+                ),
                 changes=(AboutChange(ref="note", subjects=subjects),),
                 dry_run=dry_run,
                 accept=accept,

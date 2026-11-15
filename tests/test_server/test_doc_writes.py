@@ -29,7 +29,7 @@ def _context(playbill_http, tmp_path):
 def _batch(cx, *, field="status", value="ready"):
     return (
         cx.changes(because="Recorded the rationale")
-        .append_section("notes.md", "# Decision\nThe checks passed.\n")
+        .append_section("notes.md", "# Decision\nThe checks passed.\n\n")
         .set(
             f"{KIND}/wi-1",
             field,
@@ -88,7 +88,7 @@ def test_replace_cas_dry_run_docs_only_and_document_followup(playbill_http, tmp_
         history.revisions[0].actor == client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
     )
     retained = cx.get(f"file:{source}@1", detail="body").value
-    assert base64.b64decode(retained.content_base64) == b"# Decision\nold\n"
+    assert base64.b64decode(retained.content_base64) == b"# Decision\nold\n\n"
 
     with pytest.raises(WriteRefusalError) as caught:
         cx.changes(because="Stale").replace_section(
@@ -217,8 +217,44 @@ def test_typed_set_carries_new_section_and_catalogues_after_admission(
     claim = next(change for change in result.changes if change.op == "set")
     assert claim.verdict == "supported"
     assert len(cited_captures(instance, claim.claim)) == 2
-    assert (workspace / "decisions.md").read_text() == "# Decision\nThe checks passed.\n"
+    assert (workspace / "decisions.md").read_text() == "# Decision\nThe checks passed.\n\n"
     assert len(yaml.safe_load((workspace / ".cruxible/files.yaml").read_text())["entries"]) == 1
+
+
+def test_typed_section_names_its_heading_once_and_leaves_a_blank_line(playbill_http, tmp_path):
+    """F32: heading= builds the heading line, path and depth; appends stay separated."""
+
+    cx, instance, workspace = _context(playbill_http, tmp_path)
+    w = cx.world()
+    top = cx.section("notes.md", heading="Notes", body="Why items moved.")
+    assert w.project.work_item["wi-1"].set(title="One", evidence=top, because="Titled").docs
+    first = cx.section("notes.md", heading="wi-1", under=("Notes",), body="The checks passed.")
+    assert first.citation.section == ("Notes", "wi-1")
+    ready = w.project.work_item["wi-1"].set(status="ready", evidence=first, because="Ready")
+    second = cx.section("notes.md", heading="wi-2", under=("Notes",), body="Waiting on review.\n")
+    blocked = w.project.work_item["wi-2"].set(status="blocked", evidence=second, because="Blocked")
+    for outcome in (ready, blocked):
+        assert outcome.status == "accepted" and outcome.docs[0].written, outcome
+        assert outcome.changes[0].verdict == "supported"
+    assert (workspace / "notes.md").read_text() == (
+        "# Notes\n\nWhy items moved.\n\n"
+        "## wi-1\n\nThe checks passed.\n\n"
+        "## wi-2\n\nWaiting on review.\n\n"
+    )
+    # The first item's section kept its bytes when the second was appended after it.
+    page = cx.next(expiring_within=Duration.days(count=1))
+    assert not any(item.reason == "citation_drifted" for item in page.items), page.items
+    replaced = w.project.work_item["wi-2"].set(
+        status="ready",
+        because="Reviewed",
+        evidence=cx.section(
+            "notes.md", heading="wi-2", under=("Notes",), body="Reviewed.", replace=True
+        ),
+    )
+    assert replaced.docs[0].written
+    assert (workspace / "notes.md").read_text().endswith("## wi-2\n\nReviewed.\n")
+    with pytest.raises(TypeError):
+        cx.section("notes.md", ("Notes", "x"), heading="x", body="both forms")
 
 
 def test_typed_carried_replace_and_stale_expect(playbill_http, tmp_path):

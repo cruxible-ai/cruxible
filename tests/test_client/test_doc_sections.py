@@ -84,16 +84,17 @@ def test_duplicate_path_refuses_with_each_line_but_other_path_is_usable() -> Non
 def test_append_under_path_and_retry() -> None:
     content = b"# A\nbody\n## Old\nchild\n# B\n"
     result = append_section(content, under=("A",), text="## New\nnew")
-    assert result.content == b"# A\nbody\n## Old\nchild\n## New\nnew\n# B\n"
+    # The appended section leaves one blank line after it; the sections before keep their bytes.
+    assert result.content == b"# A\nbody\n## Old\nchild\n## New\nnew\n\n# B\n"
     assert result.section == ("A", "New")
     assert result.before_digest is None
-    assert result.after_digest == section_digest(b"## New\nnew\n")
+    assert result.after_digest == section_digest(b"## New\nnew\n\n")
     assert not append_section(result.content, under=("A",), text="## New\nnew").changed
 
 
 def test_append_root_allows_any_level_and_repairs_missing_newline() -> None:
     result = append_section(b"# A\nbody", text="### B")
-    assert result.content == b"# A\nbody\n### B\n"
+    assert result.content == b"# A\nbody\n### B\n\n"
     # At EOF, a lower-level root append is still nested by Markdown's hierarchy.
     assert result.section == ("A", "B")
 
@@ -179,7 +180,7 @@ def test_crlf_preserved_and_identical_replacement_is_noop() -> None:
 @pytest.mark.parametrize("text", ["# A\nbody", "---\nagent: chosen\n---\n# A\nbody"])
 def test_missing_file_contains_only_agent_text_and_retry_converges(text: str) -> None:
     result = append_section(None, text=text, file="chosen.markdown")
-    assert result.content == (text + "\n").encode()
+    assert result.content == (text + "\n\n").encode()
     assert not append_section(result.content, text=text).changed
 
 
@@ -198,3 +199,32 @@ def test_section_digests_survive_unrelated_edits_and_own_body_survives_child_app
     child = append_section(content, under=("A",), text="## Child\nnew")
     assert parse_sections(child.content).own_body(("A",)) == before.own_body(("A",))
     assert parse_sections(child.content).section(("A",)).digest != before.section(("A",)).digest
+
+
+def test_consecutive_appends_are_separated_by_one_blank_line() -> None:
+    """F32: each appended section leaves a blank line; earlier sections keep their bytes."""
+
+    first = append_section(None, text="# Notes", file="notes.md")
+    one = append_section(first.content, under=("Notes",), text="## a\n\nAlpha.")
+    cited = parse_sections(one.content).section(("Notes", "a")).digest
+    two = append_section(one.content, under=("Notes",), text="## b\n\nBeta.\n")
+    assert two.content == b"# Notes\n\n## a\n\nAlpha.\n\n## b\n\nBeta.\n\n"
+    assert parse_sections(two.content).section(("Notes", "a")).digest == cited
+    # A section appended before blank lines were left still counts as the same on retry.
+    assert not append_section(
+        b"# Notes\n## a\nAlpha.\n", under=("Notes",), text="## a\nAlpha."
+    ).changed
+
+
+def test_a_section_built_from_its_heading_takes_the_depth_its_place_needs() -> None:
+    from cruxible_client.contracts.doc_sections import heading_level, heading_text
+
+    document = parse_sections(b"## Top\n### Old\nx\n", file="notes.md")
+    assert heading_level(document, under=("Top",)) == 3
+    assert heading_level(document) == 2
+    assert heading_level(document, under=("Top", "Old"), replaces=True) == 3
+    assert heading_level(parse_sections(b"", file="notes.md")) == 1
+    assert heading_text("slug", "Body.\n", level=3) == "### slug\n\nBody.\n"
+    assert heading_text("slug", "", level=2) == "## slug\n"
+    with pytest.raises(DocSectionError):
+        heading_level(parse_sections(b"###### Deep\n", file="notes.md"), under=("Deep",))

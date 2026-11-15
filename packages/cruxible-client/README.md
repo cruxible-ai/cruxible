@@ -59,14 +59,18 @@ item = w.project.work_item["wi-1"]
 outcome = item.set(
     status="ready",
     because="Record the decision and its basis together.",
-    evidence=cx.section("notes.md", ("Decision",),
-                        text="# Decision\nThe checks passed.\n"),
+    evidence=cx.section("notes.md", heading="Decision", body="The checks passed."),
 )
 # Next: inspect outcome.docs[0].written and outcome.next, then cx.get(item.address).
 ```
 
-`cx.section(file, heading_path, text=..., under=())` appends a subtree; with
-`replace=True, expect=digest` it replaces the named subtree or preamble. It
+`cx.section(file, heading="slug", body=..., under=("Notes",))` names the
+heading once: the heading line is written at the depth its place needs, and
+the section cited is `(*under, heading)`. The longer form
+`cx.section(file, heading_path, text=..., under=())` takes `text` starting
+with the heading line. Either appends a subtree that leaves one blank line
+after it; with `replace=True` (and `expect=digest`) it replaces the named
+subtree, or with `heading_path=()` the preamble. It
 returns `authoring.section_evidence.AuthoredSection`, an immutable client-only
 evidence object. Construction writes nothing. Accepted Subjects, their edits,
 new Subject drafts' `.set(...).write(...)`, and `cx.set` accept it as evidence.
