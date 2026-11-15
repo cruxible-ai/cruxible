@@ -2013,10 +2013,13 @@ def _rebind_replaces(
 
     One collapse (Claim law v4 revision 3): own words once located by a second
     Capture -- a copy, independent, under the file's foreign-source contract,
-    whose working selection is bound to this Claim -- are replaced by the one
-    located own-words Capture (a copy, self_source, under the coordinator
-    contract) whose location names the same file. The pair's own-words half is
-    replaced by the same new citation under the ordinary rule.
+    whose working selection is bound to this Claim, dropped together with the
+    Claim's unlocated own words over the same bytes (the pair's other half) --
+    are replaced by the one located own-words Capture (a copy, self_source,
+    under the coordinator contract) whose location names the same file. The
+    pair's own-words half is replaced by the same new citation under the
+    ordinary rule. A copy with no such own-words half is no pair and keeps the
+    ordinary rule.
 
     Reads the envelopes of the dropped and the newly added citations only: the
     cost is this Claim's change, never its whole history.
@@ -2052,6 +2055,29 @@ def _rebind_replaces(
                     located_sources.add(envelope.source.source_identity)
         return located_sources
 
+    own_words_halves: set[str] | None = None
+
+    def dropped_own_words() -> set[str]:
+        """What the dropped unlocated own words of this Claim commit to: a pair's other half."""
+
+        nonlocal own_words_halves
+        if own_words_halves is None:
+            own_words_halves = set()
+            for other in dropped:
+                if (other.role, other.origin) != ("copy", "self_source"):
+                    continue
+                if contract(other) != coordinator:
+                    continue
+                envelope = _stored_capture_envelope(store, other.capture_digest)
+                if (
+                    envelope is not None
+                    and isinstance(envelope.source, CasSourceReference)
+                    and envelope.run_coordinate.run_id
+                    == f"coordinator-self-source:{claim_id.casefold()}"
+                ):
+                    own_words_halves.add(envelope.commitment.digest)
+        return own_words_halves
+
     def collapses(item: ClaimCitation, identity: str) -> bool:
         if (item.role, item.origin) != ("copy", "independent"):
             return False
@@ -2071,6 +2097,10 @@ def _rebind_replaces(
             and isinstance(selector, dict)
             and selector.get("claim_id") == claim_id
             and isinstance(selector.get("working_selection"), dict)
+            # Only a revision-71 pair collapses: the same revision drops the
+            # Claim's own words over these very bytes. A standalone copy keeps
+            # the ordinary rule (replaced under its own contract).
+            and envelope.commitment.digest in dropped_own_words()
             and source.source_identity in offered_locations()
         )
 

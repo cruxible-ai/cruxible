@@ -234,3 +234,27 @@ def test_located_own_words_re_bind_replace_one_citation(world: LocatedWorld) -> 
     (after,) = world.claim(claim_id).backing.citations  # type: ignore[union-attr]
     assert after.citation_id != first.citation_id
     assert (after.role, after.origin) == ("copy", "self_source")
+
+
+def test_a_standalone_copy_is_no_pair_and_never_collapses(world: LocatedWorld) -> None:
+    """Only a revision-71 pair collapses (the review's collapse probe).
+
+    A Claim citing one section as an independent copy, with no own words over
+    the same bytes, keeps the ordinary rule: own words in the same file do not
+    replace it, so its coverage is never silently dropped.
+    """
+
+    world.seed(v7_type())
+    tree, path = world.author(located(b"Independent words.\n"), citation_role="copy")
+    world.accept(tree, name="standalone")
+    claim_id = parse_claim(tree[path], path=path).identity.name
+    (held,) = world.claim(claim_id).backing.citations  # type: ignore[union-attr]
+    assert (held.role, held.origin) == ("copy", "independent")
+    assert world.verdict(claim_id) == "supported"
+    tree, _path = world.author_located(
+        located(b"Replacement own words.\n"),
+        claim_ref=claim_id,
+        replaces_citations=(held.citation_id,),
+    )
+    assert "cruxible.claim.rebind_unmatched" in world.refusals(tree, name="replace")
+    assert world.verdict(claim_id) == "supported"
