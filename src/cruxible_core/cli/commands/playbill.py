@@ -2445,7 +2445,7 @@ def build_kit(
         click.echo(
             f"{kit_id} {version}: {len(bundle.artifacts)} artifacts, "
             f"{len(bundle.manifest.providers)} provider package(s), "
-            f"{bundle.manifest.content_digest}"
+            f"content {bundle.manifest.content_digest}"
         )
         _echo_kit_requires(bundle.manifest.requires)
         template = bundle.manifest.automation_template
@@ -2646,7 +2646,8 @@ def kit_status(offline: bool, output_json: bool) -> None:
             available = f"; latest {kit.latest_available} available" if newer else "; up to date"
         elif kit.update_check != "checked":
             available = f"; update check {kit.update_check.replace('_', ' ')}"
-        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}{available}")
+        # The content digest (what kit add pins), not an OCI image digest.
+        click.echo(f"{kit.kit_id} {kit.version} content {kit.content_digest}{available}")
         if kit.source is not None:
             click.echo(f"  source: {kit.source}")
         if kit.provenance is not None:

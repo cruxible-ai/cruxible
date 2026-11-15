@@ -348,7 +348,7 @@ def test_kit_build_bundles_a_provider_directory_as_staged_wheels_and_lock(
         "cruxible_provider_runtime-0.2.0-py3-none-any.whl"
     ]
     assert sorted(client.stored) == sorted(files.values())
-    assert "1 provider package(s)" in result.output
+    assert "1 provider package(s), content sha256:" in result.output
     assert (out / "providers" / "kit_call-0.2.0-py3-none-any.whl").read_bytes() == b"wheel"
 
 
@@ -477,6 +477,8 @@ def test_kit_status_shows_each_required_kit_and_whether_it_is_met(
     assert result.exit_code == 0, result.output
     assert "  requires base >= 1.0.0: met (installed 1.2.0)\n" in result.output
     assert "  requires other >= 2.0.0: not met (not installed)\n" in result.output
+    # S4: the digest is labelled: the content digest kit add pins, not an image digest.
+    assert f"acme 1.0.0 content sha256:{'1' * 64}; update check local source\n" in result.output
 
 
 def test_kit_add_preview_shows_requires_met_and_one_heading_spelling(
