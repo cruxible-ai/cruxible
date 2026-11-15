@@ -88,12 +88,6 @@ class VocabularyExportRefused(VocabularyFileError):
     error_code = "cruxible.vocabulary.export_refused"
 
 
-class VocabularyApplyRefused(VocabularyFileError):
-    """The file's changes cannot be submitted as they stand."""
-
-    error_code = "cruxible.vocabulary.apply_refused"
-
-
 # -- strict YAML ------------------------------------------------------------------------
 
 _PLAIN_INT = re.compile(r"-?(?:0|[1-9][0-9]*)")
@@ -487,7 +481,6 @@ __all__ = [
     "FIELD_SHORTHANDS",
     "VOCABULARY_FILE_FORMAT",
     "VocabularyAction",
-    "VocabularyApplyRefused",
     "VocabularyApplyResult",
     "VocabularyBaseline",
     "VocabularyBaselineError",

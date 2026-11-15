@@ -279,6 +279,38 @@ def test_apply_refuses_a_field_someone_changed_since_the_export(world) -> None: 
     assert cx.vocabulary.apply().status == "landed"
 
 
+def test_apply_refuses_a_subject_kind_someone_changed_since_the_export(world) -> None:  # type: ignore[no-untyped-def]
+    """Review R1: the daemon refuses on the export's SubjectKind digest; no client re-read."""
+
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    _edit(workspace, lambda data: data["kinds"]["dev.item"].update(description="Mine."))
+    plan = cx.vocabulary.plan()
+    assert [(entry.definition, entry.action) for entry in plan.changes] == [
+        ("SubjectKind:dev.item", "replace")
+    ]
+    other = cx.changes(rationale="A concurrent edit.")
+    other.subject_kind(name="dev.item", keys=["dev.item.slug"], description="Theirs.")
+    assert other.submit().outcome.status == "landed"
+    cx.refresh()
+
+    refused = cx.vocabulary.apply()
+
+    assert refused.status == "refused", refused
+    assert refused.frontier is not None
+    (diagnostic,) = refused.frontier.diagnostics
+    assert diagnostic.code == "cruxible.authoring.subject_kind_predecessor_moved"
+    described = cx.get("SubjectKind:dev.item").value
+    assert described.description == "Theirs."
+    # The unapplied edit is protected; re-exported (forced) and merged, it lands.
+    with pytest.raises(VocabularyExportRefused, match="SubjectKind:dev.item"):
+        cx.vocabulary.export()
+    cx.vocabulary.export(force=True)
+    _edit(workspace, lambda data: data["kinds"]["dev.item"].update(description="Mine."))
+    assert cx.vocabulary.apply().status == "landed"
+    assert cx.get("SubjectKind:dev.item").value.description == "Mine."
+
+
 def _claim(cx: Cruxible, subject: str, predicate: str, value: str) -> str:
     outcome = cx.set(subject, predicate, value, because=f"It is {value}.")
     assert outcome.status == "accepted", outcome

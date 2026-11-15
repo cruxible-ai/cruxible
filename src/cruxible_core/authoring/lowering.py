@@ -3462,6 +3462,24 @@ def _render_subject_kind_member(
     path = subject_kind_path(payload.name)
     previous_content = tree.get(path)
     previous = None if previous_content is None else parse_subject_kind(previous_content, path=path)
+    if payload.predecessor_digest is not None:
+        held = None if previous is None else subject_kind_digest(previous).tagged
+        if held != payload.predecessor_digest:
+            # The pin a ClaimType succession carries, for a SubjectKind: a
+            # change written against one version never replaces another.
+            _refuse(
+                "cruxible.authoring.subject_kind_predecessor_moved",
+                "predecessor_digest",
+                f"SubjectKind:{payload.name} is not the version this change was written "
+                "against: it changed since it was read"
+                + ("" if held is not None else ", and no SubjectKind is accepted for it now"),
+                repair_kind="replace_predecessor",
+                repair_description=(
+                    "Read the accepted SubjectKind again, restate the change against it, and "
+                    "pin its digest (for the vocabulary file: re-export and merge)."
+                ),
+                replacement={"accepted_digest": held, "pinned_digest": payload.predecessor_digest},
+            )
     rule: SubjectKindKeys | SubjectKindMinted = (
         SubjectKindMinted()
         if payload.minted

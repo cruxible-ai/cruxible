@@ -14125,6 +14125,19 @@
                 "title": "Normalizers",
                 "type": "object"
               },
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The digest of the accepted SubjectKind this succeeds, as you read it; the change refuses if the accepted one has moved since. Omit for a new kind.",
+                "title": "Predecessor Digest"
+              },
               "retire": {
                 "default": false,
                 "title": "Retire",

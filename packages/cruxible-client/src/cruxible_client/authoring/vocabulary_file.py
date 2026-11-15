@@ -72,7 +72,6 @@ from cruxible_client.contracts.subject_kinds import (
 from cruxible_client.contracts.temporal import format_iso_duration_microseconds
 from cruxible_client.contracts.vocabulary_file import (
     VOCABULARY_FILE_FORMAT,
-    VocabularyApplyRefused,
     VocabularyApplyResult,
     VocabularyBaseline,
     VocabularyBaselineError,
@@ -713,8 +712,18 @@ def _merged_subject_kind(
     }
 
 
-def _subject_kind_member(kind: str, view: Mapping[str, object], *, retire: bool) -> dict[str, Any]:
+def _subject_kind_member(
+    kind: str,
+    view: Mapping[str, object],
+    *,
+    retire: bool,
+    predecessor: SubjectKind | None,
+) -> dict[str, Any]:
     member: dict[str, Any] = {"kind": "subject_kind", "name": kind}
+    if predecessor is not None:
+        # The daemon refuses this member if the accepted SubjectKind moved since
+        # the export read it, as a ClaimType succession's predecessor pin does.
+        member["predecessor_digest"] = subject_kind_digest(predecessor).tagged
     if view.get("description") is not None:
         member["description"] = view["description"]
     if view.get("minted"):
@@ -737,8 +746,6 @@ class _Planned:
     entries: list[VocabularyPlanEntry] = field(default_factory=list)
     claims: list[VocabularyClaimChange] = field(default_factory=list)
     members: list[dict[str, Any]] = field(default_factory=list)
-    #: Kinds whose SubjectKind this plan changes (checked against the head at apply).
-    subject_kinds: dict[str, SubjectKind | None] = field(default_factory=dict)
 
     @property
     def changes_only(self) -> list[VocabularyPlanEntry]:
@@ -1042,17 +1049,20 @@ def _plan_members(
                     code="cruxible.vocabulary.kind_invalid",
                 )
             planned.members.append(
-                _subject_kind_member(kind, _subject_kind_view(current_kind), retire=True)
+                _subject_kind_member(
+                    kind, _subject_kind_view(current_kind), retire=True, predecessor=current_kind
+                )
             )
             planned.entries.append(
                 VocabularyPlanEntry(definition=definition, action="retire", kit=kit)
             )
-            planned.subject_kinds[kind] = current_kind
         elif entry.states_subject_kind:
             merged = _merged_subject_kind(kind, entry, current_kind)
             before = None if current_kind is None else _subject_kind_view(current_kind)
             if merged != before:
-                planned.members.append(_subject_kind_member(kind, merged, retire=False))
+                planned.members.append(
+                    _subject_kind_member(kind, merged, retire=False, predecessor=current_kind)
+                )
                 planned.entries.append(
                     VocabularyPlanEntry(
                         definition=definition,
@@ -1069,7 +1079,6 @@ def _plan_members(
                         kit=kit,
                     )
                 )
-                planned.subject_kinds[kind] = current_kind
         for name in sorted(entry.fields, key=lambda item: item.encode("utf-8")):
             item = entry.fields[name]
             predicate = f"{kind}.{name}"
@@ -1257,7 +1266,6 @@ class _PlannedFile:
     file: VocabularyFile
     accepted: AcceptedVocabulary
     change_set: ChangeSetInput | None
-    subject_kinds: dict[str, SubjectKind | None]
 
 
 def _plan(
@@ -1337,7 +1345,6 @@ def _plan(
         file=file,
         accepted=accepted,
         change_set=change_set,
-        subject_kinds=planned.subject_kinds,
     )
 
 
@@ -1345,35 +1352,6 @@ def plan_vocabulary(cx: Cruxible, path: str | Path | None = None) -> VocabularyP
     """What applying the file would change; writes nothing."""
 
     return _plan(cx, path).plan
-
-
-def _refuse_moved_subject_kinds(cx: Cruxible, planned: _PlannedFile) -> None:
-    """A SubjectKind the file changes must still be the one it was exported with.
-
-    A ClaimType edit pins its predecessor's digest, and the daemon refuses it if
-    the head moved; a SubjectKind change is lowered by the daemon against the
-    head, so it is checked here against the head, per kind.
-    """
-
-    if not planned.subject_kinds:
-        return
-    head = read_accepted_vocabulary(
-        cx._client, cx._instance_id, at=None, evaluation_time=cx._evaluation_time()
-    )
-    moved = sorted(
-        kind
-        for kind, before in planned.subject_kinds.items()
-        if (head.subject_kinds.get(kind) is None) != (before is None)
-        or (
-            before is not None
-            and subject_kind_digest(head.subject_kinds[kind]) != subject_kind_digest(before)
-        )
-    )
-    if moved:
-        raise VocabularyApplyRefused(
-            f"SubjectKind {', '.join(moved)} changed since the export the file names; "
-            "re-export with `cruxible vocabulary export`, merge your edits, and apply again"
-        )
 
 
 def apply_vocabulary(
@@ -1385,14 +1363,14 @@ def apply_vocabulary(
 ) -> VocabularyApplyResult:
     """Submit the file's changes as one ordinary change set, at the export's coordinate.
 
-    Each edited field's successor pins the digest the export read, so a field
-    someone changed since then refuses at preflight, naming its member.
+    Each edited field's successor, and each edited SubjectKind, pins the digest
+    the export read, so a definition someone changed since then refuses at
+    preflight, naming its member.
     """
 
     planned = _plan(cx, path, rationale=rationale, preview=False)
     if planned.change_set is None:
         return VocabularyApplyResult(status="unchanged", plan=planned.plan)
-    _refuse_moved_subject_kinds(cx, planned)
     pinned = cx.at(planned.file.based_on.coordinate)
     lowered = lower_authoring_input(planned.change_set)
     assert isinstance(lowered, ChangeSetAuthoringPayload)
