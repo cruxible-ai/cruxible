@@ -360,55 +360,27 @@ enough), sent as one change set by `.write(dry_run=False, accept="if_allowed", a
 
 A vocabulary is SubjectKinds (how Subjects of a kind are named) and ClaimTypes
 (their fields), defined together in one change set. This one defines a kind
-`shop.part` keyed by its `sku`, an enum field and a relation to other parts;
-each field admits its writer's own words (`because`) as evidence:
+`shop.part` keyed by its `sku`, an enum field and a relation to other parts.
+[`ChangeSetDraft.field`](#api-changesetdraft-field) gives each field the short
+form's defaults, so it admits its writer's own words (`because`) as evidence:
 
 ```python
-from cruxible_client import ClaimAdmissionPolicy, ClaimResolutionPolicy
-from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-from cruxible_client.contracts.policies import (
-    CaptureContractAdmission,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
-)
-
-OWN_WORDS = ClaimEvidenceAdmissionPolicy(rules=(ClaimEvidenceAdmissionRule(
-    rule_id="self", claim_roles=("normative",), admission="direct",
-    subject_binding="exact_claim_subject",
-    capture_contracts=(CaptureContractAdmission(
-        role="capture-contract", target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity),),
-),))
-
-
-def field(name, value_type, description, *, many=False):
-    cardinality = "many" if many else "one"
-    draft = cx.claim_type(
-        predicate=f"shop.part.{name}", subject_kinds=["shop.part"], value_type=value_type,
-        cardinality=cardinality, permitted_roles=["normative"],
-        referent_sensitivity="identity", sources=[], pins=[], evidence_freshness=None,
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality=cardinality, eligible_verdicts=("supported",),
-            selector="all" if many else "only_contender",
-        ),
-    )
-    return draft.definition.model_copy(
-        update={"evidence_admission_policy": OWN_WORDS, "description": description}
-    )
-
-
 changes = cx.changes(rationale="The parts vocabulary.")
-changes.claim_type(field("sku", "string{min_len: 1, max_len: 32}", "The stock code; the key."))
-changes.claim_type(field("status", "enum[in_stock, discontinued]", "Whether it can be ordered."))
-changes.claim_type(field("replaces", "subject<shop.part>", "Parts it supersedes.", many=True))
-changes.subject_kind(name="shop.part", keys=["shop.part.sku"], description="A stocked part.")
+changes.field("shop.part", "sku", "string{min_len: 1, max_len: 32}",
+              description="The stock code; the key.", key=True)
+changes.field("shop.part", "status", "enum[in_stock, discontinued]",
+              description="Whether it can be ordered.",
+              members={"in_stock": "Can be ordered.", "discontinued": "No longer sold."})
+changes.field("shop.part", "replaces", "subject<shop.part>", many=True,
+              description="Parts it supersedes.")
+changes.subject_kind(name="shop.part", description="A stocked part.")
 intent = changes.submit()          # intent.outcome.status: 'landed'
 outcome = cx.set("shop.part/bp-2210", "status", "in_stock", because="On the stock list.")
 ```
 
-`intent.prepare()` checks the set without submitting. The `create-state` agent
-skill (`skills/create-state`) says what makes a good kind, field and enum before
-you define them. With floor delivery on, the daemon keeps `.cruxible/world.pyi`
+`changes.prepare()` checks and lints the set without submitting. The
+`create-state` agent skill (`skills/create-state`) says what makes a good kind,
+field and enum before you define them. With floor delivery on, the daemon keeps `.cruxible/world.pyi`
 current: bind `world = cast("World", cx.world())` (`from world import World`
 under `TYPE_CHECKING`, with `.cruxible` on the checker's path) and a type checker
 refuses a misspelled kind, field or enum member in a script.
