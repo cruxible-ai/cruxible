@@ -3,7 +3,7 @@
 A binding is keyed by slot name, or ``<invoke node path>.<slot>`` for a slot of
 an invoked child, and names ``provider[/build]#operation`` or
 ``provider[/build]`` (when the build serves exactly one operation fitting the
-slot's signature).
+slot's capability).
 """
 
 from typing import Annotated, TypeAlias

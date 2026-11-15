@@ -259,15 +259,19 @@ from cruxible_client.contracts.write import (
     Change,
     ClaimValue,
     CreateChange,
+    CreatedSubject,
+    CreateKeyPart,
     DocOp,
     Evidence,
     ExpectedValue,
+    FileEvidence,
     NoneValue,
     RebindChange,
     ReplaceSection,
     RetireChange,
     RetireRequest,
     SectionEvidence,
+    SelfEvidence,
     SetChange,
     SetRequest,
     SlotRef,
@@ -277,6 +281,7 @@ from cruxible_client.contracts.write import (
     WriteRetireReason,
     WriteRole,
     WriteValue,
+    as_write_request,
     write_accept,
 )
 from cruxible_client.errors import CoreError
@@ -1271,7 +1276,7 @@ class ChangeSetDraft:
         defined earlier in this same set) and binds every slot to one exact
         ``{build, operation}``: ``bindings`` maps a slot (or
         ``<invoke node>.<slot>``) to ``provider[/build]#operation``; a slot left
-        out is fitted, and exactly one live operation must serve its signature. A Line
+        out is fitted, and exactly one live operation must serve its capability. A Line
         runs when run explicitly, or, once it is enabled, when a Trigger aimed
         at it fires (:meth:`trigger`; a Trigger does nothing until then), and
         inherits the Procedure's hard caps as its budget unless one is given.
@@ -1287,8 +1292,9 @@ class ChangeSetDraft:
         ``acquisition`` maps a capture output, ``<alias>.<field>``, to
         ``{max_age, on_unavailable, ...}`` and replaces the Procedure's default
         for it.
-        ``parameters`` is the Procedure's input record; lowering checks it
-        against the Procedure's input contract. ``max_authority`` (observe,
+        ``parameters`` are the Procedure's params: values over its params
+        defaults, checked against its params Contract (a field of its input
+        refuses ``cruxible.authoring.line_parameters_refused``). ``max_authority`` (observe,
         propose or settle) caps this Line below its Procedure's own capability
         and defaults to it. A Line that proposes or settles also needs a live
         ProcedureMandate covering its Procedure before it can run or be enabled;
@@ -1841,14 +1847,22 @@ def _write_target(target: str | ClaimRef | SubjectRef | SlotRef) -> str | SlotRe
     return target
 
 
-_WriteSubject = str | SubjectRef
+_WriteSubject: TypeAlias = "str | SubjectRef | CreatedSubject | SubjectCreationDraft"
 _WriteField = str | ClaimTypeRef
-_WriteValue = ClaimValue | SubjectRef | LiteralValue | NoneValue
+_WriteValue: TypeAlias = (
+    "ClaimValue | SubjectRef | LiteralValue | NoneValue | CreatedSubject | SubjectCreationDraft"
+)
+#: One key part of a create: a literal, or a pair's end (an accepted Subject, a
+#: Subject this write creates, or a ``cx.new_subject`` draft of one).
+_CreateKeyPartInput: TypeAlias = (
+    "str | int | bool | SubjectRef | SubjectKeyReference | CreatedSubject | SubjectCreationDraft"
+)
+#: A create's key: one value (a kind with one key), each key part by field name
+#: or predicate, or none (a minted kind).
+_CreateKeyInput: TypeAlias = "Mapping[str, _CreateKeyPartInput] | str | int | bool | None"
 
 
-def _batch_operands(
-    verb: str, operands: tuple[Any, ...], subject: _WriteSubject | None
-) -> tuple[str | None, str, WriteValue]:
+def _batch_operands(verb: str, operands: tuple[Any, ...], subject: Any) -> tuple[Any, Any, Any]:
     """``(subject, field, value)`` positionally, or ``(field, value)`` with a default subject."""
 
     if len(operands) == 3:
@@ -1861,19 +1875,24 @@ def _batch_operands(
         raise TypeError(
             f"{verb}() takes (subject, field, value), or (field, value) under a default subject"
         )
-    return (
-        None if subject is None else _write_subject(subject),
-        _write_field(field_name),
-        _write_value(value),
-    )
+    return subject, field_name, value
+
+
+def _batch_subject_text(subject: str | CreatedSubject | None) -> str | None:
+    if isinstance(subject, CreatedSubject):
+        return f"{{created: {subject.created}}}"
+    return subject
 
 
 class WriteBatch:
     """Changes that are written together, as one change set: ``cx.changes(because=...)``.
 
-    ``set`` replaces a single-value field, ``add`` puts one more value in a
-    many-valued field, and ``retire`` ends one live Claim; ``write()`` sends them
-    all and returns the outcome, raising ``WriteRefusalError`` on a refusal.
+    ``create`` makes a Subject by its key, ``set`` replaces a single-value field,
+    ``add`` puts one more value in a many-valued field, and ``retire`` ends one
+    live Claim; ``write()`` sends them all and returns the outcome, raising
+    ``WriteRefusalError`` on a refusal. A ``create`` handle, or a
+    ``cx.new_subject(...)`` draft, names the new Subject anywhere a change takes
+    one.
 
     ``cx.changes(because=..., subject="kind/id")`` names the Subject once:
     ``.set(field, value)`` and ``.add(field, value)`` are about it, and
@@ -1884,9 +1903,127 @@ class WriteBatch:
     def __init__(self, cx: Cruxible, *, because: str, subject: _WriteSubject | None = None) -> None:
         self._playbill = cx
         self.because = because
-        self.subject = None if subject is None else _write_subject(subject)
         self.changes: list[Change] = []
         self.docs: list[DocOp] = []
+        self._labels: set[str] = set()
+        self._drafts: dict[int, tuple[SubjectCreationDraft, CreatedSubject]] = {}
+        #: A default Subject this write creates: filled into each change naming none.
+        self._default: CreatedSubject | None = None
+        self.subject: str | None = None
+        if isinstance(subject, CreatedSubject | SubjectCreationDraft):
+            self._default = self._created(subject)
+        elif subject is not None:
+            self.subject = _write_subject(subject)
+
+    def create(
+        self,
+        kind: str,
+        *,
+        key: _CreateKeyInput = None,
+        create_new: bool = False,
+        expect_new: bool = False,
+        role: WriteRole | None = None,
+        evidence: Evidence | None = None,
+        label: str | None = None,
+    ) -> CreatedSubject:
+        """Create a Subject of ``kind`` by its key in this write; core assigns the id.
+
+        ``key`` is the value of a kind's one key, or maps each key field (by name
+        under the kind, or full predicate) to its value; leave it out for a minted
+        kind. A pair's end is ``kind/id``, a ``SubjectRef``, another ``create``
+        handle or a ``cx.new_subject(...)`` draft. A key a live Subject already
+        holds lands on it and creates nothing (``expect_new=True`` refuses
+        instead); ``create_new=True`` makes another holder of a ``hint`` kind's
+        key. The key Claims cite ``evidence`` (default: the write's ``because``).
+
+        Returns the handle the same write names it by: pass it as ``subject=`` or
+        as a Subject value. Next: ``.set(handle, field, value)``, then ``.write()``.
+        """
+
+        if label is None:
+            base = kind.rpartition(".")[2][:56]
+            number = 1
+            while f"{base}-{number}" in self._labels:
+                number += 1
+            label = f"{base}-{number}"
+        elif label in self._labels:
+            raise ValueError(f"create label {label!r} is already used in this write")
+        self._labels.add(label)
+        self.changes.append(
+            CreateChange(
+                label=label,
+                subject_kind=kind,
+                key=self._create_key(kind, key),
+                create_new=create_new,
+                expect_new=expect_new,
+                role=role,
+                evidence=evidence,
+            )
+        )
+        return CreatedSubject(created=label)
+
+    def _create_key(
+        self, kind: str, key: _CreateKeyInput
+    ) -> str | int | bool | tuple[CreateKeyPart, ...] | None:
+        if not isinstance(key, Mapping):
+            return key
+        return tuple(
+            CreateKeyPart(
+                predicate=name if "." in name else f"{kind}.{name}",
+                value=self._key_part(value),
+            )
+            for name, value in key.items()
+        )
+
+    def _key_part(self, value: _CreateKeyPartInput) -> str | int | bool | CreatedSubject:
+        if isinstance(value, CreatedSubject | SubjectCreationDraft):
+            return self._created(value)
+        if isinstance(value, SubjectRef):
+            return value.address
+        if isinstance(value, SubjectKeyReference):
+            raise ValueError(
+                "a write names a pair's end as kind/id, a batch.create(...) handle or a "
+                "cx.new_subject(...) draft; read the Subject's kind/id with cx.get(...) first"
+            )
+        return value
+
+    def _created(self, value: CreatedSubject | SubjectCreationDraft) -> CreatedSubject:
+        """The handle of a Subject this write creates; a draft becomes its create change."""
+
+        if isinstance(value, CreatedSubject):
+            return value
+        known = self._drafts.get(id(value))
+        if known is not None:
+            return known[1]
+        creation = value.creation
+        key: _CreateKeyInput = value.key_input
+        if key is None and creation.key_value is not None:
+            key = creation.key_value
+        elif key is None and creation.key:
+            raise ValueError(
+                "this draft does not carry the key it was made with; create the Subject "
+                "with batch.create(kind, key=...)"
+            )
+        handle = self.create(
+            creation.subject_kind,
+            key=key,
+            create_new=creation.create_new,
+            evidence=None if creation.rationale is None else SelfEvidence(self=creation.rationale),
+        )
+        self._drafts[id(value)] = (value, handle)
+        return handle
+
+    def _target(self, subject: _WriteSubject | None) -> str | CreatedSubject | None:
+        if subject is None:
+            return self._default
+        if isinstance(subject, CreatedSubject | SubjectCreationDraft):
+            return self._created(subject)
+        return _write_subject(subject)
+
+    def _value(self, value: _WriteValue) -> WriteValue | CreatedSubject:
+        if isinstance(value, CreatedSubject | SubjectCreationDraft):
+            return self._created(value)
+        return _write_value(value)
 
     def append_section(
         self,
@@ -1983,9 +2120,9 @@ class WriteBatch:
         named, field_name, value = _batch_operands("set", operands, subject)
         self.changes.append(
             SetChange(
-                subject=named,
-                field=field_name,
-                value=value,
+                subject=self._target(named),
+                field=_write_field(field_name),
+                value=self._value(value),
                 evidence=evidence,
                 role=role,
                 contend=contend,
@@ -2045,9 +2182,9 @@ class WriteBatch:
         named, field_name, value = _batch_operands("add", operands, subject)
         self.changes.append(
             AddChange(
-                subject=named,
-                field=field_name,
-                value=value,
+                subject=self._target(named),
+                field=_write_field(field_name),
+                value=self._value(value),
                 evidence=evidence,
                 role=role,
                 expect_absent=expect_absent,
@@ -2124,7 +2261,8 @@ class WriteBatch:
             if isinstance(item, CreateChange)
             else f"about {item.ref or item.file + '#' + '/'.join(item.section)}"
             if isinstance(item, AboutChange)
-            else f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
+            else f"{item.op} {_batch_subject_text(item.subject) or self.subject or ''} "
+            f"{item.field}".replace("  ", " ")
             for item in self.changes
         )
         about = "" if self.subject is None else f", subject={self.subject!r}"
@@ -2141,6 +2279,9 @@ class SubjectCreationDraft(_IntentDraft):
     """
 
     creation: SubjectCreationAuthoringPayload
+    #: The key as ``cx.new_subject`` took it, so a write batch can create the same
+    #: Subject (``batch.set(draft, ...)``) with the pair ends it names.
+    key_input: _CreateKeyInput = field(default=None, repr=False, compare=False)
 
     @property
     def member_identity(self) -> str:
@@ -3272,6 +3413,7 @@ class Cruxible:
             _program_stamp("subject_creation", creation.model_dump(mode="json")),
             DiagnosticSourceMap(()),
             creation,
+            key,
         )
 
     def claim_type(
@@ -3489,7 +3631,7 @@ class Cruxible:
         )
 
     @overload
-    def changes(self, *, because: str, subject: str | SubjectRef | None = None) -> WriteBatch: ...
+    def changes(self, *, because: str, subject: _WriteSubject | None = None) -> WriteBatch: ...
 
     @overload
     def changes(self, *, rationale: str | None = None) -> ChangeSetDraft: ...
@@ -3499,14 +3641,15 @@ class Cruxible:
         *,
         rationale: str | None = None,
         because: str | None = None,
-        subject: str | SubjectRef | None = None,
+        subject: _WriteSubject | None = None,
     ) -> ChangeSetDraft | WriteBatch:
         """Open one changeset that any mix of members can be authored into.
 
         ``changes(because=...)`` opens the typed write batch instead:
         ``.set(...)``, ``.add(...)`` and ``.retire(...)`` changes, sent together by
         ``.write()``; ``subject=`` names the Subject of every change that names
-        none. ``changes(rationale=...)`` is the full authoring changeset.
+        none (``kind/id``, or a ``cx.new_subject(...)`` draft the write creates).
+        ``changes(rationale=...)`` is the full authoring changeset.
 
         `cx.claim(...)` still authors exactly one Claim. This is the same
         authoring surface for an intent that carries more than one: it lowers
@@ -3781,9 +3924,10 @@ class Cruxible:
             surface="sdk",
             full_coordinate=True,
         )
-        if request.evidence is not None:
-            (change,) = observe_changes((request.change(),), workspace=self._workspace_root)
-            request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
+        if isinstance(request.evidence, FileEvidence | SectionEvidence):
+            # Through the workspace write, as add and write: it reads the cited
+            # file here and catalogues a workspace file the catalog did not name.
+            return self._write(as_write_request(request))
         return self._written(self._client.set(self._instance_id, request=request))
 
     def add(

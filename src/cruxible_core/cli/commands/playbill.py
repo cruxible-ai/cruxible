@@ -85,7 +85,6 @@ from cruxible_client.authoring.workspace import (
 from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
 from cruxible_client.authoring.write_evidence import (
     observe_changes,
-    observe_evidence,
     rebind_evidence,
 )
 from cruxible_client.contracts.artifacts import parse_artifact_identity
@@ -190,12 +189,12 @@ from cruxible_client.contracts.write import (
     Change,
     ContractEvidence,
     DocOp,
-    FileEvidence,
     RetireRequest,
     SetRequest,
     SubjectRef,
     WriteOutcome,
     WriteRequest,
+    as_write_request,
     capture_handle,
 )
 from cruxible_client.errors import DataValidationError
@@ -3619,8 +3618,9 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
 
 
 @files_group.command("add")
-@click.argument("name")
-@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.argument(
+    "path", nargs=-1, required=True, metavar="[NAME] PATH", type=click.Path(dir_okay=False)
+)
 @click.option("--document-id", default=None, help="The Document this file compiles to.")
 @click.option("--document-kind", default=None, help="The Document's kind (with --document-id).")
 @click.option("--title", default=None, help="The Document's title (with --document-id).")
@@ -3652,8 +3652,7 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
 @json_option
 @handle_errors
 def add_file(
-    name: str,
-    path: Path,
+    path: tuple[str, ...],
     document_id: str | None,
     document_kind: str | None,
     title: str | None,
@@ -3668,7 +3667,8 @@ def add_file(
     """Catalogue PATH under NAME in the workspace's .cruxible/files.yaml.
 
     NAME is the stable source name evidence is cited under (`--evidence-file
-    PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
+    PATH#ANCHOR` resolves through it); left out, it is doc-<path>, the name a
+    write citing the file gives it. With --document-id, --document-kind,
     --title and --scope the entry also declares the Document it compiles to
     (files compile, files propose); without them the file is still a source
     to cite and a page to project blocks into, just not a Document. The
@@ -3677,10 +3677,13 @@ def add_file(
     target refuses. Writes only the catalog file (commit it with Git, if you use Git).
     """
 
+    # NAME is optional and comes first: one argument is PATH, two are NAME PATH.
+    if len(path) > 2:
+        raise click.UsageError("files add takes PATH, or NAME PATH")
     result = catalog_file(
         _catalog_edit_root(repository_root),
-        name=name,
-        path=path,
+        name=path[0] if len(path) == 2 else None,
+        path=Path(path[-1]),
         document_id=document_id,
         document_kind=document_kind,
         title=title,
@@ -4449,7 +4452,7 @@ def propose_claim_type(
 def _claim_type_lint_meaning(code: str) -> str:
     """``: what it means`` for a lint warning that has words, else nothing."""
 
-    from cruxible_core.claims.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
+    from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 
     meaning = CLAIM_TYPE_LINT_TEXT.get(code)
     return "" if meaning is None else f": {meaning}"
@@ -5577,14 +5580,8 @@ def _evidence_option_value(
         return {"kind": "contract", "contract": contract}
     if evidence_file is None:
         return None
-    try:
-        observed = observe_evidence(
-            FileEvidence(file=evidence_file), workspace=Path(workspace_root)
-        )
-    except (ValidationError, CoreError) as exc:
-        raise click.UsageError(f"--evidence-file {evidence_file}: {exc}") from None
-    assert observed is not None
-    return observed.model_dump(mode="json")
+    # Read on this side by the workspace write (_workspace_write), as write does.
+    return {"kind": "file", "file": evidence_file}
 
 
 _NONE_HELP = (
@@ -5682,6 +5679,17 @@ def set_value(
         },
         example='cruxible set dev.item/tidy-cli status done --because "Shipped."',
     )
+    if evidence_file is not None:
+        _workspace_write(
+            as_write_request(request),
+            workspace_root=workspace_root,
+            send=lambda observed: _server_call(
+                lambda client, instance_id: client.write(instance_id, request=observed),
+                command_name="cruxible set",
+            ),
+            output_json=output_json,
+        )
+        return
     outcome = _server_call(
         lambda client, instance_id: client.set(instance_id, request=request),
         command_name="cruxible set",
@@ -5781,11 +5789,15 @@ def add_value(
             'cruxible add dev.item/tidy-cli governs dev.item/cli-docs --because "Linked in review."'
         ),
     )
-    outcome = _server_call(
-        lambda client, instance_id: client.write(instance_id, request=request),
-        command_name="cruxible add",
+    _workspace_write(
+        request,
+        workspace_root=workspace_root,
+        send=lambda observed: _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible add",
+        ),
+        output_json=output_json,
     )
-    _finish_write(outcome, output_json=output_json)
 
 
 @playbill_group.command("retire")
@@ -6010,8 +6022,10 @@ def write_changes(
     FILE (YAML or JSON; - reads stdin) holds {"because": ..., "changes": [...]},
     or a bare list of changes with --because. Each change is {"op": "set" |
     "add", "subject", "field", "value"}, {"op": "retire", "target"} or {"op":
-    "create", "label", "subject_kind", "key"}; other changes name a created
-    Subject {"created": label}, as subject or value. A top-level "subject" is
+    "create", "label", "subject_kind", "key"}, where key is one value or
+    {field: value, ...} (e.g. {"occurrence": "kind/id", "vulnerability":
+    "kind/id"}); other changes name a created Subject {"created": label}, as
+    subject or value. A top-level "subject" is
     the Subject of every change that names none. --schema prints the schema.
     Optional docs hold append {file, under, text} or replace {file, section,
     text, expect}. Paths are heading lists; [] selects the preamble. Section
@@ -6050,6 +6064,26 @@ def write_changes(
         },
         example="cruxible write changes.yaml",
     )
+    _workspace_write(
+        request,
+        workspace_root=workspace_root,
+        send=lambda observed: _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible write",
+        ),
+        output_json=output_json,
+    )
+
+
+def _workspace_write(
+    request: WriteRequest,
+    *,
+    workspace_root: str,
+    send: Callable[[WriteRequest], WriteOutcome],
+    output_json: bool,
+) -> None:
+    """Send a write through the workspace seam: cited files are read (and catalogued) here."""
+
     from cruxible_client.contracts.errors import WriteRefusalError
     from cruxible_core.cli.commands._common import _echo_refusal
 
@@ -6058,15 +6092,12 @@ def write_changes(
     def submit(observed: WriteRequest) -> WriteOutcome:
         nonlocal submitted
         submitted = True
-        return _server_call(
-            lambda client, instance_id: client.write(instance_id, request=observed),
-            command_name="cruxible write",
-        )
+        return send(observed)
 
     try:
         outcome = write_workspace(request, workspace=Path(workspace_root), submit=submit)
     except WriteRefusalError as exc:
-        # A doc write refused while observing files never reached the daemon.
+        # A write refused while observing files never reached the daemon.
         if submitted or output_json:
             raise
         _echo_refusal(

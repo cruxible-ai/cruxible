@@ -9,7 +9,7 @@ here for the daemon's callers.
 from __future__ import annotations
 
 import re
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 from typing import Annotated, Literal
 
 from pydantic import Field, ValidationError
@@ -21,6 +21,7 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_type_inputs import (
+    CLAIM_TYPE_LINT_TEXT,
     ClaimDurationInput,
     ClaimEvidenceFreshnessInput,
     ClaimInverseInput,
@@ -44,44 +45,12 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import CAPTURE_CONTRACT_FAMILY_SHAPES
-from cruxible_client.contracts.shapes import BoolType, EnumType, FieldType, StringType
+from cruxible_client.contracts.shapes import BoolType, DateType, EnumType, FieldType, StringType
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import ProposalInspection
 from cruxible_core.service.discovery.field_names import is_reserved_field_name
-
-#: What a lint warning means, for surfaces that print more than its code.
-CLAIM_TYPE_LINT_TEXT: dict[str, str] = {
-    "cruxible.claim_type.description_missing": "state what one value of this field means",
-    "cruxible.claim_type.field_restates_ledger": (
-        "the ledger already records who wrote and approved each value, when, why and what "
-        "was proposed: drop the field and read those from the Claim"
-    ),
-    "cruxible.claim_type.string_holds_prose": (
-        "a long free string holds prose: keep strings to identifiers and one short label, "
-        "and put prose in a Document section the Claim cites"
-    ),
-    "cruxible.claim_type.enum_members_name_things": (
-        "members that look like versions, dates or identifiers name things with their own "
-        "facts: make the thing a kind and the field subject<K>"
-    ),
-    "cruxible.claim_type.evidence_policy_admits_no_accepted_contract": (
-        "no evidence rule admits a contract this instance holds, so every value written "
-        "lands uncovered: add the own-words rule (the replacement names it) or a source rule"
-    ),
-    "cruxible.claim_type.subject_kind_undeclared": (
-        "the inferred Subject kind has no live SubjectKind: declare it in this change set "
-        "or state allowed_subject_kinds"
-    ),
-    "cruxible.claim_type.inverse_on_enum_or_boolean": (
-        "an inverse on a one-valued enum or boolean field: a member states the negative"
-    ),
-    "cruxible.claim_type.stale_eligible_never_current": (
-        "eligible_verdicts lists stale while require_current is true: stale contenders "
-        "never resolve"
-    ),
-}
 
 
 class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
@@ -465,9 +434,34 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"inverse": None},
             )
         )
-    warnings.extend(lint_modelling(value.predicate, value_type))
+    warnings.extend(
+        lint_modelling(
+            value.predicate,
+            value_type,
+            key=lambda: _is_key(instance, coordinate, value.predicate, key_predicates),
+        )
+    )
     warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     return ClaimTypeProposalLintV1(warnings=tuple(warnings))
+
+
+def _is_key(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    predicate: str,
+    key_predicates: frozenset[str],
+) -> bool:
+    """Whether ``predicate`` keys its kind: declared in the change set, or accepted.
+
+    One indexed read of the kind's SubjectKind, made only when a lint asks.
+    """
+
+    if predicate in key_predicates:
+        return True
+    kind = predicate.rpartition(".")[0]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        declared = projection.typed.source(f"SubjectKind:{kind}")
+    return isinstance(declared, SubjectKind) and predicate in declared.keys
 
 
 #: Field names that restate what the ledger already records about every Claim:
@@ -508,21 +502,32 @@ _THING_MEMBER = re.compile(
 )
 
 
-def lint_modelling(predicate: str, value: FieldType | None) -> tuple[ClaimTypeLintWarningV1, ...]:
+def lint_modelling(
+    predicate: str,
+    value: FieldType | None,
+    *,
+    key: Callable[[], bool] = lambda: False,
+) -> tuple[ClaimTypeLintWarningV1, ...]:
     """Three definition-time modelling warnings (advisory; never a refusal).
 
     - ``field_restates_ledger``: the field's name restates what the ledger
       records about every Claim (writer, approver, time, ``because``, proposals).
+      A time-named field (``*_at``, ``*_on``) holding a date is a day in the
+      domain (when a decision took effect), not the write's own instant, so it
+      does not warn.
     - ``string_holds_prose``: a string bounded above ``PROSE_STRING_MAX_LEN``
       with no pattern (other than the default ``string{max_len: 256}``) holds
-      prose, which belongs in a Document section a Claim cites.
+      prose, which belongs in a Document section a Claim cites. A key field
+      (``key`` answers whether it keys its kind) is an identifier, so it does
+      not warn.
     - ``enum_members_name_things``: an enum member looks like a version, date or
       identifier: a thing with its own facts, which is a kind (``subject<K>``).
     """
 
     warnings: list[ClaimTypeLintWarningV1] = []
     name = predicate.rpartition(".")[2]
-    if name in LEDGER_FIELD_NAMES:
+    domain_day = name.endswith(("_at", "_on")) and isinstance(value, DateType)
+    if name in LEDGER_FIELD_NAMES and not domain_day:
         warnings.append(
             ClaimTypeLintWarningV1(
                 code="cruxible.claim_type.field_restates_ledger",
@@ -547,6 +552,7 @@ def lint_modelling(predicate: str, value: FieldType | None) -> tuple[ClaimTypeLi
         and value.pattern is None
         and value.max_len is not None
         and value.max_len > PROSE_STRING_MAX_LEN
+        and not key()
     ):
         warnings.append(
             ClaimTypeLintWarningV1(
@@ -576,6 +582,7 @@ def lint_modelling(predicate: str, value: FieldType | None) -> tuple[ClaimTypeLi
 
 
 __all__ = [
+    "CLAIM_TYPE_LINT_TEXT",
     "ClaimDurationInput",
     "ClaimEvidenceFreshnessInput",
     "ClaimInverseInput",

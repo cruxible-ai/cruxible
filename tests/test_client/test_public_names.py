@@ -15,6 +15,7 @@ from cruxible_client.contracts.public_names import (
     public_name,
     public_name_map,
     stored_contract_name,
+    stored_name,
 )
 
 
@@ -90,3 +91,30 @@ def test_core_taint_labels_are_all_reserved() -> None:
         if name.startswith("TAINT_") and isinstance(value, str)
     }
     assert labels == set(RESERVED_TAINT_LABELS)
+
+
+def test_every_public_spelling_maps_back_to_its_stored_name() -> None:
+    """Walkthrough S8: a printed built-in name resolves to the artifact it names."""
+
+    table = public_name_map()
+    for pair in table.exact:
+        assert stored_name(pair.public) == pair.stored
+        assert stored_name(f"CaptureContract:{pair.public}") == f"CaptureContract:{pair.stored}"
+        assert stored_name(pair.stored) == pair.stored
+    for pair in table.prefixes:
+        assert stored_name(pair.public + "repo") == pair.stored + "repo"
+    for name in ("cruxible.unknown", "acme.contract", "dev.item/a", "CLM-" + "a" * 32):
+        assert stored_name(name) == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Contract:cruxible.foreign-source.probe@1",
+        "Contract:playbill.foreign-source.probe@1",
+        "Document:cruxible.coordinator-self-source-v1",
+        "cruxible.unknown",
+    ],
+)
+def test_a_name_the_map_does_not_own_round_trips_unchanged(name: str) -> None:
+    assert stored_name(public_name(name)) == name

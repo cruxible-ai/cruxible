@@ -394,7 +394,7 @@ REMOVED_NOUNS: Final[Mapping[str, str]] = {
     ),
     "provider-interfaces/": (
         "ProviderInterfaces are removed; a provider build declares typed operations, and "
-        "a Procedure slot names the signature {in, out, effect} it needs."
+        "a Procedure slot names the capability it needs."
     ),
     "source-acquisition-policies/": (
         "SourceAcquisitionPolicies are removed; declare acquisition per capture output "

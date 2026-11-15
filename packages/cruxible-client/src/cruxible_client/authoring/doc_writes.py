@@ -7,15 +7,20 @@ parsing/indexing is cached by revision; nothing inventories instance Claims.
 from __future__ import annotations
 
 import base64
-import re
 import shlex
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cruxible_client._safe_files import read_regular_file
-from cruxible_client.authoring.files import FileCatalogEditError, add_catalog_entry
+from cruxible_client._safe_files import ContainmentError, HeldRoot
+from cruxible_client.authoring.files import (
+    FileCatalogEditError,
+    add_catalog_entry,
+    catalog_file,
+    default_catalog_name,
+)
 from cruxible_client.authoring.page_writes import PageWriteError, replace_page_file
+from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import (
     FileSelector,
     source_content_for_observation,
@@ -43,6 +48,7 @@ from cruxible_client.contracts.write import (
     AboutChange,
     AddChange,
     AppendSection,
+    CataloguedFile,
     Change,
     CreateChange,
     DocEditObservation,
@@ -63,7 +69,13 @@ def _path(workspace: Path, file: str) -> Path:
     if not candidate.is_absolute():
         candidate = workspace / candidate
     resolved = candidate.resolve()
-    if not resolved.is_relative_to(workspace) or any(
+    if not resolved.is_relative_to(workspace) or resolved == workspace:
+        raise DocSectionError(
+            "path_outside_workspace",
+            f"{file} is outside the workspace",
+            repair=f"Name a file inside the workspace ({workspace}), by its path from there",
+        )
+    if any(
         part.casefold() in {".cruxible", ".git"} for part in (*candidate.parts, *resolved.parts)
     ):
         raise DocSectionError(
@@ -82,11 +94,24 @@ def _coordinate(content: bytes) -> WorkingDigestCoordinate:
     )
 
 
-def _read(path: Path) -> bytes | None:
+def _read(held: HeldRoot | None, workspace: Path, path: Path) -> bytes | None:
+    """``path``'s bytes, opened beneath the held workspace descriptor, or None if absent.
+
+    Every parent is walked without following a symbolic link, so a parent
+    swapped for one after ``_path`` checked the name is refused, never read.
+    """
+
+    if held is None:  # no workspace folder yet: nothing in it to read
+        return None
     try:
-        return read_regular_file(path)
+        return held.read(path.relative_to(workspace).as_posix())
     except FileNotFoundError:
         return None
+    except ContainmentError as exc:
+        raise DocSectionError(
+            "protected_path",
+            "Choose a regular file inside the workspace, not one under a symbolic link.",
+        ) from exc
 
 
 def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
@@ -145,6 +170,8 @@ class _File:
     edits: list[SectionEdit] = field(default_factory=list)
     record_indices: list[int] = field(default_factory=list)
     citations: dict[tuple[str, ...], bytes] = field(default_factory=dict)
+    #: Cited, not catalogued and not edited: the write catalogues it once admitted.
+    catalogue: bool = False
 
 
 def _observe_about(
@@ -189,6 +216,67 @@ def _observe_about(
     )
 
 
+def _catalogue_cited(
+    request: WriteRequest, outcome: WriteOutcome, workspace: Path, states: Iterable[_File]
+) -> WriteOutcome:
+    """Catalogue each cited workspace file the catalog did not name, once admitted.
+
+    By the code ``files add`` uses (one locked read-modify-write of the
+    catalog), under the name the write sent, which its citation carries. A name
+    another file took meanwhile is never overwritten and never swapped for a
+    free one (the citation would name the wrong file): the entry is refused and
+    the outcome says written=false with the repair. The same file catalogued
+    under that name by a concurrent write counts as catalogued. A dry run
+    reports the files it would catalogue and writes nothing; a refused write
+    catalogues nothing.
+    """
+
+    cited = [state for state in states if state.catalogue and not state.ops]
+    if not cited:
+        return outcome
+    if outcome.status in ("accepted", "awaiting_approval") and not request.dry_run:
+        written = True
+    elif outcome.status in ("would_accept", "would_await_approval"):
+        written = False
+    else:
+        return outcome
+    catalogued: list[CataloguedFile] = []
+    missed: list[str] = []
+    for state in cited:
+        relative = state.path.relative_to(workspace).as_posix()
+        added = written
+        if written:
+            try:
+                catalog_file(workspace, name=state.source_id, path=state.path)
+            except (FileCatalogEditError, OSError) as exc:
+                taken = isinstance(exc, FileCatalogEditError) and exc.reason == "entry_exists"
+                if taken and _catalogued_as(workspace, state.path, state.source_id):
+                    pass  # a concurrent write catalogued this same file under this name
+                else:
+                    # The write landed; only the catalog entry is missing.
+                    added = False
+                    missed.append(
+                        f"{state.source_id} is catalogued for another file; catalogue "
+                        f"{relative} under another name (cruxible files add NAME "
+                        f"{shlex.quote(relative)}) and re-cite it"
+                        if taken
+                        else f"cruxible files add {state.source_id} {shlex.quote(relative)}"
+                    )
+        catalogued.append(CataloguedFile(file=relative, name=state.source_id, written=added))
+    update: dict[str, object] = {"catalogued": tuple(catalogued)}
+    if missed:
+        update["next"] = "; ".join(filter(None, [outcome.next, *missed]))
+    return outcome.model_copy(update=update)
+
+
+def _catalogued_as(workspace: Path, path: Path, name: str) -> bool:
+    try:
+        entries = workspace_files(workspace).entries_for_path(path)
+    except (ValueError, OSError):
+        return False
+    return any(entry.name == name for entry in entries)
+
+
 def write_workspace(
     request: WriteRequest,
     *,
@@ -207,7 +295,20 @@ def write_workspace(
         for c in request.changes
     ):
         return submit(request)
-    workspace = workspace.expanduser().resolve()
+    root = workspace.expanduser().resolve()
+    if not root.is_dir():
+        return _write_workspace(request, workspace=root, submit=submit, held=None)
+    with HeldRoot(root) as held:
+        return _write_workspace(request, workspace=root, submit=submit, held=held)
+
+
+def _write_workspace(
+    request: WriteRequest,
+    *,
+    workspace: Path,
+    submit: Callable[[WriteRequest], WriteOutcome],
+    held: HeldRoot | None,
+) -> WriteOutcome:
     files: dict[Path, _File] = {}
     records: list[tuple[str, _File, DocEditObservation]] = []
     catalog = None
@@ -216,7 +317,9 @@ def write_workspace(
     ):
         catalog = workspace_files(workspace)
 
-    def load(file: str, *, name: str | None = None, editing: bool = False) -> _File:
+    def load(
+        file: str, *, name: str | None = None, editing: bool = False, citing: bool = False
+    ) -> _File:
         path = _path(workspace, file)
         if path in files:
             return files[path]
@@ -226,30 +329,33 @@ def write_workspace(
                 "catalog_ambiguous", "The file has multiple catalog names; choose one binding."
             )
         entry = matches[0] if matches else None
-        if entry is None and not editing:
+        if entry is None and not editing and not citing:
             raise DocSectionError(
-                "file_uncatalogued", "Catalogue the file before citing its existing sections."
+                "file_uncatalogued",
+                "Catalogue the file before linking its existing sections.",
+                repair="Cite it as evidence in a write first: a cited workspace file is "
+                "catalogued by the write",
             )
-        source_id = (
-            entry.name
-            if entry
-            else name
-            or "doc-"
-            + re.sub(r"[^a-z0-9_.-]+", "-", path.relative_to(workspace).as_posix().lower()).strip(
-                "-."
-            )[:120]
-        )
+        source_id = entry.name if entry else name or default_catalog_name(workspace, path)
         if entry is None and catalog is not None:
             if source_id in catalog._by_name:
                 raise DocSectionError(
-                    "catalog_name_exists", "Choose a distinct name for the new file."
+                    "catalog_name_exists",
+                    f"Another file is already catalogued as {source_id}.",
+                    repair=(
+                        f"Catalogue {file} under another name first (cruxible files add "
+                        f"NAME {shlex.quote(file)}), then cite it"
+                        if citing and not editing
+                        else "Choose a distinct name for the new file"
+                    ),
                 )
         if any(f.source_id == source_id and f.path != path for f in files.values()):
             raise DocSectionError(
                 "catalog_name_exists", "Choose distinct catalog names for the new files."
             )
-        content = _read(path)
+        content = _read(held, workspace, path)
         state = _File(path, source_id, content, content, entry)
+        state.catalogue = entry is None and not editing
         files[path] = state
         return state
 
@@ -318,12 +424,13 @@ def write_workspace(
             if isinstance(change, SetChange | AddChange | CreateChange) and isinstance(
                 evidence, SectionEvidence | FileEvidence
             ):
-                state = load(
-                    evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
-                )
+                cited = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
+                state = load(cited, citing=True)
                 if state.current is None:
                     raise DocSectionError(
-                        "file_missing", "Read or create the Markdown file before citing it."
+                        "file_missing",
+                        f"No file {cited} in the workspace.",
+                        repair="Cite a file that exists, by its path from the workspace root",
                     )
                 selector = FileSelector(state.path, state.source_id, state.current)
                 if isinstance(evidence, SectionEvidence):
@@ -346,9 +453,16 @@ def write_workspace(
                         }
                     )
                 else:
-                    evidence = evidence.model_copy(
-                        update={"observation": selector.anchor(evidence.anchor).observation()}
-                    )
+                    try:
+                        selection = selector.anchor(evidence.anchor)
+                    except SourceSelectionError as exc:
+                        raise DocSectionError(
+                            "anchor_not_unique",
+                            f"{evidence.anchor!r} in {cited}: {exc}",
+                            repair="Quote text that occurs exactly once in the file "
+                            "(a longer phrase, or a whole line)",
+                        ) from exc
+                    evidence = evidence.model_copy(update={"observation": selection.observation()})
                 change = change.model_copy(update={"evidence": evidence})
             changes.append(change)
     except (ValueError, OSError) as exc:
@@ -367,6 +481,7 @@ def write_workspace(
         }
     )
     outcome = submit(observed)
+    outcome = _catalogue_cited(request, outcome, workspace, files.values())
     if not records:
         return outcome
     outcomes = [
@@ -397,7 +512,7 @@ def write_workspace(
                     state.path, expected=state.original, replacement=state.current or b""
                 )
             except PageWriteError:
-                rebase_original = moved = _read(state.path)
+                rebase_original = moved = _read(held, workspace, state.path)
                 for index, (op, previous) in enumerate(zip(state.ops, state.edits, strict=True)):
                     rebased, _, _ = _apply(moved, op)
                     applied[index] = rebased.changed

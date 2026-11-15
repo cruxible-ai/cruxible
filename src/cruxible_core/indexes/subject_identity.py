@@ -966,7 +966,7 @@ def subject_creation_shape(kind: str, key_hint: str = "<value>") -> str:
 def write_create_change_shape(
     kind: str, keys: Sequence[str], *, label: str = "new", minted: bool = False
 ) -> str:
-    """The ``write`` change that creates a Subject of ``kind``, its key parts named.
+    """The ``write`` change that creates a Subject of ``kind``, its key fields named.
 
     The same write names the created Subject as ``{"created": label}``. A minted
     kind's create carries no key; a keyed one names each declared key predicate.
@@ -974,7 +974,8 @@ def write_create_change_shape(
 
     change: dict[str, object] = {"op": "create", "label": label, "subject_kind": kind}
     if not minted:
-        change["key"] = [{"predicate": predicate, "value": "<value>"} for predicate in keys]
+        # Each key field by its name under the kind (the full predicate otherwise).
+        change["key"] = {predicate.removeprefix(kind + "."): "<value>" for predicate in keys}
     return json.dumps(change)
 
 

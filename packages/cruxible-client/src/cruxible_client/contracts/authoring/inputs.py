@@ -428,7 +428,7 @@ class LineInput(_StrictInputModel):
     one exact ``{build, operation}``: ``bindings`` names
     ``provider[/build]#operation`` (or ``provider[/build]``) per slot, and a
     slot left out is fitted (exactly one live operation must serve its
-    signature). A Line runs when run explicitly (`line run`, one manual occurrence),
+    capability). A Line runs when run explicitly (`line run`, one manual occurrence),
     or, once it is enabled (`line enable`), when a Trigger aimed at it fires; a
     Trigger aimed at a Line that is not enabled does nothing. Enabling needs
     governed write even for an observe-only Line. A Line that proposes or
@@ -465,7 +465,8 @@ class LineInput(_StrictInputModel):
     parameters: dict[str, object] = Field(
         default_factory=dict,
         description=(
-            "The Procedure's input record, checked against its input contract at authoring."
+            "The Procedure's params: values over its params defaults, checked against its "
+            "params Contract at authoring."
         ),
     )
     budgets: LineBudgetsInput | None = Field(
@@ -746,7 +747,7 @@ def refuse_unserved_procedure_nodes(
                 raise AuthoringInputError(
                     "cruxible.authoring.call_contract_from_interface",
                     location,
-                    "Call input and output contracts come from its slot's signature.",
+                    "Call input and output contracts come from its slot's capability.",
                     "Remove the Call's contract_in/contract_out and any unused owned Contracts.",
                 )
 

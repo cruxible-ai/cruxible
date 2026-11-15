@@ -12,7 +12,8 @@ prefix, so a CaptureContract an author names ``playbill.x`` reads as itself.
 - :func:`public_name` maps a stored name for display (prose, table cells).
   Typed JSON keeps the stored value.
 - :func:`stored_contract_name` maps a CaptureContract name as typed back to the
-  stored identity, so input accepts either spelling.
+  stored identity, so input accepts either spelling; :func:`stored_name` does
+  the same for every name in the table (reads resolve a printed name).
 - :func:`public_name_map` is the same table as data, served once by
   ``server_info`` so a client applies it instead of copying the rule.
 """
@@ -141,9 +142,47 @@ def public_name(name: str) -> str:
     mapped = _exact_public().get(bare)
     if mapped is not None:
         return qualifier + mapped
+    if qualifier not in _PREFIX_QUALIFIERS:
+        return name
     for prefix in _reserved_prefixes():
         if bare.startswith(prefix) and len(bare) > len(prefix):
             return qualifier + _public_spelling(prefix) + bare[len(prefix) :]
+    return name
+
+
+@cache
+def _exact_stored() -> dict[str, str]:
+    return {public: stored for stored, public in _exact_public().items()}
+
+
+#: The artifact kinds a reserved name can be: reserved identities are Capture
+#: Contracts and Contracts; the per-source prefix names CaptureContracts only.
+_EXACT_QUALIFIERS = frozenset({"", "CaptureContract:", "Contract:"})
+_PREFIX_QUALIFIERS = frozenset({"", "CaptureContract:"})
+
+
+def stored_name(name: str) -> str:
+    """A reserved identity in its public spelling, mapped back to the stored one.
+
+    The inverse of :func:`public_name` over the same table, in the artifact
+    kinds the table covers (CaptureContract and Contract; the per-source prefix
+    in CaptureContracts only), so every name a reader is shown resolves; a
+    stored spelling, and every other name, comes back unchanged. Readers try a
+    name as written first and map it only when nothing has that name.
+    """
+
+    qualifier, bare = _split(name)
+    if qualifier not in _EXACT_QUALIFIERS:
+        return name
+    mapped = _exact_stored().get(bare)
+    if mapped is not None:
+        return qualifier + mapped
+    if qualifier not in _PREFIX_QUALIFIERS:
+        return name
+    for prefix in _reserved_prefixes():
+        public = _public_spelling(prefix)
+        if bare.startswith(public) and len(bare) > len(public):
+            return qualifier + prefix + bare[len(public) :]
     return name
 
 
@@ -190,4 +229,5 @@ __all__ = [
     "public_name",
     "public_name_map",
     "stored_contract_name",
+    "stored_name",
 ]

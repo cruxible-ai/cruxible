@@ -349,6 +349,19 @@ def _render_get(surface: ReadSurface, ref: str) -> str:
     return f"cruxible_get(ref={json.dumps(ref)})"
 
 
+def _sdk_create_repair(kind: str, keys: Sequence[str], named: str) -> str:
+    """How the SDK creates a Subject of ``kind`` in the same write batch."""
+
+    parts = ", ".join(
+        f"{json.dumps(predicate.removeprefix(kind + '.'))}: <value>" for predicate in keys
+    )
+    key = f", key={{{parts}}}" if keys else ""
+    return (
+        f"Create it in this write: new = batch.create({json.dumps(kind)}{key}), and pass new "
+        f"where this change names {named} (or pass a cx.new_subject(...) draft there)"
+    )
+
+
 def _render_commit(surface: ReadSurface, git_oid: str) -> str:
     if surface == "cli":
         return f"Run the same command without --dry-run, adding --at {git_oid}"
@@ -1037,7 +1050,9 @@ class _Planner:
                 "create one from a reference",
                 change=index,
                 repair=(
-                    f"Create it in this write: add the change {shape}"
+                    _sdk_create_repair(kind, declared.keys, f"{kind}/{subject_id}")
+                    if self.request.surface == "sdk"
+                    else f"Create it in this write: add the change {shape}"
                     + ("" if declared.minted else " with each key value filled in")
                     + ', and name it {"created": "new"} where this change names '
                     f"{kind}/{subject_id}"
@@ -1107,8 +1122,7 @@ class _Planner:
                 change=index,
                 candidates=declared.keys,
                 repair=(
-                    "Give key: the value for a one-key kind, or each key part as "
-                    '{"predicate", "value"}'
+                    "Give key: the value for a one-key kind, or each key field as {field: value}"
                 ),
                 field_path=path,
             )
@@ -1131,7 +1145,7 @@ class _Planner:
                 f"({', '.join(declared.keys)}); a bare key value names only a one-key kind",
                 change=index,
                 candidates=declared.keys,
-                repair='Give each key part as {"predicate", "value"}',
+                repair="Give each key field as {field: value}",
                 field_path=path,
             )
         else:
@@ -3693,10 +3707,17 @@ class _Planner:
                 touched[claim] = index
             if isinstance(change, SetChange) and planned.slot is not None:
                 if planned.slot in slots:
+                    subject = planned.outcome["subject"]
+                    if subject is None and isinstance(change.subject, CreatedSubject):
+                        # Not named until lowering: the create it names, by label and kind.
+                        bound = self.plan.labels.get(change.subject.created)
+                        subject = f"{{created: {change.subject.created}}}" + (
+                            f" ({bound.kind})" if bound is not None else ""
+                        )
                     raise _refuse(
                         "cruxible.write.slot_set_twice",
                         f"changes {slots[planned.slot]} and {index} both set "
-                        f"{planned.outcome['subject']} {planned.outcome['field']}",
+                        f"{subject} {planned.outcome['field']}",
                         change=index,
                         repair="Keep one set per field in a write",
                     )

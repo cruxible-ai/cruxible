@@ -532,13 +532,31 @@ def render_vocabulary_file(accepted: AcceptedVocabulary, *, instance_id: str) ->
         ),
         "kinds:" if by_kind else "kinds: {}",
     ]
+    # Every field's entry first, so one refusal names every definition that
+    # cannot be written faithfully, not only the first.
+    kind_entries = {
+        kind: _subject_kind_entry(kind, declared, set(by_kind[kind]))
+        for kind, declared in accepted.subject_kinds.items()
+    }
+    entries: dict[str, dict[str, object]] = {}
+    unwritable: list[str] = []
+    for claim_type in accepted.claim_types.values():
+        kind, _, name = claim_type.predicate.rpartition(".")
+        key_names = kind_entries[kind][1] if kind in kind_entries else ()
+        try:
+            entries[claim_type.predicate] = _field_entry(claim_type, key=name in key_names)
+        except VocabularyExportRefused:
+            unwritable.append(f"ClaimType:{claim_type.predicate}")
+    if unwritable:
+        names = sorted(unwritable, key=lambda item: item.encode("utf-8"))
+        raise VocabularyExportRefused(
+            f"{len(names)} definition(s) do not lower back from their own input form, so export "
+            f"would change what they mean: {', '.join(names)}; read each with `cruxible get "
+            "<ref> --detail proof`"
+        )
     for kind in sorted(by_kind, key=lambda item: item.encode("utf-8")):
         fields = by_kind[kind]
-        declared = accepted.subject_kinds.get(kind)
-        props: dict[str, object] = {}
-        key_fields: tuple[str, ...] = ()
-        if declared is not None:
-            props, key_fields = _subject_kind_entry(kind, declared, set(fields))
+        props, key_fields = kind_entries.get(kind, ({}, ()))
         kit = accepted.kits.get(f"SubjectKind:{kind}")
         if kit is not None:
             lines.append(f"  # kit: {kit}")
@@ -552,7 +570,7 @@ def render_vocabulary_file(accepted: AcceptedVocabulary, *, instance_id: str) ->
         ordered = [*key_fields, *sorted(set(fields) - set(key_fields))]
         for name in ordered:
             claim_type = fields[name]
-            entry = _field_entry(claim_type, key=name in key_fields)
+            entry = entries[claim_type.predicate]
             kit = accepted.kits.get(f"ClaimType:{claim_type.predicate}")
             if kit is not None:
                 lines.append(f"      # kit: {kit}")
@@ -1348,18 +1366,94 @@ def plan_vocabulary(cx: Cruxible, path: str | Path | None = None) -> VocabularyP
     return _plan(cx, path).plan
 
 
+#: Preflight refusals that mean a definition the file edits moved since its export.
+_MOVED_CODES = frozenset(
+    {
+        "cruxible.authoring.claim_type_succession_invalid",
+        "cruxible.authoring.subject_kind_predecessor_moved",
+    }
+)
+
+VocabularySurface = Literal["sdk", "cli", "mcp"]
+
+
+def _moved_since_export(cx: Cruxible, planned: _PlannedFile) -> tuple[str, ...]:
+    """The definitions the file replaces or retires whose head differs from its export.
+
+    Read only on a refused apply: one get per edited definition, at the head.
+    """
+
+    moved: list[str] = []
+    for entry in planned.plan.changes:
+        if entry.action not in ("replace", "retire"):
+            continue
+        kind, _, name = entry.definition.partition(":")
+        exported_type = planned.accepted.claim_types.get(name)
+        exported_kind = planned.accepted.subject_kinds.get(name)
+        try:
+            batch = cx._client.get_batch(
+                cx._instance_id,
+                request=GetBatchRequest(
+                    refs=(entry.definition,),
+                    evaluation_time=datetime.fromisoformat(cx._evaluation_time()),
+                ),
+            )
+            envelope = (batch.results[0].proof or {}).get("envelope")
+            if kind == "ClaimType":
+                head_digest = claim_type_digest(ClaimType.model_validate(envelope)).tagged
+                was = None if exported_type is None else claim_type_digest(exported_type).tagged
+            else:
+                head_digest = subject_kind_digest(SubjectKind.model_validate(envelope)).tagged
+                was = None if exported_kind is None else subject_kind_digest(exported_kind).tagged
+        except (CoreError, ValidationError, ValueError):
+            moved.append(entry.definition)  # gone from the head
+            continue
+        if head_digest != was:
+            moved.append(entry.definition)
+    return tuple(moved)
+
+
+def _moved_repair(surface: VocabularySurface) -> str:
+    """Re-export over the moved definitions, keeping the edit, in the surface's own calls."""
+
+    if surface == "cli":
+        export, plan, apply = (
+            "cruxible vocabulary export --force",
+            "cruxible vocabulary plan",
+            "cruxible vocabulary apply",
+        )
+    elif surface == "mcp":
+        export, plan, apply = (
+            "cruxible_vocabulary_export(force=true)",
+            "cruxible_vocabulary_plan()",
+            "cruxible_vocabulary_apply()",
+        )
+    else:
+        export, plan, apply = (
+            "cx.vocabulary.export(force=True)",
+            "cx.vocabulary.plan()",
+            "cx.vocabulary.apply()",
+        )
+    return (
+        f"Save your edits to {VOCABULARY_FILE_PATH} elsewhere, run {export} to read the "
+        f"definitions as they are now, redo your edits, check them with {plan}, then {apply}"
+    )
+
+
 def apply_vocabulary(
     cx: Cruxible,
     path: str | Path | None = None,
     *,
     rationale: str | None = None,
     accept: Literal["if_allowed", "never"] = "if_allowed",
+    surface: VocabularySurface = "sdk",
 ) -> VocabularyApplyResult:
     """Submit the file's changes as one ordinary change set, at the export's coordinate.
 
     Each edited field's successor, and each edited SubjectKind, pins the digest
     the export read, so a definition someone changed since then refuses at
-    preflight, naming its member.
+    preflight; the result then names each such definition (``moved``) and
+    ``next`` says how to redo the edit over the current definitions.
     """
 
     planned = _plan(cx, path, rationale=rationale, preview=False)
@@ -1384,7 +1478,18 @@ def apply_vocabulary(
     )
     if intent.refused:
         assert preflight is not None
-        return VocabularyApplyResult(status="refused", plan=plan, frontier=preflight.frontier)
+        codes = {
+            item.code
+            for item in (() if preflight.frontier is None else preflight.frontier.diagnostics)
+        }
+        moved = _moved_since_export(cx, planned) if codes & _MOVED_CODES else ()
+        return VocabularyApplyResult(
+            status="refused",
+            plan=plan,
+            frontier=preflight.frontier,
+            moved=moved,
+            next=_moved_repair(surface) if moved else None,
+        )
     outcome = intent.outcome
     status: Literal["landed", "proposed"] = (
         "landed" if outcome is not None and outcome.status == "landed" else "proposed"
@@ -1512,11 +1617,16 @@ def vocabulary_apply_for(
     path: str | Path | None = None,
     rationale: str | None = None,
     accept: Literal["if_allowed", "never"] = "if_allowed",
+    surface: VocabularySurface = "cli",
 ) -> VocabularyApplyResult:
     """``apply`` over an open client: the CLI's and MCP server's entry point."""
 
     return apply_vocabulary(
-        _connected(client, instance_id, workspace), path, rationale=rationale, accept=accept
+        _connected(client, instance_id, workspace),
+        path,
+        rationale=rationale,
+        accept=accept,
+        surface=surface,
     )
 
 

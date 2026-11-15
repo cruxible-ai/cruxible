@@ -261,27 +261,87 @@ def test_typed_section_names_its_heading_once_and_leaves_a_blank_line(playbill_h
 
 
 def test_sdk_catalogues_an_existing_file_and_cites_it(playbill_http, tmp_path):
-    """F23: a file written outside Cruxible is catalogued from the SDK, then cited."""
+    """F23: a file catalogued from the SDK is cited under its name."""
 
     cx, _, workspace = _context(playbill_http, tmp_path)
     (workspace / "notes").mkdir()
     (workspace / "notes" / "roadmap.md").write_text("# Roadmap\n\n## wi-1\n\nReady.\n")
-    w = cx.world()
-    with pytest.raises(WriteRefusalError, match="file_uncatalogued"):
-        w.project.work_item["wi-1"].set(
+    edit = cx.files.add("roadmap-notes", "notes/roadmap.md")
+    assert (edit.status, edit.entry.locator) == ("added", "notes/roadmap.md")
+    result = (
+        cx.world()
+        .project.work_item["wi-1"]
+        .set(
             status="ready",
             because="Ready",
             evidence=SectionEvidence(file="notes/roadmap.md", section=("Roadmap", "wi-1")),
         )
-    edit = cx.files.add("roadmap-notes", "notes/roadmap.md")
-    assert (edit.status, edit.entry.locator) == ("added", "notes/roadmap.md")
-    result = w.project.work_item["wi-1"].set(
-        status="ready",
-        because="Ready",
-        evidence=SectionEvidence(file="notes/roadmap.md", section=("Roadmap", "wi-1")),
     )
     # Cited as file evidence of the catalogued source (its policy decides the verdict).
     assert result.status == "accepted" and result.changes[0].claim, result
+    assert result.catalogued == ()
+
+
+def test_a_write_catalogues_the_workspace_file_it_cites(playbill_http, tmp_path):
+    """Walkthrough S14: citing an uncatalogued workspace file catalogues it, as files add would."""
+
+    from cruxible_client.contracts.write import CataloguedFile, FileEvidence
+
+    cx, _, workspace = _context(playbill_http, tmp_path)
+    (workspace / "app").mkdir()
+    (workspace / "app" / "forms.py").write_text("def handler(request):\n    return None\n")
+    catalog = workspace / ".cruxible/files.yaml"
+
+    def cite(anchor="def handler", path="app/forms.py", **kwargs):
+        return (
+            cx.changes(because="Read the handler")
+            .set(f"{KIND}/wi-1", "status", "ready", evidence=FileEvidence(file=f"{path}#{anchor}"))
+            .write(**kwargs)
+        )
+
+    # A dry run says what it would catalogue and writes nothing.
+    preview = cite(dry_run=True)
+    assert preview.catalogued == (
+        CataloguedFile(file="app/forms.py", name="doc-app-forms.py", written=False),
+    )
+    assert not catalog.exists()
+    assert "would catalogue as doc-app-forms.py" in str(preview)
+    landed = cite()
+    assert landed.status == "accepted", landed
+    assert landed.catalogued == (
+        CataloguedFile(file="app/forms.py", name="doc-app-forms.py", written=True),
+    )
+    entries = yaml.safe_load(catalog.read_text())["entries"]
+    assert [(item["name"], item["locator"]) for item in entries] == [
+        ("doc-app-forms.py", "app/forms.py")
+    ]
+    # Catalogued now: a later citation names nothing new.
+    assert cite(anchor="return None").catalogued == ()
+    # The one-change verb goes through the same workspace write.
+    (workspace / "app" / "views.py").write_text("def index(request):\n    return None\n")
+    single = cx.set(
+        f"{KIND}/wi-2",
+        "status",
+        "ready",
+        because="Read the view",
+        evidence=FileEvidence(file="app/views.py#def index"),
+    )
+    assert single.catalogued == (
+        CataloguedFile(file="app/views.py", name="doc-app-views.py", written=True),
+    )
+
+    # Still refused, each with its repair: a missing file, a path outside the
+    # workspace, an anchor that is not found exactly once.
+    for path, anchor, code in (
+        ("app/gone.py", "x", "cruxible.doc.file_missing"),
+        ("../outside.py", "x", "cruxible.doc.path_outside_workspace"),
+        ("app/forms.py", "e", "cruxible.doc.anchor_not_unique"),
+        ("app/forms.py", "absent text", "cruxible.doc.anchor_not_unique"),
+    ):
+        with pytest.raises(WriteRefusalError) as caught:
+            cite(anchor=anchor, path=path)
+        assert caught.value.error_code == code, (path, anchor)
+        assert caught.value.repair_line, (path, anchor)
 
 
 def _own_words_size(cx, claim_id):
