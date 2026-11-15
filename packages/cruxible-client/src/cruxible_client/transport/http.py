@@ -886,12 +886,14 @@ class CruxibleClient:
         evaluation_time: str | None = None,
         surface: contracts.OrientSurface = "sdk",
         caller_tools: Sequence[str] | None = None,
+        vocabulary_at: str | None = None,
     ) -> contracts.OrientResult:
         """The orient map: kinds, artifacts, you, attention and next calls for ``surface``.
 
         ``at`` is an accepted coordinate or one accepted generation's Git OID, or a
         unique prefix of it of at least 12 hex characters.
         ``kind`` reads one kind in full; ``section`` pages one artifact family.
+        ``vocabulary_at`` is the Git OID a vocabulary file was exported at.
         """
         params: dict[str, Any] = (
             {"at": at} if isinstance(at, str) else dict(self._coordinate_params(at))
@@ -906,6 +908,7 @@ class CruxibleClient:
             ("limit", limit),
             ("cursor", cursor),
             ("evaluation_time", evaluation_time),
+            ("vocabulary_at", vocabulary_at),
         ):
             if value is not None:
                 params[name] = value

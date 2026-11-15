@@ -228,3 +228,24 @@ def test_a_section_built_from_its_heading_takes_the_depth_its_place_needs() -> N
     assert heading_text("slug", "", level=2) == "## slug\n"
     with pytest.raises(DocSectionError):
         heading_level(parse_sections(b"###### Deep\n", file="notes.md"), under=("Deep",))
+
+
+@pytest.mark.parametrize("content", [None, b"# Elsewhere\nbody\n"])
+def test_appending_under_a_missing_heading_names_the_repair(content: bytes | None) -> None:
+    """Walkthrough W3: every section refusal names its fix; nothing is written."""
+
+    with pytest.raises(DocSectionError) as refused:
+        append_section(content, under=("Roadmap notes",), text="## Slice\nbody\n")
+    assert refused.value.code == "cruxible.doc.section_not_found"
+    assert refused.value.repair is not None
+    assert "Append the heading 'Roadmap notes' first (at the root)" in refused.value.repair
+    assert "leave under= out" in refused.value.repair
+
+
+def test_a_missing_section_lists_the_headings_the_file_has() -> None:
+    with pytest.raises(DocSectionError) as refused:
+        parse_sections(b"# One\n## Two\n").section(("Three",))
+    assert (
+        refused.value.repair
+        == "Name the section by its full heading path; this file's headings: One; One > Two."
+    )

@@ -293,6 +293,23 @@ block: ProjectionBlocks
 
 Client-only declaration stamps; prose remains wholly agent-owned.
 
+<a id="api-cruxible-vocabulary"></a>
+
+### `Cruxible.vocabulary`
+
+[Source](src/cruxible_client/authoring/vocabulary_file.py)
+
+```text
+vocabulary: Vocabulary
+vocabulary.export(*, force=False) -> VocabularyExportResult
+vocabulary.plan(path=None) -> VocabularyPlan
+vocabulary.apply(path=None, *, rationale=None, accept="if_allowed") -> VocabularyApplyResult
+```
+
+The workspace's vocabulary file, `.cruxible/vocabulary.yaml`: every kind and field in one YAML input. `export()` writes the accepted vocabulary (shorthand where it round-trips, the full ClaimType input form otherwise, each entry checked by lowering it back); `plan()` reads at the export the file names and lists what it adds, replaces and retires, the Claims an enum mapping moves, and the daemon's write-free preflight; `apply()` submits the same members as one ordinary change set.
+
+**Conditions and effects:** a kind or field the file leaves out is untouched; only `retired: true` retires. An edited field pins the digest its export read, so one changed since refuses at preflight. Export replaces an existing file only when nothing in it would be lost (it parses and states no change accepted state lacks); otherwise it refuses, naming the pending changes, unless `force=True`. Git is not consulted. The same request gives the same result as `cruxible vocabulary` and `cruxible_vocabulary_*`. `print()` on each result shows what the CLI prints; `repr()` is the full model.
+
 <a id="api-cruxible-enter"></a>
 
 ### `Cruxible.__enter__`
@@ -1254,10 +1271,10 @@ Signs that the caller examined the exact Claim and appends it once. With neither
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-next(*, expiring_within: Duration) -> NextPage
+next(*, expiring_within: Duration | None = None) -> NextPage
 ```
 
-Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon.
+Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon (`expiring_within` defaults to seven days, as `cruxible next`).
 
 **Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. Each row's `repair.command` is the SDK call that performs it (for example `cx.line('hourly').enable()`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
 
@@ -7910,7 +7927,7 @@ definitions singular.
 
 **`contracts.floor`** — [FloorEntry](src/cruxible_client/contracts/floor.py), [FloorManifest](src/cruxible_client/contracts/floor.py), [FloorHead](src/cruxible_client/contracts/floor.py), [FloorDeltaFile](src/cruxible_client/contracts/floor.py), [FloorDelta](src/cruxible_client/contracts/floor.py), [FloorApplyResult](src/cruxible_client/contracts/floor.py).
 
-**`contracts.text_display`** — the text `str()` and the CLI print for orient results, coordinates, write outcomes, landings and intents: [render_orient](src/cruxible_client/contracts/text_display.py), [write_outcome_lines](src/cruxible_client/contracts/text_display.py), [landing_lines](src/cruxible_client/contracts/text_display.py), [render_intent](src/cruxible_client/contracts/text_display.py).
+**`contracts.text_display`** — the text `str()` and the CLI print for orient results, coordinates, write outcomes, landings, intents and vocabulary-file results: [render_orient](src/cruxible_client/contracts/text_display.py), [write_outcome_lines](src/cruxible_client/contracts/text_display.py), [landing_lines](src/cruxible_client/contracts/text_display.py), [render_intent](src/cruxible_client/contracts/text_display.py), [vocabulary_plan_lines](src/cruxible_client/contracts/text_display.py), [render_vocabulary_export](src/cruxible_client/contracts/text_display.py), [render_vocabulary_apply](src/cruxible_client/contracts/text_display.py). A query page prints the table `cruxible query` prints ([render_query_table](src/cruxible_client/authoring/compact_query.py)).
 
 **`contracts.get_display`** — [GetValueDisplay](src/cruxible_client/contracts/get_display.py).
 

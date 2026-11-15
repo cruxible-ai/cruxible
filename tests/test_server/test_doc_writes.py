@@ -81,6 +81,8 @@ def test_replace_cas_dry_run_docs_only_and_document_followup(playbill_http, tmp_
         .write()
     )
     assert replaced.docs[0].written and (workspace / "notes.md").read_text() == "# Decision\nnew\n"
+    # Walkthrough W12: a replaced section may be cited, so the write claims nothing.
+    assert replaced.hint is None
     source = created.docs[0].source_id
     history = cx.get(f"file:{source}", detail="history").value
     assert history.revisions[0].digest == digest

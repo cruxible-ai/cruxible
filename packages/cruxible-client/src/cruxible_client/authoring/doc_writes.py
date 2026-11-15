@@ -101,7 +101,11 @@ def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
         result = append_section(content, under=op.under, text=text, file=op.file)
     else:
         if content is None:
-            raise DocSectionError("section_not_found", "Replace requires an existing file.")
+            raise DocSectionError(
+                "section_not_found",
+                "Replace requires an existing file.",
+                repair="Append the section instead (op append at the root): it creates the file.",
+            )
         if op.heading is not None:
             level = heading_level(document, under=op.section, replaces=True)
             text = heading_text(op.heading, op.text, level=level)

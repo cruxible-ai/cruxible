@@ -62,6 +62,11 @@ from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
+from cruxible_client.authoring.vocabulary_file import (
+    vocabulary_apply_for,
+    vocabulary_export_for,
+    vocabulary_plan_for,
+)
 from cruxible_client.authoring.workspace import (
     WorkspaceAttachmentError,
     daemon_floor_delivery,
@@ -70,6 +75,8 @@ from cruxible_client.authoring.workspace import (
     observe_projection_coverage,
     validate_workspace_config_write,
     workspace_floor_freshness,
+    workspace_vocabulary_at,
+    workspace_vocabulary_freshness,
     write_workspace_config,
     write_workspace_floor,
     write_workspace_floor_delta,
@@ -10157,6 +10164,8 @@ def orient(
     --kind prints one kind's every field, and --json carries everything.
     """
 
+    workspace_root = _local_workspace_root(fallback_to_start=False).workspace_root
+    vocabulary_at = None if workspace_root is None else workspace_vocabulary_at(workspace_root)
     result = _server_call(
         lambda client, instance_id: client.orient(
             instance_id,
@@ -10167,12 +10176,14 @@ def orient(
             at=at_oid,
             evaluation_time=evaluation_time,
             surface="cli",
+            vocabulary_at=vocabulary_at,
         ),
         command_name="cruxible orient",
     )
-    workspace_root = _local_workspace_root(fallback_to_start=False).workspace_root
     if workspace_root is not None:
-        result = workspace_floor_freshness(workspace_root, result)
+        result = workspace_vocabulary_freshness(
+            workspace_root, workspace_floor_freshness(workspace_root, result)
+        )
     rendered = result.model_dump(mode="json")
     if output_json:
         _emit_json(rendered)
@@ -10216,6 +10227,108 @@ def world_stub(out_path: str | None) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered, encoding="utf-8")
     click.echo(f"Wrote {target}")
+
+
+@playbill_group.group("vocabulary")
+def vocabulary_group() -> None:
+    """The vocabulary file: every kind and field in .cruxible/vocabulary.yaml.
+
+    `export` writes it from accepted state; edit it, `plan` shows what would
+    change, `apply` submits that as one change set. A kind or field left out is
+    untouched; only `retired: true` retires.
+    """
+
+
+def _vocabulary_workspace(command_name: str) -> Path:
+    resolution = _local_workspace_root(required=command_name)
+    _emit_git_workspace_note(resolution)
+    assert resolution.workspace_root is not None
+    return Path(resolution.workspace_root)
+
+
+def _vocabulary_path(file: str | None) -> Path | None:
+    """A FILE argument as the shell meant it: relative to the current directory."""
+
+    return None if file is None else Path(file).expanduser().resolve()
+
+
+@vocabulary_group.command("export")
+@click.option("--force", is_flag=True, help="Replace a file holding changes not in accepted state.")
+@json_option
+@handle_errors
+def export_vocabulary(force: bool, output_json: bool) -> None:
+    """Write the accepted vocabulary to .cruxible/vocabulary.yaml.
+
+    Shorthand where it says the same thing, the full ClaimType input form
+    otherwise; every entry is checked by lowering it back. The header records the
+    accepted coordinate it was read at, which plan and apply read against.
+    """
+
+    workspace = _vocabulary_workspace("cruxible vocabulary export")
+    result = _server_call(
+        lambda client, instance_id: vocabulary_export_for(
+            client, instance_id, workspace=workspace, force=force
+        ),
+        command_name="cruxible vocabulary export",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(str(result))
+
+
+@vocabulary_group.command("plan")
+@click.argument("file", required=False)
+@json_option
+@handle_errors
+def plan_vocabulary(file: str | None, output_json: bool) -> None:
+    """Show what applying the vocabulary file would add, replace and retire.
+
+    Reads at the export the file names; writes nothing. Claims an enum mapping
+    moves are listed first; definitions the file leaves out are listed as left
+    as they are.
+    """
+
+    workspace = _vocabulary_workspace("cruxible vocabulary plan")
+    plan = _server_call(
+        lambda client, instance_id: vocabulary_plan_for(
+            client, instance_id, workspace=workspace, path=_vocabulary_path(file)
+        ),
+        command_name="cruxible vocabulary plan",
+    )
+    if output_json:
+        _emit_json(plan.model_dump(mode="json"))
+        return
+    click.echo(str(plan))
+
+
+@vocabulary_group.command("apply")
+@click.argument("file", required=False)
+@click.option("--rationale", default=None, help="Why the vocabulary changes.")
+@click.option("--no-accept", is_flag=True, help="Keep the proposal instead of landing it.")
+@json_option
+@handle_errors
+def apply_vocabulary(
+    file: str | None, rationale: str | None, no_accept: bool, output_json: bool
+) -> None:
+    """Submit the vocabulary file's changes as one change set; lands when policy allows."""
+
+    workspace = _vocabulary_workspace("cruxible vocabulary apply")
+    result = _server_call(
+        lambda client, instance_id: vocabulary_apply_for(
+            client,
+            instance_id,
+            workspace=workspace,
+            path=_vocabulary_path(file),
+            rationale=rationale,
+            accept="never" if no_accept else "if_allowed",
+        ),
+        command_name="cruxible vocabulary apply",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(str(result))
 
 
 @playbill_group.group("floor")

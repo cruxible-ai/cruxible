@@ -561,6 +561,13 @@ class SubjectKindInput(_StrictInputModel):
     )
     minted: bool = Field(default=False, description="Core mints opaque ids; no keys.")
     retire: bool = False
+    predecessor_digest: str | None = Field(
+        default=None,
+        description=(
+            "The digest of the accepted SubjectKind this succeeds, as you read it; the change "
+            "refuses if the accepted one has moved since. Omit for a new kind."
+        ),
+    )
 
 
 class ContractFieldInput(_StrictInputModel):

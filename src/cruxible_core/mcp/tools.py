@@ -70,6 +70,11 @@ from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.vocabulary_file import (
+    VocabularyApplyResult,
+    VocabularyExportResult,
+    VocabularyPlan,
+)
 from cruxible_client.contracts.write import (
     _EXPECT_DESCRIPTION,
     CAPTURE_DIGEST_PATTERN,
@@ -2200,6 +2205,52 @@ def register_tools(
             mode=mode,
             force=force,
             include=tuple(include or ()),
+        )
+
+    @_tool
+    def cruxible_vocabulary_export(
+        instance_id: InstanceId = None,
+        *,
+        force: Annotated[
+            bool, Field(description="Replace a file holding changes not in accepted state.")
+        ] = False,
+    ) -> VocabularyExportResult:
+        """Write the accepted vocabulary to .cruxible/vocabulary.yaml in the MCP workspace."""
+        return handlers.handle_playbill_vocabulary_export(
+            require_instance_id(instance_id), force=force
+        )
+
+    @_tool
+    def cruxible_vocabulary_plan(
+        instance_id: InstanceId = None,
+        *,
+        file: Annotated[
+            str | None,
+            Field(description="Workspace-relative file; default .cruxible/vocabulary.yaml."),
+        ] = None,
+    ) -> VocabularyPlan:
+        """What applying the vocabulary file would change, against the export it names."""
+        return handlers.handle_playbill_vocabulary_plan(require_instance_id(instance_id), file=file)
+
+    @_tool
+    def cruxible_vocabulary_apply(
+        instance_id: InstanceId = None,
+        *,
+        file: Annotated[
+            str | None,
+            Field(description="Workspace-relative file; default .cruxible/vocabulary.yaml."),
+        ] = None,
+        rationale: Annotated[
+            str | None, Field(description="Why the vocabulary changes; the change set's subject.")
+        ] = None,
+        accept: Annotated[
+            AuthoringAccept,
+            Field(description="never keeps the proposal instead of landing it."),
+        ] = "if_allowed",
+    ) -> VocabularyApplyResult:
+        """Submit the vocabulary file's changes as one change set; lands when policy allows."""
+        return handlers.handle_playbill_vocabulary_apply(
+            require_instance_id(instance_id), file=file, rationale=rationale, accept=accept
         )
 
     return registered

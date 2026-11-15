@@ -107,6 +107,7 @@ from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_client.contracts.validation_messages import validation_summary
+from cruxible_client.contracts.workspace_layout import VOCABULARY_FILE_PATH
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.compiler.compiler import compiler_revision_label, current_compiler_coordinate
 from cruxible_core.consumers.protocol import ConsumerHealth
@@ -367,6 +368,16 @@ class NextMissingBinding(_StrictNextModel):
     locator: str = Field(min_length=1, max_length=4096)
 
 
+class NextVocabularyFileObservation(_StrictNextModel):
+    """The workspace's vocabulary file: the generation its ``based_on`` header names.
+
+    ``git_oid`` is None when the file exists but its header cannot be read.
+    """
+
+    tag: Literal["playbill-next-vocabulary-file-v1"] = "playbill-next-vocabulary-file-v1"
+    git_oid: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+
+
 class NextWorkspaceObservation(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
@@ -380,6 +391,10 @@ class NextWorkspaceObservation(_StrictNextModel):
     projection_coverage: ProjectionCoverageObservation | None = None
     # Catalog entries whose bound workspace file is missing; each is a repair row.
     missing_bindings: tuple[NextMissingBinding, ...] = ()
+    # The vocabulary file's export baseline; absent when the workspace has none.
+    vocabulary_file: NextVocabularyFileObservation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("missing_bindings")
     @classmethod
@@ -857,6 +872,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.inbox.list": "inbox list",
     "cruxible.prediction.settle": "prediction settle",
     "cruxible.kit.add": "kit add",
+    "cruxible.vocabulary.export": "vocabulary export",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -948,13 +964,14 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.inbox.list": "cruxible_inbox_list",
     "cruxible.prediction.settle": "cruxible_prediction_settle",
     "cruxible.kit.add": "cruxible_kit_add",
+    "cruxible.vocabulary.export": "cruxible_vocabulary_export",
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
 #: Repairs whose served door writes nothing and so never meets the principal
 #: boundary; every other served repair is refused to a caller that cannot author.
 _AUTHORING_FREE_REPAIRS = frozenset(
-    {"cruxible.floor.export", "cruxible.get", "cruxible.inbox.list"}
+    {"cruxible.floor.export", "cruxible.get", "cruxible.inbox.list", "cruxible.vocabulary.export"}
 )
 
 
@@ -1413,6 +1430,10 @@ def _mcp_repair_call(
         return _mcp_call("cruxible_block_detach", files=_repair_paths(values))
     if operation == "cruxible.floor.export":
         return _mcp_call("cruxible_floor_export", mode="write")
+    if operation == "cruxible.vocabulary.export":
+        if values.get("force") is True:
+            return _mcp_call("cruxible_vocabulary_export", force=True)
+        return _mcp_call("cruxible_vocabulary_export")
     if operation == "cruxible.files.propose" and (source := text("source_id")):
         return _mcp_call(
             "cruxible_files_propose", file=source, proposal_name=_revision_name(source)
@@ -1493,6 +1514,12 @@ def _sdk_repair_call(
 
     if operation == "cruxible.line.enable" and (line := text("line")):
         return _sdk_call("cx.line", line) + ".enable()"
+    if operation == "cruxible.vocabulary.export":
+        return (
+            _sdk_call("cx.vocabulary.export", force=True)
+            if values.get("force") is True
+            else ("cx.vocabulary.export()")
+        )
     if operation == "cruxible.line.evaluate" and (line := text("line")):
         since, until = text("since"), text("until")
         if since is None or until is None:
@@ -1645,6 +1672,11 @@ def _repair_command(
         # No operands: the command targets the compiler the daemon runs, which
         # is the one this repair names in its facet's detail.
         pass
+    elif operation == "cruxible.vocabulary.export":
+        # It writes the workspace's own vocabulary file; --force replaces a file
+        # whose header cannot establish what it meant.
+        if values.get("force") is True:
+            parts.append("--force")
     elif operation == "cruxible.line.evaluate":
         line, since, until = values.get("line"), values.get("since"), values.get("until")
         if not all(isinstance(value, str) and value for value in (line, since, until)):
@@ -4656,6 +4688,68 @@ def _citation_unavailable_item(item: _UnavailableCitation) -> PlaybillNextItemV1
     )
 
 
+def _vocabulary_file_item(
+    instance: PlaybillInstance,
+    observed: NextVocabularyFileObservation,
+    *,
+    coordinate: AcceptedCoordinate,
+) -> PlaybillNextItemV1 | None:
+    """A vocabulary file behind accepted state, or naming an export this history lacks.
+
+    Unlike a stale floor (status only), a stale vocabulary file is work: it is an
+    input someone edits, so re-exporting or merging needs a person or an agent.
+    The check costs the definitions changed since the export, never the instance.
+    """
+
+    from cruxible_core.service.discovery.vocabulary_drift import vocabulary_file_drift
+
+    drift = vocabulary_file_drift(instance, baseline=observed.git_oid, coordinate=coordinate)
+    if drift.state == "current":
+        return None
+    repair = PlaybillNextRepairV1(
+        operation="cruxible.vocabulary.export",
+        target=VOCABULARY_FILE_PATH,
+        required_change="export_the_vocabulary_then_merge_local_edits",
+        arguments={},
+    )
+    if drift.state == "invalid":
+        # Export keeps a file whose header cannot establish what it meant, so
+        # the repair that works is the forced one (or restoring the header).
+        repair = repair.model_copy(
+            update={
+                "required_change": "restore_the_header_or_replace_the_file_with_accepted_state",
+                "arguments": {"force": True},
+            }
+        )
+        return _item(
+            severity="repair",
+            reason="vocabulary_file_baseline_invalid",
+            subject_identity=VOCABULARY_FILE_PATH,
+            detail={
+                "baseline": drift.at,
+                "cause": drift.reason,
+                "message": (
+                    "the vocabulary file's header cannot be read"
+                    if drift.reason == "unreadable"
+                    else "the vocabulary file names an export this instance does not hold"
+                ),
+            },
+            repair=repair,
+        )
+    return _item(
+        severity="warning",
+        reason="vocabulary_file_behind",
+        subject_identity=VOCABULARY_FILE_PATH,
+        detail={
+            "baseline": drift.at,
+            "definitions_behind": drift.behind,
+            "changed": list(drift.changed),
+            "message": f"vocabulary file behind by {drift.behind} definition(s)",
+        },
+        repair=repair,
+    )
+
+
 def _workspace_items(
     instance: PlaybillInstance,
     *,
@@ -4724,6 +4818,12 @@ def _workspace_items(
                     ),
                 )
             )
+    if observation.vocabulary_file is not None:
+        vocabulary_item = _vocabulary_file_item(
+            instance, observation.vocabulary_file, coordinate=coordinate
+        )
+        if vocabulary_item is not None:
+            items.append(vocabulary_item)
     if observation.drift_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
         requested_ids = {drift.citation_id for drift in observation.drift_observations}

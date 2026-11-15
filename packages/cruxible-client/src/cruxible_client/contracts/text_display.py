@@ -18,6 +18,11 @@ from cruxible_client.contracts.public_names import public_name as _public_name
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.authoring_landing import AuthoringLanded, AuthoringProposed
+    from cruxible_client.contracts.vocabulary_file import (
+        VocabularyApplyResult,
+        VocabularyExportResult,
+        VocabularyPlan,
+    )
     from cruxible_client.contracts.write import ApprovalNeeded, WriteOutcome
 
 #: How many hex digits of a Git OID name a generation in text, as ``World`` prints it.
@@ -109,6 +114,29 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 else f"{behind} generation(s) behind"
             )
             + ("" if behind == 0 else "; refresh: cruxible floor export --force")
+        )
+    vocabulary = result.get("vocabulary_file")
+    if vocabulary is not None:
+        at = vocabulary.get("at")
+        state = vocabulary["state"]
+        lines.append(
+            "Vocabulary file: .cruxible/vocabulary.yaml"
+            + ("" if at is None else f" at {at[:12]}")
+            + ", "
+            + (
+                "current"
+                if state == "current"
+                else f"behind by {vocabulary.get('definitions_behind', 0)} definition(s)"
+                if state == "behind"
+                else "baseline invalid"
+            )
+            + (
+                ""
+                if state == "current"
+                else "; refresh: cruxible vocabulary export"
+                if state == "behind"
+                else "; restore its header, or replace it: cruxible vocabulary export --force"
+            )
         )
     you = result.get("you")
     if you is not None:
@@ -309,6 +337,12 @@ def render_orient(result: Mapping[str, Any]) -> str:
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
+        vocabulary_file = result.get("vocabulary_file")
+        if vocabulary_file is not None and vocabulary_file["state"] != "current":
+            # next= counts accepted state; the workspace's own rows are next's.
+            lines.append(
+                "  note: next= counts accepted state; the vocabulary file row is in `cruxible next`"
+            )
         enablements = attention.get("enablements")
         if enablements is not None:
             lines.append(
@@ -475,4 +509,70 @@ def render_intent(
     if outcome is not None:
         lines.extend(landing_lines(outcome))
     lines.extend(diagnostic_lines(diagnostics))
+    return "\n".join(lines)
+
+
+def vocabulary_plan_lines(plan: VocabularyPlan) -> list[str]:
+    """A vocabulary plan as ``cruxible vocabulary plan`` prints it."""
+
+    lines = [f"Vocabulary plan: {plan.path} (based on {plan.based_on.git_oid[:12]})"]
+    if plan.claims:
+        lines.append("Claims:")
+        for claim in plan.claims:
+            change = (
+                f"becomes {claim.becomes}"
+                if claim.action == "re_author"
+                else f"retires ({claim.reason})"
+            )
+            lines.append(f"  {claim.claim} {claim.subject} {claim.field}: {claim.value} {change}")
+    changes = plan.changes
+    lines.append("Changes:" if changes else "Changes: none")
+    for entry in changes:
+        lines.append(
+            f"  {entry.action} {entry.definition}"
+            + (f" ({', '.join(entry.changed)})" if entry.changed else "")
+            + (
+                f" ({entry.live_claims} live Claim(s) retire with it)"
+                if entry.live_claims is not None
+                else ""
+            )
+            + (f" kit={entry.kit}" if entry.kit else "")
+        )
+    left = [entry for entry in plan.entries if entry.action == "not_in_file"]
+    if left:
+        lines.append(f"Not in file (left as they are): {len(left)}")
+        for entry in left:
+            lines.append(f"  {entry.definition}" + (f" kit={entry.kit}" if entry.kit else ""))
+    preflight = plan.preflight
+    verdict = preflight.verdict.replace("_", " ")
+    lines.append(f"Preflight: {verdict}" + (f": {preflight.note}" if preflight.note else ""))
+    for item in () if preflight.frontier is None else preflight.frontier.diagnostics:
+        lines.append(f"  {item.code} at {item.offending_element}: {item.message}")
+    for warning in () if preflight.lint is None else preflight.lint.warnings:
+        lines.append(f"  lint {warning.code} ({warning.artifact})")
+    return lines
+
+
+def render_vocabulary_export(result: VocabularyExportResult) -> str:
+    """What ``cruxible vocabulary export`` prints for one export."""
+
+    state = "Wrote" if result.status == "written" else "Already current:"
+    return (
+        f"{state} {result.path} ({result.kinds} kind(s), {result.fields} field(s)) "
+        f"at {result.based_on.git_oid[:SHORT_OID]}"
+    )
+
+
+def render_vocabulary_apply(result: VocabularyApplyResult) -> str:
+    """What ``cruxible vocabulary apply`` prints: the plan, then how it landed."""
+
+    lines = vocabulary_plan_lines(result.plan)
+    if result.status == "unchanged":
+        lines.append("Nothing to apply.")
+    elif result.status == "refused":
+        lines.append("Refused: nothing was submitted.")
+    elif result.outcome is not None:
+        lines.append(str(result.outcome))
+    if result.next:
+        lines.append(f"Next: {result.next}")
     return "\n".join(lines)

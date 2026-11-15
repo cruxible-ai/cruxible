@@ -1376,6 +1376,40 @@ def workspace_floor_freshness(
     )
 
 
+def workspace_vocabulary_at(workspace: str | Path) -> str | None:
+    """The Git OID to send as orient's ``vocabulary_at``: the vocabulary file's baseline.
+
+    None when the workspace has no vocabulary file or its header cannot be read
+    (``workspace_vocabulary_freshness`` then marks it invalid).
+    """
+
+    from cruxible_client.authoring.vocabulary_file import workspace_vocabulary_baseline
+
+    baseline = workspace_vocabulary_baseline(workspace)
+    return baseline if isinstance(baseline, str) else None
+
+
+def workspace_vocabulary_freshness(
+    workspace: str | Path,
+    orientation: contracts.OrientResult,
+) -> contracts.OrientResult:
+    """``orientation`` with ``vocabulary_file`` marked invalid when the file's header is unreadable.
+
+    A readable header was sent as ``vocabulary_at`` and the daemon answered for
+    it; this reads only the header lines.
+    """
+
+    from cruxible_client.authoring.vocabulary_file import workspace_vocabulary_baseline
+
+    if orientation.vocabulary_file is not None:
+        return orientation
+    if workspace_vocabulary_baseline(workspace) is not False:
+        return orientation
+    return orientation.model_copy(
+        update={"vocabulary_file": contracts.OrientVocabularyFile(at=None, state="invalid")}
+    )
+
+
 def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     """Observe the configured floor and every resolvable installed catalog file.
 
@@ -1412,6 +1446,13 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
         "presentation_policy": PresentationPolicy().model_dump(mode="json"),
         "presentation_policy_notes": [],
     }
+    # The vocabulary file's export baseline (its header alone); next names a file
+    # behind accepted state.
+    from cruxible_client.authoring.vocabulary_file import vocabulary_file_observation
+
+    vocabulary = vocabulary_file_observation(root)
+    if vocabulary is not None:
+        observation["vocabulary_file"] = vocabulary
     try:
         candidates = (
             workspace_path(root, "files.yaml"),

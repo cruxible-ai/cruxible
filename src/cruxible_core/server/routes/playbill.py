@@ -453,6 +453,14 @@ def orient(
             "Advertised MCP repair tools; repeat for each tool, or send an empty value for none."
         ),
     ),
+    vocabulary_at: str | None = Query(
+        default=None,
+        pattern=r"^[0-9a-f]{40}([0-9a-f]{24})?$",
+        description=(
+            "The Git OID a workspace's vocabulary file was exported at; the answer's "
+            "vocabulary_file then says how many definitions it is behind."
+        ),
+    ),
 ) -> contracts.OrientResult:
     coordinate = _coordinate(git_oid, semantic_root, generation_root, compiler_digest)
     if at is not None and coordinate is not None:
@@ -467,6 +475,7 @@ def orient(
         evaluation_time=evaluation_time,
         surface=surface,
         caller_tools=None if caller_tools is None else tuple(name for name in caller_tools if name),
+        vocabulary_at=vocabulary_at,
     )
 
 

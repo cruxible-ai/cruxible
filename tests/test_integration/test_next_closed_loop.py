@@ -85,6 +85,7 @@ from cruxible_core.service.discovery.next import (
     NextReason,
     NextRequest,
     NextSourceObservation,
+    NextVocabularyFileObservation,
     NextWorkspaceObservation,
     service_playbill_next,
 )
@@ -209,6 +210,10 @@ EXPECTED_OPERATIONS = {
     # A recorded kit add resume whose head moved out from under it: run kit
     # add again, resolving the refusal that recorded the resume.
     "kit_resume_blocked": "cruxible.kit.add",
+    # A vocabulary file behind accepted state, or naming an export this history
+    # lacks: export it again (merging the author's edits is theirs to do).
+    "vocabulary_file_behind": "cruxible.vocabulary.export",
+    "vocabulary_file_baseline_invalid": "cruxible.vocabulary.export",
 }
 
 
@@ -1012,6 +1017,31 @@ def _floor_case(root: Path, reason: str) -> None:
 
 def _floor_invalid(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _floor_case(root, "floor_invalid")
+
+
+def _vocabulary_case(root: Path, reason: str, baseline: str | None) -> None:
+    instance, owner = initialize_local(root)
+    exported = instance.accepted_coordinate().git_oid
+    _seed_claim_surface(instance, owner)
+
+    def observed(git_oid: str | None) -> NextWorkspaceObservation:
+        return NextWorkspaceObservation(
+            vocabulary_file=NextVocabularyFileObservation(git_oid=git_oid)
+        )
+
+    row = _row(instance, reason, _request(instance, workspace=observed(baseline or exported)))
+    assert row.repair.operation == EXPECTED_OPERATIONS[reason]
+    # Exported again: the file's header names the head.
+    head = instance.accepted_coordinate().git_oid
+    _assert_gone(instance, reason, _request(instance, workspace=observed(head)))
+
+
+def _vocabulary_file_behind(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    _vocabulary_case(root, "vocabulary_file_behind", None)
+
+
+def _vocabulary_file_baseline_invalid(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    _vocabulary_case(root, "vocabulary_file_baseline_invalid", "0" * 40)
 
 
 def _projection_dirty(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2514,6 +2544,8 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("prediction_settleable", None): _prediction_settleable,
     ("prediction_window_unbindable", None): _prediction_window_unbindable,
     ("kit_resume_blocked", None): _kit_resume_blocked,
+    ("vocabulary_file_behind", None): _vocabulary_file_behind,
+    ("vocabulary_file_baseline_invalid", None): _vocabulary_file_baseline_invalid,
 }
 
 

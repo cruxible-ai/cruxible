@@ -25,6 +25,9 @@ WORKSPACE_DIRECTORY = ".cruxible"
 FLOOR_PATH = ".cruxible/floor"
 #: The world stub: a `.pyi` typing the accepted vocabulary, beside the floor.
 WORLD_STUB_PATH = ".cruxible/world.pyi"
+#: The vocabulary file: kinds and fields as one YAML input, committed beside
+#: ``files.yaml``; ``cruxible vocabulary export`` is its only writer.
+VOCABULARY_FILE_PATH = ".cruxible/vocabulary.yaml"
 #: What a 0.3-era per-project instance kept in the same directory name.
 LEGACY_INSTANCE_FILES = ("instance.json", "state.db")
 #: Relocates the daemon state root from ``~/.cruxible``.
@@ -160,6 +163,7 @@ __all__ = [
     "FLOOR_PATH",
     "LEGACY_INSTANCE_FILES",
     "STATE_ROOT_ENV",
+    "VOCABULARY_FILE_PATH",
     "WORKSPACE_DIRECTORY",
     "WORLD_STUB_PATH",
     "WorkspaceDirectoryConflict",

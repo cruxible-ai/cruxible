@@ -145,7 +145,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:d1e8583ce477cdfd5f15988b69b3854819137dd0ead29669d6659620be6bb6d2"
+    "sha256:d0ad869cead03645e12adf3a0a99169ab5868a9a0c08a41733b9ce868d861c5c"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1232,6 +1232,16 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
     )
     minted: bool = Field(default=False, exclude_if=lambda value: value is False)
     retire: bool = Field(default=False, exclude_if=lambda value: value is False)
+    #: The digest of the accepted SubjectKind this decision succeeds, as the
+    #: author read it. Lowering refuses when the accepted SubjectKind is another
+    #: one (or there is none). Absent: no pin, as for a new kind. Absent from the
+    #: wire when unset, so an unpinned member's bytes never move.
+    predecessor_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("predecessor_digest")
+    @classmethod
+    def _predecessor(cls, value: str | None) -> str | None:
+        return None if value is None else _sha256(value, label="SubjectKind predecessor digest")
 
     @field_validator("name")
     @classmethod

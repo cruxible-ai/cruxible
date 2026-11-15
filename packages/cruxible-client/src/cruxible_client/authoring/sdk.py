@@ -88,6 +88,8 @@ from cruxible_client.authoring.workspace import (
     observe_next_workspace_with_coverage,
     refresh_workspace_floor,
     workspace_floor_freshness,
+    workspace_vocabulary_at,
+    workspace_vocabulary_freshness,
 )
 from cruxible_client.authoring.write_evidence import observe_changes, rebind_evidence
 from cruxible_client.contracts.artifacts import (
@@ -274,12 +276,14 @@ from cruxible_client.contracts.write import (
     WriteRetireReason,
     WriteRole,
     WriteValue,
+    write_accept,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient, configured_principal_id
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.files import WorkspaceCatalog
+    from cruxible_client.authoring.vocabulary_file import Vocabulary
     from cruxible_client.authoring.world import World
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -779,7 +783,7 @@ class _IntentDraft:
                 item.model_dump(mode="json") for item in self.reference_expectations
             ],
             program_stamp=self.program_stamp.model_dump(mode="json"),
-            accept=accept,
+            accept=write_accept(accept),
         )
         self._playbill._observe_authoring_submit(result)
         return Intent(
@@ -1656,6 +1660,18 @@ class ChangeSetDraft:
         )
         return self
 
+    def _member(self, payload: AuthoringChangeSetMember, decisions: dict[str, object]) -> None:
+        """Stage one member already lowered elsewhere (the vocabulary file's apply)."""
+
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions=decisions,
+            )
+        )
+
     def prepare(self) -> Intent:
         """Compile and preflight the whole changeset as one intent.
 
@@ -2061,7 +2077,7 @@ class WriteBatch:
                 changes=tuple(self.changes),
                 docs=tuple(self.docs),
                 dry_run=dry_run,
-                accept=accept,
+                accept=write_accept(accept),
                 at=self._playbill._write_at(at),
                 surface="sdk",
                 full_coordinate=True,
@@ -2362,7 +2378,7 @@ class Intent:
         self._candidate_status = None
         self.outcome = None
         result = self._playbill._client.submit_authoring_intent(
-            self._playbill._instance_id, self.intent_id, accept=accept
+            self._playbill._instance_id, self.intent_id, accept=write_accept(accept)
         )
         self._playbill._observe_authoring_submit(result)
         self._raw = result.intent
@@ -2786,6 +2802,18 @@ class Cruxible:
             raise ValueError("accepted read returned a different requested coordinate")
         if not self._pinned:
             self._coordinate = coordinate
+
+    @property
+    def vocabulary(self) -> Vocabulary:
+        """The workspace's vocabulary file (``.cruxible/vocabulary.yaml``).
+
+        Next: ``cx.vocabulary.export()``, edit the file, then ``cx.vocabulary.plan()`` and
+        ``cx.vocabulary.apply()``.
+        """
+
+        from cruxible_client.authoring.vocabulary_file import Vocabulary
+
+        return Vocabulary(self)
 
     @property
     def block(self) -> ProjectionBlocks:
@@ -3605,7 +3633,7 @@ class Cruxible:
                 ),
                 changes=(AboutChange(ref="note", subjects=subjects),),
                 dry_run=dry_run,
-                accept=accept,
+                accept=write_accept(accept),
                 at=self._write_at(at),
                 surface="sdk",
                 full_coordinate=True,
@@ -3702,7 +3730,7 @@ class Cruxible:
                         ),
                     ),
                     dry_run=dry_run,
-                    accept=accept,
+                    accept=write_accept(accept),
                     at=self._write_at(at),
                     surface="sdk",
                     full_coordinate=True,
@@ -3718,7 +3746,7 @@ class Cruxible:
             contend=contend,
             expect=_write_expect(expect),
             dry_run=dry_run,
-            accept=accept,
+            accept=write_accept(accept),
             at=self._write_at(at),
             surface="sdk",
             full_coordinate=True,
@@ -3772,7 +3800,7 @@ class Cruxible:
                 ),
             ),
             dry_run=dry_run,
-            accept=accept,
+            accept=write_accept(accept),
             at=self._write_at(at),
             surface="sdk",
             full_coordinate=True,
@@ -3836,7 +3864,7 @@ class Cruxible:
                     because=because,
                     changes=(observed,),
                     dry_run=dry_run,
-                    accept=accept,
+                    accept=write_accept(accept),
                     at=self._write_at(at),
                     surface="sdk",
                     full_coordinate=True,
@@ -3876,7 +3904,7 @@ class Cruxible:
             expect=_write_expect(expect),
             with_claims=with_claims,
             dry_run=dry_run,
-            accept=accept,
+            accept=write_accept(accept),
             at=self._write_at(at),
             surface="sdk",
             full_coordinate=True,
@@ -5058,6 +5086,9 @@ class Cruxible:
             at=requested,
             evaluation_time=self._evaluation_time(),
             surface="sdk",
+            vocabulary_at=(
+                None if self._workspace is None else workspace_vocabulary_at(self._workspace)
+            ),
         )
         self._observe_read(
             result.coordinate,
@@ -5066,7 +5097,9 @@ class Cruxible:
         if self._workspace is None:
             # No workspace, no floor to compare: the floor is unknown, not stale.
             return result
-        return workspace_floor_freshness(self._workspace, result)
+        return workspace_vocabulary_freshness(
+            self._workspace, workspace_floor_freshness(self._workspace, result)
+        )
 
     def attest(
         self,
@@ -5115,18 +5148,21 @@ class Cruxible:
             ),
         )
 
-    def next(self, *, expiring_within: Duration) -> NextPage:
+    def next(self, *, expiring_within: Duration | None = None) -> NextPage:
         """Read the whole queue of work that needs this caller.
 
         The queue covers accepted state and this workspace. Every page is read, pinned to
         the first page's instant, coordinate and attestation head; ``expiring_within`` says
-        how far ahead expiring evidence counts. Each item names its ``reason``, the thing it
-        is about and its ``repair``, rendered as an SDK call this caller can run
+        how far ahead expiring evidence counts (default seven days, as ``cruxible next``).
+        Each item names its ``reason``, the thing it is about and its ``repair``, rendered
+        as an SDK call this caller can run
         (``repair_requires`` names what a withheld one needs). ``page.status`` reports the
         environment: the floor, the ledger mirror, providers, Line dispatch. Next: run an
         item's ``repair.command``, or ``cx.get(item.subject_identity)`` to look first.
         """
 
+        if expiring_within is None:
+            expiring_within = Duration.days(count=7)
         requested_coordinate = self._read_at()
         access_profile = self._access_profile.model_dump()
         observation, scanned_coordinate = observe_next_workspace_with_coverage(

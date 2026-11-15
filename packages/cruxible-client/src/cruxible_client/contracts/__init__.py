@@ -187,6 +187,9 @@ from cruxible_client.contracts.orient import (
 from cruxible_client.contracts.orient import (
     OrientSurface as OrientSurface,
 )
+from cruxible_client.contracts.orient import (
+    OrientVocabularyFile as OrientVocabularyFile,
+)
 from cruxible_client.contracts.policy_rows import PolicyInForce as PolicyInForce
 from cruxible_client.contracts.policy_rows import PolicyKind as PolicyKind
 from cruxible_client.contracts.predictions import (
@@ -469,6 +472,8 @@ NextReason: TypeAlias = Literal[
     "prediction_window_unbindable",
     "subject_kind_undeclared",
     "kit_resume_blocked",
+    "vocabulary_file_behind",
+    "vocabulary_file_baseline_invalid",
 ]
 #: How much a row asks of its reader, most first. ``setup`` is a choice the
 #: operator owns rather than something wrong (a Line accepted but not yet
@@ -506,6 +511,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.inbox.list",
     "cruxible.prediction.settle",
     "cruxible.kit.add",
+    "cruxible.vocabulary.export",
     "hand_edit",
 ]
 # The next queue's own refusals that carry a declared repair. A page cursor

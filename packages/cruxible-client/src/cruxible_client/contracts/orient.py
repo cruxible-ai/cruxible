@@ -418,6 +418,10 @@ class OrientAttention(_StrictOrientModel):
     ``next_items`` counts the queue's problems and ``top`` names the first of
     them; ``setup_items`` counts its setup rows apart (choices the operator
     owns, such as a Line accepted but not yet enabled), absent when none.
+    These count accepted state only: rows about the caller's workspace (its
+    floor, sources, projection blocks, vocabulary file) need the workspace
+    and appear in ``next``; orient reports the floor and the vocabulary file
+    as status beside this (``floor``, ``vocabulary_file``), as it always has.
     """
 
     next_items: int = Field(ge=0)
@@ -440,6 +444,20 @@ class OrientFloor(_StrictOrientModel):
 
     at: str
     generations_behind: int | None = Field(ge=0)
+
+
+class OrientVocabularyFile(_StrictOrientModel):
+    """The workspace's vocabulary file against this answer's coordinate.
+
+    Only a client that sees the workspace (CLI, MCP, SDK) asks for it, naming the
+    generation the file's header was exported at; the daemon counts the
+    ClaimTypes and SubjectKinds accepted since. ``invalid``: the header cannot be
+    read, or names an export this instance does not hold.
+    """
+
+    at: str | None
+    state: Literal["current", "behind", "invalid"]
+    definitions_behind: int = Field(default=0, ge=0)
 
 
 class Head(_StrictOrientModel):
@@ -814,6 +832,7 @@ class OrientResult(_StrictOrientModel):
     #: (the instance's retention setting); a read at an older one rebuilds it.
     retention_generations: int | None = Field(default=None, ge=1, exclude_if=_is_none)
     floor: OrientFloor | None = Field(default=None, exclude_if=_is_none)
+    vocabulary_file: OrientVocabularyFile | None = Field(default=None, exclude_if=_is_none)
     you: OrientYou | None = Field(default=None, exclude_if=_is_none)
     kinds: tuple[OrientKindSummary, ...] | None = Field(default=None, exclude_if=_is_none)
     artifacts: OrientArtifactCounts | None = Field(default=None, exclude_if=_is_none)
@@ -937,5 +956,6 @@ __all__ = [
     "OrientKindEnd",
     "OrientSubjectKind",
     "OrientSurface",
+    "OrientVocabularyFile",
     "OrientYou",
 ]
