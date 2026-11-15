@@ -176,6 +176,20 @@ class _SelectedWorkspace:
     marked: bool = False
 
 
+def _existing_workspace(value: str | Path, named: str) -> Path:
+    """A named workspace folder, refused unless it exists: a write never creates one."""
+
+    root = Path(value).expanduser().resolve()
+    if not root.is_dir():
+        raise ContextResolutionError(
+            f"workspace_missing: {named} {root} is not an existing folder, so nothing would "
+            "be read from it and a write would create files there; repair: name an existing "
+            "folder (an absolute path; `~` expands against this process's HOME), or create "
+            "it first"
+        )
+    return root
+
+
 def _selected_workspace(
     *,
     explicit: str | Path | None,
@@ -200,13 +214,13 @@ def _selected_workspace(
     }:
         return _SelectedWorkspace(start, "local", None, None)
     if explicit is not None:
-        root = ensure_workspace_directory(Path(explicit).expanduser().resolve())
+        root = ensure_workspace_directory(_existing_workspace(explicit, "workspace"))
         binding, path = _workspace_binding(root)
         return _SelectedWorkspace(
             root, "explicit", binding, path, marked=holds_workspace_directory(root)
         )
     if raw := environ.get("CRUXIBLE_WORKSPACE"):
-        root = ensure_workspace_directory(Path(raw).expanduser().resolve())
+        root = ensure_workspace_directory(_existing_workspace(raw, "CRUXIBLE_WORKSPACE"))
         binding, path = _workspace_binding(root)
         return _SelectedWorkspace(
             root, "environment", binding, path, marked=holds_workspace_directory(root)

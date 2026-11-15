@@ -763,3 +763,40 @@ def test_context_show_says_why_a_remembered_instance_was_ignored(
     text = CliRunner().invoke(cli, ["context", "show"])
     assert text.exit_code == 0, text.output
     assert "Remembered instance ignored: context_instance_transport_mismatch" in text.output
+
+
+def test_a_named_workspace_that_does_not_exist_refuses_on_every_surface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Walkthrough W11: connect accepted a missing folder and a write created files there."""
+
+    missing = tmp_path / "no-such-folder"
+    home = tmp_path / "home"
+    home.mkdir()
+    with pytest.raises(ContextResolutionError, match="workspace_missing"):
+        resolve_context(workspace=missing, environ={}, remembered={}, cwd=tmp_path, home=home)
+    with pytest.raises(ContextResolutionError, match="workspace_missing"):
+        resolve_context(
+            environ={"CRUXIBLE_WORKSPACE": str(missing)}, remembered={}, cwd=tmp_path, home=home
+        )
+    with pytest.raises(ContextResolutionError, match="workspace_missing"):
+        Cruxible.connect(
+            context=tmp_path / "context.json",
+            target="unix:/nonexistent.sock",
+            instance="inst_x",
+            workspace=missing,
+        )
+    assert not missing.exists()
+    # The MCP adapter refuses the same folder, as it always has.
+    from cruxible_core.errors import ConfigError
+    from cruxible_core.mcp.workspace import mcp_workspace_root
+
+    with pytest.raises(ConfigError, match="unavailable"):
+        mcp_workspace_root({"CRUXIBLE_MCP_WORKSPACE_ROOT": str(missing)})
+    # The CLI resolves CRUXIBLE_WORKSPACE through the same resolver.
+    monkeypatch.setenv("CRUXIBLE_WORKSPACE", str(missing))
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+    assert result.exit_code != 0
+    assert "workspace_missing" in result.output
+    assert not missing.exists()
