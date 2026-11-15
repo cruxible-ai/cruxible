@@ -178,3 +178,29 @@ def test_unfilled_and_ambiguous_slots_read_plainly() -> None:
         "a#web.fetch",
         EffectUnequal(capability="external_read", operation="pure"),
     ).endswith("does not fit: effect: the capability is external_read; the operation is pure.")
+
+
+def test_every_binding_refusal_names_its_repair() -> None:
+    from cruxible_client.contracts.capability_fit import slot_unfilled_repair
+    from cruxible_client.contracts.procedures.line_specs import (
+        LINE_BINDING_BUILTIN_MISMATCH,
+        binding_problem_repair,
+    )
+
+    assert slot_unfilled_repair("fetch", "web.fetch@1") == (
+        "Install a provider that serves web.fetch (`cruxible provider install PACKAGE`, or "
+        "`cruxible kit add KIT` for a kit that bundles one)."
+    )
+    assert "binding_unfit" in slot_unfilled_repair("fetch", "web.fetch@1", declared=True)
+    assert slot_unfilled_repair("fetch", "web.fetch@1", within="web").startswith(
+        "Bind `fetch` to another build that serves web.fetch"
+    )
+    for code in (
+        "cruxible.line.binding_unfit",
+        "cruxible.line.binding_undeclared",
+        LINE_BINDING_BUILTIN_MISMATCH,
+    ):
+        for builtin in (False, True):
+            repair = binding_problem_repair(code, "fetch", "web.fetch@1", builtin=builtin)
+            assert repair is not None and repair.startswith("Bind `fetch` to ")
+    assert binding_problem_repair("cruxible.line.slot_unbound", "fetch", "web.fetch@1") is None

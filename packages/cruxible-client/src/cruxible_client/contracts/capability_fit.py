@@ -819,6 +819,74 @@ def binding_undeclared_message(
     return f"Slot `{slot}` needs {capability}. `{operation}` serves {served}, not {name}."
 
 
+# -- repairs of binding by capability ------------------------------------------------------
+#
+# Each refusal's message ends with its repair sentence, and the producer serves the
+# same sentence as the hand edit, so every surface shows it: the CLI prints it on its
+# own Repair line, MCP and the SDK read it in the message.
+
+#: Leaving a slot out of the bindings binds it by capability, on a Line or a run.
+_UNBOUND = "leave `{slot}` out of the bindings to bind it by capability"
+
+
+def slot_unfilled_repair(
+    slot: str, capability: str, *, declared: bool = False, within: str | None = None
+) -> str:
+    """What to do about ``cruxible.line.slot_unfilled``.
+
+    ``declared`` says some live operation declares the capability but none fits
+    (the message names each with its first failing field); ``within`` names the
+    build the author bound, whose operations were the only candidates.
+    """
+
+    name = capability.partition("@")[0]
+    if within is not None:
+        return (
+            f"Bind `{slot}` to another build that serves {name} "
+            f"(`cruxible provider list` shows each build's operations), or "
+            + _UNBOUND.format(slot=slot)
+            + "."
+        )
+    if declared:
+        return (
+            f"Install a version of one of those providers built against {capability}, or "
+            f"bind `{slot}` to one of them by name to see its binding_unfit refusal in full."
+        )
+    return (
+        f"Install a provider that serves {name} (`cruxible provider install "
+        "PACKAGE`, or `cruxible kit add KIT` for a kit that bundles one)."
+    )
+
+
+def slot_ambiguous_repair(slot: str) -> str:
+    """What to do about ``cruxible.line.slot_ambiguous``: name one of the candidates."""
+
+    return (
+        f"Name one: bind `{slot}` to PROVIDER in the run's bindings "
+        f"(`--bind {slot}=PROVIDER` on the CLI) or in the Line's `bindings`."
+    )
+
+
+def binding_unfit_repair(slot: str, capability: str) -> str:
+    """What to do about ``cruxible.line.binding_unfit``."""
+
+    name = capability.partition("@")[0]
+    return (
+        f"Bind `{slot}` to another operation that serves {name}, install a version of "
+        f"this provider built against {capability}, or " + _UNBOUND.format(slot=slot) + "."
+    )
+
+
+def binding_undeclared_repair(slot: str, capability: str) -> str:
+    """What to do about ``cruxible.line.binding_undeclared``."""
+
+    name = capability.partition("@")[0]
+    return (
+        f"Bind `{slot}` to an operation that serves {name} (`cruxible provider "
+        "list` shows what each serves), or " + _UNBOUND.format(slot=slot) + "."
+    )
+
+
 __all__ = [
     "ABSENT",
     "BINDING_UNDECLARED",
@@ -841,9 +909,13 @@ __all__ = [
     "TruncationUnfit",
     "Unfit",
     "binding_undeclared_message",
+    "binding_undeclared_repair",
     "binding_unfit_message",
+    "binding_unfit_repair",
     "record_fits",
     "render_unfit",
     "slot_ambiguous_message",
+    "slot_ambiguous_repair",
     "slot_unfilled_message",
+    "slot_unfilled_repair",
 ]

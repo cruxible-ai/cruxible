@@ -47,7 +47,9 @@ from cruxible_client.contracts.capability_fit import (
     TruncationUnfit,
     Unfit,
     binding_undeclared_message,
+    binding_undeclared_repair,
     binding_unfit_message,
+    binding_unfit_repair,
     record_fits,
 )
 from cruxible_client.contracts.capture_layouts import DeclaredCaptureKind
@@ -446,6 +448,38 @@ def builtin_binding_problem(
             f"serves only {', '.join(reserved)}.",
         )
     return None
+
+
+def binding_problem_repair(
+    code: str, slot: str, capability: str, *, builtin: bool = False
+) -> str | None:
+    """The repair sentence of a slot binding refusal from :func:`judge_slot_binding`.
+
+    ``capability`` is the slot's ``name@N``; ``builtin`` whether core serves it.
+    ``None`` for a code that is not one of its refusals; the producer then names
+    its own repair.
+    """
+
+    unbound = f"leave `{slot}` out of the bindings to bind it by capability"
+    if code == BINDING_UNFIT:
+        return binding_unfit_repair(slot, capability)
+    if code == BINDING_UNDECLARED:
+        return binding_undeclared_repair(slot, capability)
+    if code == LINE_BINDING_BUILTIN_MISMATCH:
+        name = capability.rpartition("@")[0] or capability
+        if builtin:
+            return f"Bind `{slot}` to core's builtin (`cruxible-builtin#{name}`), or {unbound}."
+        return (
+            f"Bind `{slot}` to a provider operation that serves {name}, or {unbound}; "
+            "core's builtin serves only workspace.file and workspace.files."
+        )
+    return None
+
+
+def with_repair(message: str, repair: str) -> str:
+    """``message`` ending with its repair sentence, once."""
+
+    return message if message.endswith(f" {repair}") else f"{message} {repair}"
 
 
 class SlotCapabilityUnresolved(ValueError):
@@ -1028,7 +1062,9 @@ def line_binding_problem(
             fitter=fitter or _no_fit,
         )
         if verdict.problem is not None:
-            return verdict.problem
+            code, message = verdict.problem
+            repair = binding_problem_repair(code, key, need.spelling, builtin=need.builtin)
+            return (code, message if repair is None else with_repair(message, repair))
     return None
 
 
@@ -1056,6 +1092,7 @@ __all__ = [
     "SlotBindingVerdict",
     "SlotFitter",
     "SlotNeed",
+    "binding_problem_repair",
     "builtin_binding_problem",
     "declared_kind",
     "judge_slot_binding",
@@ -1066,6 +1103,7 @@ __all__ = [
     "slot_fit",
     "slot_fitter",
     "slot_needs",
+    "with_repair",
     "SlotCapabilityUnresolved",
     "AcceptedLineSpec",
     "LineAuthority",

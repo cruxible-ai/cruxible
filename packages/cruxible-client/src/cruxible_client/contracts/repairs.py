@@ -62,6 +62,17 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
         "provider-declared-enumeration): emit the source as a Capture and extract it, "
         "or drop expect and when_absent, then rerun the Line."
     ),
+    # Binding by capability: the producer names the slot and capability in its
+    # message's last sentence; this is what a carrier that kept only the code shows.
+    "cruxible.line.slot_unfilled": (
+        "Install a provider that serves the slot's capability (cruxible provider install "
+        "PACKAGE, or cruxible kit add KIT for a kit that bundles one), or bind the slot by "
+        "name to an operation that fits it."
+    ),
+    "cruxible.line.slot_ambiguous": (
+        "Name one of the operations the refusal lists in the run's or the Line's bindings."
+    ),
+    "cruxible.procedure.slot_undeclared": "Bind only the slots the Procedure declares.",
     "claims_inverse_unit_unresolved": (
         "Restore the object's single live key Claim or correct its declared inverse unit, "
         "then rerun the Line."

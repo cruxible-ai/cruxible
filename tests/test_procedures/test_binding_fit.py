@@ -368,6 +368,18 @@ def _refused(instance: Any, bindings: Mapping[str, str] | None = None) -> Reques
     return refused.value
 
 
+def _repair(refusal: RequestRefusedError) -> str:
+    """The refusal's hand edit, which its message ends with: the CLI prints it on its own
+    Repair line, and MCP and the SDK read it in the message."""
+
+    from cruxible_client.contracts.repairs import HandEditRepair
+
+    assert isinstance(refusal.repair, HandEditRepair)
+    required_change = refusal.repair.hand_edit.required_change
+    assert str(refusal).endswith(f" {required_change}")
+    return required_change
+
+
 def test_an_exactly_fitting_operation_binds(tmp_path: Path) -> None:
     instance = _world(tmp_path, EXACT, NARROWER, OTHER)
     author_line(instance)
@@ -384,24 +396,53 @@ def test_an_operation_accepting_less_is_refused_unfit(tmp_path: Path) -> None:
     instance = _world(tmp_path, NARROWER)
     refusal = _refused(instance, {"compute": "narrow-provider"})
     assert refusal.error_code == "cruxible.line.binding_unfit"
-    assert str(refusal).endswith(
+    assert (
         "Slot `compute` needs test.compute@1. `narrow-provider#compute` declares it but does "
         "not fit: request.count: the operation requires int; the slot never sends it."
+    ) in str(refusal)
+    assert _repair(refusal) == (
+        "Bind `compute` to another operation that serves test.compute, install a version of "
+        "this provider built against test.compute@1, or leave `compute` out of the bindings "
+        "to bind it by capability."
     )
     # Unnamed, it is listed among those that declare the capability but do not fit.
     unfilled = _refused(instance)
     assert unfilled.error_code == "cruxible.line.slot_unfilled"
     assert "`narrow-provider#compute`: request.count" in str(unfilled)
+    assert _repair(unfilled) == (
+        "Install a version of one of those providers built against test.compute@1, or bind "
+        "`compute` to one of them by name to see its binding_unfit refusal in full."
+    )
+
+
+def test_an_unserved_capability_names_the_install_that_fills_it(tmp_path: Path) -> None:
+    instance = _world(tmp_path, OTHER)
+    refusal = _refused(instance)
+    assert refusal.error_code == "cruxible.line.slot_unfilled"
+    assert "No live operation serves slot `compute` (test.compute@1, pure)." in str(refusal)
+    assert _repair(refusal) == (
+        "Install a provider that serves test.compute (`cruxible provider install PACKAGE`, "
+        "or `cruxible kit add KIT` for a kit that bundles one)."
+    )
+
+
+def test_a_capability_written_as_a_binding_says_it_is_not_a_provider(tmp_path: Path) -> None:
+    instance = _world(tmp_path, EXACT)
+    refusal = _refused(instance, {"compute": "test.compute"})
+    assert refusal.error_code == "cruxible.line.binding_unavailable"
+    assert "'test.compute', which is the slot's capability, not a provider." in str(refusal)
+    assert "leave `compute` out of the bindings" in _repair(refusal)
 
 
 def test_an_operation_serving_another_capability_is_refused_undeclared(tmp_path: Path) -> None:
     instance = _world(tmp_path, OTHER)
     refusal = _refused(instance, {"compute": "other-provider"})
     assert refusal.error_code == "cruxible.line.binding_undeclared"
-    assert str(refusal).endswith(
+    assert (
         "Slot `compute` needs test.compute@1. `other-provider#compute` serves test.other, "
         "not test.compute."
-    )
+    ) in str(refusal)
+    assert _repair(refusal).startswith("Bind `compute` to an operation that serves test.compute")
 
 
 def test_two_fitting_operations_are_ambiguous(tmp_path: Path) -> None:
@@ -410,6 +451,10 @@ def test_two_fitting_operations_are_ambiguous(tmp_path: Path) -> None:
     assert refusal.error_code == "cruxible.line.slot_ambiguous"
     assert f"`{EXACT.identity.name}#compute`" in str(refusal)
     assert f"`{WIDER.identity.name}#compute`" in str(refusal)
+    assert _repair(refusal) == (
+        "Name one: bind `compute` to PROVIDER in the run's bindings "
+        "(`--bind compute=PROVIDER` on the CLI) or in the Line's `bindings`."
+    )
 
 
 def test_a_builtin_slot_refuses_any_other_build_before_fit(tmp_path: Path) -> None:
@@ -420,6 +465,9 @@ def test_a_builtin_slot_refuses_any_other_build_before_fit(tmp_path: Path) -> No
     refusal = _refused(instance, {"compute": "cruxible-builtin#workspace.file"})
     assert refusal.error_code == LINE_BINDING_BUILTIN_MISMATCH
     assert "test.compute@1" in str(refusal) and "core's builtin" in str(refusal)
+    assert _repair(refusal).startswith(
+        "Bind `compute` to a provider operation that serves test.compute"
+    )
 
 
 def test_the_line_law_refuses_an_unfit_binding_accepted_directly(tmp_path: Path) -> None:
@@ -509,6 +557,7 @@ def test_admission_rechecks_the_recorded_binding_and_records_its_fit(tmp_path: P
                 },
             )
     assert refused.value.error_code == "cruxible.line.binding_unfit"
+    assert _repair(refused.value).startswith("Bind `compute` to another operation")
 
 
 def test_the_admission_recheck_is_memoized_per_process(tmp_path: Path) -> None:
