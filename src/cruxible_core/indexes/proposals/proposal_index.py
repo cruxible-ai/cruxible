@@ -595,12 +595,12 @@ class ProposalIndex:
             "SELECT 1 FROM proposal_subjects WHERE proposal_id=? LIMIT 1", (proposal_id,)
         ).fetchone():
             return  # Its candidate is immutable: rows already derived stay right.
-        connection.executemany(
-            "INSERT OR IGNORE INTO proposal_subjects VALUES (?,?,?)",
+        _insert_subject_rows(
+            connection,
             [
                 (subject, proposal_id, predicate)
-                for subject, predicate in _claim_slots(
-                    evidence, row["candidate_digest"], row["evaluated_tree_oid"]
+                for subject, predicate in sorted(
+                    _claim_slots(evidence, row["candidate_digest"], row["evaluated_tree_oid"])
                 )
             ],
         )
@@ -973,6 +973,25 @@ class ProposalIndex:
         if not rows:
             raise ProposalIntegrityError("proposal admission evidence is missing")
         return rows[0]
+
+
+#: Rows per multi-row insert: three variables each, under SQLite's oldest 999 limit.
+_SUBJECT_ROWS_PER_INSERT = 333
+
+
+def _insert_subject_rows(connection: sqlite3.Connection, rows: list[tuple[str, str, str]]) -> None:
+    """Put one proposal's Subject rows a statement per chunk, not one per row.
+
+    A proposal opening with N Claim members (a settle's change set) would run N
+    statements through ``executemany``; a multi-row ``VALUES`` runs one per 333.
+    """
+
+    for start in range(0, len(rows), _SUBJECT_ROWS_PER_INSERT):
+        chunk = rows[start : start + _SUBJECT_ROWS_PER_INSERT]
+        connection.execute(
+            "INSERT OR IGNORE INTO proposal_subjects VALUES " + ",".join("(?,?,?)" for _ in chunk),
+            tuple(value for item in chunk for value in item),
+        )
 
 
 def _claim_slots(

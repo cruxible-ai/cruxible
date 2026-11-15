@@ -956,3 +956,20 @@ def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_
     assert reopened.read_admission(first.admission.proposal_id) == first.admission
     assert owner.proposals.reconstructions == 0
     owner.close()
+
+
+def test_a_proposals_subject_rows_insert_a_statement_per_chunk_not_per_row() -> None:
+    """A settle's proposal opens with many Claim members: its rows cost O(1) statements."""
+
+    from cruxible_core.indexes.proposals import proposal_index
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.executescript(proposal_index._SUBJECTS_SCHEMA)
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+    rows = [(f"subjects/k/s{index:04d}.json", "prop-1", "k.f") for index in range(700)]
+    proposal_index._insert_subject_rows(connection, [*rows, rows[0]])
+    assert len(statements) == 3  # 333 + 333 + 35 rows; a repeated row is ignored
+    proposal_index._insert_subject_rows(connection, [])
+    assert len(statements) == 3
+    assert connection.execute("SELECT count(*) FROM proposal_subjects").fetchone() == (700,)
