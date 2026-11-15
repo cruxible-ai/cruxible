@@ -269,10 +269,7 @@ Evidence = Annotated[
 # -- document operations --------------------------------------------------------
 
 
-_HEADING_DESCRIPTION = (
-    "The heading's text, once: the writer builds the heading line at the depth its place "
-    "needs, and text is the body under it. Without it, text starts with the heading line."
-)
+_HEADING_DESCRIPTION = "Heading text; the line is built at its depth and text is the body."
 
 
 class AppendSection(_StrictWriteModel):

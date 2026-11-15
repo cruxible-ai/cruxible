@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-14:sdk-writes-documents",
-    "surface_digest": "sha256:5fcce37566d38a27a2c1a1db3a4d71197edaf84f82826437a8bf89da1a1c2370"
+    "surface_digest": "sha256:b1618c0bd20a5173b8284296c2c03f58b8094d840cbeab9406f50391594389fd"
   },
   "surface": {
     "cli_leaves": [
@@ -2109,7 +2109,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/write",
         "request_model": "cruxible_client.contracts.write.WriteRequest",
-        "request_schema_digest": "sha256:c4817052d59cbc06ccdf7e0810571c5b9b35631b5a8946e5cc2fc9cb395a6ac4",
+        "request_schema_digest": "sha256:9291ea83411c9315f202a855038edfcdf2358e08a9dacd8e2d041a8fa2f4604c",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
         "response_schema_digest": "sha256:347b8f8fe7f0c3a96de1f4a800a1b597c32bbae5f9612ae66ac54de8521f8fff"
       }
@@ -2997,7 +2997,7 @@
           "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_write",
-        "input_schema_digest": "sha256:fc1fe7d10703d1c34b3550fec1b746016c585d6fe44b40102c7c53855286ee54",
+        "input_schema_digest": "sha256:bd940d888a107b6a12e940d707d0390b06090c2e41b27843570edf3ab190ccfe",
         "name": "cruxible_write",
         "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
         "permission": "GOVERNED_WRITE"
