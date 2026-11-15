@@ -10870,7 +10870,7 @@
                 "additionalProperties": {
                   "$ref": "#/$defs/CapabilitySlot"
                 },
-                "description": "Each slot's signature {in: name@N, out: name@N, effect}; a Line binds it.",
+                "description": "Each slot's capability, {capability: name@N} (and may_truncate); a Line binds it to an operation that serves and fits it.",
                 "title": "Slots",
                 "type": "object"
               },
@@ -55508,7 +55508,7 @@
           },
           "CallNode": {
             "additionalProperties": false,
-            "description": "A typed call: the slot names the signature; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for the generic ``capture<workspace.file>``\nof the core-served read). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
+            "description": "A typed call: the slot names the capability; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for a generic ``capture<*>``, such as a\nworkspace read's). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
             "properties": {
               "as": {
                 "title": "As",
@@ -57541,7 +57541,7 @@
           },
           "ProcedureDefinition": {
             "additionalProperties": false,
-            "description": "The one Procedure graph: explicit value joins and typed return paths.\n\nEvery dependency field names a governed identity; an execution plan\nresolves each to its exact pin at the run's accepted coordinate.\n``slots`` declares each provider-calling node's signature ``{in, out,\neffect}`` by name. The Procedure never names a provider; a Line binds every\nslot to one exact build and operation when it is accepted.",
+            "description": "The one Procedure graph: explicit value joins and typed return paths.\n\nEvery dependency field names a governed identity; an execution plan\nresolves each to its exact pin at the run's accepted coordinate.\n``slots`` names, for each provider-calling node, the capability it needs\n(its request and result Contracts and effect come from that capability).\nThe Procedure never names a provider; a Line binds every slot to one exact\nbuild and operation when it is accepted.",
             "properties": {
               "annotations": {
                 "title": "Annotations"
@@ -83777,7 +83777,7 @@
           },
           "CallNode": {
             "additionalProperties": false,
-            "description": "A typed call: the slot names the signature; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for the generic ``capture<workspace.file>``\nof the core-served read). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
+            "description": "A typed call: the slot names the capability; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for a generic ``capture<*>``, such as a\nworkspace read's). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
             "properties": {
               "as": {
                 "title": "As",
@@ -86756,7 +86756,7 @@
           },
           "ProcedureDefinition": {
             "additionalProperties": false,
-            "description": "The one Procedure graph: explicit value joins and typed return paths.\n\nEvery dependency field names a governed identity; an execution plan\nresolves each to its exact pin at the run's accepted coordinate.\n``slots`` declares each provider-calling node's signature ``{in, out,\neffect}`` by name. The Procedure never names a provider; a Line binds every\nslot to one exact build and operation when it is accepted.",
+            "description": "The one Procedure graph: explicit value joins and typed return paths.\n\nEvery dependency field names a governed identity; an execution plan\nresolves each to its exact pin at the run's accepted coordinate.\n``slots`` names, for each provider-calling node, the capability it needs\n(its request and result Contracts and effect come from that capability).\nThe Procedure never names a provider; a Line binds every slot to one exact\nbuild and operation when it is accepted.",
             "properties": {
               "annotations": {
                 "title": "Annotations"
@@ -92471,7 +92471,7 @@
           },
           "CallNode": {
             "additionalProperties": false,
-            "description": "A typed call: the slot names the signature; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for the generic ``capture<workspace.file>``\nof the core-served read). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
+            "description": "A typed call: the slot names the capability; the Line names the operation.\n\n``captures`` pins, for each ``capture<K>`` field of the slot's out Contract,\nthe accepted CaptureContract the field's bytes are committed as (``K``\nitself, or any CaptureContract for a generic ``capture<*>``, such as a\nworkspace read's). A call with captures acquires: its capture\nfields are committed byte-exact as Captures and its other fields are\nnormalized, and its value names each Capture by digest.",
             "properties": {
               "as": {
                 "title": "As",
@@ -95450,7 +95450,7 @@
           },
           "ProcedureDefinition": {
             "additionalProperties": false,
-            "description": "The one Procedure graph: explicit value joins and typed return paths.\n\nEvery dependency field names a governed identity; an execution plan\nresolves each to its exact pin at the run's accepted coordinate.\n``slots`` declares each provider-calling node's signature ``{in, out,\neffect}`` by name. The Procedure never names a provider; a Line binds every\nslot to one exact build and operation when it is accepted.",
+            "description": "The one Procedure graph: explicit value joins and typed return paths.\n\nEvery dependency field names a governed identity; an execution plan\nresolves each to its exact pin at the run's accepted coordinate.\n``slots`` names, for each provider-calling node, the capability it needs\n(its request and result Contracts and effect come from that capability).\nThe Procedure never names a provider; a Line binds every slot to one exact\nbuild and operation when it is accepted.",
             "properties": {
               "annotations": {
                 "title": "Annotations"

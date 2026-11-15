@@ -469,9 +469,15 @@ def binding_problem_repair(
         name = capability.rpartition("@")[0] or capability
         if builtin:
             return f"Bind `{slot}` to core's builtin (`cruxible-builtin#{name}`), or {unbound}."
+        from cruxible_client.contracts.workspace_file import (
+            WORKSPACE_FILE_OPERATION,
+            WORKSPACE_FILES_OPERATION,
+        )
+
         return (
             f"Bind `{slot}` to a provider operation that serves {name}, or {unbound}; "
-            "core's builtin serves only workspace.file and workspace.files."
+            f"core's builtin serves only {WORKSPACE_FILE_OPERATION} and "
+            f"{WORKSPACE_FILES_OPERATION}."
         )
     return None
 

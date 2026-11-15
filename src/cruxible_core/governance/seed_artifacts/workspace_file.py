@@ -143,16 +143,18 @@ WORKSPACE_FILE_BUILTIN_SOURCE = {
     "path": "src/cruxible_core/providers/builtin_workspace_file.py",
     "repository": "https://github.com/cruxible-ai/cruxible",
 }
+_BUILTIN_ONLY = (
+    "Built into Cruxible and present on every instance; only it serves the "
+    f"{WORKSPACE_FILE_OPERATION} and {WORKSPACE_FILES_OPERATION} capabilities."
+)
 WORKSPACE_FILE_BUILTIN_DESCRIPTION = (
     "Reads one file from an authorized workspace and returns its exact bytes as one "
-    "Capture. Built into Cruxible and present on every instance; only it serves the "
-    "workspace.file and workspace.files capabilities."
+    f"Capture. {_BUILTIN_ONLY}"
 )
 WORKSPACE_FILES_BUILTIN_DESCRIPTION = (
     "Reads every file a glob matches in an authorized workspace and returns their exact "
     "bytes as a list of Captures, sorted by name; more matches than max_files refuses the "
-    "read before any file is read. Built into Cruxible and present on every instance; "
-    "only it serves the workspace.file and workspace.files capabilities."
+    f"read before any file is read. {_BUILTIN_ONLY}"
 )
 
 

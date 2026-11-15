@@ -56,6 +56,7 @@ from cruxible_client.contracts.query.grammar import (
 )
 from cruxible_client.contracts.shapes import EnumType, StringType
 from cruxible_client.contracts.triggers import CronSchedule
+from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_OPERATION
 
 
 def subject_example() -> SubjectInput:
@@ -435,7 +436,7 @@ def procedure_example() -> ProcedureInput:
             "description": "Read the work-item file and state each item's status.",
             "params": {"path": "string{min_len: 1, max_len: 1024}"},
             # A slot names a capability; the Line binds it to an operation.
-            "slots": {"read": {"capability": "workspace.file@1"}},
+            "slots": {"read": {"capability": f"{WORKSPACE_FILE_OPERATION}@1"}},
             # Every run fits these caps; the Line's operating budget may narrow
             # them. They are a safety factor against an obviously bad run, not
             # compute management, so they stay generous.
