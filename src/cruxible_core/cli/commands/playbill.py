@@ -2622,10 +2622,25 @@ def kit_status(offline: bool, output_json: bool) -> None:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
             newer = kit_version_key(kit.latest_available) > kit_version_key(kit.version)
-            available = f"; latest {kit.latest_available} available" if newer else "; up to date"
+            differs = (
+                kit.latest_available == kit.version
+                and kit.latest_content_digest is not None
+                and kit.latest_content_digest != kit.content_digest
+            )
+            if newer:
+                available = f"; latest {kit.latest_available} available"
+            elif differs:
+                # Same version, other content: not up to date, whatever the version says.
+                available = (
+                    f"; differs from the available {kit.latest_available}, content "
+                    f"{kit.latest_content_digest}"
+                )
+            else:
+                available = "; up to date"
         elif kit.update_check != "checked":
             available = f"; update check {kit.update_check.replace('_', ' ')}"
-        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}{available}")
+        # The content digest (what kit add pins), not an OCI image digest.
+        click.echo(f"{kit.kit_id} {kit.version} content {kit.content_digest}{available}")
         if kit.source is not None:
             click.echo(f"  source: {kit.source}")
         if kit.provenance is not None:

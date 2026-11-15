@@ -259,6 +259,8 @@ def test_creation_installs_the_base_kit_as_the_owner_with_no_network(
     assert installed.providers == () and installed.drifted == ()
     # A local comparison with the bundled copy: no registry is asked.
     assert (installed.latest_available, installed.update_check) == ("1.0.0", "checked")
+    # ... with the bundled content, so a same-version receipt that differs shows it.
+    assert installed.latest_content_digest == BASE_KIT_PIN.content_digest
 
 
 def test_under_independent_approval_creation_succeeds_and_the_kit_awaits_approval(
