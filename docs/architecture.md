@@ -128,8 +128,11 @@ The ledger holds typed artifacts, each checked by its own law at acceptance:
 - CaptureContracts and Captures: what retained evidence must look like, and
   the evidence itself;
 - QueryDefinitions: named queries;
-- Procedures and Blueprints: deterministic graphs with pinned providers, and
-  their skeletons with open slots; ProviderInterfaces and Providers;
+- Contracts and capabilities: immutable data shapes, and the versioned kinds
+  of call a Procedure slot names;
+- Procedures and Providers: deterministic graphs whose slots name
+  capabilities, and the installed provider builds whose operations serve
+  them, each carrying its own copies of the shapes it accepts and returns;
 - Lines, Triggers and ProcedureMandates: when Procedures run and what they may
   propose or settle;
 - ResolutionContracts (predictions), the approval policy, the Procedure runtime

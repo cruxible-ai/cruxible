@@ -17,10 +17,12 @@ A registry version names a release; its digest identifies the bytes. `cruxible
 kit pull NAME:VERSION --out DIRECTORY` fetches and verifies without installing.
 `cruxible kit add REFERENCE` previews the change. Its guarded commit uses
 `--commit --at OID` with the preview's coordinate. Provider installation
-needs admin authority. A commit can land as several changes (provider
-Contracts, one registration per missing provider, then definitions); a blocked or
-awaiting-providers result means earlier changes may be accepted but the
-definitions are not. Report its served repair.
+needs admin authority. A commit can land as several changes (one registration
+per missing provider, then definitions); a blocked or awaiting-providers
+result means earlier changes may be accepted but the definitions are not. A
+kit can require another kit (`requires`), usually the base kit every instance
+starts with; a missing requirement refuses with the command that adds it.
+Report its served repair.
 
 The manifest's `automation_template` names inert local automation, not an
 assumed examples path. The `kit add` result carries its text

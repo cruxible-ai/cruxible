@@ -21,7 +21,8 @@ example from Concepts.
 
 | Piece | What it is |
 |---|---|
-| **Procedure** | A fixed graph of steps: read accepted state, read a source (keeping what it read as a Capture), transform, and end by posting to the inbox, proposing a change or settling one. Every provider it calls is pinned, so a run can be replayed and explained. |
+| **Procedure** | A fixed graph of steps: read accepted state, read a source (keeping what it read as a Capture), extract its records, and end by posting to the inbox, proposing a change or settling one. Each provider call goes through a slot that names a capability; a Line binds each slot to one exact provider build, so a run can be replayed and explained. |
+| **Capability** | A named, versioned kind of call (`workspace.file@1`, `web.fetch@1`): its request Contract, its result Contract and its effect. A slot names one; any installed operation that serves it and fits can fill the slot. |
 | **Line** | A Procedure with its inputs, its budgets and an authority ceiling (`max_authority`): `observe`, `propose` or `settle`. |
 | **Trigger** | When a Line runs: a cron schedule, a cadence, a Capture landing, a window closing, or a generation being accepted. |
 | **Mandate** | The grant that lets a Procedure propose, or settle within a scope. |
@@ -35,13 +36,21 @@ the same result. Procedures are written once, as a typed `ProcedureSpec`
 ## A worked example: discontinued parts
 
 Acme publishes the part numbers it has discontinued, and the team keeps a copy
-in the repository at `supplier/acme-discontinued.txt`, one part number per
-line. The Procedure `catalog.acme-discontinued` reads that file and records
+in the repository at `supplier/acme-discontinued.csv`, one part per row with
+the reason Acme gives:
+
+~~~text
+part,reason
+af-208,Replaced by af-210
+wb-330,End of line
+~~~
+
+The Procedure `catalog.acme-discontinued` reads that file and records
 `discontinued: true` for each part it lists, citing the file as it read it:
 
 ```mermaid
 flowchart LR
-    file["supplier/acme-discontinued.txt"] -->|read, kept as a Capture| shape["One item per line:<br/>catalog.part/ID discontinued: true"]
+    file["supplier/acme-discontinued.csv"] -->|read, kept as a Capture| shape["One item per row:<br/>catalog.part/ID discontinued: true"]
     shape --> term["Settle, or propose<br/>while capped"]
     term -->|proposal| review["Your review"]
     term -->|under a settle mandate| state[("Accepted state")]
@@ -75,57 +84,179 @@ reads. It counts against the same read budget, its refusal refuses the run,
 and the run receipt lists it under `late_reads`, apart from the admitted
 inputs.
 
-The SDK's `Sequence` is a thin builder over that spec: each step returns a
+#### Declare what the file looks like
+
+An extract never describes a document itself. The file's **CaptureKind** (a
+CaptureContract) declares how its bytes decode and its **layout**: its header
+fields and its named record sets, each with where its records are, the key
+that names each record's Subject, a row Contract that types the record, and
+the rule for each field. Every Procedure that reads the kind reads it through
+that one declaration.
+
+The row Contract comes first, as a change set (`row.json`):
+
+~~~json
+{
+  "kind": "change_set",
+  "rationale": "The row Contract for Acme's discontinued-parts file.",
+  "members": [
+    {
+      "kind": "contract",
+      "name": "catalog.discontinued-line",
+      "version": 1,
+      "description": "One line of Acme's discontinued-parts file: why the part was dropped.",
+      "fields": {"reason": "string{max_len: 200}"}
+    }
+  ]
+}
+~~~
+
+Then the kind, with its decoding and layout (`supplier-file.yaml`):
+
+~~~yaml
+name: catalog.acme-discontinued
+shape: http_response
+decoding:
+  format: csv
+  csv: {header: true}
+  limits: {decoded_bytes: 1048576, depth: 4, records: 10000}
+layout:
+  records:
+    parts:
+      at: /*
+      key:
+        part: {at: part, type: "key_part<catalog.part:name>"}
+      row: catalog.discontinued-line@1
+      fields:
+        reason: {at: reason}
+~~~
+
+~~~text
+$ cruxible authoring submit row.json --brief
+outcome: accepted
+...
+$ cruxible capture-contract propose --input supplier-file.yaml
+admitted  sha256:6f108ce0…  verdict=candidate
+landed: accepted at f5091acc7af1
+~~~
+
+A layout needs a `json` or `csv` decoding. A CSV record set is every data row
+(`/*`) and declares no header fields or count; a JSON one names a path such as
+`/vulnerabilities/*` and may declare `count_at`, the path of a count the
+document states about itself, so a short read shows as incomplete. A field
+rule takes `at`, and optionally `type`, `parse`, `project`, `canonicalize` and
+`presence`.
+
+A kind and its layout often take more than one change, because each change can
+use only what is already accepted or arrives in the same change set: the row
+Contract before the layout that names it, and a ClaimType whose evidence rule
+names the kind after the kind. When the row Contract itself refers to that
+ClaimType (an `enum_of` field, say), add the kind without a layout first, then
+the vocabulary and the row Contract, then the layout as the kind's successor.
+A successor may only add to a layout: new header fields, new record sets, new
+optional row fields. Any other change is a new kind.
+
+The field the Procedure writes, `catalog.part.discontinued`, admits Captures of
+this kind as evidence; see [Evolving your
+vocabulary](evolving-your-vocabulary.md#the-vocabulary-file) for adding it.
+
+#### The Procedure itself
+
+The SDK's `Sequence` is a thin builder over the spec: each step returns a
 handle, and `handle["field"]` is a typed reference to one of its fields. This
-one reads the file, extracts its records, and ends in a claims step with one
-Claim per record (`item(...)` is the current record):
+one reads the file, extracts its `parts` records, and ends in a claims step
+with one Claim per record (`item(...)` is the current record):
 
 ~~~python
+from cruxible_client import Cruxible
 from cruxible_client.authoring.procedures import Sequence, item
 
+cx = Cruxible.connect()
 procedure = Sequence(
     "catalog.acme-discontinued",
-    input={"path": "string"},
-    # The slot's signature; a Line binds it to the built-in workspace.file read,
-    # which core recognizes by this exact (pure) signature.
-    slots={"read": {"in": "workspace.file.request@1", "out": "workspace.file.result@1",
-                    "effect": "pure"}},
+    params={"path": "string{min_len: 1, max_len: 256}"},
+    # The slot names a capability. Cruxible serves workspace.file itself.
+    slots={"read": {"capability": "workspace.file@1"}},
 )
 listing = procedure.call(
-    "listing", slot="read", captures={"capture": "catalog.supplier-file-v1"},
-    input={"logical_source": "acme.discontinued", "relative_path": procedure.input["path"]},
+    "listing", slot="read", captures={"capture": "catalog.acme-discontinued"},
+    input={"logical_source": "acme.discontinued", "relative_path": procedure.params["path"]},
 )
-parts = procedure.extract(
-    "parts", capture=listing["capture"], records="/*", row="catalog.part-line@1",
-    key={"part": {"at": "part"}}, fields={},
-)
+parts = procedure.extract("parts", capture=listing["capture"], records="parts")
 procedure.claims(
     ({"type": "catalog.part.discontinued", "value": True,
       "rationale": "Listed in Acme's discontinued-parts file."},),
     for_each=parts["records"],
-    subject={"kind": "catalog.part", "key": {"part": item("key", "part")}},
+    subject={"kind": "catalog.part", "key": {"name": item("key", "part")}},
 )
 
 cx.changes(rationale="The Acme discontinued-parts check.") \
     .procedure(definition=procedure).submit()
 ~~~
 
+The pieces:
+
+- **The slot** names the capability `workspace.file@1`: read one file from an
+  authorized workspace and return its bytes as one Capture. Its request is
+  `{logical_source, relative_path}` (plus an optional `workspace`, naming one
+  authorized root when there are several), and its result is one field,
+  `capture`. A slot names a capability, never a provider: `web.fetch@1` is a
+  slot's capability, `cruxible-provider-web#web.fetch` is a binding.
+- **The call** sends a request typed against the capability's request
+  Contract. A value must fit the field it fills: `relative_path` is
+  `string{min_len: 1, max_len: 1024}`, so a parameter typed `string`, or one
+  whose pattern only implies a length, is refused
+  (`procedure_operand_type_mismatch`); state the bounds. `captures` names the
+  CaptureKind of each Capture field of the result.
+- **The extract** names the Capture and a record set of its kind's layout;
+  `header=[...]` selects header fields. It may also set `duplicates` and
+  `only_keys`, and give a key part the layout types as a plain string a
+  Subject key type (`key={"url": "key_part<my.page:url>"}`). Nothing else about
+  the document is written here. When the Procedure is accepted, the extract
+  pins the row Contract it read, so a kind whose layout grows later does not
+  change what this Procedure extracts until it is accepted again.
+- **The claims step** writes one Claim per record, keyed by the record's key.
+
 `procedure.spec()` is the exact spec every surface submits; `get` shows an
 accepted Procedure in the same form, each typed reference rendered as its
-`$...` text for review.
+`$...` text for review, with each slot's capability pinned by digest:
 
-To read many files at once, name a `glob` instead of `relative_path`, say
-`{"logical_source": "acme.notices", "glob": "supplier/*.json", "max_files": 50}`.
-Each component may use `*`, `?` and `[...]`; `**` is not a pattern. The
-built-in lists the matches, sorted by their real names, and reads each one as
-an ordinary file read, so the capture field holds a list of Captures, one per
+~~~text
+$ cruxible get Procedure:catalog.acme-discontinued
+{
+  "procedure": "catalog.acme-discontinued",
+  ...
+  "slots": {
+    "read": {
+      "capability": {
+        "name": "workspace.file",
+        "version": 1,
+        "digest": "sha256:b751c693…"
+      }
+    }
+  },
+  "steps": [
+    ...
+    {
+      "extract": "parts",
+      "capture": "$steps.listing.capture",
+      "records": "parts"
+    },
+    ...
+~~~
+
+To read many files at once, use the capability `workspace.files@1` instead:
+its request is `{logical_source, glob, max_files}` and its result one field,
+`captures`, a list. Each component of the glob may use `*`, `?` and `[...]`;
+`**` is not a pattern. Cruxible lists the matches, sorted by their real names, and
+reads each one as an ordinary file read, so the list holds one Capture per
 file, and an extract over it cites each record's own file. Hidden files match
 only a pattern that starts with `.`. More matches than `max_files` (default
-100, at most 1000) refuses the read (`glob_over_cap`). A file that cannot be
-read (a link, say) is left out and the list is incomplete. A glob names only
-the files that exist now: an extract straight over it never judges absence,
-so a file the glob no longer matches retires nothing. Each file counts as one
-provider call against the run's budget.
+100, at most 1000) refuses the read before any file is read (`glob_over_cap`).
+A file that cannot be read (a link, say) is left out and the list is
+incomplete. A glob names only the files that exist now: an extract straight
+over it never judges absence, so a file the glob no longer matches retires
+nothing. Each file counts as one provider call against the run's budget.
 
 ### Write the Line, its Trigger and its mandate
 
@@ -143,7 +274,7 @@ go in through authoring as one change set, saved here as `automation.json`:
       "procedure_name": "catalog.acme-discontinued",
       "acquisition": {"listing.capture": {"max_age": "P1D"}},
       "max_authority": "propose",
-      "parameters": {"path": "supplier/acme-discontinued.txt"}
+      "parameters": {"path": "supplier/acme-discontinued.csv"}
     },
     {
       "kind": "trigger",
@@ -157,8 +288,8 @@ go in through authoring as one change set, saved here as `automation.json`:
       "line_name": "catalog.acme-discontinued",
       "grants": "propose",
       "namespace": ["claims"],
-      "valid_from": "2026-10-21T00:00:00Z",
-      "expires_at": "2027-01-19T00:00:00Z"
+      "valid_from": "2026-11-15T00:00:00Z",
+      "expires_at": "2027-02-13T00:00:00Z"
     }
   ]
 }
@@ -170,11 +301,16 @@ outcome: accepted
 ...
 ~~~
 
-The `parameters` are the Procedure's input. `acquisition` sets the rules for
-each capture output, keyed `<call>.<field>` (how old a reading may be, and what
-to do when one is unavailable, stale or oversized); an output left out runs
-under the core default: any age, refuse when unavailable, stale or oversized.
-A mandate's `line_name` names the Line it authorizes. Cron schedules are always UTC: 06:00 UTC, here. `cruxible
+The Line's `parameters` are the Procedure's `params`: a Line run's input is
+empty, so a value a Line supplies is declared as a param, never as `input`
+(`line_parameters_refused` otherwise). Accepting the Line binds its slot: core
+seeks the operations that serve the slot's capability and fit it, and records
+the one it found (here the built-in `workspace.file`) as the Line's binding.
+`acquisition` sets the rules for each capture output, keyed `<call>.<field>`
+(how old a reading may be, and what to do when one is unavailable, stale or
+oversized); an output left out runs under the core default: any age, refuse
+when unavailable, stale or oversized. A mandate's `line_name` names the Line
+it authorizes. Cron schedules are always UTC: 06:00 UTC, here. `cruxible
 authoring example line`, `trigger` and `procedure-mandate` print templates.
 
 ### Run it once
@@ -183,40 +319,46 @@ authoring example line`, `trigger` and `procedure-mandate` print templates.
 
 ~~~text
 $ cruxible line run catalog.acme-discontinued
-RUN-f4b3d8bd…: succeeded
-Result: {"listed": 2}
-Read list: supplier/acme-discontinued.txt (14 bytes, sha256:ef7766d0…)
-Capture list: sha256:75f0fda7…
-Proposal settle: sha256:84437408… candidate sha256:14fb95b1… (settle fell back: cruxible.settle.authority_capped_by_line_max_authority)
+RUN-18882aff…: succeeded
+Counts: written 2 (settled 0, proposed 2); unchanged 0; refused 0; inbox 0
+Result: {}
+Next: done
+Read listing.capture: supplier/acme-discontinued.csv (57 bytes, sha256:f0905f48…)
+Capture listing.capture: sha256:ab0fac03…
+Node listing call succeeded: 1 capture CAP-ab0fac03a37d
+Node parts extract succeeded: 2 records
+Node step_3 claims succeeded: 2 written; proposed
+Proposal step_3: sha256:dd16f9be… candidate sha256:34c20e4b… (settle fell back: cruxible.settle.authority_capped_by_line_max_authority)
+  2 items: 2 changed
+  ...
 ~~~
 
-Its Line is capped at `propose`, so the settle step proposed. `line run
+Its Line is capped at `propose`, so the claims step proposed. `line run
 --parameters FILE` runs it once on other parameter values (another file, say):
 that run is not the one the Line's mandate covers, so it proposes and never
 settles. The proposal reads like anyone's, with the run that made it and each
 item's reason:
 
 ~~~text
-$ cruxible proposal review sha256:84437408…
+$ cruxible proposal review sha256:dd16f9be…
 ...
-Why:
-  Proposed by Procedure catalog.acme-discontinued run RUN-f4b3d8bd… terminal settle
-Changes (2):
-  set catalog.part/af-208 discontinued: true  [CLM-79c37658…]
-  set catalog.part/wb-330 discontinued: true  [CLM-1858ef00…]
-
-Item reasons (2 of 2):
-  ...
-    Listed in Acme's discontinued-parts file.
+Originating Line: Line:catalog.acme-discontinued sha256:8d28a0ac…
+Why: Proposed by Procedure catalog.acme-discontinued run RUN-18882aff… terminal step_3
+...
+Item reasons: 2 (bounded preview; --detail to page)
+  Reason: {"path":"claims/c5/CLM-c520c897….json","reason":"Listed in Acme's discontinued-parts file."}
+  Reason: {"path":"claims/8b/CLM-8bda31cf….json","reason":"Listed in Acme's discontinued-parts file."}
+Changes: 2 created / 0 revised / 0 retired
+...
 ~~~
 
 Once approved, each Claim cites what the run read, not the file as it is
 now:
 
 ~~~text
-$ cruxible get CLM-79c37658… --detail evidence
+$ cruxible get CLM-8bda31cf… --detail evidence
 value: true
-capture CAP-a175ef6cc924  CaptureContract:catalog.supplier-file-v1 v1  source=acme.discontinued  observed=2026-10-21T19:41:54.870243+00:00  evidence: admitted
+capture CAP-ab0fac03a37d  CaptureContract:catalog.acme-discontinued v1  source=acme.discontinued  observed=2026-11-15T20:22:16.260809+00:00  evidence: admitted
 rationale: Listed in Acme's discontinued-parts file.
 ~~~
 
@@ -225,11 +367,49 @@ A later run that finds nothing new proposes nothing, and says so:
 ~~~text
 $ cruxible line run catalog.acme-discontinued
 ...
-Terminal settle: nothing changed (2 items restate accepted state)
+Node step_3 claims succeeded: 2 re-observed; unchanged
+Terminal step_3: nothing changed (2 items restate accepted state)
 ~~~
 
 A Line keeps at most one open proposal: a run whose change differs replaces
 it.
+
+### When a slot cannot be bound
+
+A slot is bound by capability name first, then by fit: the operation's request
+Contract must accept everything the capability's request may send, its result
+must give everything the capability's result promises and nothing it does
+not, the effects must be equal, and every Capture field must be of the
+CaptureKind the capability names, under a layout that covers this instance's
+layout of that kind. The binding is checked when a Line is accepted (and for a
+direct run, when it is admitted), and rechecked at every run admission; it is
+never chosen again silently.
+
+| Refusal | Means | Repair |
+|---|---|---|
+| `cruxible.line.slot_unfilled` | No live operation serves the slot's capability and fits it. When some declare it but do not fit, the message names each and its first failing field, with both sides' types. | Install a provider that serves the capability (`cruxible provider install cruxible-provider-web` serves `web.fetch`, `web.fetch.pages`, `web.render` and `web.search`), or a build whose copy of the shapes fits. |
+| `cruxible.line.slot_ambiguous` | Several operations serve and fit it. | Name one: `--bind slot=provider` on a direct run, or `bindings` on the Line. |
+| `cruxible.line.binding_unfit` | The operation you named declares the capability but does not fit; the message names the first failing path. | Choose another build, or one built against this capability version. |
+| `cruxible.line.binding_undeclared` | The operation you named does not serve the slot's capability. | Name an operation that does. |
+| `cruxible.line.binding_builtin_mismatch` | You named core's built-in for a capability it does not serve; it serves only `workspace.file` and `workspace.files`. | Name a provider operation. |
+
+With no web provider installed, a Procedure whose slot names `web.fetch@1`
+refuses to run:
+
+~~~text
+$ cruxible procedure run catalog.acme-notices-fetch input.json
+Error: cruxible.line.slot_unfilled: No live operation serves slot `fetch` (web.fetch@1, external_read).
+~~~
+
+Growing a kind that a provider produces needs that provider too. A derived
+kind (one a provider's operation returns, such as `web.search-results`) is
+covered only by an operation whose own copy of its layout has every record
+set, header field and count the instance's layout has. So adding a record set
+to such a kind on your instance makes every Line bound to an older build refuse
+`cruxible.line.binding_unfit` at its next acceptance or run, until a build
+whose copy covers the new record set is installed and the Lines move to it
+(`cruxible provider move`). A raw kind, one a generic fetch returns verbatim
+(any `capture<*>`), is the instance's own: grow it freely.
 
 ## Running on a schedule
 
@@ -346,7 +526,7 @@ category:
       "procedure_name": "catalog.acme-discontinued",
       "acquisition": {"listing.capture": {"max_age": "P1D"}},
       "max_authority": "settle",
-      "parameters": {"path": "supplier/acme-discontinued.txt"}
+      "parameters": {"path": "supplier/acme-discontinued.csv"}
     }
   ]
 }
@@ -629,11 +809,12 @@ execution (`claims_enumeration_invalid`) because presence templates must see
 the same record fields and values as the enumeration: put typing in the
 extract (`parse`, the row Contract's types) so both loops read the same typed
 record. A `for_each` rooted at a provider call's records is refused with
-`claims_expect_provider_enumeration_unsupported` until provider-declared
-enumerations are supported.
+`claims_expect_provider_enumeration_unsupported`: absence is judged over an
+extract, so have the provider return its records as a Capture of a kind with a
+layout, and extract that.
 Declaring `mirror` or `inverse` is the author's completeness statement; no
 count declaration is required. A run is complete unless it observes
-incompleteness: a declared `complete_when.count_at` mismatch, a `may_truncate`
+incompleteness: a mismatch with the record set's declared `count_at`, a `may_truncate`
 slot, or an invalid or duplicate record. A declared count is extra proof,
 checked and recorded in the witness. Paged sources must assemble every page
 in the Procedure or declare `may_truncate`.

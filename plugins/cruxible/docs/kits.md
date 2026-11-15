@@ -3,25 +3,26 @@
 # Kits
 
 A kit is a starting point. One instance exports it and another installs it:
-vocabulary, named queries, Procedures, guidance Documents, the provider
-packages those Procedures need, reference pages, and an automation template
-you tailor. It is
+vocabulary, named queries, Procedures, the capabilities their slots name,
+guidance Documents, the provider packages those Procedures need, reference
+pages, and an automation template you tailor. It is
 not a schema you have to adopt. Every garage that starts from a car parts kit
 begins with the same parts, vehicles and fitments, so the same questions and
 automation work on day one. From there the instance is yours to grow: revise
 the kit's definitions, add your own, and adapt or replace its automation, all
 by ordinary authoring. `kit add` previews first and writes nothing. Its
-commit proceeds in three phases, each change accepted under the instance's
-approval policy: when bundled providers are missing, first one change with the
-Contracts their operations use, then a separate registration change for each
-missing provider, then one change with the kit's definitions.
+commit proceeds in two phases, each change accepted under the instance's
+approval policy: when bundled providers are missing, first a registration
+change for each missing provider, then one change with the kit's definitions.
 An earlier change can be accepted before a later one stops: an
 `awaiting_providers` or `blocked` result means the definitions are not in yet,
 not that nothing changed. An upgrade names every definition you have edited; the release's
 version replaces your edit unless you keep it.
 
-This page covers using kits, the automation a kit suggests, and building and
-documenting kits. Command details are in the CLI reference.
+Every instance starts with one kit already installed: the **base kit**, which
+holds the capabilities shared across kits (fetching a web page, reading a
+workspace file). This page covers the base kit, using kits, the automation a
+kit suggests, and building and documenting kits. Command details are in the CLI reference.
 
 ## A worked example: installing car parts
 
@@ -75,14 +76,15 @@ upgrade over a local edit.
 
 ## What a kit carries
 
-A kit carries definitions from seven families:
+A kit carries definitions from eight families:
 
 | Family | What it is |
 |---|---|
 | ClaimTypes | Vocabulary: what a field may hold and what evidence backs it |
 | SubjectKinds | How a kind's Subjects are keyed; travels with its key ClaimTypes |
-| CaptureContracts | What a retained piece of evidence must look like |
-| Contracts | Immutable data shapes that Procedures and provider operations pin |
+| CaptureContracts | What a retained piece of evidence must look like: its decoding and, for a kind an extract reads, its layout |
+| Contracts | Immutable data shapes: request, result and row types |
+| Capabilities | Immutable, versioned kinds of call that Procedure slots name |
 | QueryDefinitions | Named queries |
 | Procedures | Runnable graphs over provider calls |
 | Documents | Governed Documents, such as guidance linked by `guides` |
@@ -106,70 +108,211 @@ A kit names the provider packages its definitions need in one of two ways:
 - **Bundled**: a kit's own domain code (for example a parser for one domain's
   feed) travels inside the kit as the package's built wheel and lock file,
   never as source. Installing the kit installs the package first, and the
-  package's operations serve the kit's Procedure slots.
+  package's operations serve the capabilities the kit's Procedure slots name.
 - **Default**: a published, general-purpose package (for example
   `cruxible-provider-web` for `web.fetch`) is named by package and exact
   version, and the kit carries none of its files. Installing the kit installs
   it by name from the provider index, only when builds already installed do
   not serve every slot the kit's Procedures declare.
 
-## Procedures with Provider slots
+## Procedures, capabilities and providers
 
-A Procedure never names a provider. Each provider call names a slot, and the
-Procedure declares each slot's signature: its input Contract, its output
-Contract and its effect (`pure`, `external_read` or `external_mutation`). Any
-installed provider build with an operation of exactly that signature fits the
-slot, so a kit's Procedures leave the consumer free to choose which search
-service, converter or other implementation runs them.
+A Procedure never names a provider. Each provider call names a slot, and each
+slot names a **capability**: a small, versioned artifact that says what kind of
+call it is, with its request Contract, its result Contract and its effect
+(`pure`, `external_read` or `external_mutation`):
+
+~~~text
+$ cruxible get Capability:workspace.file@1
+capability: Capability:workspace.file@1
+version: 1
+description: Reads one file from an authorized workspace and returns its exact bytes as one Capture. …
+effect: pure
+in: workspace.file.request@1
+out: workspace.file.result@1
+~~~
+
+A provider operation declares which capabilities it `serves`, by name, and
+carries its own copies of the Contracts and CaptureKind layouts it accepts and
+returns. Any installed operation that serves a slot's capability and fits it
+can fill the slot, so a kit's Procedures leave the consumer free to choose
+which search service, converter or other implementation runs them. Fit is
+structural: the operation accepts everything the capability's request may
+send, returns what its result promises and nothing more, has the same effect,
+and returns each Capture as the CaptureKind the capability names, under a
+layout that covers this instance's.
+
+`cruxible orient --section capabilities` lists the capabilities this instance
+holds; `--section operations` lists the provider operations a slot can bind
+to, with the capabilities each serves.
 
 A Line binds every slot to one exact build and operation when it is accepted,
 and its runs never rebind. A direct run fits each slot it is not told about to
-the single live operation serving its signature; `--bind slot=provider`
-chooses one. The run records the bound builds for replay; the accepted
-Procedure stays unchanged.
+the single live operation that serves its capability and fits; `--bind
+slot=provider` chooses one. The run records the bound builds for replay; the
+accepted Procedure stays unchanged. [Lines and
+automation](lines-and-automation.md#when-a-slot-cannot-be-bound) lists the
+refusals and their repairs.
 
-Contracts are shared definitions: builds whose operations name the same
-Contracts serve the same slots. A provider is pure computation behind its
-Contracts: it receives every input its operation's input Contract admits, and
-refuses, typed, what it cannot serve.
+A provider is pure computation behind its capabilities: it receives every
+input its operation's request Contract admits, and refuses, typed, what it
+cannot serve. Every Capture a call returns is a named field of its result
+(`capture`, `captures`, `document`), typed `capture<K>` for the CaptureKind it
+produces, or `capture<*>` for bytes returned verbatim, whose kind the
+Procedure's call names.
+
+## The base kit
+
+Every instance is created with the base kit, kit `base`, installed as its first
+change. It ships inside Cruxible, so it needs no registry and no network, and
+holds the capabilities shared across kits under the prefixes `web.` and
+`workspace.`:
+
+| Capability | Effect | What it does |
+|---|---|---|
+| `workspace.file@1` | pure | Read one workspace file; one Capture. Served by core. |
+| `workspace.files@1` | pure | Read every file a glob matches; a sorted list of Captures. Served by core. |
+| `web.fetch@1` | external_read | One HTTP GET; the body the origin sent, as one Capture. |
+| `web.fetch.pages@1` | external_read | One resource fetched as pages, one Capture per page. |
+| `web.render@1` | pure | A readable document (Markdown or JSON) derived from one fetched HTML Capture. |
+| `web.render.dom@1` | external_read | A page loaded in a browser; the serialized DOM. |
+| `web.search@1` | external_read | One query to a search service; its response verbatim. |
+| `web.search.results@1` | pure | A search response read into the shared form, CaptureKind `web.search-results`. |
+
+It also holds each capability's request and result Contracts and the one
+shared CaptureKind, `web.search-results`, with its layout. It holds no
+provider, Procedure or vocabulary.
+
+~~~text
+$ cruxible init
+...
+Approval policy: self_approval_allowed
+Base kit: base 1.0.0 installed
+...
+$ cruxible kit status
+base 1.0.0 sha256:0bd64225…; up to date
+  source: bundled
+~~~
+
+- **Who serves what.** Cruxible serves `workspace.file` and `workspace.files`
+  itself, through its built-in provider `cruxible-builtin`; a provider package
+  that declares a `workspace.` capability is refused
+  (`cruxible.provider.capability_reserved`). Nothing serves the `web.`
+  capabilities until you install a provider:
+  `cruxible provider install cruxible-provider-web` (it needs the network). Until
+  then a run whose slot names one refuses `cruxible.line.slot_unfilled`.
+- **Under independent approval.** An instance created with
+  `--require-independent-approval` cannot land the base kit on its creator's
+  approval alone: `init` stops it at a proposal and prints the approve
+  command for a second principal (`Base kit: base 1.0.0 awaits approval,
+  proposal sha256:… (cruxible proposal approve sha256:… --signer-id ID --key
+  FILE, as a second principal)`). Until it is approved, `kit status` lists no
+  kits and the capabilities are absent.
+- **Upgrading.** The base kit changes only with a Cruxible release. A newer
+  release may bundle a newer version; `kit status` compares the installed one
+  with the bundled one (no registry is asked), and `cruxible kit add base`
+  previews and proposes the upgrade, with the usual keep rules. Nothing
+  upgrades by itself.
+- **Yours to extend.** Its definitions are ordinary instance state: add a
+  capability version, grow `web.search-results` with a record set (see
+  [When a slot cannot be bound](lines-and-automation.md#when-a-slot-cannot-be-bound)
+  for what growing a derived kind asks of its providers), or author your own
+  capabilities under your own prefix. A capability or Contract version never
+  changes once accepted: a wording fix is the next version.
+
+## A kit that requires another kit
+
+A kit whose definitions use another kit's definitions does not carry copies
+of them: its manifest lists the kit it **requires**, with the lowest version
+it works with:
+
+~~~json
+"requires": [{"kit_id": "base", "min_version": "1.0.0"}]
+~~~
+
+`kit build` writes this for you. A Procedure whose slot names `web.fetch@1`
+pins a capability the base kit owns, so building its kit leaves that pin out of
+the bundle and records the base kit at the version installed where you build:
+
+~~~text
+$ cruxible kit build --id catalog --version 1.0.0 --owns catalog. --out ./catalog-1.0.0
+catalog 1.0.0: 27 artifacts, 0 provider package(s), sha256:ee5571b5…
+  requires: base >= 1.0.0
+~~~
+
+`kit add` checks each requirement before anything else, and `kit remove`
+refuses to take away a kit another one needs:
+
+| Refusal | When | Repair |
+|---|---|---|
+| `cruxible.kit.requires_missing` | A required kit is not installed, or is older than `min_version`; also when a change would take a required kit below it. | Add or upgrade the required kit first (the message names the command). |
+| `cruxible.kit.requires_unresolved` | A pin the bundle left out does not resolve here: a Contract or capability at the exact digest the kit was built against, or a CaptureKind by name, live. | Install the required kit's release that holds it, or restore the definition. |
+| `cruxible.kit.remove_required` | `kit remove` of a kit an installed kit requires. | Remove the dependent kit first. |
+
+~~~text
+$ cruxible kit add ./catalog-1.0.0
+Error: cruxible.kit.requires_missing: Kit catalog 1.0.0 requires kit base 1.0.0 or later; this instance holds none. Add it first: cruxible kit add base.
+
+$ cruxible kit remove base
+Error: cruxible.kit.remove_required: Kit base cannot be removed: kit catalog requires it.
+~~~
+
+`kit status` shows each requirement and whether it is met (`requires base >=
+1.0.0: met (installed 1.0.0)`), and the kit's receipt records it as installed.
+Carrying a copy still works for a definition that belongs to no installed
+kit.
 
 ## Providers you already have
 
-- **Built in.** Every new instance starts with the built-in `workspace.file`
-  operation and its core-owned Contracts, which turn an authorized workspace
-  file read into evidence. Nothing to install; a slot with its signature binds
-  to it.
+- **Built in.** Every instance has `cruxible-builtin`, core's own provider,
+  which serves `workspace.file` and `workspace.files`: the daemon reads the
+  file and keeps its exact bytes as a Capture. Nothing to install; a slot that
+  names either capability binds to it.
 - **Published by name.** General-purpose providers install by package name:
   from the operator's provider repository when one is configured, otherwise
   from the provider index (PyPI unless the operator names another).
 
   ~~~bash
-  cruxible provider list                     # what a configured repository offers
+  cruxible provider list                     # what is installed, and what a configured repository offers
   cruxible provider install cruxible-provider-web
   ~~~
 
-  `cruxible-provider-web` implements `web.fetch`, `search.web` and
-  `web.render`. `web.fetch` returns the body the origin sent as its Capture,
-  verbatim, with the URL, final URL, status, media type, request digest and
-  kept headers in the Capture's coordinate; `search.web` likewise returns the
-  search instance's response body. `web.render` reads a fetched Capture and
-  returns a derived Capture citing it (the page assembled in a browser, or its
-  main content as Markdown). `web.fetch`
-  refuses loopback, private, link-local (cloud metadata included), CGNAT,
-  multicast and reserved addresses, on the first request and on every
-  redirect, and connects only to the address it checked, so DNS rebinding
-  cannot reach behind it. It needs direct outbound access and fetches pages as
-  served.
-  Any package whose operation serves the same `web.fetch` Contracts fits the
-  same slots.
+  `cruxible-provider-web` serves `web.fetch`, `web.fetch.pages`, `web.search`,
+  `web.render` and `web.render.dom`. `web.fetch` returns the body the origin
+  sent as its Capture, verbatim, with the URL, final URL, status, media type,
+  request digest and kept headers in the Capture's coordinate; `web.search`
+  likewise returns the search service's response body. `web.render` reads a
+  fetched Capture and returns a derived Capture citing it (the page's main
+  content as Markdown, or canonical JSON). `web.fetch` refuses loopback,
+  private, link-local (cloud metadata included), CGNAT, multicast and reserved
+  addresses, on the first request and on every redirect, and connects only to
+  the address it checked, so DNS rebinding cannot reach behind it. It needs
+  direct outbound access and fetches pages as served. Any package whose
+  operation serves `web.fetch` and fits fills the same slots.
 - **From a kit.** A kit's own domain provider arrives bundled in the kit; a
   kit's default provider is installed by name when the kit is added and the
   kit's slots are not already served here.
 
 Installing a provider needs `admin` permission. It registers the build and
-its operations as a change, which lands at once when the approval
-policy requires no approval and otherwise stops at a proposal to approve and
-activate. Installing grants no permission to run anything.
+its operations as a change, which lands at once when the approval policy
+requires no approval and otherwise stops at a proposal to approve and
+activate. A provider installs on its own, with no kit present: it carries the
+shapes it accepts and returns. Installing grants no permission to run
+anything.
+
+`get Provider:NAME` shows each operation with what it serves and where its
+code is:
+
+~~~text
+$ cruxible get Provider:cruxible-builtin
+provider: cruxible-builtin
+...
+operations:
+  workspace.file  workspace.file.handoff@1 -> workspace.file.result@1 (pure)  serves workspace.file
+    Reads one workspace file in the daemon's own process and returns its exact bytes as one Capture. ...
+    source src/cruxible_core/providers/builtin_workspace_file.py (https://github.com/cruxible-ai/cruxible)
+    ...
+~~~
 
 ## Use a kit
 
@@ -201,8 +344,9 @@ such as a checkout or a `kit pull --out` folder) or an OCI image layout:
 
 The preview lists the plan grouped by kind (what each definition does and
 how many dependents it has), each provider package and what happens to it
-(already installed, `satisfied` when builds installed here already serve
-every slot the kit's Procedures declare, or to be installed), and who built the release, from
+(already installed, `satisfied` when operations installed here already serve
+and fit every slot the kit's Procedures declare, or to be installed), the
+kits it requires, and who built the release, from
 which instance and at which coordinate. That build
 record is claimed by the builder, not proven. The preview ends with the
 command that commits exactly what you saw:
@@ -248,23 +392,23 @@ as the build the kit recorded: the provider index must list the recorded wheel
 hash before the wheel is fetched, and the wheel's lock must match before any
 dependency is fetched. Another build under the same name and version is
 refused (`cruxible.provider.index_build_differs`) with nothing installed. A
-default is skipped (`satisfied`) when live builds of other providers here
-already serve every slot signature the kit's Procedures declare; those slots
-then bind to them. A daemon configured with a
+default is skipped (`satisfied`) when, for every slot the kit's Procedures
+declare, some other live operation here serves its capability and fits; those
+slots then bind to them. A daemon configured with a
 provider repository installs by name only from that repository, so there a
 default that is not satisfied is refused: install an implementation yourself
 and add the kit again.
 
 ### Run a slotted Procedure
 
-`get` on a Procedure renders its declared slots and their signatures:
+`get` on a Procedure renders its declared slots and the capability each names:
 
 ~~~bash
 cruxible get Procedure:catalog.price-check
 ~~~
 
-A direct run fits each slot to the single live operation serving its
-signature. No fit refuses `cruxible.line.slot_unfilled`; several fits refuse
+A direct run fits each slot to the single live operation that serves its
+capability and fits. No fit refuses `cruxible.line.slot_unfilled`; several fits refuse
 `cruxible.line.slot_ambiguous` and list the candidates. Select explicitly with
 `cruxible procedure run NAME INPUT --bind slot=provider` (`provider[/build][#operation]`;
 a bare name is its most recently registered live build), or pass
@@ -319,8 +463,9 @@ are unaffected. Old builds stay installed and runnable; kit add neither retires
 nor lists them.
 
 Provider builds have identities `Provider:NAME/BUILD`, where BUILD is a hash of
-the wheel and lock or image, excluding the host environment. Contracts are shared:
-builds whose operations name the same Contracts serve the same slots. Installing a
+the wheel and lock or image, excluding the host environment. Capabilities are
+shared: builds whose operations serve the same capability and fit it fill the
+same slots. Installing a
 build adds it alongside earlier builds; existing exact pins stay put. New
 authoring by bare provider name chooses the live build registered most recently,
 even when its package version is lower. Signing-key and capture-declaration changes
@@ -332,7 +477,10 @@ or Capture declarations preserves their runtime build's original registration or
 Procedures name no builds, so moving a provider moves Lines:
 `cruxible provider move NAME --to newest|BUILD` rebinds the Lines bound to NAME
 (or only those named with `--only`) as a governed change with its own preview,
-carrying them disabled and their Mandates propose-only. `cruxible provider retire NAME/BUILD` is refused
+carrying them disabled and their Mandates propose-only; each slot moves to the
+target build's operation of the same name if it serves the capability and
+fits, else to the one that does, else the move refuses with the reason.
+`cruxible provider retire NAME/BUILD` is refused
 while live definitions pin it and retains its runtime environment after retirement.
 Legacy single-path Providers remain readable without a rewrite; `cruxible-builtin`
 keeps its single path.
@@ -367,8 +515,14 @@ Removing retires the definitions the kit owns. It does not retire what the kit
 carried in from elsewhere, nor its provider packages. A definition you edited
 since install must be reverted or retired on its own first, and removal is
 refused while live Claims or other definitions still depend on what it would
-retire. Like `kit add`, it lands at once when the approval policy requires no
-approval and otherwise stops at a proposal.
+retire, or while an installed kit requires the kit
+(`cruxible.kit.remove_required`). Like `kit add`, it lands at once when the
+approval policy requires no approval and otherwise stops at a proposal.
+
+Removing the base kit retires only its CaptureKind, `web.search-results`:
+capability and Contract versions are immutable and stay accepted. Adding it
+back is refused today (`cruxible.capture_contract.revival_refused`, since its
+retired CaptureKind cannot be revived), so keep the base kit installed.
 
 ## Automation that comes with a kit
 
@@ -409,8 +563,8 @@ NAME`). The kit's README says which Lines settle what and why
 
 A kit is exported from an instance where its definitions are accepted. You
 name the identity prefixes the kit owns; every live definition under them, in
-the six families above, is exported together with everything those
-definitions pin.
+the families above, is exported together with everything those definitions
+pin.
 
 ~~~bash
 cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-parts-1.0.0
@@ -421,8 +575,10 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
 - `--version` is `MAJOR.MINOR.PATCH`. A new release needs a higher version.
 - The release is a snapshot: each definition is exported without its local
   history, so the consumer's instance gets its own.
-- The built-in `workspace.file` provider is pinned as it is and never
-  exported.
+- A definition another installed kit owns (the base kit's capabilities, for
+  example) is left out of the bundle and that kit is recorded in `requires`
+  ([A kit that requires another kit](#a-kit-that-requires-another-kit)).
+  Cruxible's built-in provider is pinned as it is and never exported.
 - The manifest records who built the release, on which instance and at which
   accepted coordinate.
 - `--automation-template FILE` names the kit's automation template (it sits at
@@ -454,6 +610,75 @@ refuses a different build under the same version. Registry dependencies (for
 example `cruxible-provider-runtime`) are not bundled; the consumer's daemon
 resolves them from its provider index.
 
+### What a provider package declares
+
+A provider package ships `registration.json`, schema 3. Each operation says
+what it is, where its code is, and which capabilities it serves; its request,
+result and refusal Contracts are the package's own:
+
+~~~json
+{
+  "schema_version": 3,
+  "manifest": {"path": "manifest.yaml", "digest": "sha256:…"},
+  "operations": [
+    {
+      "name": "parts.read",
+      "description": "Reads one supplier price sheet: one document of parts with their list prices.",
+      "source": {
+        "path": "src/catalog_parser/sheet.py",
+        "repository": "https://github.com/example/catalog-parser"
+      },
+      "serves": ["catalog.price-sheet.read"],
+      "in": "catalog.price-sheet.read.request@1",
+      "out": "catalog.price-sheet.read.result@1",
+      "effect": "pure",
+      "refusals": {
+        "provider_declined": {"contract": "parts.read.refusal.provider_declined@1", "absorbable": false}
+      },
+      "entrypoint": "catalog_parser.sheet:ReadSheet"
+    }
+  ],
+  "declares": {
+    "contracts": ["… every Contract the operations reach, in full …"],
+    "capture_kinds": ["… every CaptureKind they name, with its decoding and layout …"],
+    "built_against": [
+      {"kind": "Capability", "name": "catalog.price-sheet.read", "version": 1, "digest": "sha256:…"}
+    ]
+  }
+}
+~~~
+
+- `description` (at most 2048 characters) says what the operation does, led
+  by its result. `source.path` is required; `repository` and `revision` (a
+  full commit hash) are optional, since a local build has neither.
+- `serves` lists capability names, sorted, at most 16, with no versions: fit
+  is checked against whichever version a slot pins. Naming a `workspace.`
+  capability is refused (`cruxible.provider.capability_reserved`): core serves
+  those.
+- `declares` carries a copy of every Contract and CaptureKind the operations
+  reach, and nothing they do not. The copies are never installed as instance
+  definitions, so a provider installs with no kit present, and its names
+  never collide with the consumer's. The usual way to build them is to copy
+  the capability's Contracts and the kind's layout byte for byte from the kit
+  (or the base kit) the provider is built for: the digests are then equal and
+  fit is immediate. An operation may accept more than the capability sends
+  (an extra optional request field, a wider type) by declaring its own
+  request Contract under its own name; it may not return a field the
+  capability's result does not declare.
+- `built_against` records which capability and kind versions the copies came
+  from; nothing gates on it.
+- A result Contract cannot be the Capture itself: every Capture is a named
+  field, `capture<K>` (or a list of them), and an operation that returns a
+  derived kind must name that kind (`capture<*>` fits only a capability that
+  also says `*`).
+- `may_truncate: true` marks an operation that may return a truncated
+  listing; it binds only a slot that declares `may_truncate` too.
+
+A registration in an older schema is refused at install. A new version on
+either side (a capability version, a provider build) never needs the package
+re-registered: bindings are rechecked at the next Line acceptance or run
+admission.
+
 ### Name a default provider
 
 For general-purpose operations such as `web.fetch`, name a published package
@@ -474,8 +699,8 @@ The manifest records the package, its exact version and the wheel and lock
 digests (`delivery: index`), and the kit carries none of its files. Every
 Provider a carried definition pins must be named by `--provider` or
 `--default-provider`, as the build this instance installed. `kit add` installs
-the default unless builds already here serve every slot the kit's Procedures
-declare. A Line binds each slot to an exact build when accepted; a direct run
+the default unless operations already here serve and fit every slot the kit's
+Procedures declare. A Line binds each slot to an exact build when accepted; a direct run
 fits each slot, and more than one fitting operation requires an explicit
 binding.
 
@@ -530,6 +755,10 @@ there never moves to different content.
   unless you keep them.
 - **Building a kit over another kit's prefix.** Two installed kits can't own
   overlapping prefixes, so give a kit you build a prefix of its own.
+- **Copying shared definitions into your kit.** Use the base kit's
+  capabilities where they fit; your kit then requires `base` and carries no
+  copy. Declare a capability of your own, under your own prefix, only for a
+  kind of call the base kit does not have.
 - **Forgetting the Lines after an upgrade.** An upgrade that changes a
   Procedure brings its Lines back disabled and its settle mandates back to
   propose; `next` lists each one.

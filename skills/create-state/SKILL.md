@@ -20,13 +20,18 @@ observations. A relationship with its own facts can be a pair Subject keyed
 by Subject-valued ends; those ends are immutable. Prefer existing kinds and
 fields when they express the intended meaning.
 
-Kit vocabulary is a starting point, not a fixed schema. Revise it like any
-definition (allow more enum values, add a field, split a category) through
-authoring; new vocabulary goes where it fits, in a local namespace or beside
+The instance's kinds and fields are stated in one file,
+`.cruxible/vocabulary.yaml`: `cruxible vocabulary export` writes it from
+accepted state, `plan` shows what an edit would change (including the Claims
+an enum mapping moves) and `apply` submits it as one change set. A kind or
+field the file leaves out is untouched. `next` says when the file is behind
+accepted state. Kit vocabulary is a starting point, not a fixed schema: revise
+it like any definition (allow more enum values, add a field, split a
+category); new vocabulary goes where it fits, in a local namespace or beside
 the kit's own types. A kit upgrade names your local edits and replaces them
 unless you keep them. The bundled
-[vocabulary reference](../../docs/evolving-your-vocabulary.md) covers what
-each kind of change costs.
+[vocabulary reference](../../docs/evolving-your-vocabulary.md) covers the
+file's format, its value types and what each kind of change costs.
 
 Apply the [copy-in rule](../_shared/references/copy-in.md) before turning source
 material into Claims. A governed Document can point to a source instead.
@@ -37,10 +42,13 @@ justified, the [data-readiness reference](../_shared/references/data-readiness.m
 helps resolve grain, identifiers and joins without requiring a profiling
 project for every input.
 
-Definitions use authoring; values use `set`, `retire` or `write`. File passages,
-sections, Captures, contracts and the writer's own words provide evidence
-through the supported write surface. Preserve verdict flags instead of
-treating every stored value as supported.
+Kinds and fields use the vocabulary file; other definitions use authoring;
+values use `set`, `retire` or `write`. File passages, sections, Captures,
+contracts and the writer's own words provide evidence through the supported
+write surface. Evidence belongs to each Claim: a decision and the values that
+rest on its reasoning (its date included) cite the section written in the
+same change. Preserve verdict flags instead of treating every stored value as
+supported.
 
 Use [guarded edits](../_shared/references/concurrent-edits.md) and
 [governance](../_shared/references/governance-flow.md) for shared or reviewed

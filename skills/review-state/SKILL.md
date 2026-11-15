@@ -12,7 +12,9 @@ does not imply an audit of every kind or permission to repair the instance.
 
 `next` reports attention and served repairs; `query` answers questions as
 rows with verdict flags; `get` exposes a reference's summary, evidence, why
-and history. Distinguish an explicit none from an unknown or unexamined value.
+and history. Evidence belongs to each Claim: `query KIND --claims` names the
+Claims behind each cell, and `get CLAIM --detail evidence` shows what one
+rests on. Distinguish an explicit none from an unknown or unexamined value.
 A stored Claim is not automatically supported, and a proposal is not accepted
 state. Name the evidence and coordinate behind a conclusion. Before
 re-deriving one, check whether an accepted Claim already answers the question;

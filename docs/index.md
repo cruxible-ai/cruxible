@@ -36,11 +36,13 @@ judgment; Cruxible checks it, records it and serves it back.
   on a schedule and propose what they find.
 - [Review and governance](review-and-governance.md): who can change what, and
   how changes get reviewed.
-- [Evolving your vocabulary](evolving-your-vocabulary.md): changing what you
-  record without losing what you already know.
+- [Evolving your vocabulary](evolving-your-vocabulary.md): the vocabulary
+  file, its format, and changing what you record without losing what you
+  already know.
 - [For AI agents](for-ai-agents.md): connecting an agent, and the loop it
   runs.
-- [Kits](kits.md): installing shared vocabularies built by others.
+- [Kits](kits.md): the base kit every instance starts with, installing
+  shared vocabularies built by others, capabilities and provider packages.
 
 ## Reference
 

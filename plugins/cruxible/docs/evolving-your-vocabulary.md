@@ -16,9 +16,12 @@ unchanged, say it again in the new terms, or retire it. Cruxible won't accept
 a change that leaves any of them unaccounted for, so history never holds a
 Claim that its own field doesn't admit.
 
-This guide covers what's cheap to change and what isn't, a worked example of
-splitting a category, the common tasks, and upgrading a kit you've edited.
-It uses the car parts example from Concepts.
+The ordinary way to change kinds and fields is one file,
+`.cruxible/vocabulary.yaml`: export it, edit it, see the plan, apply it. This
+guide covers what's cheap to change and what isn't, the vocabulary file and
+its format, a worked example of splitting a category, the common tasks, what
+the file does not do, and upgrading a kit you've edited. It uses the car parts
+example from Concepts.
 
 ## What a change costs
 
@@ -34,107 +37,400 @@ Even the cheap rows touch every Claim of the field: a revision carries all of
 them, so a busy field means a large change to review. Get definitions right
 early, and prefer adding a field to reshaping one that's full.
 
+## The vocabulary file
+
+`.cruxible/vocabulary.yaml` states every kind and its fields in one YAML file,
+committed to Git beside `files.yaml`. It is an input to authoring, never the
+authority: the signed ledger stays the record, and the file only proposes
+changes to it.
+
+~~~text
+$ cruxible vocabulary export
+Wrote .cruxible/vocabulary.yaml (4 kind(s), 13 field(s)) at 2938ae08d54c
+~~~
+
+Edit the file, then see what applying it would change. `plan` writes nothing:
+
+~~~text
+$ cruxible vocabulary plan
+Vocabulary plan: .cruxible/vocabulary.yaml (based on 148364df5e71)
+Changes:
+  add ClaimType:catalog.part.warranty_months
+  add SubjectKind:catalog.supplier
+  add ClaimType:catalog.supplier.name
+Preflight: passed
+...
+~~~
+
+`apply` submits the same changes as one ordinary change set, which lands at
+once when your approval policy allows it (`--no-accept` keeps the proposal),
+and `export` then moves the file to the new head:
+
+~~~text
+$ cruxible vocabulary apply --rationale "Warranty terms, and suppliers as a kind."
+...
+landed: accepted at 99ae6ac69012
+Next: cruxible vocabulary export
+~~~
+
+The same three steps are `cx.vocabulary.export()`, `.plan()` and `.apply()` in
+the SDK (printing a result shows the text the CLI prints), and
+`cruxible_vocabulary_export`, `_plan` and `_apply` on MCP (the `full`
+profile), each reading the file from the workspace and sending its bytes.
+
+What the file leaves out is untouched. A kind or field it does not name is
+listed by `plan` as left as it is (`Not in file (left as they are)`), never
+retired, and a property an existing field's entry leaves out keeps its
+accepted value; write `null` to clear one that may be empty. Only `retired:
+true` retires. Definitions a kit installed are edited the same way; `plan`
+marks them `kit=<id>`, and export marks them `# kit: <id>`.
+
+**Keeping it in step.** Only `export` writes the file; the daemon never does.
+When accepted vocabulary moves past the file's export (someone proposed a
+field from the CLI, say, or a kit upgrade landed), `orient` says so and
+`next` lists it, and exporting again repairs it:
+
+~~~text
+$ cruxible orient
+...
+Vocabulary file: .cruxible/vocabulary.yaml at 63de72d1d932, behind by 1 definition(s); refresh: cruxible vocabulary export
+...
+$ cruxible next
+warning  vocabulary_file_behind  .cruxible/vocabulary.yaml  next=cruxible.vocabulary.export
+  repair: cruxible vocabulary export
+~~~
+
+`orient`'s `next=` count covers accepted state only; the vocabulary row is in
+`cruxible next`. A header naming an export this instance does not know is
+`vocabulary_file_baseline_invalid`: restore the header, or `vocabulary export
+--force`. Export replaces a file only when nothing in it would be lost; a file
+holding edits not yet applied refuses, naming them:
+
+~~~text
+$ cruxible vocabulary export
+Error: cruxible.vocabulary.export_refused: .cruxible/vocabulary.yaml holds changes not in accepted state (ClaimType:catalog.part.title): apply them (`cruxible vocabulary apply`), or pass --force to replace the file
+~~~
+
+**When someone else changed the same field.** `plan` and `apply` read at the
+export the file names (`based_on`), so an edit replaces the definition you
+saw. If someone changed that definition since your export, preflight refuses
+it rather than overwriting their change:
+
+~~~text
+$ cruxible vocabulary plan
+...
+Changes:
+  replace ClaimType:catalog.part.title (description)
+Preflight: refused
+  cruxible.authoring.claim_type_succession_invalid at members[0].successor: cruxible.claim_type.migration_invalid: successor does not pin the current ClaimType
+~~~
+
+Keep your edit aside, `vocabulary export --force` to read the current
+definitions, make the edit again on top of them, and apply.
+
+### The format
+
+The file is a header and a map of kinds. Here is a whole one, exported from
+the car parts instance:
+
+~~~yaml
+format: cruxible-vocabulary-v1
+instance: inst_f42e670feacb4f97
+based_on:
+  git_oid: 1646c6bf80001577a1914bacfdd070692ca95b58
+  semantic_root: sha256:0d6d9218…
+  generation_root: sha256:9979a436…
+  compiler_digest: sha256:f537406e…
+  vocabulary_digest: sha256:4f2c0207…
+kinds:
+  catalog.decision:
+    description: A ruling the shop made; its reasoning lives in a doc section.
+    fields:
+      slug:
+        key: true
+        value: 'string{min_len: 1, max_len: 64}'
+        description: A short slug for the ruling; the key.
+      decided_on:
+        value: date
+        description: The day the shop made the ruling, as the ruling states it.
+      governs:
+        link:
+        - catalog.part
+        - catalog.vehicle
+        many: true
+        description: The parts and vehicles the ruling applies to.
+      status:
+        enum:
+        - proposed
+        - accepted
+        - superseded
+        description: Where the ruling stands.
+      summary:
+        value: 'string{max_len: 200}'
+        description: The ruling in one line; it cites the section that gives the reasoning.
+  catalog.part:
+    description: A part the shop stocks, named by its part number.
+    fields:
+      name:
+        key: true
+        value: 'string{min_len: 1, max_len: 64}'
+        description: The part number; the key.
+        canonical_form:
+        - nfkc
+        - trim
+        - casefold
+      category:
+        enum:
+          brake-pads: Brake pads.
+          brake-rotors: Brake rotors and discs.
+          filters: Oil, air and cabin filters.
+          lighting: null
+          wipers: Wiper blades.
+        description: The part's shelf category.
+      discontinued:
+        value: bool
+        description: The supplier has stopped making the part, as its discontinued-parts file says.
+        evidence_admission_policy:
+          rules:
+          - rule_id: acme-file
+            claim_roles:
+            - observation
+            admission: direct
+            subject_binding: exact_claim_subject
+            attestation_requirement: none
+            capture_contracts:
+            - role: capture-contract
+              target:
+                kind: CaptureContract
+                name: catalog.acme-discontinued
+        default_role: observation
+      fits:
+        link: catalog.vehicle
+        many: true
+        description: A vehicle the part fits.
+      replaces:
+        link: catalog.part
+        many: true
+        description: An older part this one supersedes.
+      title:
+        description: What the supplier calls the part.
+      warranty_months:
+        value: int{0..120}
+        description: How many months the supplier's warranty runs.
+  catalog.vehicle:
+    description: A car, named by make, model and year.
+    fields:
+      name:
+        key: true
+        value: 'string{min_len: 1, max_len: 128}'
+        description: Make, model and year; the key.
+        canonical_form:
+        - nfkc
+        - trim
+        - collapse_whitespace
+        - casefold
+  semantic:
+    fields:
+      alias:
+        ...
+      distinct_from:
+        ...
+~~~
+
+**The header.** `format` is always `cruxible-vocabulary-v1`; `instance` names
+the instance the file belongs to; `based_on` is the export it was written
+from: the accepted coordinate (Git OID, semantic root, generation root,
+compiler digest) and a digest over every live ClaimType and SubjectKind. Never
+edit it; `export` writes it.
+
+**A kind** is a dotted name. Its keys state its SubjectKind, the rule for
+naming its Subjects:
+
+| Key | Means |
+|---|---|
+| `description` | What a Subject of the kind is. |
+| `minted: true` | Cruxible generates each Subject's id; the kind has no key fields. |
+| `keys` | The key fields in full form (their predicates, in order), for when the keys are not this kind's own fields. Usually unnecessary: mark fields `key: true` instead. |
+| `uniqueness` | `unique` (the default: a key names one Subject) or `hint` (a key usually names one). |
+| `normalizers` | A core identity normalizer per key part, such as `{name: {normalizer: pep503, version: 1}}` for Python package names. |
+| `retired: true` | Retires the kind. |
+| `fields` | The kind's fields, by name. |
+
+A kind with only `fields` changes no SubjectKind.
+
+**A field** is one ClaimType, named `<kind>.<field>` (`catalog.part.category`).
+`{}` takes every default: one value, a string of at most 256 characters,
+normative, backed by its writer's own words. Beside any property of the full
+ClaimType input form, a field takes these shorthands:
+
+| Shorthand | Means |
+|---|---|
+| `enum: [a, b]` | A closed list of members. As a map, `{member: meaning}` gives each member's meaning (`null` for none). |
+| `link: KIND` | The value is a Subject of that kind; `link: [KIND, KIND]` for several kinds. |
+| `many: true` | Several values at once. Left out: one value (on an edit, what is accepted). |
+| `key: true` | A key of the kind, in file order. A key holds one value. |
+| `retired: true` | Retire the field, and its live Claims with it; `reason:` (`superseded`, the default, `was-wrong` or `was-rescinded`) is the reason each Claim takes. |
+
+The other properties are the full ClaimType input form, written in the same
+entry: `value` (below), `description`, `default_role`, `permitted_roles`,
+`canonical_form`, `evidence_requirement`, `evidence_admission_policy`,
+`evidence_freshness` (`{stale_after: P30D}`), `inverse`, `requires_complete_input`
+and `incomplete_fallback`, `allowed_subject_kinds` (for a field several kinds
+share), and the rest that `cruxible claim-type propose --template --expanded`
+prints with their defaults. Anything shorthand cannot say is written this way,
+so an export never loses meaning: `discontinued` above states its evidence
+rule in full. Hand-written, the same rule may name the contract briefly
+(`capture_contracts: [CaptureContract:catalog.acme-discontinued]`), and export
+writes it back in full. Evidence and
+admission covers evidence
+rules.
+
+**`value:`** is the field's type, in the Contract type grammar. Quote a type
+that holds `{` and `:` so YAML reads it as one string (`'string{max_len:
+200}'`). An enum or a link states the value itself; drop `value` there.
+
+### Value types
+
+| Type | Holds | Example |
+|---|---|---|
+| `string{...}` | Text. Bounds: `min_len`, `max_len` (a field's string allows at most 256), `pattern` (a regular expression). | `'string{min_len: 1, max_len: 64}'` |
+| `int{min..max}` | A whole number; either bound may be left out. | `int{0..120}`, `'int{0..}'` |
+| `decimal{min..max}` | An exact decimal number. | `'decimal{0..}'` |
+| `number{min..max}` | A floating-point number. | `number` |
+| `bool` | `true` or `false`. | `bool` |
+| `date` | A calendar date, `2026-11-12`. | `date` |
+| `datetime` | An instant with its offset. | `datetime` |
+| `duration` | An ISO 8601 duration, `P30D`. | `duration` |
+| `enum[...]` | One of a closed list of members (the `enum:` shorthand writes it). | `'enum[open, done]'` |
+| `enum_of PREDICATE` | One of another field's enum members. | `enum_of catalog.part.category` |
+| `subject<KIND>` | A Subject of that kind, or `subject<A \| B>` (the `link:` shorthand writes it). | `'subject<catalog.vehicle>'` |
+| `list<T>{max_items: N}` | A list of up to N values of type T, as one value. | `'list<string{max_len: 20}>{max_items: 5}'` |
+| `NAME@N` | A record of a governed Contract's fields. | `catalog.dimensions@1` |
+
+There is no `json`, `object` or `map` type: a field holds a declared shape.
+Prose belongs in a document section the field cites, not in a long string. A
+number with a unit is clearest as an integer in the smallest unit
+(`price_cents`).
+
+### Moving Claims when an enum narrows
+
+A member that leaves an enum must say what happens to the live Claims that hold
+it. Write it as the member's entry, beside the members that stay:
+
+- `old: {becomes: new}` says each of its Claims again with `new`, keeping its
+  identity, Subject and role and citing its own evidence again;
+- `old: {retire: was-wrong}` (or `superseded`, `was-rescinded`) retires them.
+
+`plan` lists the Claims a mapping moves before the definition changes.
+[The worked example](#a-worked-example-splitting-a-category) uses one.
+
+### Strict YAML
+
+The file is read strictly, so it can't be read two ways. A duplicate key, an
+unknown key, an alias, an anchor or a merge key refuses, and so does a value a
+YAML reader could take as something else: `yes`/`no` (write `true` or
+`false`), an unquoted date, a decimal number, or an empty value. Each refusal
+names its line:
+
+~~~text
+$ cruxible vocabulary plan
+Error: cruxible.vocabulary.file_invalid: 'yes' at line 78, column 15 reads as a boolean: write true or false, or quote it
+$ cruxible vocabulary plan
+Error: cruxible.vocabulary.file_invalid: kinds.catalog.part.fields.fits: Value error, unknown field property plural; a field takes key, enum, link, many, retired, reason or a ClaimType input field
+~~~
+
+### The `semantic` group
+
+Every export ends with `semantic`, which reads like a kind but is not one: it
+is the namespace of Cruxible's built-in fields `semantic.alias` and
+`semantic.distinct_from`, which apply to Subjects of every kind (their
+`allowed_subject_kinds` is the pseudo-kind `semantic.subject`). There is no
+`semantic` SubjectKind and no `semantic/...` Subject. Leave the group as export
+writes it (Duplicates says what
+the two fields are for).
+
 ## A worked example: splitting a category
 
 `catalog.part.category` holds one of `brakes`, `filters`, `lighting` and
 `wipers`. The shop starts stocking rotors and wants `brakes` split into
-`brake-pads` and `brake-rotors`. Four Claims are written under the field
-today: two parts are `brakes`, one `filters`, one `wipers`.
+`brake-pads` and `brake-rotors`. Both parts recorded as `brakes` today are
+pads.
 
 A change to a field is a **succession**: a new version of its definition that
 replaces the old one, together with what happens to every Claim written under
-it. An edit names the field and only what changes; everything else carries
-over. The split takes three steps, each a reviewed change.
+it. In the file, the split is one edit: add the two new members, and say that
+`brakes` becomes `brake-pads`:
 
-**1. Allow the new values.** Widening the list carries every Claim over as it
-is:
-
-~~~yaml
-predicate: catalog.part.category
-value: enum[brakes, brake-pads, brake-rotors, filters, lighting, wipers]
+~~~diff
+       category:
+         enum:
+-          brakes: Pads, rotors and calipers.
++          brakes: {becomes: brake-pads}
++          brake-pads: Brake pads.
++          brake-rotors: Brake rotors and discs.
+           filters: Oil, air and cabin filters.
+           lighting: null
+           wipers: Wiper blades.
 ~~~
+
+`plan` lists the Claims the mapping moves first:
 
 ~~~text
-$ cruxible claim-type propose --input widen.yaml --name widen-category
-admitted  sha256:b7b56ddc…  verdict=candidate
-landed: accepted at 38b76ed1a46e
+$ cruxible vocabulary plan
+Vocabulary plan: .cruxible/vocabulary.yaml (based on 84066bb057b3)
+Claims:
+  CLM-016b6497e106c48920a7df8cf28c03ec catalog.part/bp-2210 catalog.part.category: brakes becomes brake-pads
+  CLM-e399f3db867bbd66ddc10c94c945e174 catalog.part/bp-1142 catalog.part.category: brakes becomes brake-pads
+Changes:
+  replace ClaimType:catalog.part.category (member_descriptions, value)
+Preflight: passed
+
+$ cruxible vocabulary apply --rationale "Split brakes: the shop now stocks rotors; both brake parts on file are pads."
+...
+landed: accepted at 63de72d1d932
+
+$ cruxible query catalog.part --select category
+subject               category    flags
+catalog.part/af-208   filters     -
+catalog.part/bp-1142  brake-pads  -
+catalog.part/bp-2210  brake-pads  -
+catalog.part/wb-330   wipers      -
 ~~~
 
-**2. Move the values.** Say again, in the new terms, what each `brakes` part
-is, as one write:
-
-~~~python
-from cruxible_client import Cruxible
-
-cx = Cruxible.connect()
-batch = cx.changes(because="Split brakes: these two parts are brake pads.")
-for part in ("bp-1142", "bp-2210"):
-    batch.set(f"catalog.part/{part}", "category", "brake-pads")
-moved = batch.write()
-[(c.subject, c.before, c.after, c.verdict) for c in moved.changes]
-# [('catalog.part/bp-1142', 'brakes', 'brake-pads', 'supported'),
-#  ('catalog.part/bp-2210', 'brakes', 'brake-pads', 'supported')]
-~~~
-
-**3. Drop the old value.** With nothing left on it, narrowing the list
-carries every Claim:
-
-~~~text
-$ cruxible claim-type propose --input narrow.yaml --name narrow-category    # the enum without brakes
-admitted  sha256:959016af…  verdict=candidate
-landed: accepted at 99407d14196a
-
-$ cruxible set catalog.part/af-208 category brakes --because "…"
-refused (generation 43, 99407d14196a)
-cruxible.write.value_not_member (change 0): 'brakes' is not a member of category; its members are: brake-pads, brake-rotors, filters, lighting, wipers
-  nearest: brake-pads, brake-rotors
-~~~
-
-A narrowing that would strand a value is refused before anything lands, and
-names the value:
-
-~~~text
-$ cruxible claim-type propose --input drop-wipers.yaml --name drop-wipers --dry-run
-would_block  -  verdict=refused
-  cruxible.claim.value_invalid: The Claim literal 'wipers' does not satisfy the native value type of ClaimType 'catalog.part.category'; its members are: brake-pads, brake-rotors, filters, lighting.
-~~~
-
+The new definition and the two re-authored Claims land as one generation.
 Each Claim keeps its identity, so the field's history reads as revisions
 (`cruxible get catalog.part/bp-1142 --detail history --field category`).
+`vocabulary export` then writes the enum without `brakes`.
 
-To make a change like this in one atomic step instead, submit a
-`claim_type_succession` change-set member, which re-authors the moved Claims
-beside the new definition. It takes the full definition today: read it with
-`cruxible get ClaimType:catalog.part.category --detail proof --json`, change
-it, and set `lifecycle.predecessor_digest` to its `artifact_digest`
-(`cruxible authoring example claim-type-succession` prints a template). From
-Python, `ChangeSetDraft.succeed_claim_type(successor, dependents=[...])`
-builds the same change, with `carry`, `re_author`, `retire` and `rescind` for
-each dependent (For AI agents).
+When the old member's Claims go different ways (some pads, some rotors), a
+mapping can't say which is which. Split in three steps instead, each a
+reviewed change: add the new members in the file and apply; move each Claim
+with a write (`batch.set(part, "category", "brake-rotors")`, one `write` for
+all of them); then drop the old member in the file and apply. With nothing
+left on it, dropping it carries every Claim. A narrowing that would strand a
+value is refused before anything lands, and names the value.
 
 ## Common tasks
 
 ### Add a field
 
-A field needs its name, the kinds it applies to, what it holds, and how many
-values a Subject has; everything else has a default (`cruxible claim-type
-propose --template` prints this shape):
+Add an entry under its kind. A field needs only what differs from the
+defaults:
 
 ~~~yaml
-predicate: catalog.part.warranty_months
-allowed_subject_kinds: [catalog.part]
-value: int{min: 0}
-cardinality: one
+      warranty_months:
+        value: int{0..120}
+        description: How many months the supplier's warranty runs.
 ~~~
 
 ~~~text
-$ cruxible claim-type propose --input warranty.yaml --name add-warranty
-admitted  sha256:a1a00ee1…  verdict=candidate
-landed: accepted at dfe3a8309a22
+$ cruxible vocabulary apply
+...
+landed: accepted at 99ae6ac69012
 
 $ cruxible set catalog.part/bp-1142 warranty_months 24 --because "Acme's warranty card."
-accepted (generation 34, d0f4b78923e6)
-  set catalog.part/bp-1142 warranty_months: 24  [CLM-db2ff013…; verdict supported]
+...
+  set catalog.part/bp-1142 warranty_months: 24  [CLM-a3a9ce1d…; verdict supported]
 ~~~
 
 By default a field is normative and backed by its writer's own words. Add a
@@ -142,68 +438,64 @@ By default a field is normative and backed by its writer's own words. Add a
 evidence (Evidence and
 admission shows a field
 that requires a supplier's quote). Like any change, the field lands at once
-when your approval policy allows it; `--no-accept` only proposes it. Numbers
-are integers: store a price in cents, say. To change a field later, propose
-an edit naming only what changes, as in the example above.
+when your approval policy allows it. Numbers with units are clearest as
+integers in the smallest unit: store a price in cents, say.
 
 ### Add a kind of thing
 
 A new kind needs a **SubjectKind**, which says how its Subjects are named.
 Most kinds are keyed: a key field, such as a supplier's name, decides which
-Subject a name refers to, so the same supplier is never recorded twice. Add
-the key field first, with a `canonical_form`, the rule that decides when two
-spellings are the same key:
+Subject a name refers to, so the same supplier is never recorded twice. Give
+the key a `canonical_form`, the rule that decides when two spellings are the
+same key:
 
 ~~~yaml
-predicate: catalog.supplier.name
-description: "The supplier's name; its key."
-allowed_subject_kinds: [catalog.supplier]
-value: string{min_len: 1, max_len: 256}
-cardinality: one
-canonical_form: [nfkc, trim, collapse_whitespace, casefold]
+  catalog.supplier:
+    description: A parts supplier, named by its name.
+    fields:
+      name:
+        key: true
+        value: 'string{min_len: 1, max_len: 256}'
+        description: The supplier's name; its key.
+        canonical_form: [nfkc, trim, collapse_whitespace, casefold]
 ~~~
 
-Then declare the kind, saved as `supplier.json`:
-
-~~~json
-{
-  "kind": "subject_kind",
-  "name": "catalog.supplier",
-  "keys": ["catalog.supplier.name"],
-  "uniqueness": "unique",
-  "description": "A parts supplier, named by its name."
-}
-~~~
-
-~~~text
-$ cruxible claim-type propose --input supplier-name.yaml --name add-supplier-name
-admitted  sha256:46e5b47f…  verdict=candidate
-landed: accepted at 8c5c4c5e53ba
-
-$ cruxible authoring submit supplier.json --brief
-outcome: accepted
-...
-~~~
-
-Name a new Subject by its key, and Cruxible creates it and assigns its id:
+`apply` adds the SubjectKind and its key field together. Name a new Subject by
+its key, and Cruxible creates it and assigns its id:
 
 ~~~text
 $ cruxible set "catalog.supplier/Bolt Supply" name "Bolt Supply" --because "A second supplier."
-accepted (generation 47, a8242f4b9a28)
+accepted (generation 24, 1646c6bf8000)
   create catalog.supplier/bolt-supply: created
   + subject catalog.supplier/bolt-supply
 ~~~
 
 The key is stored in its canonical form (this one folds case), and any
-spelling of it finds the same Subject: `cruxible get "catalog.supplier/ACME
-parts"` reads `catalog.supplier/acme-parts`. A key with a well-known identity
+spelling of it finds the same Subject: `cruxible get "catalog.supplier/BOLT
+supply"` reads `catalog.supplier/bolt-supply`. A key with a well-known identity
 rule, such as a Python package name or a package URL, also names a core
-normalizer in the SubjectKind (`"normalizers": {"name": {"normalizer": "pep503",
-"version": 1}}`), so `Django_REST` and `django-rest` are one package; see
-identity normalizers. A kind whose things have no
-natural name, such as a remediation task, is **minted** instead: Cruxible
-gives each a generated id. To bring an existing kind under keys, see Subject
-kinds.
+normalizer (`normalizers: {name: {normalizer: pep503, version: 1}}`), so
+`Django_REST` and `django-rest` are one package; see identity
+normalizers. A kind whose things
+have no natural name, such as a remediation task, is `minted: true` instead:
+Cruxible gives each a generated id. To bring an existing kind under keys, see
+Subject kinds.
+
+### Retire a field
+
+Write `retired: true` on its entry; its live Claims retire with it, and `plan`
+says how many:
+
+~~~text
+$ cruxible vocabulary plan
+...
+Changes:
+  retire ClaimType:catalog.part.price_cents (0 live Claim(s) retire with it)
+Preflight: passed
+~~~
+
+`cruxible claim-type retire PREDICATE --because TEXT` does the same from the
+command line, and `ChangeSetDraft.retire_claim_type(predicate)` from Python.
 
 ### Change what kind of value a field holds
 
@@ -215,9 +507,10 @@ field now says:
 cruxible.authoring.claim_type_succession_object_kind_change: A successor that changes object_kind cannot carry a live Claim dependent unchanged: its object no longer says what the ClaimType now means.
 ~~~
 
-Re-author each Claim in the new form, or retire it, in the same change set.
-Often it's simpler to add the new field beside the old one, fill it in, and
-retire the old one when nothing reads it.
+Re-author each Claim in the new form, or retire it, in the same change set
+([What the file does not do](#what-the-file-does-not-do)). Often it's simpler
+to add the new field beside the old one, fill it in, and retire the old one
+when nothing reads it.
 
 ### Move a paragraph field into prose
 
@@ -300,41 +593,23 @@ edit to the section later brings the summary back as `citation_drifted`
 (Keeping knowledge current).
 The old rulings stay readable in each decision's history.
 
-Once no live Claim uses the long field, retire its definition. A retirement
-is a succession whose successor is the field's full current definition (read
-it with `cruxible get ClaimType:catalog.decision.ruling --detail proof
---json`) with `lifecycle.state` set to `retired` and
-`lifecycle.predecessor_digest` set to its `artifact_digest`. `cruxible
-claim-type migrate` takes it, first as a preflight that lists the dependents:
+Once no live Claim uses the long field, retire its definition: write
+`retired: true` on its entry in the vocabulary file and apply it, or run
+`cruxible claim-type retire catalog.decision.ruling --because "…"`. The
+retired Claims stay readable in history. Afterwards the field is gone from
+the vocabulary, and a write to it is refused, as here for a retired
+`price_cents`:
 
 ~~~text
-$ cruxible claim-type migrate retire-ruling.json      # {"mode": "preflight", "successor": {…}, "dependents": []}
-ClaimType migration preflight
-...
-Blast radius: 2 dependent(s)
-  Claim:CLM-760d1a32ecbe941c631363c520f0c0f5 (claim)
-  Claim:CLM-88af13a35fee7502bbe9d0592a1b4bfb (claim)
-Semantic delta:
-  ...
-  /lifecycle/state: "live" -> "retired"
+$ cruxible set catalog.part/bp-1142 price_cents 4200 --because "…"
+refused (generation 25, b2bab12aeb51)
+cruxible.write.unknown_field (change 0): catalog.part has no field 'price_cents'
+  repair: Use a field of catalog.part; orient kind=catalog.part lists them
 ~~~
 
-The dependents are the Claims you just retired; they move with the retired
-definition (`"disposition": "successor"`), which keeps their history readable.
-Submit with `"mode": "submit"` and those dispositions, and approve the
-proposal it prints straight away: if anything else lands first, run the
-preflight and submit again. Afterwards the field is gone from the vocabulary:
-
-~~~text
-$ cruxible set catalog.decision/wiper-brand ruling "…" --because "…"
-refused (generation 55, fe1ac3c5eb75)
-cruxible.write.unknown_field (change 0): catalog.decision has no field 'ruling'
-~~~
-
-To keep the field with a tighter shape instead, revise it after the move with
-a succession that adds a `maxLength`; a long value still in it can't be
-carried, so move every one first ([the worked
-example](#a-worked-example-splitting-a-category) shows a succession).
+To keep the field with a tighter shape instead, lower its `max_len` in the
+file after the move; a long value still in it can't be carried, so move every
+one first.
 
 ### Adopt a built-in field
 
@@ -342,6 +617,28 @@ Cruxible ships `semantic.alias` and `semantic.distinct_from` (Keeping
 knowledge current). An instance
 created before one shipped adopts it with `cruxible claim-type propose
 --builtin NAME`.
+
+## What the file does not do
+
+The file covers the common changes: adding and editing kinds and fields,
+retiring them, and moving an enum's Claims by a mapping. A few things go
+another way:
+
+- **A judgment per Claim.** When a field changes what kind of value it holds,
+  or an old member's Claims go different ways, each Claim needs its own new
+  value. Widen in the file, move the values with writes, then narrow in the
+  file ([the worked example](#a-worked-example-splitting-a-category)). Or,
+  from Python, change the field and every dependent in one change set:
+  `ChangeSetDraft.succeed_claim_type(successor, dependents=[...])`, with
+  `carry`, `re_author`, `retire` and `rescind` for each dependent (For AI
+  agents); `cruxible claim-type
+  migrate` takes the same change as a file.
+- **Other definitions.** Saved queries, CaptureKinds, Contracts, Procedures
+  and Documents go through authoring (`cruxible authoring submit`,
+  `capture-contract propose`, `files propose`).
+- **One field from the command line.** `cruxible claim-type propose --input
+  FILE` still proposes a single ClaimType, and `claim-type retire` retires
+  fields; export afterwards so the file catches up.
 
 ## Upgrading a kit you've edited
 
@@ -401,6 +698,8 @@ field your Claims use needs the same decisions as any succession; see
   edits unless you keep them.
 - **Defining and changing a field in one change set.** Both members write the
   same definition, and the set is refused; submit them separately.
+- **Editing an old export.** `plan` and `apply` read at the export the file
+  names; a field someone changed since refuses. Re-export, then edit.
 
 ## Where to go next
 
