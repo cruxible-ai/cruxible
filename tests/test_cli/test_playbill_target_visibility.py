@@ -51,6 +51,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("claim-type", "propose"): "active",
     ("capture-contract", "propose"): "active",
     ("claim-type", "migrate"): "active",
+    ("claim-type", "retire"): "active",
     ("block", "depublish"): "active",
     ("set",): "active",
     ("add",): "active",
