@@ -61,6 +61,10 @@ def _type(**stated: object):  # type: ignore[no-untyped-def]
         ("a: 1.0\n", "reads as a decimal number"),
         ("a: 2026-11-15\n", "reads as a date"),
         ("a: 0o17\n", "reads as a number"),
+        ("a: 1e3\n", "reads as a number"),
+        ("a: 1E+3\n", "reads as a number"),
+        ("a: -2.5e-2\n", "reads as a decimal number"),
+        ("a: .5e-2\n", "reads as"),
         ("a: 017\n", "reads as a number"),
         ("a:\n", "an empty value"),
         ("a: ~\n", "reads as null"),
@@ -114,6 +118,14 @@ def test_the_strict_loader_reads_the_plain_spellings() -> None:
 def test_unknown_or_contradictory_keys_refuse_naming_the_field(body: str, refusal: str) -> None:
     with pytest.raises(VocabularyFileError, match=refusal):
         load_vocabulary_file(HEADER + body)
+
+
+def test_a_whole_file_refuses_scientific_enum_members_unless_quoted() -> None:
+    body = "kinds:\n  dev.item:\n    fields:\n      size:\n        enum: [{members}]\n"
+    with pytest.raises(VocabularyFileError, match="1e3"):
+        load_vocabulary_file(HEADER + body.format(members="1e3, 1E+3"))
+    quoted = load_vocabulary_file(HEADER + body.format(members="'1e3', '1E+3'"))
+    assert quoted.kinds["dev.item"].fields["size"].enum == ("1e3", "1E+3")
 
 
 def test_the_header_is_read_without_the_kinds() -> None:

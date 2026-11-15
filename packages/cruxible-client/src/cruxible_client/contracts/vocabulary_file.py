@@ -177,7 +177,10 @@ def _strict_null(loader: _StrictLoader, node: yaml.ScalarNode) -> None:
 
 
 #: Plain text a YAML 1.2 reader takes as a number though this one reads text.
-_YAML12_NUMBER = re.compile(r"[-+]?0o[0-7]+")
+_YAML12_NUMBER = re.compile(
+    r"[-+]?0o[0-7]+"  # 1.2 octal
+    r"|[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+"  # 1.2 scientific
+)
 
 
 def _strict_str(loader: _StrictLoader, node: yaml.ScalarNode) -> str:
