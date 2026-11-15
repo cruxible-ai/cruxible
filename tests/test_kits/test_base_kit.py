@@ -247,7 +247,17 @@ def test_under_independent_approval_creation_succeeds_and_the_kit_awaits_approva
     assert (result.status, result.approval_required) == ("proposed", True)
     assert result.proposal_id is not None
     assert [item.sequence for item in instance.accepted_history()] == [0]
-    assert service_kit_status(instance).kits == ()
+    status = service_kit_status(instance)
+    assert status.kits == ()
+    # Kit status shows the pending kit and its proposal, as init reported it.
+    (pending,) = status.resumes
+    assert (pending.kit_id, pending.version, pending.state, pending.proposal_id) == (
+        "base",
+        "1.0.0",
+        "proposed",
+        result.proposal_id,
+    )
+    assert pending.proposal_open is True
     assert capability_path("workspace.file", 1) not in _tree(instance)
 
     # A second principal's approval lands it like any kit add.
@@ -269,8 +279,10 @@ def test_under_independent_approval_creation_succeeds_and_the_kit_awaits_approva
         instance, proposal_id=result.proposal_id, activated_by="owner"
     )
     assert activated.status == "accepted"
-    (installed,) = service_kit_status(instance).kits
+    landed = service_kit_status(instance)
+    (installed,) = landed.kits
     assert (installed.kit_id, installed.source) == ("base", "bundled")
+    assert [resume.proposal_open for resume in landed.resumes] == [False]
 
 
 def test_an_older_bundled_base_kit_shows_behind_and_kit_add_base_previews_the_upgrade(

@@ -125,6 +125,44 @@ def record_kit_resume(
         _refresh_waiting(instance, connection)
 
 
+def record_proposed_kit(
+    instance: PlaybillInstance,
+    request: KitAddRequest,
+    *,
+    actor_id: str,
+    proposal_id: str,
+) -> None:
+    """Record a kit add that stopped at its proposal, so kit status shows it pending.
+
+    Creation's base kit add under independent approval stops here; the row has
+    no waits, so nothing resumes it, and kit status shows it while its proposal
+    is open.
+    """
+
+    resumed = request.model_copy(update={"dry_run": False, "at": None})
+    stored = instance.body_store().store(canonical_bytes(resumed.model_dump(mode="json")))
+    manifest = request.bundle.manifest
+    with retained_records(instance, write=True) as connection:
+        assert connection is not None
+        connection.execute("DELETE FROM kit_resume_waits WHERE kit_id=?", (manifest.kit_id,))
+        connection.execute(
+            "INSERT OR REPLACE INTO kit_resumes (kit_id,version,request_digest,actor_id,"
+            "recorded_at,recorded_head,state,proposal_id,detail,source) "
+            "VALUES (?,?,?,?,?,?,'proposed',?,NULL,?)",
+            (
+                manifest.kit_id,
+                manifest.version,
+                stored.digest,
+                actor_id,
+                format_datetime(utc_now()),
+                instance.accepted_coordinate().git_oid,
+                proposal_id,
+                request.source,
+            ),
+        )
+        _refresh_waiting(instance, connection)
+
+
 def resuming() -> bool:
     """Whether this call is a recorded kit add being resumed (it records nothing)."""
 
@@ -411,6 +449,7 @@ __all__ = [
     "forget_kit_resume",
     "kit_resume_statuses",
     "record_kit_resume",
+    "record_proposed_kit",
     "resume_kits_after_activation",
     "resume_pending_kits",
 ]

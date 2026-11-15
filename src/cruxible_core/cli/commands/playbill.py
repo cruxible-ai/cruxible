@@ -2629,7 +2629,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if not result.kits:
+    if not result.kits and not result.resumes:
         click.echo("No kits installed.")
     for resume in result.resumes:
         line = f"{resume.kit_id} {resume.version}: kit add {resume.state} (as {resume.actor_id})"
@@ -2640,6 +2640,11 @@ def kit_status(offline: bool, output_json: bool) -> None:
         click.echo(line)
         if resume.detail:
             click.echo(f"  {printable(resume.detail)}")
+        if resume.proposal_open and resume.proposal_id is not None:
+            click.echo(
+                f"  next: cruxible proposal approve {resume.proposal_id} --signer-id ID "
+                "--key FILE (the approval that completes it activates it)"
+            )
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:

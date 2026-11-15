@@ -877,3 +877,53 @@ def test_kit_status_compares_the_base_kit_with_the_bundled_copy_offline(
     assert "base 0.9.0" in result.output
     assert "latest 1.0.0 available" in result.output
     assert "source: bundled" in result.output
+
+
+def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under independent approval, kit status said "No kits installed." while the base
+    kit's install proposal waited; init had reported it."""
+
+    from cruxible_client.contracts.kits import KitResumeStatus
+
+    proposal = "sha256:" + "c" * 64
+
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                resumes=(
+                    KitResumeStatus(
+                        kit_id="base",
+                        version="1.0.0",
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id=proposal,
+                        proposal_open=True,
+                        source="bundled",
+                    ),
+                    KitResumeStatus(
+                        kit_id="acme",
+                        version="1.0.0",
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id="sha256:" + "d" * 64,
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert "No kits installed." not in result.output
+    assert f"base 1.0.0: kit add proposed (as owner); proposal {proposal}\n" in result.output
+    assert (
+        f"  next: cruxible proposal approve {proposal} --signer-id ID --key FILE "
+        "(the approval that completes it activates it)\n" in result.output
+    )
+    # A proposal no longer open names no next step.
+    assert result.output.count("next: cruxible proposal approve") == 1

@@ -213,17 +213,18 @@ def install_bundled_base_kit(
     from cruxible_core.service.kits import service_add_kit
 
     timestamp = canonical_candidate_timestamp(at)
-    result = service_add_kit(
-        instance,
-        KitAddRequest(
-            bundle=bundled_base_kit(),
-            source=BUNDLED_KIT_SOURCE,
-            dry_run=False,
-            at=instance.accepted_coordinate().git_oid,
-        ),
-        actor_id=actor_id,
-        timestamp=timestamp,
+    request = KitAddRequest(
+        bundle=bundled_base_kit(),
+        source=BUNDLED_KIT_SOURCE,
+        dry_run=False,
+        at=instance.accepted_coordinate().git_oid,
     )
+    result = service_add_kit(instance, request, actor_id=actor_id, timestamp=timestamp)
+    if result.status == "proposed" and result.proposal_id is not None:
+        # Awaiting approval: kit status shows it (and its proposal) until it lands.
+        from cruxible_core.service.kit_resume import record_proposed_kit
+
+        record_proposed_kit(instance, request, actor_id=actor_id, proposal_id=result.proposal_id)
     if result.status not in {"accepted", "proposed", "unchanged"}:
         raise BootstrapError(
             f"creation could not add the bundled base kit ({result.status}): "

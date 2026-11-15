@@ -1222,7 +1222,8 @@ KitResumeState = Literal["waiting", "proposed", "blocked"]
 
 
 class KitResumeStatus(_Strict):
-    """A ``kit add`` that stopped at awaiting_providers and resumes on activation."""
+    """A ``kit add`` that stopped at awaiting_providers and resumes on activation, or
+    one that stopped at its proposal (creation's base kit under independent approval)."""
 
     kit_id: str
     version: str
@@ -1234,6 +1235,8 @@ class KitResumeStatus(_Strict):
     waiting_on: tuple[str, ...] = ()
     #: The definitions' proposal, once proposed.
     proposal_id: str | None = None
+    #: That proposal is still open (awaiting approval or activation).
+    proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
     detail: str | None = None
     #: Where the bundle came from, as the kit add recorded it.
     source: str | None = None
