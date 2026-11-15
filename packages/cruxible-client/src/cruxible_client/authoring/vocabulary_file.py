@@ -962,6 +962,22 @@ def _mapped_claims(
     return changes, dependents, siblings
 
 
+def _live_claims(cx: Cruxible, at: AcceptedCoordinate, predicate: str) -> int | None:
+    """The live Claims of one ClaimType at ``at``, from the counter Claim writes maintain."""
+
+    batch = cx._client.get_batch(
+        cx._instance_id,
+        request=GetBatchRequest(
+            refs=(f"ClaimType:{predicate}",),
+            detail="summary",
+            at=at,
+            evaluation_time=datetime.fromisoformat(cx._evaluation_time()),
+        ),
+    )
+    count = getattr(batch.results[0].card, "live_claims", None) if batch.results else None
+    return count if isinstance(count, int) else None
+
+
 def _refuse_stranded_members(
     cx: Cruxible,
     *,
@@ -1017,7 +1033,9 @@ def _plan_members(
         current_kind = accepted.subject_kinds.get(kind)
         definition = f"SubjectKind:{kind}"
         kit = accepted.kits.get(definition)
-        if entry.retired:
+        if entry.retired and current_kind is None and applied_ok:
+            pass  # Against the head: already retired, so applied.
+        elif entry.retired:
             if current_kind is None:
                 raise VocabularyFileError(
                     f"kinds.{kind}: retired: true, but {kind} has no accepted SubjectKind",
@@ -1059,6 +1077,8 @@ def _plan_members(
             definition = f"ClaimType:{predicate}"
             kit = accepted.kits.get(definition)
             current = accepted.claim_types.get(predicate)
+            if item.retired and current is None and applied_ok:
+                continue  # Against the head: already retired, so applied.
             if item.retired:
                 if current is None:
                     raise VocabularyFileError(
@@ -1074,7 +1094,12 @@ def _plan_members(
                     }
                 )
                 planned.entries.append(
-                    VocabularyPlanEntry(definition=definition, action="retire", kit=kit)
+                    VocabularyPlanEntry(
+                        definition=definition,
+                        action="retire",
+                        kit=kit,
+                        live_claims=_live_claims(cx, at, predicate),
+                    )
                 )
                 continue
             mapped = _mappings(predicate, item, current, applied_ok=applied_ok)

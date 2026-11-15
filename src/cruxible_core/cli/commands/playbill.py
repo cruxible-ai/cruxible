@@ -10270,6 +10270,11 @@ def _vocabulary_plan_lines(plan: VocabularyPlan) -> list[str]:
         lines.append(
             f"  {entry.action} {entry.definition}"
             + (f" ({', '.join(entry.changed)})" if entry.changed else "")
+            + (
+                f" ({entry.live_claims} live Claim(s) retire with it)"
+                if entry.live_claims is not None
+                else ""
+            )
             + (f" kit={entry.kit}" if entry.kit else "")
         )
     left = [entry for entry in plan.entries if entry.action == "not_in_file"]

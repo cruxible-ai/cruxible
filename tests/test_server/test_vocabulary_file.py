@@ -391,18 +391,38 @@ def test_retired_true_retires_a_field_and_its_claims(world) -> None:  # type: ig
     claim = _claim(cx, "dev.item/a", "dev.item.title", "First")
     cx.refresh()
     cx.vocabulary.export()
+    later = _claim(cx, "dev.item/b", "dev.item.title", "Second")
     _edit(
         workspace,
         lambda data: data["kinds"]["dev.item"]["fields"]["title"].update(retired=True),
     )
     plan = cx.vocabulary.plan()
-    assert [(entry.definition, entry.action) for entry in plan.changes] == [
-        ("ClaimType:dev.item.title", "retire")
+    # The count is the head's: a Claim written after the export retires too.
+    assert [(entry.definition, entry.action, entry.live_claims) for entry in plan.changes] == [
+        ("ClaimType:dev.item.title", "retire", 2)
     ]
     assert cx.vocabulary.apply().status == "landed"
     cx.refresh()
     assert "dev.item.title" not in set(cx.world().predicates)
     assert _claim_view(cx, claim).lifecycle.state == "retired"
+    assert _claim_view(cx, later).lifecycle.state == "retired"
+    # Walkthrough P2: the applied retirement is not a pending change; export
+    # replaces the file without --force and drops the field.
+    assert cx.vocabulary.export().status == "written"
+    assert "title:" not in _file(workspace).read_text(encoding="utf-8")
+
+
+def test_an_applied_subject_kind_retirement_lets_export_replace_the_file(world) -> None:  # type: ignore[no-untyped-def]
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    _edit(workspace, lambda data: data["kinds"]["dev.note"].update(retired=True))
+    assert [(entry.definition, entry.action) for entry in cx.vocabulary.plan().changes] == [
+        ("SubjectKind:dev.note", "retire")
+    ]
+    assert cx.vocabulary.apply().status == "landed"
+    cx.refresh()
+    assert cx.vocabulary.export().status == "written"
+    assert "minted" not in _file(workspace).read_text(encoding="utf-8")
 
 
 def test_a_file_naming_an_unknown_export_refuses(world) -> None:  # type: ignore[no-untyped-def]

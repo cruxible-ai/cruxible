@@ -406,6 +406,8 @@ class VocabularyPlanEntry(_StrictResultModel):
     changed: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     #: The installed kit that owns the accepted definition.
     kit: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A retired field: how many live Claims retire with it (at the head).
+    live_claims: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
 
 
 class VocabularyClaimChange(_StrictResultModel):
