@@ -1394,7 +1394,7 @@ def _subject_card(
     """One Subject's fields, ends and pairs, and the reads that go further.
 
     ``at_head`` (a card read with no ``at``) adds the open proposals that would
-    write its fields: proposals are operational state, read only at the head.
+    write its fields: proposals are operational state, read only unpinned.
     """
 
     from cruxible_core.service.discovery.backlinks import subject_has_backlinks
@@ -3605,8 +3605,9 @@ def service_playbill_get(
                 resolved,
                 evaluation_time=evaluation_time,
                 surface=surface,
-                at_head=request.at is None
-                or coordinate.git_oid == instance.accepted_coordinate().git_oid,
+                # Only an unpinned read is a head read: a pin, even to the head's
+                # own OID, names accepted state, and proposals are not part of it.
+                at_head=request.at is None,
             )
         elif resolved.kind == "claim_type":
             card = _claim_type_card(instance, coordinate, resolved, surface=surface, pinned=pinned)

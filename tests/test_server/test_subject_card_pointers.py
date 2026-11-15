@@ -80,6 +80,13 @@ def test_a_held_proposal_shows_on_the_card_and_its_next_row_names_the_field(
     assert f'cx.get("{proposal_id}")' in card.next
     # The accepted value stays the accepted one until the proposal is accepted.
     assert next(row.value for row in card.claims if row.predicate == "status") == "in_stock"
+    # A pinned read names accepted state only, even pinned to the head's own OID.
+    head = get_playbill_manager().get(instance_id).accepted_coordinate().git_oid
+    pinned = playbill_api.playbill_get(
+        instance_id, request=GetRequest(ref=SUBJECT, at=head, surface="cli")
+    ).card
+    assert pinned is not None and pinned.pending == ()
+    assert not any(proposal_id in step for step in pinned.next)
 
     instance = get_playbill_manager().get(instance_id)
     actor = instance.proposal_evidence().read_admission(proposal_id).actor_id
