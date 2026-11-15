@@ -962,15 +962,55 @@ def _mapped_claims(
     return changes, dependents, siblings
 
 
+def _refuse_stranded_members(
+    cx: Cruxible,
+    *,
+    at: AcceptedCoordinate,
+    predicate: str,
+    current: ClaimType,
+    successor: ClaimType,
+    mapped: Mapping[str, VocabularyMemberMapping],
+) -> None:
+    """An enum member dropped without a mapping must state no live Claim.
+
+    Only the members the edit drops are queried (cost: the Claims stating
+    them). Without this the preflight refuses each such Claim as an invalid
+    value, with advice meant for a new field.
+    """
+
+    before, after = value_members(current.value), set(value_members(successor.value))
+    dropped = [member for member in before if member not in after and member not in mapped]
+    if not dropped:
+        return
+    stranded = _affected_claims(cx, at=at, predicate=predicate, current=current, members=dropped)
+    if stranded:
+        examples = " or ".join(
+            f"`{member}: {{becomes: <member>}}` / `{member}: {{retire: superseded}}`"
+            for member in dropped[:2]
+        )
+        raise VocabularyFileError(
+            f"{predicate}: {len(stranded)} live Claim(s) state {', '.join(dropped)}, which the "
+            f"edited enum drops; say what they become in the file's enum: {examples}",
+            code="cruxible.vocabulary.mapping_required",
+        )
+
+
 def _plan_members(
     cx: Cruxible,
     file: VocabularyFile,
     accepted: AcceptedVocabulary,
     *,
     applied_ok: bool = False,
+    claims_at: AcceptedCoordinate | None = None,
 ) -> _Planned:
+    """Plan the file against ``accepted`` (definitions and their pinned digests).
+
+    ``claims_at`` is where Claims are read (the head: data written after the
+    export is normal); it defaults to ``accepted``'s coordinate.
+    """
+
     planned = _Planned()
-    at = accepted.coordinate
+    at = claims_at or accepted.coordinate
     named_types: set[str] = set()
     for kind in sorted(file.kinds, key=lambda item: item.encode("utf-8")):
         entry = file.kinds[kind]
@@ -1057,6 +1097,9 @@ def _plan_members(
                 "successor": lowered.model_dump(mode="json"),
                 "carry_all": True,
             }
+            _refuse_stranded_members(
+                cx, at=at, predicate=predicate, current=current, successor=lowered, mapped=mapped
+            )
             if mapped:
                 changes, dependents, siblings = _mapped_claims(
                     cx, at=at, predicate=predicate, current=current, mapped=mapped
@@ -1111,7 +1154,13 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
         return [f"the file was exported from instance {file.instance}"]
 
     def changes(accepted: AcceptedVocabulary, *, applied_ok: bool) -> set[str]:
-        planned = _plan_members(cx.at(accepted.coordinate), file, accepted, applied_ok=applied_ok)
+        planned = _plan_members(
+            cx.at(accepted.coordinate),
+            file,
+            accepted,
+            applied_ok=applied_ok,
+            claims_at=head.coordinate,
+        )
         found = {entry.definition for entry in planned.changes_only}
         found.update(f"Claim:{claim.claim}" for claim in planned.claims)
         return found
@@ -1196,7 +1245,12 @@ def _plan(
             f"{coordinate.git_oid[:12]}; the header was edited: re-export and merge your edits"
         )
     pinned = cx.at(coordinate)
-    planned = _plan_members(pinned, file, accepted)
+    # Definitions pin the export's digests; Claims are data, read at the head,
+    # where the daemon's preflight will meet them.
+    head = AcceptedCoordinate.model_validate(
+        cx._client.whoami(cx._instance_id).coordinate.model_dump(mode="json")
+    )
+    planned = _plan_members(pinned, file, accepted, claims_at=head)
     change_set = (
         ChangeSetInput.model_validate(
             {

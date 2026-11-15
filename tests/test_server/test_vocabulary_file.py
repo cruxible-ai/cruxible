@@ -24,6 +24,7 @@ from cruxible_client.contracts.shapes import EnumType, StringType
 from cruxible_client.contracts.vocabulary_file import (
     VocabularyBaselineError,
     VocabularyExportRefused,
+    VocabularyFileError,
     load_vocabulary_file,
 )
 from cruxible_client.contracts.workspace_layout import VOCABULARY_FILE_PATH
@@ -320,6 +321,56 @@ def test_a_mapping_can_map_some_members_and_retire_the_rest(world) -> None:  # t
     assert _accepted(cx, "dev.item.state").value == EnumType(members=("done",))
     assert _claim_view(cx, moved).statement.object.value == "done"
     assert _claim_view(cx, retired).lifecycle.state == "retired"
+
+
+def test_a_mapping_moves_claims_written_after_the_export(world) -> None:  # type: ignore[no-untyped-def]
+    """Walkthrough P1: data written after the export is normal; the mapping finds it."""
+
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    moved = [_claim(cx, f"dev.item/{name}", "dev.item.state", "wontfix") for name in "abc"]
+    retired = _claim(cx, "dev.item/d", "dev.item.state", "open")
+    cx.refresh()
+
+    def edit(data):  # type: ignore[no-untyped-def]
+        members = data["kinds"]["dev.item"]["fields"]["state"]["enum"]
+        members["wontfix"] = {"becomes": "done"}
+        members["open"] = {"retire": "superseded"}
+
+    _edit(workspace, edit)
+    plan = cx.vocabulary.plan()
+    assert {(item.claim, item.action) for item in plan.claims} == {
+        *((claim, "re_author") for claim in moved),
+        (retired, "retire"),
+    }
+    assert plan.preflight.verdict == "passed", plan.preflight
+    assert cx.vocabulary.apply().status == "landed"
+    for claim in moved:
+        assert _claim_view(cx, claim).statement.object.value == "done"
+    assert _claim_view(cx, retired).lifecycle.state == "retired"
+
+
+def test_dropping_a_member_that_claims_state_names_the_mapping(world) -> None:  # type: ignore[no-untyped-def]
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    _claim(cx, "dev.item/a", "dev.item.state", "wontfix")
+    cx.refresh()
+    _edit(
+        workspace, lambda data: data["kinds"]["dev.item"]["fields"]["state"]["enum"].pop("wontfix")
+    )
+
+    with pytest.raises(VocabularyFileError, match=r"wontfix: \{becomes: <member>\}") as refused:
+        cx.vocabulary.plan()
+    assert refused.value.error_code == "cruxible.vocabulary.mapping_required"
+    # A member no live Claim states can simply leave the enum.
+    _edit(workspace, lambda data: data["kinds"]["dev.item"]["fields"]["state"]["enum"].pop("open"))
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"]["state"]["enum"].update(
+            wontfix={"becomes": "done"}
+        ),
+    )
+    assert cx.vocabulary.plan().preflight.verdict == "passed"
 
 
 def test_a_mapping_names_a_member_the_enum_does_not_have(world) -> None:  # type: ignore[no-untyped-def]
