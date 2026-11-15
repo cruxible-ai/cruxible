@@ -138,3 +138,87 @@ def test_a_refused_intent_prints_its_diagnostics(tmp_path: Path) -> None:
         "  cruxible.claim_type.string_unbounded at $.members[0]: the string field has no bound",
         "    repair: use an enum",
     ]
+
+
+def test_vocabulary_results_print_what_the_cli_prints() -> None:
+    """Walkthrough W20: print(cx.vocabulary.plan()) was a pydantic repr."""
+
+    from cruxible_client.contracts.authoring_landing import AuthoringLanded
+    from cruxible_client.contracts.vocabulary_file import (
+        VocabularyApplyResult,
+        VocabularyBaseline,
+        VocabularyExportResult,
+        VocabularyPlan,
+        VocabularyPlanEntry,
+        VocabularyPreflight,
+    )
+
+    baseline = VocabularyBaseline(
+        git_oid=_OID,
+        semantic_root=_COORDINATE.semantic_root,
+        generation_root=_COORDINATE.generation_root,
+        compiler_digest=_COORDINATE.compiler_digest,
+        vocabulary_digest="sha256:" + "4" * 64,
+    )
+    plan = VocabularyPlan(
+        path=".cruxible/vocabulary.yaml",
+        based_on=baseline,
+        entries=(
+            VocabularyPlanEntry(
+                definition="ClaimType:dev.item.title", action="retire", live_claims=2
+            ),
+            VocabularyPlanEntry(definition="ClaimType:dev.item.slug", action="not_in_file"),
+        ),
+        preflight=VocabularyPreflight(verdict="passed"),
+    )
+    assert str(plan).splitlines() == [
+        "Vocabulary plan: .cruxible/vocabulary.yaml (based on 0123456789ab)",
+        "Changes:",
+        "  retire ClaimType:dev.item.title (2 live Claim(s) retire with it)",
+        "Not in file (left as they are): 1",
+        "  ClaimType:dev.item.slug",
+        "Preflight: passed",
+    ]
+    applied = VocabularyApplyResult(
+        status="landed",
+        plan=plan,
+        outcome=AuthoringLanded(accepted_coordinate=_COORDINATE),
+        next="cruxible vocabulary export",
+    )
+    assert str(applied).splitlines()[-2:] == [
+        "landed: accepted at 0123456789ab",
+        "Next: cruxible vocabulary export",
+    ]
+    exported = VocabularyExportResult(
+        path=".cruxible/vocabulary.yaml", status="written", based_on=baseline, kinds=2, fields=5
+    )
+    assert str(exported) == (
+        "Wrote .cruxible/vocabulary.yaml (2 kind(s), 5 field(s)) at 0123456789ab"
+    )
+    for result in (plan, applied, exported):
+        assert repr(result).startswith(type(result).__name__ + "(")
+
+
+def test_a_query_page_prints_the_cli_table() -> None:
+    """Walkthrough W20: print(cx.query(...)) showed no rows."""
+
+    from cruxible_client.authoring.compact_query import QueryResult, render_query_table
+    from cruxible_client.contracts.compact_query import QueryResultRecord
+
+    page = QueryResultRecord.model_validate(
+        {
+            "kind": "dev.item",
+            "columns": [{"name": "state", "predicate": "dev.item.state", "type": "string"}],
+            "rows": [{"subject": "dev.item/a", "state": "open"}],
+            "receipt": {
+                "mode": "inline",
+                "spec_digest": "sha256:" + "5" * 64,
+                "coordinate": _COORDINATE.model_dump(mode="json"),
+                "evaluation_time": "2026-11-15T00:00:00Z",
+            },
+        }
+    )
+    result = QueryResult(page)
+    assert str(result) == render_query_table(page)
+    assert "dev.item/a" in str(result) and "open" in str(result)
+    assert repr(result).startswith("<QueryResult rows=1")

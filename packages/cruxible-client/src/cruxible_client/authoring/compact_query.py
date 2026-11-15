@@ -160,6 +160,11 @@ class QueryResult:
             f"mode={self.page.receipt.mode}>"
         )
 
+    def __str__(self) -> str:
+        """The table ``cruxible query`` prints for this page; ``repr()`` stays short."""
+
+        return render_query_table(self.page)
+
 
 # -- the table ----------------------------------------------------------------------
 

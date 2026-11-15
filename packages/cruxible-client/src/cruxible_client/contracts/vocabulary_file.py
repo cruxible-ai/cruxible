@@ -397,6 +397,13 @@ class VocabularyExportResult(_StrictResultModel):
     kinds: int = Field(ge=0)
     fields: int = Field(ge=0)
 
+    def __str__(self) -> str:
+        """What ``cruxible vocabulary export`` prints; ``repr()`` stays the model."""
+
+        from cruxible_client.contracts.text_display import render_vocabulary_export
+
+        return render_vocabulary_export(self)
+
 
 VocabularyAction = Literal["add", "replace", "retire", "not_in_file"]
 
@@ -457,6 +464,13 @@ class VocabularyPlan(_StrictResultModel):
     entries: tuple[VocabularyPlanEntry, ...] = ()
     preflight: VocabularyPreflight
 
+    def __str__(self) -> str:
+        """What ``cruxible vocabulary plan`` prints; ``repr()`` stays the model."""
+
+        from cruxible_client.contracts.text_display import vocabulary_plan_lines
+
+        return "\n".join(vocabulary_plan_lines(self))
+
     @property
     def changes(self) -> tuple[VocabularyPlanEntry, ...]:
         """The entries apply would submit (every entry but ``not_in_file``)."""
@@ -475,6 +489,13 @@ class VocabularyApplyResult(_StrictResultModel):
         default=None, exclude_if=lambda value: value is None
     )
     next: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    def __str__(self) -> str:
+        """What ``cruxible vocabulary apply`` prints; ``repr()`` stays the model."""
+
+        from cruxible_client.contracts.text_display import render_vocabulary_apply
+
+        return render_vocabulary_apply(self)
 
 
 __all__ = [
