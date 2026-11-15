@@ -439,6 +439,38 @@ def test_definition_lint_names_ledger_fields_prose_strings_and_enums_of_things(
     }
 
 
+def test_a_domain_date_and_a_long_key_do_not_take_the_modelling_lints(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """A decision's day is domain data; a 256-character key is an identifier."""
+
+    from cruxible_client.contracts.shapes import DateTimeType, DateType
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    changes = cx.changes(rationale="Decisions keyed by a long reference.")
+    reference = StringType(min_len=1, max_len=256)
+    changes.field("dev.decision", "ref", reference, description="Its reference.", key=True)
+    changes.field("dev.decision", "decided_on", DateType(), description="When it took effect.")
+    changes.field("dev.decision", "created_at", DateTimeType(), description="When it was written.")
+    changes.field("dev.decision", "summary", StringType(max_len=240), description="A summary.")
+    changes.subject_kind(name="dev.decision", description="A decision.")
+    intent = changes.prepare()
+    assert not intent.refused, intent.diagnostics
+    found = {(item.artifact, item.code) for item in intent.warnings}
+    assert found == {
+        # An instant the ledger already records, and a prose string, still warn.
+        ("ClaimType:dev.decision.created_at", "cruxible.claim_type.field_restates_ledger"),
+        ("ClaimType:dev.decision.summary", "cruxible.claim_type.string_holds_prose"),
+    }
+    assert intent.submit().outcome.status == "landed"
+    cx.refresh()
+    # The accepted SubjectKind still marks the key when only the field is edited.
+    edit = cx.changes(rationale="A longer description.")
+    edit.field("dev.decision", "ref", reference, description="Its full reference.", key=True)
+    assert not any(item.code.endswith("string_holds_prose") for item in edit.prepare().warnings)
+
+
 def test_vocabulary_lint_does_not_grow_with_unrelated_capture_contracts(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,

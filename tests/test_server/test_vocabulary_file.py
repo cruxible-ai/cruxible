@@ -758,3 +758,21 @@ def test_a_kit_owned_field_is_marked_and_its_local_edit_applies(
     # The kit sees the adopter's edit as its own drift, as for any local edit.
     (kit,) = _installed(playbill_api.playbill_kit_status(consumer.instance_id))
     assert _path(PLAN) in kit.drifted
+
+
+def test_plan_prints_each_lint_with_what_it_means(world) -> None:  # type: ignore[no-untyped-def]
+    _http, _instance_id, workspace, cx = world
+    cx.vocabulary.export()
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"].update(
+            notes={"value": "string{max_len: 240}", "description": "Free notes."}
+        ),
+    )
+
+    text = str(cx.vocabulary.plan())
+
+    assert (
+        "lint cruxible.claim_type.string_holds_prose (ClaimType:dev.item.notes): "
+        "a long free string holds prose"
+    ) in text

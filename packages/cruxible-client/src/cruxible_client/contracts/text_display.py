@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from cruxible_client._error_base import printable
+from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 from cruxible_client.contracts.get_display import get_value_display
 from cruxible_client.contracts.public_names import public_name as _public_name
 
@@ -559,7 +560,11 @@ def vocabulary_plan_lines(plan: VocabularyPlan) -> list[str]:
     for item in () if preflight.frontier is None else preflight.frontier.diagnostics:
         lines.append(f"  {item.code} at {item.offending_element}: {item.message}")
     for warning in () if preflight.lint is None else preflight.lint.warnings:
-        lines.append(f"  lint {warning.code} ({warning.artifact})")
+        meaning = CLAIM_TYPE_LINT_TEXT.get(warning.code)
+        lines.append(
+            f"  lint {warning.code} ({warning.artifact})"
+            + ("" if meaning is None else f": {meaning}")
+        )
     return lines
 
 

@@ -4452,7 +4452,7 @@ def propose_claim_type(
 def _claim_type_lint_meaning(code: str) -> str:
     """``: what it means`` for a lint warning that has words, else nothing."""
 
-    from cruxible_core.claims.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
+    from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 
     meaning = CLAIM_TYPE_LINT_TEXT.get(code)
     return "" if meaning is None else f": {meaning}"
