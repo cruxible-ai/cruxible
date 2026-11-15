@@ -9,7 +9,10 @@ change or drop a released one, and changes content only under a new kit version.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
+import json
+import shutil
 from pathlib import Path
 from types import ModuleType
 
@@ -24,12 +27,19 @@ from cruxible_core.capabilities.artifact import bundled_version_problems
 from cruxible_core.kits import base_kit_releases
 from cruxible_core.kits.base_kit import bundled_base_kit
 from cruxible_core.kits.base_kit_releases import (
+    RELEASE_PINS_RELATIVE,
     ReleasedBaseKit,
+    ReleasePins,
+    load_release_pins,
+    pin_of,
+    record_problems,
     release_problems,
+    render_release_pins,
     render_releases_module,
 )
 
-_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "build_base_kit.py"
+_REPO = Path(__file__).resolve().parents[2]
+_SCRIPT = _REPO / "scripts" / "build_base_kit.py"
 
 
 def _script() -> ModuleType:
@@ -56,6 +66,7 @@ OTHER = "sha256:" + "f" * 64
 
 def test_the_bundle_holds_the_released_record() -> None:
     assert release_problems(*_bundle()) == []
+    # The real record against its real pins, then the bundle against the record.
     assert _script().release_differences() == []
 
 
@@ -131,17 +142,132 @@ def test_replay_accepts_any_released_workspace_v1(monkeypatch: pytest.MonkeyPatc
     assert bundled_version_problems(held) == ()
 
 
-def test_the_release_cut_records_the_bundle(tmp_path: Path) -> None:
-    """``build_base_kit.py --release`` appends the bundle as it renders today."""
+def _cut(tmp_path: Path) -> tuple[tuple[object, ...], Path]:
+    """Record today's bundle as release 1 the way the cut does, frozen: ``(record, pins)``."""
 
-    target = tmp_path / "base_kit_releases.py"
-    assert _script().release(releases_module=target) == bundled_base_kit().manifest.version
+    module, pins = tmp_path / "base_kit_releases.py", tmp_path / "pins.json"
+    pins.write_text(render_release_pins(ReleasePins()), encoding="utf-8")
+    version, ordinal = _script().release(releases_module=module, pins_path=pins)
+    assert (version, ordinal) == (bundled_base_kit().manifest.version, 1)
+    frozen = load_release_pins(pins).model_copy(update={"frozen_through": 1})
+    pins.write_text(render_release_pins(frozen), encoding="utf-8")
     namespace: dict[str, object] = {}
-    exec(compile(target.read_text(encoding="utf-8"), str(target), "exec"), namespace)
-    (entry,) = namespace["BASE_KIT_RELEASES"]  # type: ignore[misc]
+    exec(compile(module.read_text(encoding="utf-8"), str(module), "exec"), namespace)
+    record = namespace["BASE_KIT_RELEASES"]
+    assert isinstance(record, tuple)
+    return record, pins
+
+
+def test_the_record_holds_its_pins() -> None:
+    pins = load_release_pins(_REPO / RELEASE_PINS_RELATIVE)
+    assert record_problems(pins) == []
+    # Nothing is released yet: nothing is frozen.
+    assert (pins.frozen_through, pins.entries) == (0, ())
+
+
+def test_the_release_cut_records_the_bundle_and_its_pin(tmp_path: Path) -> None:
+    """``build_base_kit.py --release`` appends the bundle as it renders today, with its pin."""
+
+    record, pins = _cut(tmp_path)
+    (entry,) = record
     version, content, artifacts = _bundle()
-    assert (entry.version, entry.content_digest, dict(entry.artifacts)) == (
+    assert (entry.version, entry.content_digest, dict(entry.artifacts)) == (  # type: ignore[attr-defined]
         version,
         content,
         artifacts,
     )
+    (pin,) = load_release_pins(pins).entries
+    assert (pin.ordinal, pin.version, pin.entry_digest) == (1, version, entry.entry_digest())  # type: ignore[attr-defined]
+    assert _script().release_differences(releases=record, pins_path=pins) == []
+
+
+def test_an_edited_frozen_entry_fails_the_check_by_name(tmp_path: Path) -> None:
+    record, pins = _cut(tmp_path)
+    (entry,) = record
+    path = capability_path("workspace.file", 1)
+    edited = dataclasses.replace(
+        entry,  # type: ignore[type-var]
+        artifacts=tuple(
+            (item, OTHER if item == path else digest)
+            for item, digest in entry.artifacts  # type: ignore[attr-defined]
+        ),
+    )
+    (problem,) = _script().release_differences(releases=(edited,), pins_path=pins)
+    assert problem.startswith("Released entry 1 (base 1.0.0) was edited, reordered or removed")
+
+
+def test_a_truncated_record_fails_the_check_by_name(tmp_path: Path) -> None:
+    _record, pins = _cut(tmp_path)
+    (problem,) = _script().release_differences(releases=(), pins_path=pins)
+    assert problem.startswith("Released entry 1 (base 1.0.0) is missing from BASE_KIT_RELEASES")
+
+
+def test_a_removed_entry_fails_the_check_by_name(tmp_path: Path) -> None:
+    """Two releases frozen; dropping the first moves the second into its place."""
+
+    record, pins = _cut(tmp_path)
+    (first,) = record
+    second = dataclasses.replace(first, version="1.1.0")  # type: ignore[type-var]
+    frozen = load_release_pins(pins)
+    pins.write_text(
+        render_release_pins(
+            frozen.model_copy(
+                update={"entries": (*frozen.entries, pin_of(2, second)), "frozen_through": 2}  # type: ignore[arg-type]
+            )
+        ),
+        encoding="utf-8",
+    )
+    assert _script().release_differences(releases=(first, second), pins_path=pins) == []
+    problems = _script().release_differences(releases=(second,), pins_path=pins)
+    assert problems[0].startswith("Released entry 1 (base 1.0.0) was edited, reordered or removed")
+    assert problems[1].startswith("Released entry 2 (base 1.1.0) is missing")
+
+
+def test_an_unpinned_entry_fails_the_check(tmp_path: Path) -> None:
+    record, _pins = _cut(tmp_path)
+    empty = tmp_path / "empty.json"
+    empty.write_text(render_release_pins(ReleasePins()), encoding="utf-8")
+    (problem,) = _script().release_differences(releases=record, pins_path=empty)
+    assert problem.startswith("entry 1 (base 1.0.0) has no pin")
+
+
+def test_a_bundle_rewriting_a_released_v1_is_refused_at_check_time(tmp_path: Path) -> None:
+    """The review's cold-replay case, refused before any instance can meet it.
+
+    Release 1.0.0 is recorded and frozen; a later bundle (1.2.0) rewrites the
+    released ``workspace.file@1``. Intact, the record refuses the bundle; edited to
+    the rewritten digest, or emptied, the record is refused by its pins. (An
+    intact record's later bundle opening a released instance cold is
+    ``tests/test_kits/test_base_kit_upgrade_replay.py``.)
+    """
+
+    record, pins = _cut(tmp_path)
+    source = tmp_path / "source"
+    shutil.copytree(_REPO / "scripts" / "base_kit", source)
+    kit = json.loads((source / "kit.json").read_bytes())
+    (source / "kit.json").write_text(json.dumps({**kit, "version": "1.2.0"}))
+    rewritten_path = source / "capabilities/workspace.file/v1.json"
+    capability = json.loads(rewritten_path.read_bytes())
+    rewritten_path.write_text(json.dumps({**capability, "description": "Rewritten."}))
+    path = capability_path("workspace.file", 1)
+
+    script = _script()
+    (problem,) = script.release_differences(source, releases=record, pins_path=pins)
+    assert problem.startswith(f"{path} was released in base kit 1.0.0")
+
+    artifacts, _manifest, _pin = script.render(source)
+    from cruxible_core.claims.closure import parse_dependency_artifact
+
+    state = parse_dependency_artifact(path, artifacts[path])
+    assert state is not None
+    (entry,) = record
+    forged = dataclasses.replace(
+        entry,  # type: ignore[type-var]
+        artifacts=tuple(
+            (item, state.artifact_digest if item == path else digest)
+            for item, digest in entry.artifacts  # type: ignore[attr-defined]
+        ),
+    )
+    for edited in ((forged,), ()):
+        problems = script.release_differences(source, releases=edited, pins_path=pins)
+        assert len(problems) == 1 and problems[0].startswith("Released entry 1 (base 1.0.0)")
