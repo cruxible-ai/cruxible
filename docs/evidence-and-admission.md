@@ -48,8 +48,8 @@ rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 ~~~
 
 Each line ends with how the verdict reads it. A copy is labeled by where it
-came from (`own words`, `own words in` the file they were written in, or
-`passage of` a catalogued file), and anything else
+came from (`own words`, `own words in` the file they were written in, each
+with its size in bytes, or `location in` a catalogued file), and anything else
 as `evidence`. Each is then `admitted` (the field's rules accept it), `not
 admitted` (offered as evidence, refused by the field's rules) or `not
 evidence` (a copy the rules don't count).

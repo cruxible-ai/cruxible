@@ -812,6 +812,9 @@ def test_a_pre_acceptance_index_is_reconstructed_on_the_current_schema(tmp_path)
     instance._accepted_history_index.close()
     with sqlite3.connect(index_path) as connection:
         connection.execute("DROP TABLE proposals")
+        # A file from before acceptance never held the Subject rows either.
+        connection.execute("DROP TABLE proposal_subjects")
+        connection.execute("DROP TABLE proposal_readmissions")
         connection.executescript(proposal_index._PRE_ACCEPTANCE_SCHEMA_SQL)
     # A checkpoint that still certifies the file: only the schema is behind.
     marker_path = evidence.root / ".proposal-source.json"

@@ -2181,6 +2181,28 @@ class Intent:
             f"revision={self._raw.get('intent_revision')}, {state}{proposal})"
         )
 
+    def __str__(self) -> str:
+        # No I/O: its state, proposal and outcome, and every diagnostic when refused.
+        from cruxible_client.contracts.text_display import render_intent
+
+        status = self._candidate_status
+        return render_intent(
+            intent_id=self._raw.get("intent_id"),
+            revision=self._raw.get("intent_revision"),
+            state=(
+                "refused"
+                if self.refused
+                else status.state
+                if status is not None
+                else "prepared"
+                if self._preflight is not None
+                else "not observed"
+            ),
+            proposal_id=None if status is None else status.proposal_id,
+            outcome=self.outcome,
+            diagnostics=self.diagnostics,
+        )
+
     @property
     def intent_id(self) -> str:
         """The intent's ID. Next: ``cx.resume_intent(intent_id)`` from another process."""

@@ -378,6 +378,14 @@ class GetLineRuns(_StrictGetModel):
     runs: tuple[RunRow, ...]
 
 
+class GetPendingProposal(_StrictGetModel):
+    """An open proposal that would write fields of the Subject: not accepted state yet."""
+
+    proposal: str = Field(description="The proposal's ID; get and proposal review read it.")
+    fields: tuple[str, ...] = Field(description="The Subject's fields it writes.")
+    by: str = Field(description="The principal who proposed it.")
+
+
 class GetSubjectCard(_StrictGetModel):
     subject: str
     kind: str
@@ -389,6 +397,9 @@ class GetSubjectCard(_StrictGetModel):
     incoming_count: int
     #: The pairs this Subject is an end of, at most ``GET_CARD_PAIRS`` per group.
     pairs: tuple[GetEndPairs, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Open proposals that would write its fields (a card read at the head only):
+    #: the values above stay the accepted ones until one is accepted.
+    pending: tuple[GetPendingProposal, ...] = Field(default=(), exclude_if=lambda value: not value)
     next: tuple[str, ...] = ()
 
 
@@ -765,6 +776,12 @@ class GetCaptureEvidence(_StrictGetModel):
         description="admitted: the ClaimType's rule admits it and the verdict reads it; "
         "not_admitted: offered as evidence, refused by the rule; not_evidence: a copy "
         "the rule does not admit, which the verdict never reads."
+    )
+    byte_length: int | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="How many bytes the Capture holds, from its commitment (no body read); "
+        "absent when it commits to no exact bytes or is withheld from this reader.",
     )
     erased: GetCaptureErasure | None = Field(
         default=None,
@@ -1194,6 +1211,7 @@ __all__ = [
     "GetRequest",
     "GetResult",
     "GetRevision",
+    "GetPendingProposal",
     "GetSubjectCard",
     "GetNone",
     "GetSubjectClaim",

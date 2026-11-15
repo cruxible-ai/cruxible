@@ -4213,11 +4213,12 @@ printed coordinate reads back; each history row prints both (`seq N at
 <12 hex>`). An all-digit value of 11 or fewer characters is always a
 generation, never an oid prefix; twelve or more digits are a prefix. Evidence
 names each Capture by its `CAP-<12 hex>` handle, which `get` and `capture read`
-both accept, labels a copy by origin (`own words`, `own words in FILE` for
-your own words found in a file, `passage of FILE`) and says
+both accept, labels a copy by origin (`own words (N bytes)`, `own words in FILE (N bytes)`
+for your own words found in a file, `location in FILE` for a copy that records
+where cited text sits) and says
 whether the verdict reads it: `admitted`, `not admitted` (offered as evidence,
 refused by the ClaimType's rule) or `not evidence` (a copy the rule does not
-admit). It lists the Claim version's attestations, accepted ones and the
+admit; a location row omits it). It lists the Claim version's attestations, accepted ones and the
 events `claim attest` recorded, each with whether it counts toward the
 verdict and why (`--detail why` carries the same as `attestation_accounts`).
 A `ClaimType:` or `Procedure:` card lists up to five governed Documents that

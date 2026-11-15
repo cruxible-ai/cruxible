@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1054,6 +1055,67 @@ def proposals_awaiting_activation(
             )
         )
     return tuple(ready)
+
+
+def proposal_touches(
+    instance: PlaybillInstance, *, proposal_id: str
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The Subjects one open proposal's Claim members are about, each with the fields it writes.
+
+    ``(subject path, predicates)`` pairs, sorted; empty for a proposal with no
+    Claim member (a definition, a policy) or one no longer open. One range of
+    the proposal index's maintained ``proposal_subjects`` rows, by proposal.
+    """
+
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    fields: dict[str, list[str]] = defaultdict(list)
+    with evidence.index.read(evidence) as connection:
+        for subject, predicate in connection.execute(
+            "SELECT subject_path,predicate FROM proposal_subjects INDEXED BY "
+            "proposal_subjects_by_proposal WHERE proposal_id=?",
+            (proposal_id,),
+        ):
+            fields[str(subject)].append(str(predicate))
+    return tuple((subject, tuple(sorted(fields[subject]))) for subject in sorted(fields))
+
+
+@dataclass(frozen=True)
+class PendingProposal:
+    """An open proposal that would write fields of one Subject."""
+
+    proposal_id: str
+    actor_id: str
+    #: The Subject's fields it writes, by predicate.
+    predicates: tuple[str, ...]
+
+
+def open_proposals_about(
+    instance: PlaybillInstance, *, subject_path: str
+) -> tuple[PendingProposal, ...]:
+    """Open proposals with a Claim member about ``subject_path``, oldest first.
+
+    One range of the proposal index's ``proposal_subjects`` rows for this
+    Subject, which hold only open proposals (candidates, unwithdrawn, unsettled
+    and not superseded by a readmission): a point lookup, flat in the number of
+    other open proposals and in the instance.
+    """
+
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    found: dict[str, tuple[str, list[str]]] = {}
+    with evidence.index.read(evidence) as connection:
+        for proposal_id, predicate, actor_id in connection.execute(
+            "SELECT s.proposal_id,s.predicate,p.actor_id FROM proposal_subjects s "
+            "JOIN proposals p ON p.proposal_id=s.proposal_id WHERE s.subject_path=? "
+            "ORDER BY p.admitted_at_us,s.proposal_id,s.predicate",
+            (subject_path,),
+        ):
+            found.setdefault(str(proposal_id), (str(actor_id), []))[1].append(str(predicate))
+    return tuple(
+        PendingProposal(proposal_id=proposal_id, actor_id=actor, predicates=tuple(predicates))
+        for proposal_id, (actor, predicates) in found.items()
+    )
 
 
 def service_resolve_playbill_proposal_selector(

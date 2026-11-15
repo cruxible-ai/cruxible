@@ -1094,6 +1094,13 @@ class WriteOutcome(_StrictWriteModel):
     def refused(self) -> bool:
         return self.status in ("refused", "would_refuse")
 
+    def __str__(self) -> str:
+        """The outcome as ``cruxible write`` prints it; ``repr()`` stays the full model."""
+
+        from cruxible_client.contracts.text_display import render_write_outcome
+
+        return render_write_outcome(self)
+
 
 __all__ = [
     "DocConfirmationOutcome",
