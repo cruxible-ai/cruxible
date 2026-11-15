@@ -1949,9 +1949,11 @@ class _Planner:
             }
         observation = self._observed(evidence, index=index)
         if isinstance(evidence, SectionEvidence) and evidence.own_words:
+            # Located own words, as a set's: one Capture sourced at the section.
             return {
                 **backing,
                 "source": SelfSourceBody(content_base64=observation.selected_content_base64),
+                "located_at": observation,
             }
         return {**backing, "source": observation, "citation_role": "evidence"}
 

@@ -871,7 +871,9 @@ class SubjectCreationAuthoringPayload(_StrictAuthoringModel):
     under the id core assigns (the readable rendering of the canonical key, or a
     minted id) with one key Claim per part, citing ``source`` (the rationale as
     the author's own words when absent). A cited existing section or file is a
-    working selection (``citation_role`` ``evidence``).
+    working selection (``citation_role`` ``evidence``). ``located_at`` says
+    where own words (a ``SelfSourceBody``) stand, as a Claim's does: each key
+    Claim then cites one located own-words Capture. Omitted when unset.
     """
 
     tag: Literal["cruxible-subject-creation-authoring-payload-v1"] = (
@@ -894,6 +896,9 @@ class SubjectCreationAuthoringPayload(_StrictAuthoringModel):
         default=None, exclude_if=lambda value: value is None
     )
     citation_role: Literal["evidence", "copy"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    located_at: WorkingSelectionObservation | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
@@ -927,6 +932,8 @@ class SubjectCreationAuthoringPayload(_StrictAuthoringModel):
             raise ValueError(
                 "exactly an existing Capture or a working selection states its citation_role"
             )
+        if self.located_at is not None and not isinstance(self.source, SelfSourceBody):
+            raise ValueError("only own words (a SelfSourceBody source) are located_at a file")
         return self
 
     @property

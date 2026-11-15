@@ -309,6 +309,17 @@ def test_define_and_add_carry_evidence_like_set(playbill_http, tmp_path):
         (view,) = item[field]
         assert _own_words_size(cx, view.claim_id) == len(section), field
 
+    # Located own words: one Capture per Claim, and the section's backlinks list
+    # the key Claim beside the added value (a create passes the location too).
+    claims = set()
+    for field in ("slug", "title", "governs"):
+        (view,) = item[field]
+        (own,) = cx.get(view.claim_id, detail="evidence").value.captures
+        assert (own.origin, own.source) == ("self_source", "doc-notes.md"), (field, own)
+        claims.add(view.claim_id.removeprefix("Claim:"))
+    linked = {link.source for link in cx.backlinks(file="notes.md", section=("wi-f33",)).links}
+    assert linked == claims, linked
+
     # Without evidence the key Claim rests on the write's because, as before.
     bare = w.project.work_item.define("wi-f33-bare")
     assert bare.write(because=because).status == "accepted"

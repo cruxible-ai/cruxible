@@ -5193,6 +5193,10 @@ def _stage_subject_creation(
                 or SelfSourceBody(
                     content_base64=base64.b64encode(rationale.encode("utf-8")).decode("ascii")
                 ),
+                # Own words found in a file stand there, as a Claim member's
+                # do: one located own-words Capture (set only when given, as
+                # absent and null are different statements).
+                **({} if member.located_at is None else {"located_at": member.located_at}),
             )
         )
         lowered = _lower_claim(
