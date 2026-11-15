@@ -3203,22 +3203,36 @@ def approve_proposal(
         signer_id = str(configured)
     resolved_signer: str = signer_id
 
+    # The prompt shows the reviewer's view `proposal review` prints (its first page).
+    shows_summary = not (output_json or full or yes)
+
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
-    ) -> tuple[str, contracts.ApprovalChallenge, CompilerUpgradeSigningKey]:
+    ) -> tuple[
+        str,
+        contracts.ApprovalChallenge,
+        CompilerUpgradeSigningKey,
+        contracts.ProposalReviewSummary | None,
+    ]:
         key = _signing_key(private_key_path, instance_id=instance_id, signer_id=resolved_signer)
         if key is None:
             raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        summary = None
+        if shows_summary:
+            page = client.review_proposal(instance_id, resolved_id, groups=False)
+            assert isinstance(page, contracts.ProposalReviewSummary)
+            summary = page
         return (
             resolved_id,
             client.prepare_approval(
                 instance_id, resolved_id, signer_id=resolved_signer, include_body=True
             ),
             key,
+            summary,
         )
 
-    resolved_id, challenge, key = _server_call(
+    resolved_id, challenge, key, summary = _server_call(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
@@ -3230,7 +3244,8 @@ def approve_proposal(
             for line in _approval_counts_lines(review):
                 click.echo(line)
         else:
-            click.echo(render_playbill_approval_summary(review), nl=False)
+            assert summary is not None
+            click.echo(render_playbill_approval_summary(review, summary), nl=False)
     if key.source != "option":
         click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?", err=True):

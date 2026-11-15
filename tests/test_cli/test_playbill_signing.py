@@ -413,3 +413,88 @@ def test_cli_approval_without_a_terminal_refuses_before_contacting_the_daemon(
         "review it with `cruxible proposal review PRP-0123456789ab`, then rerun with --yes"
         in result.stderr
     )
+
+
+def test_cli_approval_prompt_shows_the_reviewers_view_before_asking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The moment someone signs shows what `proposal review` shows, then the question."""
+
+    from cruxible_core.service.proposals.review import service_review_playbill_proposal
+
+    instance, _owner, reviewer = _instance(tmp_path)
+    body = service_store_playbill_body(instance, content=b"# Review me\n")
+    shell = DocumentShell(
+        identity="document:signing-test",
+        document_kind="design",
+        title="Signing test",
+        media_type="text/markdown",
+        body_digest=body.digest,
+        authority=DocumentAuthority(required_tier="graph_write"),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    proposal = service_propose_playbill_document(
+        instance, shell=shell, actor_id="owner", proposal_name="cli-signing", timestamp=TIMESTAMP
+    ).proposal
+    proposal_id = proposal.admission.proposal_id
+    access = BodyAccessContext(principal_id="reviewer", can_read_body=True)
+    asked: list[dict[str, Any]] = []
+
+    class StubClient:
+        def resolve_proposal_selector(
+            self, instance_id: str, selector: str
+        ) -> contracts.ProposalSelectorResult:
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=selector)
+
+        def review_proposal(
+            self, instance_id: str, selected: str, **options: Any
+        ) -> contracts.ProposalReviewSummary:
+            asked.append(options)
+            return contracts.ProposalReviewSummary.model_validate(
+                service_review_playbill_proposal(
+                    instance, proposal_id=selected, access=access, **options
+                ).model_dump(mode="json")
+            )
+
+        def prepare_approval(
+            self, instance_id: str, selected: str, *, signer_id: str, include_body: bool
+        ) -> contracts.ApprovalChallenge:
+            challenge = service_prepare_playbill_approval(
+                instance, proposal_id=selected, signer_id=signer_id, access=access
+            )
+            return contracts.ApprovalChallenge.model_validate(challenge.model_dump(mode="json"))
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill._can_confirm", lambda: True)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "proposal",
+            "approve",
+            proposal_id,
+            "--signer-id",
+            "reviewer",
+            "--key",
+            str(reviewer.private_key_path),
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code != 0  # declined: nothing is signed
+    assert asked == [{"groups": False}]
+    lines = result.output.splitlines()
+    assert f"Proposal: {proposal_id}" in lines
+    assert f"Candidate: {proposal.candidate.candidate_digest}" in lines
+    assert "Definitions (1):" in lines
+    assert "  Document signing-test: created" in lines
+    assert (
+        f"Stored fields grouped by kind: cruxible proposal review {proposal_id} --json. "
+        f"Every member's artifact and delta: cruxible proposal review {proposal_id} --detail"
+    ) in lines
+    assert any(line.startswith("Required approvals: ") for line in lines)
+    assert lines.index("Sign this exact candidate? [y/N]: n") > lines.index("Definitions (1):")

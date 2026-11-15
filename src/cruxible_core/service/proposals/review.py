@@ -979,21 +979,27 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     )
 
 
-def render_playbill_approval_summary(review: ProposalReview) -> str:
-    """What `proposal approve` shows before signing: who must approve, why, and what changes.
+def render_playbill_approval_summary(review: ProposalReview, summary: ProposalReviewSummary) -> str:
+    """What `proposal approve` shows before signing: the reviewer's view, then who must
+    approve and what any earlier refusal said.
 
-    The signature covers the exact candidate digest printed here; `--full`
-    renders every member's artifact and semantic delta instead.
+    ``summary`` is the first page of the same candidate's review summary (the text
+    `proposal review` prints, its paging hints naming that command); the
+    signature covers the exact candidate digest printed here. `--full` renders
+    every member's artifact and semantic delta instead.
     """
 
+    from cruxible_client.contracts.text_display import render_review_summary
+
+    if summary.candidate_digest != review.candidate_digest:
+        raise ProposalIntegrityError(
+            "the review summary names another candidate than the one being signed; "
+            "rerun proposal approve"
+        )
     lines = [
-        f"Proposal: {review.proposal_id}",
-        f"Candidate: {review.candidate_digest}",
+        render_review_summary(summary, command=f"cruxible proposal review {review.proposal_id}"),
         "Required approvals: " + _required_approvals_text(review),
-        "",
-        *proposal_change_lines(review),
         *_compiler_upgrade_lines(review),
-        *_item_reason_lines(review),
         *_prior_refusal_lines(review),
     ]
     return "\n".join(lines) + "\n"

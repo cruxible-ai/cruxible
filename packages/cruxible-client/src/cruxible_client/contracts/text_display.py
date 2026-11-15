@@ -665,9 +665,14 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
     return lines
 
 
-def render_review_summary(review: ProposalReviewSummary) -> str:
-    """A proposal review summary as ``cruxible proposal review`` prints it."""
+def render_review_summary(review: ProposalReviewSummary, *, command: str | None = None) -> str:
+    """A proposal review summary as ``cruxible proposal review`` prints it.
 
+    ``command`` is the review command a paging hint runs, when the text is shown
+    by another verb (``proposal approve``); by default a hint names only flags.
+    """
+
+    run = "" if command is None else f"{command} "
     lines = [f"Proposal: {review.proposal_id}", f"Candidate: {review.candidate_digest}"]
     if review.originating_line is not None:
         lines.append(
@@ -712,7 +717,7 @@ def render_review_summary(review: ProposalReviewSummary) -> str:
         else:
             lines.append(f"Finding: {_summary_value_text(finding)}")
     if review.findings_next_cursor:
-        lines.append(f"More findings: --findings-after {review.findings_next_cursor}")
+        lines.append(f"More findings: {run}--findings-after {review.findings_next_cursor}")
     lines.append(
         f"Changes: {review.counts.created} created / {review.counts.revised} revised / "
         f"{review.counts.retired} retired"
@@ -738,7 +743,7 @@ def render_review_summary(review: ProposalReviewSummary) -> str:
         for item in review.changes:
             lines.extend(review_change_lines(item, why=why if isinstance(why, str) else None))
         if review.changes_next is not None:
-            lines.append(f"More values: --changes-from {review.changes_next}")
+            lines.append(f"More values: {run}--changes-from {review.changes_next}")
         if shown < review.change_count and review.change_counts:
             lines.append("Values by kind and field:")
             lines.extend(
@@ -762,7 +767,7 @@ def render_review_summary(review: ProposalReviewSummary) -> str:
         for definition in review.definitions:
             lines.extend(review_definition_lines(definition))
         if review.definitions_next is not None:
-            lines.append(f"More definitions: --definitions-from {review.definitions_next}")
+            lines.append(f"More definitions: {run}--definitions-from {review.definitions_next}")
     if review.item_reason_count:
         lines.append(f"Item reasons: {review.item_reason_count} (--detail to page them)")
     for group in review.groups:
@@ -774,12 +779,13 @@ def render_review_summary(review: ProposalReviewSummary) -> str:
             lines.append(f"  {row.path}: {_json_text(row.model_dump(mode='json'))}")
         if group.next_cursor:
             lines.append(
-                f"  More rows: --summary-group {group.group} --rows-after {group.next_cursor}"
+                f"  More rows: {run}--summary-group {group.group} --rows-after {group.next_cursor}"
             )
     if review.next_cursor:
-        lines.append(f"More groups: --summary-after {review.next_cursor}")
+        lines.append(f"More groups: {run}--summary-after {review.next_cursor}")
     lines.append(
-        "Stored fields grouped by kind: --json. Every member's artifact and delta: --detail"
+        f"Stored fields grouped by kind: {run}--json. "
+        f"Every member's artifact and delta: {run}--detail"
     )
     return "\n".join(lines)
 
