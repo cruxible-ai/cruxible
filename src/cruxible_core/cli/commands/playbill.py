@@ -152,6 +152,7 @@ from cruxible_client.contracts.text_display import (
     awaiting_text,
     landing_lines,
     render_orient,
+    short_oid,
     write_outcome_lines,
 )
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
@@ -1047,6 +1048,11 @@ def create_host(
         "credential; bind one later with 'cruxible ledger set-mirror'."
     ),
 )
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Also print the public keys, settings files, workspace refs and folder identity.",
+)
 @json_option
 @handle_errors
 def init_playbill(
@@ -1061,6 +1067,7 @@ def init_playbill(
     replace: bool,
     object_format: str | None,
     mirror_url: str | None,
+    verbose: bool,
     output_json: bool,
 ) -> None:
     """Make you the owner: create client custody and bootstrap the approval policy.
@@ -1302,7 +1309,20 @@ def init_playbill(
             }
         )
         return
-    click.echo(f"Cruxible initialized at {result.coordinate.git_oid}")
+    # What matters: the instance, who owns it and where the key is, the policy and
+    # the base kit. The rest is behind --verbose and `cruxible context show`.
+    click.echo(
+        f"Cruxible initialized: {result.instance_id} at {short_oid(result.coordinate.git_oid)}"
+    )
+    click.echo(f"Owner: {principal_id}, private key {owner.private_key_path}")
+    click.echo(
+        "The owner key signs approvals; it is separate from daemon auth ("
+        + (
+            "your bearer credential)."
+            if owner_token is not None
+            else "off: any process of this OS user may call the daemon)."
+        )
+    )
     click.echo(f"Approval policy: {result.approval_policy_mode}")
     if result.base_kit is not None:
         kit = result.base_kit
@@ -1314,14 +1334,20 @@ def init_playbill(
                 f"{kit.proposal_id} (cruxible proposal approve {kit.proposal_id} "
                 "--signer-id ID --key FILE, as a second principal)"
             )
-    click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.failure_code is not None:
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
+    if reviewer is not None:
+        click.echo(
+            f"Reviewer: reviewer, private key {reviewer.private_key_path} "
+            "(cruxible context use --principal reviewer)"
+        )
+    if not verbose:
+        click.echo("More: cruxible context show")
+        return
+    click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.status == "not_git":
         click.echo(LEDGER_MIRROR_OFF)
     click.echo(f"Owner public key: {owner.principal.public_key}")
-    click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
-    click.echo(f"Owner principal: {principal_id}")
     click.echo(f"Owner settings: {settings}")
     click.echo(
         f"The CLI now acts as {principal_id} on this host (remembered in its context; "
@@ -1341,9 +1367,7 @@ def init_playbill(
         )
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
-        click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
         click.echo(f"Reviewer settings: {reviewer_settings}")
-        click.echo("Act as the reviewer with: cruxible context use --principal reviewer")
 
 
 def _record_folder_identity(

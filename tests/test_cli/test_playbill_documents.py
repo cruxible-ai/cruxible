@@ -413,7 +413,7 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     )
     made = CliRunner().invoke(
         cli,
-        [*base, "init", "--key-dir", str(tmp_path / "c"), "--principal-id", "alice"],
+        [*base, "init", "--key-dir", str(tmp_path / "c"), "--principal-id", "alice", "--verbose"],
     )
 
     assert missing.exit_code == 2
@@ -423,7 +423,7 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     assert "disagrees with the configured principal alice" in conflicting.output
     assert made.exit_code == 0, made.output
     assert claimed == ["alice"]
-    assert "Owner principal: alice" in made.output
+    assert "Owner: alice, private key" in made.output
     settings = tmp_path / "c" / "cruxible.env"
     assert f"Owner settings: {settings.resolve()}" in made.output
     assert "a claim of identity" in made.output
