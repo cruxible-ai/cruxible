@@ -327,7 +327,7 @@ def test_a_create_key_takes_each_field_by_name_or_predicate() -> None:
     assert any(branch.get("type") == "object" for branch in schema["anyOf"])
 
 
-@pytest.mark.parametrize("key", [{"created": "x"}, [{"field": "x"}], 1.5, ["v"]])
+@pytest.mark.parametrize("key", [[{"field": "x"}], 1.5, ["v"], [[1]]])
 def test_a_wrong_create_key_shape_answers_with_the_shapes_once(key: object) -> None:
     """Walkthrough S11: one sentence with the accepted shapes, not a union dump."""
 
@@ -362,3 +362,20 @@ def test_a_bad_key_part_names_only_that_part() -> None:
         )
     (error,) = refused.value.errors()
     assert error["loc"][-2:] == (0, "predicate")
+
+
+def test_a_key_field_named_created_is_a_field_not_a_handle() -> None:
+    """Review: {created: ...} as the whole key names the kind's field ``created``."""
+
+    from cruxible_client.contracts.write import CreateChange, CreateKeyPart
+
+    change = WriteRequest.model_validate(
+        {
+            "because": "x",
+            "changes": [
+                {"op": "create", "label": "s", "subject_kind": "dev.stamp", "key": {"created": "a"}}
+            ],
+        }
+    ).changes[0]
+    assert isinstance(change, CreateChange)
+    assert change.key == (CreateKeyPart(predicate="dev.stamp.created", value="a"),)

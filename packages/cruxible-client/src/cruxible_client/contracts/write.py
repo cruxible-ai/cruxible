@@ -545,10 +545,11 @@ class CreateChange(_StrictWriteModel):
             return data
         key = cast(Mapping[str, object], data["key"])
         kind = data.get("subject_kind")
+        # Every other mapping names key fields, a field named ``created`` too: a
+        # {created: label} handle is a key part's value, never the whole key
+        # (one key value is a literal).
         if set(key) == {"predicate", "value"}:
             parts: object = [dict(key)]
-        elif set(key) == {"created"}:
-            return data  # a Subject is no key; refused with the key's shapes
         else:
             parts = [
                 {
