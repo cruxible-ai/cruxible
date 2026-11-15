@@ -766,6 +766,12 @@ class GetCaptureEvidence(_StrictGetModel):
         "not_admitted: offered as evidence, refused by the rule; not_evidence: a copy "
         "the rule does not admit, which the verdict never reads."
     )
+    byte_length: int | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="How many bytes the Capture holds, from its commitment (no body read); "
+        "absent when it commits to no exact bytes or is withheld from this reader.",
+    )
     erased: GetCaptureErasure | None = Field(
         default=None,
         exclude_if=_omit_none,

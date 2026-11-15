@@ -690,15 +690,24 @@ def test_evidence_capture_source_renders_its_public_name(
 
 
 @pytest.mark.parametrize(
-    ("role", "origin", "status", "shown"),
+    ("role", "origin", "status", "byte_length", "shown"),
     [
-        ("copy", "self_source", "admitted", "own words: admitted"),
-        ("copy", "independent", "not_evidence", "passage of docs.page: not evidence"),
-        ("evidence", "independent", "not_admitted", "evidence: not admitted"),
+        ("copy", "self_source", "admitted", None, "own words: admitted"),
+        # Which text the own words hold: their size (a section's, or a short because).
+        ("copy", "self_source", "admitted", 722, "own words (722 bytes): admitted"),
+        # A copy that records where cited text sits is a location, not a rejected note.
+        ("copy", "independent", "not_evidence", None, "location in docs.page"),
+        ("copy", "independent", "admitted", None, "location in docs.page: admitted"),
+        ("evidence", "independent", "not_admitted", None, "evidence: not admitted"),
     ],
 )
 def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
-    monkeypatch: pytest.MonkeyPatch, role: str, origin: str, status: str, shown: str
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    origin: str,
+    status: str,
+    byte_length: int | None,
+    shown: str,
 ) -> None:
     from cruxible_client.contracts.get_reads import GetCaptureEvidence, GetEvidence
 
@@ -711,6 +720,7 @@ def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
         role=role,
         origin=origin,  # type: ignore[arg-type]
         status=status,  # type: ignore[arg-type]
+        byte_length=byte_length,
     )
     _stub(
         monkeypatch,

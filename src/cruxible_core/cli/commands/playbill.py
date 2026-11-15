@@ -6421,13 +6421,20 @@ def _attestation_counts_text(attestation: Any) -> str:
 
 
 def _citation_label(capture: Any) -> str:
-    """What a cited Capture is, in words: the Claim's own words, a passage, or evidence."""
+    """What a cited Capture is, in words, and whether the verdict reads it.
 
+    Own words say how much text they hold; a copy that only records where cited
+    text sits reads as that location, never as rejected evidence.
+    """
+
+    status = capture.status.replace("_", " ")
     if capture.origin == "self_source":
-        return "own words"
+        size = "" if capture.byte_length is None else f" ({capture.byte_length} bytes)"
+        return f"own words{size}: {status}"
     if capture.role == "copy":
-        return f"passage of {_public_name(capture.source)}"
-    return str(capture.role)
+        where = f"location in {_public_name(capture.source)}"
+        return where if capture.status == "not_evidence" else f"{where}: {status}"
+    return f"{capture.role}: {status}"
 
 
 def _stale_claim_evidence_erased(request: Any, result: Any) -> bool:
@@ -6586,7 +6593,7 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                 f"capture {capture.capture}  {_public_name(capture.contract)} "
                 f"v{capture.version}  source={_public_name(capture.source)}  "
                 f"observed={capture.observed_at.isoformat()}  "
-                f"{_citation_label(capture)}: {capture.status.replace('_', ' ')}"
+                f"{_citation_label(capture)}"
                 + (
                     ""
                     if erased is None

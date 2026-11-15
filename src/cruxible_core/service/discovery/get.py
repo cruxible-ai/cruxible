@@ -2266,6 +2266,7 @@ def _claim_evidence(
     for account in explanation.admission_accounts:
         version = names.version_of(account.capture_contract_digest)
         erasure = None
+        byte_length: int | None = None
         if account.capture_digest in withheld:
             row = indexed.get(account.capture_digest)
             if row is None:
@@ -2281,6 +2282,7 @@ def _claim_evidence(
             if source is None and version is not None:
                 source = envelope.producer.qualified
             observed_at = envelope.observed_at
+            byte_length = envelope.commitment.byte_length
         captures.append(
             GetCaptureEvidence(
                 capture=capture_handle(account.capture_digest),
@@ -2293,6 +2295,7 @@ def _claim_evidence(
                 role=account.citation_role,
                 origin=account.citation_origin,
                 status=account.status,
+                byte_length=byte_length,
                 erased=None
                 if erasure is None
                 else GetCaptureErasure(
