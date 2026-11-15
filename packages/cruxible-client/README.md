@@ -59,14 +59,18 @@ item = w.project.work_item["wi-1"]
 outcome = item.set(
     status="ready",
     because="Record the decision and its basis together.",
-    evidence=cx.section("notes.md", ("Decision",),
-                        text="# Decision\nThe checks passed.\n"),
+    evidence=cx.section("notes.md", heading="Decision", body="The checks passed."),
 )
 # Next: inspect outcome.docs[0].written and outcome.next, then cx.get(item.address).
 ```
 
-`cx.section(file, heading_path, text=..., under=())` appends a subtree; with
-`replace=True, expect=digest` it replaces the named subtree or preamble. It
+`cx.section(file, heading="slug", body=..., under=("Notes",))` names the
+heading once: the heading line is written at the depth its place needs, and
+the section cited is `(*under, heading)`. The longer form
+`cx.section(file, heading_path, text=..., under=())` takes `text` starting
+with the heading line. Either appends a subtree that leaves one blank line
+after it; with `replace=True` (and `expect=digest`) it replaces the named
+subtree, or with `heading_path=()` the preamble. It
 returns `authoring.section_evidence.AuthoredSection`, an immutable client-only
 evidence object. Construction writes nothing. Accepted Subjects, their edits,
 new Subject drafts' `.set(...).write(...)`, and `cx.set` accept it as evidence.
@@ -689,6 +693,23 @@ Reads a cataloged workspace file into a FileSelector using .cruxible/files.yaml 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `path` | Required | Workspace/source path or destination; interpretation is stated by its owning operation. |
+
+<a id="api-cruxible-files"></a>
+
+### `Cruxible.files`
+
+[Source](src/cruxible_client/authoring/files.py)
+
+```text
+files.add(name: str, path: str | Path, *, document_id=None, document_kind=None, title=None,
+          media_type=None, governance_scope=(), required_tier=None, public_uri=None,
+          replace=False) -> FileCatalogEdit
+files.remove(name: str) -> FileCatalogEdit
+```
+
+Catalogues a workspace file under a source name in `.cruxible/files.yaml`, or removes its entry: the same edits as `cruxible files add` and `cruxible files remove`, through the same code.
+
+**Conditions and effects:** Writes only the catalog file. A relative path is read from the workspace root. An existing name refuses (`entry_exists`) unless `replace=True`; a partial Document or a duplicate Document target refuses.
 
 ## Reads and discovery
 
@@ -2607,7 +2628,11 @@ A key one live Subject already holds lands on that Subject and creates nothing
 `expect_new=True` refuses `cruxible.write.subject_exists`, and `create_new=True`
 makes a further holder of a `hint` kind's key. `w.<kind>["id"]` never creates:
 a missing id raises `AbsentSubject`. A kind no SubjectKind declares has no
-`define()`.
+`define()`. `define(..., evidence=..., role=...)` backs the key Claims and the
+fields given there as `.set` backs its fields (a `cx.section(...)` carried as
+prose included); without it they rest on the write's `because`. A draft that
+was accepted, reused in a later write, is a reference to its Subject: only
+changes added after the acceptance are sent.
 
 Creation bindings follow the complete batch's deterministic assignment, including
 keys with the same readable rendering. A dry run leaves `subject=None` on every

@@ -387,8 +387,8 @@ first child. Prose authored by that write counts as the author's own words: a
 retained self-source Capture keeps the basis, and an ordinary file-copy
 citation records its location for drift. Existing sections are file evidence.
 ClaimType rules still admit their named contracts; captured-only requirements
-reject own words. In the SDK, `evidence=cx.section(file, heading_path,
-text=...)` authors the section and cites it in the same write.
+reject own words. In the SDK, `evidence=cx.section(file, heading="slug",
+body=..., under=(...))` authors the section and cites it in the same write.
 
 The client applies only agent-authored text after admission, including when
 approval remains pending. The daemon receives bytes and logical source IDs,

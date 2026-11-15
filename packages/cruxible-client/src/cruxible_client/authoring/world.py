@@ -580,12 +580,17 @@ class _FieldChange:
 
 
 class _Landing:
-    """Where one new Subject landed: shared by a draft and every draft derived from it."""
+    """Where one new Subject landed: shared by a draft and every draft derived from it.
 
-    __slots__ = ("ref",)
+    ``accepted`` holds the changes an accepted write already sent, by identity,
+    so a landed draft reused later sends only what it gained since.
+    """
+
+    __slots__ = ("accepted", "ref")
 
     def __init__(self) -> None:
         self.ref: str | None = None
+        self.accepted: dict[int, _FieldChange] = {}
 
 
 class WorldWritable:
@@ -603,8 +608,10 @@ class WorldNewSubject(WorldWritable):
     ``edit().set``): it is sent as a reference to its own ``create``, so the
     order of drafts never matters. ``w.write`` (or ``draft.write``) creates it,
     or lands on the one live Subject its key already names. Once accepted,
-    ``address`` is the id core assigned. Reads at this World's coordinate still
-    do not see it: ``cx.world()`` again for those.
+    ``address`` is the id core assigned, and the draft (or one derived from it)
+    passed to a later write is a reference to that Subject: its key, fields and
+    sections are not sent again, only changes added after the acceptance. Reads
+    at this World's coordinate still do not see it: ``cx.world()`` again for those.
     """
 
     subject_kind: str
@@ -612,6 +619,9 @@ class WorldNewSubject(WorldWritable):
     _key: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
     _create_new: bool = False
     _expect_new: bool = False
+    #: What the key Claims cite and their role, from ``define(evidence=, role=)``.
+    _evidence: Evidence | AuthoredSection | None = None
+    _role: WriteRole | None = None
     _changes: tuple[_FieldChange, ...] = ()
     _landing: _Landing = field(default_factory=_Landing, repr=False)
 
@@ -795,6 +805,8 @@ class KindNamespace:
         *key: SubjectKeyValue,
         create_new: bool = False,
         expect_new: bool = False,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
         **fields: object,
     ) -> WorldNewSubject:
         """Draft one new Subject of this kind by its key, with fields; core assigns its id.
@@ -802,7 +814,10 @@ class KindNamespace:
         The kind's SubjectKind says what the key is: a one-key kind takes its
         value positionally or by its key's leaf; a composite kind takes each key
         part by its leaf; a minted kind takes none. Every other keyword is a
-        field: set when it holds one value, added when it holds many. A key one
+        field: set when it holds one value, added when it holds many.
+        ``evidence=`` (``cx.section(..., heading=...)`` carries prose) and
+        ``role=`` back the key Claims and these fields as ``.set`` backs its
+        fields; without them they rest on the write's ``because``. A key one
         live Subject already holds lands on that Subject and creates nothing
         (``resolved: existing``, so a seed run again answers as done);
         ``expect_new=True`` refuses ``cruxible.write.subject_exists`` instead.
@@ -821,7 +836,14 @@ class KindNamespace:
                 "one), then read a new World"
             )
         return self._world._define(
-            kind, identity, key, dict(fields), create_new=create_new, expect_new=expect_new
+            kind,
+            identity,
+            key,
+            dict(fields),
+            create_new=create_new,
+            expect_new=expect_new,
+            evidence=evidence,
+            role=role,
         )
 
     def where(self, /, **filters: object) -> CompactQuery:
@@ -1143,6 +1165,7 @@ class World:
         changes: list[Change] = []
         docs: list[DocOp] = []
         authored: set[int] = set()
+        landings: dict[int, _Landing] = {}
 
         def mine(item: WorldWritable) -> None:
             if getattr(item, "_world", None) is not self:
@@ -1152,8 +1175,24 @@ class World:
 
         def value(raw: object) -> Any:
             if isinstance(raw, WorldNewSubject):
+                if raw._landing.ref is not None:
+                    return landed(raw)
                 return CreatedSubject(created=label(raw))
             return _write_value(raw)
+
+        def landed(draft: WorldNewSubject) -> str:
+            # An accepted draft is a reference to its Subject: only changes it
+            # gained after that acceptance are sent, under the assigned id.
+            mine(draft)
+            ref = draft._landing.ref
+            assert ref is not None
+            key = id(draft._landing)
+            if key not in landings:
+                landings[key] = draft._landing
+            done = sent.setdefault(key, [])
+            fresh = [c for c in draft._changes if id(c) not in draft._landing.accepted]
+            send(ref, fresh, done)
+            return ref
 
         def send(
             subject: str | CreatedSubject,
@@ -1164,12 +1203,7 @@ class World:
                 if any(item is earlier for earlier in done):
                     continue
                 done.append(item)
-                evidence = item.evidence
-                if isinstance(evidence, AuthoredSection):
-                    if id(evidence) not in authored:
-                        authored.add(id(evidence))
-                        docs.append(evidence.operation)
-                    evidence = evidence.citation
+                evidence = cited(item.evidence)
                 changes.append(
                     SetChange(
                         subject=subject,
@@ -1190,11 +1224,22 @@ class World:
                     )
                 )
 
+        def cited(evidence: Evidence | AuthoredSection | None) -> Evidence | None:
+            # A section carried as prose is authored once per write, however
+            # many changes cite it.
+            if isinstance(evidence, AuthoredSection):
+                if id(evidence) not in authored:
+                    authored.add(id(evidence))
+                    docs.append(evidence.operation)
+                return evidence.citation
+            return evidence
+
         def label(draft: WorldNewSubject) -> str:
             mine(draft)
             key = id(draft._landing)
             name = labels.get(key)
             if name is None:
+                landings[key] = draft._landing
                 name = labels[key] = f"new-{len(labels) + 1}"
                 creates.append(
                     (
@@ -1205,6 +1250,8 @@ class World:
                             key=draft._key,
                             create_new=draft._create_new,
                             expect_new=draft._expect_new,
+                            role=draft._role,
+                            evidence=cited(draft._evidence),
                         ),
                     )
                 )
@@ -1213,7 +1260,10 @@ class World:
 
         for item in items:
             if isinstance(item, WorldNewSubject):
-                label(item)
+                if item._landing.ref is not None:
+                    landed(item)
+                else:
+                    label(item)
             elif isinstance(item, WorldSubjectEdit):
                 mine(item)
                 done = sent.setdefault(id(item), [])
@@ -1234,6 +1284,8 @@ class World:
         if outcome.status == "accepted":
             for position, (landing, _create) in enumerate(creates):
                 landing.ref = outcome.changes[position].subject
+            for key, landing in landings.items():
+                landing.accepted.update((id(change), change) for change in sent.get(key, ()))
         return outcome
 
     def _define(
@@ -1245,6 +1297,8 @@ class World:
         *,
         create_new: bool,
         expect_new: bool,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
     ) -> WorldNewSubject:
         """One draft: its key read by the kind's identity rule, the other keywords as fields."""
 
@@ -1304,6 +1358,8 @@ class World:
                     op="add" if node.structure.cardinality == "many" else "set",
                     field=predicate,
                     value=raw,
+                    evidence=evidence,
+                    role=role,
                 )
             )
         return WorldNewSubject(
@@ -1312,6 +1368,8 @@ class World:
             _key=sent,
             _create_new=create_new,
             _expect_new=expect_new,
+            _evidence=evidence,
+            _role=role,
             _changes=tuple(changes),
         )
 

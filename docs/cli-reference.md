@@ -1895,7 +1895,9 @@ as `identity` per kind in `orient`) declares how Subjects of one kind are named:
   purpose). The id is the readable rendering of the canonical key: each part
   NFKC-normalized and lowercased, every run outside `[a-z0-9.]` turned into `-`
   and trimmed, composite parts joined with `--`, an `x` prefix when it does not
-  begin with a letter, `x-<8 hex>` when nothing readable is left. When a
+  begin with a letter (a Subject id always does, so a release keyed `0.5.0` is
+  `x0.5.0`; the key still names it, and the write's outcome says so),
+  `x-<8 hex>` when nothing readable is left. When a
   different key already renders to that id, or a live alias already names it,
   the later Subject takes `<id>-<8 hex of its key digest>`: a new id never
   shadows an existing alias.

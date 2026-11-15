@@ -652,7 +652,10 @@ def render_key_slug(values: Sequence[SubjectKeyPartValue]) -> str:
 
     Each part is rendered by ``render_key_part``; composite parts are joined
     with ``--``. A rendering that does not begin with a letter gets an ``x``
-    prefix. A rendering with no readable character left is ``x-`` and the first
+    prefix, because a Subject id begins with a letter (the id grammar every
+    ledger path, reference and digest is spelled in); the key itself still
+    names the Subject, and a write's outcome says why when it happens. A
+    rendering with no readable character left is ``x-`` and the first
     8 hex digits of the key digest. One longer than a Subject id may be is cut
     and ends ``-`` and those 8 hex digits.
     """

@@ -313,6 +313,52 @@ def test_a_define_run_again_lands_on_its_subject_and_expect_new_refuses(typed: C
     assert taken.address == f"{DECISION}/ship-it-{key_digest_hex(['ship-it'])[:8]}"
 
 
+def test_an_accepted_draft_reused_as_a_value_is_a_reference_to_its_subject(
+    typed: Cruxible,
+) -> None:
+    """F28: reusing an accepted draft never resends its create, fields or sections."""
+
+    w = typed.world()
+    items = w.project.work_item
+    parent = items.define("wi-f28-parent", title="Parent")
+    assert parent.write(because="The parent.").status == "accepted"
+    assert parent.address == f"{KIND}/wi-f28-parent"
+
+    child = items.define("wi-f28-child", title="Child").add(governs=parent)
+    preview = child.write(because="The child.", dry_run=True)
+    # create + title + governs: the parent's create and title are not sent again.
+    assert len(preview.changes) == 3, preview.changes
+    assert [change.field for change in preview.changes if change.field] == ["title", "governs"]
+    assert child.write(because="The child.").status == "accepted"
+    governs = typed.world().project.work_item["wi-f28-child"].governs
+    assert [view.value for view in governs] == [f"subjects/{parent.address}.json"]
+
+    # A draft derived from the accepted one sends only what it gained since.
+    later = parent.set(status="ready").write(because="Ready now.")
+    assert later.status == "accepted"
+    assert [change.field for change in later.changes] == ["status"]
+    assert [view.value for view in typed.world().project.work_item["wi-f28-parent"].title] == [
+        "Parent"
+    ]
+
+
+def test_a_key_starting_with_a_digit_names_its_x_prefixed_id(typed: Cruxible) -> None:
+    """F22: the outcome says why a release keyed 0.5.0 is x0.5.0, and the key still names it."""
+
+    draft = typed.world().dev.decision.define("0.5.0", title="Release")
+    outcome = draft.write(because="The release.")
+    assert draft.address == f"{DECISION}/x0.5.0"
+    assert outcome.hint is not None
+    assert f"{DECISION}/x0.5.0" in outcome.hint and "start with a letter" in outcome.hint
+    assert f"{DECISION}/0.5.0" in outcome.hint
+    read = typed.world()
+    assert read.dev.decision["0.5.0"].address == f"{DECISION}/x0.5.0"
+    later = typed.set(f"{DECISION}/0.5.0", "title", "Release 0.5.0", because="Renamed.")
+    assert later.changes[0].subject == f"{DECISION}/x0.5.0"
+    plain = typed.world().dev.decision.define("ship-later", title="Later")
+    assert plain.write(because="Plain key.").hint is None
+
+
 def test_world_lookup_resolves_alias_and_single_key_and_keeps_the_read_coordinate(
     typed: Cruxible,
 ) -> None:

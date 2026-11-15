@@ -251,3 +251,47 @@ def test_add_text_names_the_document_an_entry_declares(workspace: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "Added file status-page -> notes/status.md (Document status)" in result.output
+
+
+def test_the_sdk_catalogues_a_file_exactly_as_the_cli_does(workspace: Path, tmp_path: Path) -> None:
+    """F23: ``cx.files.add`` shares ``cruxible files add``'s implementation."""
+
+    from typing import Any, cast
+
+    from cruxible_client.authoring.sdk import Cruxible
+
+    twin = tmp_path / "twin"
+    (twin / "notes").mkdir(parents=True)
+    (twin / "notes" / "status.md").write_text("# Status\n", encoding="utf-8")
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "files", "add", "status-page", str(workspace / "notes" / "status.md"),
+            "--document-id", "status", "--document-kind", "page", "--title", "Status",
+            "--scope", "team", "--scope", "ops", "--root", str(workspace), "--json",
+        ],
+    )  # fmt: skip
+    assert cli_result.exit_code == 0, cli_result.output
+    cx = Cruxible(
+        client=cast(Any, None),
+        instance_id="inst",
+        workspace=twin,
+        access_profile=cast(Any, None),
+        clock=None,
+    )
+    edit = cx.files.add(
+        "status-page",
+        "notes/status.md",
+        document_id="status",
+        document_kind="page",
+        title="Status",
+        governance_scope=("team", "ops"),
+    )
+    assert edit.model_dump(mode="json") == json.loads(cli_result.output)
+    assert (twin / ".cruxible" / "files.yaml").read_bytes() == (
+        workspace / ".cruxible" / "files.yaml"
+    ).read_bytes()
+    with pytest.raises(FileCatalogEditError) as refused:
+        cx.files.add("status-page", "notes/status.md")
+    assert refused.value.reason == "entry_exists"
+    assert cx.files.remove("status-page").catalog_removed

@@ -233,6 +233,13 @@ class McpAddChange(AddChange):
     evidence: McpEvidence = None
 
 
+class McpCreateChange(CreateChange):
+    __doc__ = CreateChange.__doc__
+
+    role: McpRole = None
+    evidence: McpEvidence = None
+
+
 class McpRetireChange(RetireChange):
     __doc__ = RetireChange.__doc__
 
@@ -273,7 +280,12 @@ class McpAboutChange(AboutChange):
 
 
 McpChange = Annotated[
-    CreateChange | McpSetChange | McpAddChange | McpRetireChange | McpRebindChange | McpAboutChange,
+    McpCreateChange
+    | McpSetChange
+    | McpAddChange
+    | McpRetireChange
+    | McpRebindChange
+    | McpAboutChange,
     Field(discriminator="op"),
 ]
 

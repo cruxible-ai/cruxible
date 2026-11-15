@@ -53,7 +53,7 @@ def test_mcp_doc_write_observes_and_applies_through_shared_seam(monkeypatch, tmp
         ],
     )
     assert outcome.docs[0].written and outcome.changes[0].verdict == "supported"
-    assert (workspace / "notes.md").read_text() == "# Decision\nReady\n"
+    assert (workspace / "notes.md").read_text() == "# Decision\nReady\n\n"
 
 
 def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dict[str, Any]]:
