@@ -6,8 +6,11 @@ the same request gives the same result on the SDK, the CLI and MCP.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
+from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
@@ -15,10 +18,20 @@ from cruxible_client.contracts.claim_type_inputs import (
     ClaimTypeInputRecord,
     lower_claim_type_input,
 )
-from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_digest,
+    retired_successor,
+)
 from cruxible_client.contracts.policies import ClaimAdmissionPolicy, ClaimResolutionPolicy
-from cruxible_client.contracts.shapes import EnumType, StringType
+from cruxible_client.contracts.shapes import (
+    ContractFormatError,
+    EnumType,
+    StringType,
+    coerce_field_type,
+)
 from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.cli.main import cli
 from tests.support.claim_types import claim_type as build_claim_type
 
 SLUG = StringType(pattern="^[a-z0-9][a-z0-9-]*$", min_len=1, max_len=80)
@@ -203,3 +216,91 @@ def test_a_field_lowers_through_the_short_forms_defaults(
     assert edited.description == "Whether the item is done."
     assert edited.member_descriptions == accepted.member_descriptions
     assert cx.get("dev.item/a").value is not None
+
+
+def test_retiring_fields_is_a_change_set_step_that_retires_their_claims(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F12: retiring a field took migrate, a hand-built request and an approval."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    _field_vocabulary(cx)
+    written = cx.set("dev.item/a", "dev.item.state", "open", because="It is open.")
+    cx.set("dev.item/a", "dev.item.title", "First item", because="Its label.")
+    cx.refresh()
+
+    retired = cx.changes(rationale="State and title move to notes.")
+    retired.retire_claim_type("dev.item.state")
+    retired.retire_claim_type("dev.item.title")
+    intent = retired.prepare()
+    assert not intent.refused, intent.diagnostics
+    landed = intent.submit()
+    # It lands when policy allows, like any other change set.
+    assert landed.outcome.status == "landed"
+
+    cx.refresh()
+    predicates = set(cx.world().predicates)
+    assert "dev.item.state" not in predicates and "dev.item.title" not in predicates
+    claim = cx.get(f"Claim:{written.changes[0].claim}", detail="proof").value
+    assert claim.statement.lifecycle == "retired"
+
+
+def _cli(http: TestClient, instance_id: str, monkeypatch: pytest.MonkeyPatch, *args: str) -> str:
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    result = CliRunner().invoke(
+        cli, ["--server-url", "http://cruxible", "--instance-id", instance_id, *args]
+    )
+    assert result.exit_code == 0, result.output
+    return result.output
+
+
+def test_cli_retires_fields_in_one_command_and_migrate_lands_when_allowed(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F12/F16: `claim-type retire`, and `migrate` no longer always stops at a proposal."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    _field_vocabulary(cx)
+    cx.set("dev.item/a", "dev.item.state", "open", because="It is open.")
+
+    output = _cli(
+        http,
+        instance_id,
+        monkeypatch,
+        "claim-type",
+        "retire",
+        "dev.item.state",
+        "--because",
+        "State moves to notes.",
+    )
+    assert "landed: accepted at" in output
+
+    # migrate: the same accept option as a change set (if_allowed by default).
+    cx.refresh()
+    title = ClaimType.model_validate(
+        cx.get("ClaimType:dev.item.title", detail="proof").value["envelope"]
+    )
+    request = tmp_path / "migrate.json"
+    request.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-claim-type-migration-request-v3",
+                "mode": "submit",
+                "successor": retired_successor(title).model_dump(mode="json"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = _cli(http, instance_id, monkeypatch, "claim-type", "migrate", str(request))
+    assert "landed: accepted at" in output
+
+    cx.refresh()
+    predicates = set(cx.world().predicates)
+    assert "dev.item.state" not in predicates and "dev.item.title" not in predicates
+

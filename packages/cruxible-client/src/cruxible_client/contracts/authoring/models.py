@@ -1477,12 +1477,14 @@ class ClaimTypeSuccessionMember(_StrictAuthoringModel):
 
     `successor` is a whole ClaimType that names its predecessor by identity and
     pins its exact digest, which is what makes it a succession rather than the
-    definition `ClaimTypeAuthoringPayload` carries. `dependents` is the exact
-    reverse-pin closure of the predecessor over the staged tree -- the accepted
-    tree as this set's definition members left it -- and a closure that is not
-    exact refuses. Sibling Claims are not in it: members lower in dependency
-    order, so a Claim of the succeeded predicate authored in this same set is
-    lowered under the successor and lands as an ordinary member.
+    definition `ClaimTypeAuthoringPayload` carries. A retired successor retires
+    the ClaimType; its live Claims must then retire with it
+    (`retire_dependents`). `dependents` is the exact reverse-pin closure of the
+    predecessor over the staged tree -- the accepted tree as this set's
+    definition members left it -- and a closure that is not exact refuses.
+    Sibling Claims are not in it: members lower in dependency order, so a Claim
+    of the succeeded predicate authored in this same set is lowered under the
+    successor and lands as an ordinary member.
     """
 
     tag: Literal["playbill-claim-type-succession-authoring-payload-v1"] = (
@@ -1495,19 +1497,17 @@ class ClaimTypeSuccessionMember(_StrictAuthoringModel):
     #: `dependents` then names only the exceptions: a `retire` or `re_author`.
     #: Absent from the wire when false, so an exact member's bytes never move.
     carry_all: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: Retire, with this reason, every live Claim of the closure `dependents`
+    #: does not name, and carry the rest (retired Claims, Documents) to the
+    #: successor: what retiring a ClaimType owes its dependents, computed by the
+    #: daemon. Absent from the wire when unset, like `carry_all`.
+    retire_dependents: ClaimRetirementReason | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("successor")
     @classmethod
     def _successor(cls, value: ClaimType) -> ClaimType:
-        if value.lifecycle.state != "live":
-            # The standalone migration route accepts a byte-identical retiring
-            # successor without comment, so an author who knows one road did not
-            # know the other: the refusal now says which road takes it.
-            raise ValueError(
-                "a ClaimType succession installs a live successor; retire a ClaimType "
-                "through `cruxible claim-type migrate`, which is the road that "
-                "takes a retiring successor"
-            )
         if value.lifecycle.predecessor_digest is None:
             raise ValueError(
                 "a ClaimType succession member names the predecessor it succeeds; "
@@ -1517,6 +1517,10 @@ class ClaimTypeSuccessionMember(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _ordered_dependents(self) -> "ClaimTypeSuccessionMember":
+        if self.carry_all and self.retire_dependents is not None:
+            raise ValueError(
+                "carry_all and retire_dependents both fill the closure: name one of them"
+            )
         identities = tuple(item.identity.qualified for item in self.dependents)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("succession dependents must be UTF-8 byte-sorted and unique")

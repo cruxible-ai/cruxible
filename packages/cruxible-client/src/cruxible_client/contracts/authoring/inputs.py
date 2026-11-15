@@ -354,6 +354,14 @@ class ClaimTypeSuccessionInput(_StrictInputModel):
             "by the daemon (retired Claims included); dependents then names only exceptions."
         ),
     )
+    retire_dependents: ClaimRetirementReason | None = Field(
+        default=None,
+        description=(
+            "Retire every live Claim of the closure dependents does not name, with this "
+            "reason, and carry the rest; what retiring a ClaimType (a retired successor) "
+            "owes its dependents."
+        ),
+    )
 
 
 class ClaimRetirementInput(_StrictInputModel):
@@ -1067,6 +1075,7 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
                 sorted(member.dependents, key=lambda item: item.identity.qualified.encode("utf-8"))
             ),
             carry_all=member.carry_all,
+            retire_dependents=member.retire_dependents,
         )
     if isinstance(member, ClaimRetirementInput):
         return ClaimRetirementMember(

@@ -56,7 +56,9 @@ def lint_authoring_payload(
             # the same ClaimType warns the same on every road.
             claim_type = member.claim_type
         elif isinstance(member, ClaimTypeSuccessionMember):
-            claim_type = member.successor
+            # A retiring successor admits no more writes: nothing to lint.
+            if member.successor.lifecycle.state == "live":
+                claim_type = member.successor
         elif isinstance(member, ClaimAuthoringPayload):
             claim_type = member.dependency_drafts.claim_type
             if isinstance(member.source, WorkingSelectionObservation):

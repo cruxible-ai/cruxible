@@ -163,8 +163,11 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     EvidenceRequirement,
     RevisionEvidence,
+    claim_type_path,
     effective_evidence_requirement,
     effective_revision_evidence,
+    render_claim_type,
+    retired_successor,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
@@ -1443,7 +1446,6 @@ class ChangeSetDraft:
             ClaimTypeInputRecord,
             lower_claim_type_input,
         )
-        from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 
         if key and many:
             raise ValueError(f"{kind}.{name}: a key field holds one value; drop many=True")
@@ -1602,6 +1604,43 @@ class ChangeSetDraft:
                         )
                     ],
                 },
+            )
+        )
+        return self
+
+    def retire_claim_type(
+        self,
+        predicate: str | ClaimTypeRef,
+        *,
+        reason: ClaimRetirementReason = "superseded",
+    ) -> ChangeSetDraft:
+        """Retire one accepted ClaimType (a field) in this changeset.
+
+        The successor is the accepted definition, marked retired. Its live
+        Claims retire with it, with ``reason``; what can only be carried
+        (retired Claims, Documents) is carried -- the closure ``claim-type
+        migrate`` disposes, filled by the daemon. Several per set; the set lands
+        when policy allows, like any other member.
+
+        Next: more members, then ``.prepare()`` (``intent.diagnostics`` if
+        refused) and ``.submit()``.
+        """
+
+        name = _address(predicate, RefKind.CLAIM_TYPE)
+        current = self._playbill._accepted_field(name)
+        if current is None:
+            raise ValueError(
+                f"{name!r} is not an accepted ClaimType here, so there is nothing to retire; "
+                "cx.orient(section='claim_types') lists them"
+            )
+        self._members.append(
+            _ChangeSetMember(
+                payload=ClaimTypeSuccessionMember(
+                    successor=retired_successor(current), retire_dependents=reason
+                ),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "retire_claim_type", "predicate": name, "reason": reason},
             )
         )
         return self

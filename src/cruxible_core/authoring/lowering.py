@@ -6303,6 +6303,38 @@ def _stage_claim_type_succession(
                 )
             }
         )
+    elif member.retire_dependents is not None:
+        # Retiring the ClaimType: every live Claim the author did not name
+        # retires with the given reason, and what can only be carried (retired
+        # Claims, Documents) is carried -- the dispositions `claim-type migrate`
+        # takes, filled from the same closure. Work grows with this closure only.
+        named = {item.identity.qualified for item in member.dependents}
+        reason = member.retire_dependents
+        member = member.model_copy(
+            update={
+                "dependents": tuple(
+                    sorted(
+                        (
+                            *member.dependents,
+                            *(
+                                ClaimTypeSuccessionDependent(
+                                    identity=item.identity,
+                                    disposition="retire",
+                                    claim_retirement_reason=reason,
+                                )
+                                if "retire" in item.permitted_dispositions
+                                else ClaimTypeSuccessionDependent(
+                                    identity=item.identity, disposition="successor"
+                                )
+                                for item in inventory
+                                if item.identity.qualified not in named
+                            ),
+                        ),
+                        key=lambda item: item.identity.qualified.encode("utf-8"),
+                    )
+                )
+            }
+        )
     supplied = {item.identity.qualified: item for item in member.dependents}
     if set(required) != set(supplied):
         _refuse(
