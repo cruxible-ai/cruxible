@@ -1350,8 +1350,11 @@ be used by sibling Claims without pretending they already exist in accepted stat
 |---|---|---|
 | `claim` | Stages one Claim; returns builder | Same value/evidence rules as `Cruxible.claim`. |
 | `subject` | Stages a definition; returns PendingSubjectRef | Sibling Claims may use it. |
+| `field` | Defines (or edits) `<kind>.<name>` with the short form's defaults; returns PendingClaimTypeRef | Lowers through the function `claim-type propose` uses: own-words evidence rule, description, enum member meanings, `key=True` for a key. An edit carries live Claims. |
+| `subject_kind` | Stages a SubjectKind: its keys, or minted | With no keys and not minted, takes the fields staged with `field(..., key=True)` for the kind. |
 | `claim_type` | Stages a definition; returns PendingClaimTypeRef | Use succeed_claim_type for an accepted predecessor. |
 | `succeed_claim_type` | Stages a full successor and closure dispositions | Exact reverse-pin closure; sibling reauthors retain Claim identity/subject/predicate. |
+| `retire_claim_type` | Retires an accepted field; its live Claims retire with it | Several per set; lands when policy allows. CLI: `cruxible claim-type retire`. |
 | `retire` | Stages an attributed Claim retirement | Explicit required dependents. |
 | `signed_attestation` | Stages supplied signed bytes | Does not re-sign or accept them. |
 | `attestation` | Reads/prepares the exact Claim, signs locally, then stages | Explicit signer; no implicit approval of the containing changeset. |
@@ -1747,6 +1750,63 @@ the typed write verb for the common case: it computes the closure.
 | `reason` | Required | Attributed reason for refusal, retirement, or operational action as specified by the API. |
 | `effective_until` | `None` | Optional effective-end instant for retirement. |
 | `dependents` | `()` | Explicit dependency-closure dispositions required by retirement or ClaimType succession. |
+
+<a id="api-changesetdraft-field"></a>
+
+### `ChangeSetDraft.field`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+field(
+    kind: str,
+    name: str,
+    value_type: FieldType | str,
+    *,
+    description: str | None = None,
+    many: bool | None = None,
+    members: Mapping[str | int | bool, str] | None = None,
+    key: bool = False,
+    default_role: ClaimRole | str | None = None,
+    sources: Sequence[str] = (),
+    canonical_form: Sequence[str] | None = None,
+) -> PendingClaimTypeRef
+```
+
+Define (or edit) one field of a kind, with the short form's defaults. The
+same request through `cruxible claim-type propose` gives the same ClaimType and
+digest. `prepare()` returns its lint.
+
+```python
+changes = cx.changes(rationale="Project items.")
+changes.field("dev.item", "slug", "string{pattern: \"^[a-z0-9-]+$\", max_len: 80}",
+              description="The item's short name.", key=True)
+changes.field("dev.item", "state", EnumType(members=("open", "done")),
+              description="Whether it is done.",
+              members={"open": "Not done.", "done": "Done."})
+changes.field("dev.item", "blocks", "subject<dev.item>", many=True,
+              description="Items it blocks.")
+changes.subject_kind(name="dev.item", description="A planned piece of work.")
+intent = changes.prepare()   # intent.warnings: the lint, each naming its field
+intent.submit()
+```
+
+<a id="api-changesetdraft-retire-claim-type"></a>
+
+### `ChangeSetDraft.retire_claim_type`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+retire_claim_type(
+    predicate: str | ClaimTypeRef,
+    *,
+    reason: ClaimRetirementReason = "superseded",
+) -> ChangeSetDraft
+```
+
+Retire one accepted field. Its live Claims retire with `reason`; retired
+Claims and Documents in its closure are carried.
 
 <a id="api-changesetdraft-succeed-claim-type"></a>
 

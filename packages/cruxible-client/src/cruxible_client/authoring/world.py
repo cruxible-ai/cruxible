@@ -235,6 +235,8 @@ class _Identity:
     rule: Literal["keys", "minted"]
     keys: tuple[str, ...] = ()
     unique: bool = True
+    #: What one Subject of the kind is, as authored on its SubjectKind.
+    description: str | None = None
 
     def key_words(self) -> dict[str, str]:
         """Each key part's ``define()`` keyword (its leaf, keyword-escaped) -> its predicate."""
@@ -1048,10 +1050,12 @@ class World:
     def describe(self) -> str:
         """Name the verbs that act on this world, then its vocabulary, as text to read.
 
-        Each Subject kind is listed with its fields: the leaf a Subject answers
-        by attribute, then what the field holds (``literal``, ``-> kind`` for
-        a Subject), its cardinality, enum members and
-        description. Next: ``print(w.describe())``, then one of the verbs it
+        Each Subject kind is listed with its description, then its fields: the
+        leaf a Subject answers by attribute, then what the field holds (its type
+        -- ``enum``, ``string{max_len: 120}`` with its bounds and pattern -- or
+        ``-> kind`` for a Subject), its cardinality, ``key`` for a key field,
+        enum members and description, and one line per enum member meaning.
+        Next: ``print(w.describe())``, then one of the verbs it
         lists -- ``cx.query(kind, ...)`` to read values, ``cx.get(ref)`` for
         one thing, ``w.<kind>[id].set(...)`` to write.
         """
@@ -1066,34 +1070,53 @@ class World:
             lines.extend(f"  {call:<40} {what}" for call, what in verbs)
         lines.append("Vocabulary:")
         for kind in self._kind_paths():
-            lines.append(f"  {kind}")
+            kind_node = self._node_at(kind)
+            identity = None if kind_node is None else kind_node.identity
+            description = None if identity is None else identity.description
+            lines.append(
+                f"  {kind}" + ("" if not description else " -- " + description.splitlines()[0])
+            )
+            keys = () if identity is None else identity.keys
             for leaf, names in sorted(self._leaf_map(kind).items()):
                 # A leaf two predicates share is reachable only by full name.
                 for name in names:
                     label = leaf if len(names) == 1 else name
-                    lines.append("    " + self._describe_field(label, name))
+                    lines.extend(
+                        "    " + line
+                        for line in self._describe_field(label, name, key=name in keys)
+                    )
         if self.unstructured_predicates:
             lines.append("  unreadable by this client: " + ", ".join(self.unstructured_predicates))
         return "\n".join(lines)
 
-    def _describe_field(self, label: str, predicate: str) -> str:
-        """One field line of ``describe()``: what it holds, how many, and what it means."""
+    def _describe_field(self, label: str, predicate: str, *, key: bool = False) -> list[str]:
+        """A field's ``describe()`` lines: what it holds, how many, what it means,
+        then one indented line per enum member meaning."""
 
         node = self._node_at(predicate)
         assert node is not None and node.structure is not None
         structure = node.structure
-        held = (
-            "-> " + " | ".join(subject_value_kinds(structure.value))
-            if claim_value_kind(structure.value) == "subject"
-            else claim_value_kind(structure.value)
-        )
-        parts = [f"{label}: {held}, {structure.cardinality}"]
-        members = value_members(structure.value)
+        value = structure.value
+        members = value_members(value)
+        if claim_value_kind(value) == "subject":
+            held = "-> " + " | ".join(subject_value_kinds(value))
+        elif members:
+            held = value.kind
+        else:
+            held = render_type(value)
+        parts = [f"{label}: {held}, {structure.cardinality}" + (", key" if key else "")]
         if members:
             parts.append("[" + ", ".join(members) + "]")
-        if node.meaning is not None and node.meaning.description:
-            parts.append("-- " + node.meaning.description.splitlines()[0])
-        return " ".join(parts)
+        meaning = node.meaning
+        if meaning is not None and meaning.description:
+            parts.append("-- " + meaning.description.splitlines()[0])
+        lines = [" ".join(parts)]
+        if meaning is not None:
+            lines.extend(
+                f"  {item.member}: {item.description.splitlines()[0]}"
+                for item in meaning.member_descriptions
+            )
+        return lines
 
     def _kind_paths(self) -> tuple[str, ...]:
         return tuple(sorted(self._walk(lambda node: node.subject_kind)))
@@ -2134,6 +2157,7 @@ def build_world(
                 rule=declared.rule,
                 keys=tuple(declared.keys),
                 unique=declared.uniqueness != "hint",
+                description=declared.description,
             ),
         )
     return World(

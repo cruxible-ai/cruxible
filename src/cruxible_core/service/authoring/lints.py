@@ -37,30 +37,44 @@ def lint_authoring_payload(
         for member in members
         if isinstance(member, SubjectKindAuthoringPayload) and not member.retire
     )
+    key_predicates = frozenset(
+        predicate
+        for member in members
+        if isinstance(member, SubjectKindAuthoringPayload) and not member.retire
+        for predicate in member.keys
+    )
     warnings: list[ClaimTypeLintWarningV1] = []
     for member in members:
         claim_type = None
         source_ids: tuple[str, ...] = ()
         if isinstance(member, ClaimTypeAuthoringPayload):
-            # Whole definitions already state their kinds. Description lint is
-            # local to this member and needs no evidence-contract inventory.
-            warnings.extend(lint_description(member.claim_type.description))
+            # A whole definition takes the lint `claim-type propose` gives it:
+            # the same ClaimType warns the same on every road.
+            claim_type = member.claim_type
         elif isinstance(member, ClaimTypeSuccessionMember):
-            claim_type = member.successor
+            # A retiring successor admits no more writes: nothing to lint.
+            if member.successor.lifecycle.state == "live":
+                claim_type = member.successor
         elif isinstance(member, ClaimAuthoringPayload):
             claim_type = member.dependency_drafts.claim_type
             if isinstance(member.source, WorkingSelectionObservation):
                 source_ids = (member.source.source_id,)
         elif isinstance(member, SubjectKindAuthoringPayload):
-            warnings.extend(lint_description(member.description))
-        if claim_type is not None:
             warnings.extend(
-                lint_claim_type_input(
+                item.model_copy(update={"artifact": f"SubjectKind:{member.name}"})
+                for item in lint_description(member.description)
+            )
+        if claim_type is not None:
+            artifact = f"ClaimType:{claim_type.predicate}"
+            warnings.extend(
+                item.model_copy(update={"artifact": artifact})
+                for item in lint_claim_type_input(
                     instance,
                     claim_type,
                     coordinate=coordinate,
                     anticipated_source_ids=source_ids,
                     declared_subject_kinds=declared_kinds,
+                    key_predicates=key_predicates,
                 ).warnings
             )
     seen = {

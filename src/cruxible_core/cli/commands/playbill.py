@@ -4442,12 +4442,90 @@ def _echo_landing(outcome: contracts.AuthoringLanding | None) -> None:
         click.echo(f"next: {outcome.next}")
 
 
-@claim_type_group.command("migrate")
-@click.argument("request_file", type=PayloadFile())
+@claim_type_group.command("retire")
+@click.argument("predicates", nargs=-1, required=True, metavar="PREDICATE...")
+@click.option("--because", required=True, help="Why the field is retired; the change's rationale.")
+@click.option(
+    "--reason",
+    type=click.Choice(["superseded", "was-wrong", "was-rescinded"]),
+    default="superseded",
+    show_default=True,
+    help="The retirement reason each live Claim of the field takes.",
+)
+@click.option("--dry-run", is_flag=True, help="Preflight the change set; save nothing.")
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the change.")
 @json_option
 @handle_errors
-def migrate_claim_type(request_file: str, output_json: bool) -> None:
-    """Propose one ClaimType successor and every dependent disposition atomically."""
+def retire_claim_type(
+    predicates: tuple[str, ...],
+    because: str,
+    reason: str,
+    dry_run: bool,
+    no_accept: bool,
+    output_json: bool,
+) -> None:
+    """Retire one or more fields (ClaimTypes) as one change set.
+
+    Each field's live Claims retire with it (--reason); it lands when policy
+    and your tier allow, like any change set. The SDK spelling is
+    ``cx.changes(rationale=...).retire_claim_type(predicate)``.
+    """
+
+    from cruxible_client.authoring.inputs import ChangeSetInput, ClaimTypeSuccessionInput
+    from cruxible_client.contracts.claim_types import ClaimType, retired_successor
+    from cruxible_client.contracts.get_reads import GetRequest
+
+    def call(client: CruxibleClient, instance_id: str) -> Any:
+        members = []
+        for predicate in sorted(set(predicates)):
+            proof = client.get(
+                instance_id, request=GetRequest(ref=f"ClaimType:{predicate}", detail="proof")
+            ).proof
+            assert proof is not None
+            members.append(
+                ClaimTypeSuccessionInput(
+                    kind="claim_type_succession",
+                    successor=retired_successor(ClaimType.model_validate(proof["envelope"])),
+                    retire_dependents=cast(Any, reason),
+                )
+            )
+        payload = ChangeSetInput(
+            kind="change_set", members=tuple(members), rationale=because
+        ).model_dump(mode="json")
+        if dry_run:
+            return client.preview_authoring_input(instance_id, input=payload)
+        return client.submit_authoring_input(
+            instance_id, input=payload, accept="never" if no_accept else "if_allowed"
+        )
+
+    result = _server_call(call, command_name="cruxible claim-type retire")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if isinstance(result, contracts.AuthoringPreflightResult):
+        click.echo(f"would {'pass' if result.verdict == 'passed' else 'refuse'}")
+        for item in result.frontier.diagnostics:
+            click.echo(f"  {item.code}: {printable(item.message)}")
+        return
+    reason_line = _submit_refusal_reason(result)
+    if reason_line is not None:
+        click.echo(f"refused: {reason_line}")
+        return
+    _echo_landing(result.outcome)
+
+
+@claim_type_group.command("migrate")
+@click.argument("request_file", type=PayloadFile())
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the change.")
+@json_option
+@handle_errors
+def migrate_claim_type(request_file: str, no_accept: bool, output_json: bool) -> None:
+    """Propose one ClaimType successor and every dependent disposition atomically.
+
+    A submitted migration lands when policy and your tier allow, like a change
+    set; --no-accept (or "accept": "never" in the request) keeps the proposal.
+    To retire fields, ``cruxible claim-type retire`` needs no request file.
+    """
 
     try:
         request = _CLAIM_TYPE_MIGRATION_ADAPTER.validate_python(_read_mapping(request_file))
@@ -4455,6 +4533,8 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         raise click.ClickException(
             f"Invalid ClaimType migration: {validation_summary(exc)}"
         ) from exc
+    if no_accept:
+        request = request.model_copy(update={"accept": "never"})
     result = _server_call(
         lambda client, instance_id: client.migrate_claim_type(
             instance_id,
@@ -4484,7 +4564,10 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         admission = result.proposal.proposal.get("admission", {})
         proposal_id = admission.get("proposal_id", "<submitted>")
         click.echo(f"Proposal: {proposal_id}")
-        click.echo(f"Next: cruxible proposal approve {proposal_id}")
+        if result.proposal.outcome is not None:
+            _echo_landing(result.proposal.outcome)
+        else:
+            click.echo(f"Next: cruxible proposal approve {proposal_id}")
     click.echo("Semantic delta:")
     if not result.semantic_delta:
         click.echo("  (no semantic field changes)")

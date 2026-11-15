@@ -57,7 +57,10 @@
         "cruxible.claim_type.inverse_on_enum_or_boolean",
         "cruxible.claim_type.stale_eligible_never_current",
         "cruxible.claim_type.description_missing",
-        "cruxible.claim_type.subject_kind_undeclared"
+        "cruxible.claim_type.subject_kind_undeclared",
+        "cruxible.claim_type.field_restates_ledger",
+        "cruxible.claim_type.string_holds_prose",
+        "cruxible.claim_type.enum_members_name_things"
       ]
     },
     "FloorExportPart": {
@@ -7291,6 +7294,24 @@
                 "const": "claim_type_succession",
                 "title": "Kind",
                 "type": "string"
+              },
+              "retire_dependents": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "was-rescinded",
+                      "was-wrong",
+                      "superseded"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Retire every live Claim of the closure dependents does not name, with this reason, and carry the rest; what retiring a ClaimType (a retired successor) owes its dependents.",
+                "title": "Retire Dependents"
               },
               "successor": {
                 "$ref": "#/$defs/ClaimType"
@@ -15229,6 +15250,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -15239,7 +15272,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -16570,6 +16606,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -16580,7 +16628,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -22387,6 +22438,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -22397,7 +22460,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -22742,6 +22808,26 @@
     },
     "ClaimTypeLintWarning": {
       "fields": {
+        "artifact": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact"
+          }
+        },
         "code": {
           "has_default": false,
           "has_default_factory": false,
@@ -22757,7 +22843,10 @@
               "cruxible.claim_type.inverse_on_enum_or_boolean",
               "cruxible.claim_type.stale_eligible_never_current",
               "cruxible.claim_type.description_missing",
-              "cruxible.claim_type.subject_kind_undeclared"
+              "cruxible.claim_type.subject_kind_undeclared",
+              "cruxible.claim_type.field_restates_ledger",
+              "cruxible.claim_type.string_holds_prose",
+              "cruxible.claim_type.enum_members_name_things"
             ],
             "title": "Code",
             "type": "string"
@@ -22849,6 +22938,18 @@
         "additionalProperties": false,
         "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
         "properties": {
+          "artifact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact"
+          },
           "code": {
             "enum": [
               "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -22859,7 +22960,10 @@
               "cruxible.claim_type.inverse_on_enum_or_boolean",
               "cruxible.claim_type.stale_eligible_never_current",
               "cruxible.claim_type.description_missing",
-              "cruxible.claim_type.subject_kind_undeclared"
+              "cruxible.claim_type.subject_kind_undeclared",
+              "cruxible.claim_type.field_restates_ledger",
+              "cruxible.claim_type.string_holds_prose",
+              "cruxible.claim_type.enum_members_name_things"
             ],
             "title": "Code",
             "type": "string"
@@ -23065,6 +23169,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -23075,7 +23191,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -23505,6 +23624,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -23515,7 +23646,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -23984,6 +24118,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -23994,7 +24140,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -47642,6 +47791,18 @@
             "additionalProperties": false,
             "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created. ``ends``\nlists a pair kind's Subject-valued key parts, in key order: a pair kind is\nkeyed by its ends. ``kit`` is the installed kit that owns the SubjectKind,\nabsent when no kit owns it.",
             "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
               "ends": {
                 "default": [],
                 "items": {
@@ -73529,6 +73690,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -73539,7 +73712,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -75037,6 +75213,18 @@
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
             "properties": {
+              "artifact": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact"
+              },
               "code": {
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
@@ -75047,7 +75235,10 @@
                   "cruxible.claim_type.inverse_on_enum_or_boolean",
                   "cruxible.claim_type.stale_eligible_never_current",
                   "cruxible.claim_type.description_missing",
-                  "cruxible.claim_type.subject_kind_undeclared"
+                  "cruxible.claim_type.subject_kind_undeclared",
+                  "cruxible.claim_type.field_restates_ledger",
+                  "cruxible.claim_type.string_holds_prose",
+                  "cruxible.claim_type.enum_members_name_things"
                 ],
                 "title": "Code",
                 "type": "string"

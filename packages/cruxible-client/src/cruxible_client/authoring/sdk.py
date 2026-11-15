@@ -163,8 +163,11 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     EvidenceRequirement,
     RevisionEvidence,
+    claim_type_path,
     effective_evidence_requirement,
     effective_revision_evidence,
+    render_claim_type,
+    retired_successor,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
@@ -966,6 +969,8 @@ class ChangeSetDraft:
     _playbill: Cruxible = field(repr=False, compare=False)
     rationale: str | None = None
     _members: list[_ChangeSetMember] = field(default_factory=list, repr=False)
+    #: Key fields staged with ``.field(..., key=True)``, by kind, in call order.
+    _keys: dict[str, list[str]] = field(default_factory=dict, repr=False)
 
     def claim(
         self,
@@ -1349,7 +1354,9 @@ class ChangeSetDraft:
         kind only, literal and one-valued, accepted or defined in this set) with
         optional ``uniqueness`` -- the default ``unique`` refuses a second Subject
         with the same key, ``hint`` only surfaces it in the duplicates audit -- or
-        ``minted=True`` to have core mint opaque ids. Core then names every new Subject of the kind:
+        ``minted=True`` to have core mint opaque ids; with neither, the keys are the
+        fields this set staged with ``.field(..., key=True)`` for the kind.
+        Core then names every new Subject of the kind:
         its id is the readable rendering of its key, or a minted id. ``normalizers``
         maps a key (predicate or last name) to its identity normalizer, pinned by
         version (e.g. ``Pep503Normalizer(version=1)``); unnamed keys take ``none@1``.
@@ -1358,6 +1365,9 @@ class ChangeSetDraft:
         a Subject of a single-key unique kind by its key.
         """
 
+        if not keys and not minted and not retire:
+            # The fields this set staged with `.field(..., key=True)` for this kind.
+            keys = tuple(self._keys.get(name, ()))
         payload = SubjectKindAuthoringPayload(
             name=name,
             description=description,
@@ -1398,6 +1408,106 @@ class ChangeSetDraft:
             )
         )
         return self
+
+    def field(
+        self,
+        kind: str,
+        name: str,
+        value_type: FieldType | str,
+        *,
+        description: str | None = None,
+        many: bool | None = None,
+        members: Mapping[str | int | bool, str] | None = None,
+        key: bool = False,
+        default_role: ClaimRole | str | None = None,
+        sources: Sequence[str] = (),
+        canonical_form: Sequence[str] | None = None,
+    ) -> PendingClaimTypeRef:
+        """Define (or edit) one field of a kind, with the short form's defaults.
+
+        The field is the ClaimType ``<kind>.<name>``. Everything not given takes
+        the default ``cruxible claim-type propose`` gives a field, lowered by the
+        same function: roles ``[default_role]`` (else ``[normative]``), the
+        own-words evidence rule plus one rule per ``sources`` entry, supported
+        and current resolution, and ``[nfc, trim]`` for a string or enum value.
+        ``members`` maps each enum member to what it means; ``many`` makes the
+        field hold several values (left out: one, or an edit's accepted
+        cardinality). ``key=True`` marks a key: a
+        ``.subject_kind(name=kind)`` in this set that names no keys takes the
+        key fields staged for its kind, in call order.
+
+        A field the instance already holds is edited: ``value_type`` is
+        restated, what is left out (``many``, ``description``, ``members``,
+        ``default_role``, ``canonical_form``) keeps its accepted value, and its
+        live Claims are carried to the new version, as ``claim-type propose``
+        does; ``sources`` shapes a new field's rules only. Retire one with
+        ``.retire_claim_type``.
+
+        Next: more fields, ``.subject_kind(name=kind, description=...)``, then
+        ``.prepare()`` for the lint, and ``.submit()``.
+        """
+
+        from cruxible_client.contracts.claim_type_inputs import (
+            ClaimTypeInputRecord,
+            default_resolution_policy,
+            lower_claim_type_input,
+        )
+
+        if key and many:
+            raise ValueError(f"{kind}.{name}: a key field holds one value; drop many=True")
+        predicate = f"{kind}.{name}"
+        predecessor = self._playbill._accepted_field(predicate)
+        stated: dict[str, object] = {"predicate": predicate, "value": coerce_field_type(value_type)}
+        # Left out (None), an edit keeps the accepted cardinality; a new field is one-valued.
+        if many is not None or predecessor is None:
+            cardinality: Literal["one", "many"] = "many" if many else "one"
+            stated["cardinality"] = cardinality
+            if predecessor is not None and predecessor.cardinality != cardinality:
+                # A stated change of cardinality takes the resolution policy the
+                # short form gives a new field of that cardinality; the law then
+                # decides whether the field's Claims allow it.
+                stated["resolution_policy"] = default_resolution_policy(cardinality)
+        if description is not None:
+            stated["description"] = description
+        if members is not None:
+            stated["member_descriptions"] = [
+                {"member": member, "description": meaning} for member, meaning in members.items()
+            ]
+        if default_role is not None:
+            stated["default_role"] = _enum(
+                default_role, ClaimRole, label="field default role"
+            ).value
+        if sources:
+            stated["anticipated_source_ids"] = sorted(set(sources), key=lambda s: s.encode())
+        if canonical_form is not None:
+            stated["canonical_form"] = tuple(canonical_form)
+        record = ClaimTypeInputRecord.model_validate(stated)
+        tree = (
+            {}
+            if predecessor is None
+            else {claim_type_path(predicate): render_claim_type(predecessor)}
+        )
+        definition = lower_claim_type_input(record, tree=tree)
+        payload: AuthoringChangeSetMember = (
+            ClaimTypeAuthoringPayload(claim_type=definition)
+            if predecessor is None
+            else ClaimTypeSuccessionMember(successor=definition, carry_all=True)
+        )
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "field", "input": record.model_dump(mode="json")},
+            )
+        )
+        if key:
+            self._keys.setdefault(kind, []).append(predicate)
+        return PendingClaimTypeRef(
+            address=predicate,
+            coordinate=self._playbill.coordinate,
+            value_type=definition.value,
+        )
 
     def claim_type(self, definition: ClaimTypeDraft | ClaimType) -> PendingClaimTypeRef:
         """Define one whole ClaimType inside this changeset, and return a ref.
@@ -1509,6 +1619,43 @@ class ChangeSetDraft:
         )
         return self
 
+    def retire_claim_type(
+        self,
+        predicate: str | ClaimTypeRef,
+        *,
+        reason: ClaimRetirementReason = "superseded",
+    ) -> ChangeSetDraft:
+        """Retire one accepted ClaimType (a field) in this changeset.
+
+        The successor is the accepted definition, marked retired. Its live
+        Claims retire with it, with ``reason``; what can only be carried
+        (retired Claims, Documents) is carried -- the closure ``claim-type
+        migrate`` disposes, filled by the daemon. Several per set; the set lands
+        when policy allows, like any other member.
+
+        Next: more members, then ``.prepare()`` (``intent.diagnostics`` if
+        refused) and ``.submit()``.
+        """
+
+        name = _address(predicate, RefKind.CLAIM_TYPE)
+        current = self._playbill._accepted_field(name)
+        if current is None:
+            raise ValueError(
+                f"{name!r} is not an accepted ClaimType here, so there is nothing to retire; "
+                "cx.orient(section='claim_types') lists them"
+            )
+        self._members.append(
+            _ChangeSetMember(
+                payload=ClaimTypeSuccessionMember(
+                    successor=retired_successor(current), retire_dependents=reason
+                ),
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "retire_claim_type", "predicate": name, "reason": reason},
+            )
+        )
+        return self
+
     def prepare(self) -> Intent:
         """Compile and preflight the whole changeset as one intent.
 
@@ -1575,6 +1722,20 @@ class ChangeSetDraft:
             _program_stamp("changes", {"members": decisions, "rationale": self.rationale}),
             DiagnosticSourceMap(tuple(entries)),
         )
+
+
+def _short_form_rules(roles: Sequence[str]) -> tuple[ClaimEvidenceAdmissionRule, ...]:
+    """The evidence rules the short form gives a new field with no source."""
+
+    from cruxible_client.contracts.claim_type_inputs import (
+        default_evidence_policy,
+        identity_evidence_policy,
+    )
+
+    policy = identity_evidence_policy(
+        default_evidence_policy(tuple(roles), "self", ()), identities={}
+    )
+    return ClaimEvidenceAdmissionPolicy.model_validate(policy).rules
 
 
 class _Unset(Enum):
@@ -3079,7 +3240,12 @@ class Cruxible:
             ("derivational", tuple(r for r in role_values if r == "derivation")),
             ("direct", tuple(sorted({r for r in role_values if r != "derivation"}))),
         )
-        rules = tuple(
+        rules = (
+            # No source: the short form's own-words rule (`claim-type propose`
+            # and `changes.field` lower through the same function), so a field
+            # drafted here admits what its writer says in its own words.
+            _short_form_rules(role_values) if not source_ids else ()
+        ) + tuple(
             ClaimEvidenceAdmissionRule(
                 rule_id=f"source-{source_id}-{admission}",
                 claim_roles=rule_roles,
@@ -4053,6 +4219,17 @@ class Cruxible:
                 entries_for_keywords(builder="claim", emitted=emitted, sites=sites)
             ),
         )
+
+    def _accepted_field(self, predicate: str) -> ClaimType | None:
+        """The accepted ClaimType for ``predicate`` at this context's coordinate, if any."""
+
+        try:
+            envelope = self._accepted_claim_type_envelope(predicate, predicate)
+        except CoreError as error:
+            if getattr(error, "error_code", None) == "cruxible.get.ref_not_found":
+                return None
+            raise
+        return ClaimType.model_validate(envelope)
 
     def _accepted_claim_type_envelope(
         self, predicate_name: str, predicate: str | ClaimTypeRef

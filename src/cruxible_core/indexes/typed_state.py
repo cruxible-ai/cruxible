@@ -1437,6 +1437,47 @@ class TypedStateReader:
         self.work["owners_selected"] += len(rows)
         return tuple(sorted(rows, key=lambda row: row.identity.encode("utf-8")))
 
+    def envelopes_by_digest(
+        self, *, kind: str, digests: tuple[str, ...]
+    ) -> tuple[ArtifactEnvelopeRow, ...]:
+        """The accepted artifacts of ``kind`` whose current digest is one of ``digests``."""
+
+        if not digests:
+            return ()
+        # The kind's owner table: its (artifact_digest, identity) index seeks
+        # each digest, never scanning the kind's population.
+        owner = OWNER_BY_KIND[kind]
+        rows = [
+            ArtifactEnvelopeRow(*row)
+            for row in self.connection.execute(
+                f"SELECT {self._owner_columns(owner)} FROM {owner.table} WHERE artifact_digest "
+                "IN (" + ",".join("?" for _ in digests) + ")",
+                digests,
+            )
+        ]
+        self.work["owners_selected"] += len(rows)
+        return tuple(sorted(rows, key=lambda row: row.identity.encode("utf-8")))
+
+    def first_envelope(self, *, kind: str) -> ArtifactEnvelopeRow | None:
+        """The accepted artifact of ``kind`` with the smallest digest, if any: one row."""
+
+        # The owner table's (artifact_digest, identity) index supplies the first
+        # row: a seek, with no scan or sort of the kind's population.
+        owner = OWNER_BY_KIND[kind]
+        row = self.connection.execute(
+            f"SELECT {self._owner_columns(owner)} FROM {owner.table} "
+            "ORDER BY artifact_digest, identity LIMIT 1"
+        ).fetchone()
+        self.work["owners_selected"] += row is not None
+        return None if row is None else ArtifactEnvelopeRow(*row)
+
+    @staticmethod
+    def _owner_columns(owner: OwnerCodec) -> str:
+        """The envelope columns of one owner table, as ``envelope`` selects them."""
+
+        version = "predecessor_digest,revision" if owner.versioned else "NULL,1"
+        return f"identity,'{owner.kind}',format_tag,path,artifact_digest,{version}"
+
     def query_artifact_definitions(
         self,
         *,

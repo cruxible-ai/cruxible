@@ -27,6 +27,7 @@ from cruxible_client.authoring.inputs import (
     ProcedureInput,
     QueryDefinitionInput,
 )
+from cruxible_client.authoring.sdk import ClaimTypeDraft
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -43,6 +44,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.get_reads import GetProcedureCard, GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedures.authored import ProjectStep, ReadStep
@@ -295,6 +297,15 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
         resolution_policy=ClaimResolutionPolicy.model_validate(input_value.resolution_policy),
         pins=(),
         evidence_freshness=None,
+    )
+    # No source: the draft takes the short form's own-words rule. This test is
+    # about an empty policy, so it states one, as a whole ClaimType can.
+    assert [rule.rule_id for rule in draft.definition.evidence_admission_policy.rules] == ["self"]
+    draft = ClaimTypeDraft(
+        pb,
+        draft.definition.model_copy(
+            update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy()}
+        ),
     )
     # The same authored definition through the typed input route the draft uses.
     http_proposal = http.post(

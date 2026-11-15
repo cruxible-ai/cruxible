@@ -80,6 +80,7 @@ from cruxible_client.contracts.shapes import (
     subject_value_kinds,
     value_members,
 )
+from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
@@ -240,9 +241,13 @@ def accepted_subject_kinds(typed: TypedStateReader) -> tuple[OrientSubjectKind, 
     rows: list[OrientSubjectKind] = []
     for kind, rule, uniqueness, _keys in declared:
         minted = rule == "minted"
+        # One definition read per kind (memoized by digest): the description
+        # the index does not carry. Grows with the kinds, never the Subjects.
+        definition = typed.source(f"SubjectKind:{kind}")
         rows.append(
             OrientSubjectKind(
                 kind=kind,
+                description=definition.description if isinstance(definition, SubjectKind) else None,
                 rule="minted" if minted else "keys",
                 keys=key_sets[kind],
                 uniqueness=None if minted or uniqueness is None else str(uniqueness),  # type: ignore[arg-type]

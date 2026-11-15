@@ -822,7 +822,13 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
         result=coordinator.preflight(intent.intent_id, actor=actor),
     )
     assert served.lint is not None
-    assert [warning.model_dump(mode="json") for warning in served.lint.warnings] == expected
+    # The change-set lint also names the definition each warning is about.
+    assert [
+        warning.model_dump(mode="json", exclude={"artifact"}) for warning in served.lint.warnings
+    ] == expected
+    assert {warning.artifact for warning in served.lint.warnings} == {
+        f"ClaimType:{successor.predicate}"
+    }
 
 
 def test_unshipped_succession_invalidation_input_is_rejected() -> None:

@@ -15,6 +15,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
 )
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.canonical import (
     Sha256Value,
     pretty_canonical_bytes,
@@ -102,6 +103,9 @@ class ClaimTypeMigrationRequest(_StrictMigrationModel):
     mode: Literal["preflight", "submit"]
     successor: ClaimTypeInputRecord | ClaimType
     dependents: tuple[ClaimTypeDependentDisposition, ...] = ()
+    #: A submitted migration lands when policy and the caller allow, as a change
+    #: set does; ``never`` keeps the proposal.
+    accept: AuthoringAccept = "if_allowed"
 
     @field_validator("dependents")
     @classmethod
