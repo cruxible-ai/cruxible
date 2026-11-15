@@ -4427,8 +4427,10 @@ replaces an existing file only when nothing in it would be lost: the file
 parses and, planned against accepted state, states no change of its own (an
 edit already applied, or a definition someone else changed since the file's
 export and the file restates unedited, is not lost; definitions it leaves out
-never count). Otherwise it refuses, naming the pending changes; `--force`
-replaces it. Git is not consulted, so edit, apply, export works in any folder.
+never count). Otherwise it refuses, naming the pending changes;
+`--force` replaces it. A file whose header does not match the export it names
+is kept too: restore the header, or `--force` replaces it with accepted
+state. Git is not consulted, so edit, apply, export works in any folder.
 A kit-owned kind or field carries a `# kit: <id>` comment.
 
 ~~~yaml
@@ -4479,7 +4481,8 @@ SubjectKind changed since then refuses before submitting. Re-export, merge the
 edits, and apply again. After it lands, `vocabulary export` moves the file's
 baseline to the new head; `next` names a file behind accepted state as
 `vocabulary_file_behind` and a header naming an unknown export as
-`vocabulary_file_baseline_invalid`, both repaired by `vocabulary export`.
+`vocabulary_file_baseline_invalid`, repaired by `vocabulary export` and by
+`vocabulary export --force` (or restoring the header) respectively.
 
 ## stub
 

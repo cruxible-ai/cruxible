@@ -765,8 +765,6 @@ def _mappings(
     predicate: str,
     entry: VocabularyField,
     current: ClaimType | None,
-    *,
-    applied_ok: bool = False,
 ) -> dict[str, VocabularyMemberMapping]:
     if not isinstance(entry.enum, dict):
         return {}
@@ -784,9 +782,6 @@ def _mappings(
             code="cruxible.vocabulary.mapping_invalid",
         )
     accepted = value_members(current.value)
-    if applied_ok:
-        # Against the head: a member already gone from the enum was mapped.
-        mapped = {member: mapping for member, mapping in mapped.items() if member in accepted}
     kept = {member for member, _ in _kept_members(entry)}
     for member, mapping in mapped.items():
         if member not in accepted:
@@ -1024,7 +1019,6 @@ def _plan_members(
     file: VocabularyFile,
     accepted: AcceptedVocabulary,
     *,
-    applied_ok: bool = False,
     claims_at: AcceptedCoordinate | None = None,
 ) -> _Planned:
     """Plan the file against ``accepted`` (definitions and their pinned digests).
@@ -1041,9 +1035,7 @@ def _plan_members(
         current_kind = accepted.subject_kinds.get(kind)
         definition = f"SubjectKind:{kind}"
         kit = accepted.kits.get(definition)
-        if entry.retired and current_kind is None and applied_ok:
-            pass  # Against the head: already retired, so applied.
-        elif entry.retired:
+        if entry.retired:
             if current_kind is None:
                 raise VocabularyFileError(
                     f"kinds.{kind}: retired: true, but {kind} has no accepted SubjectKind",
@@ -1087,8 +1079,6 @@ def _plan_members(
             definition = f"ClaimType:{predicate}"
             kit = accepted.kits.get(definition)
             current = accepted.claim_types.get(predicate)
-            if item.retired and current is None and applied_ok:
-                continue  # Against the head: already retired, so applied.
             if item.retired:
                 if current is None:
                     raise VocabularyFileError(
@@ -1112,7 +1102,7 @@ def _plan_members(
                     )
                 )
                 continue
-            mapped = _mappings(predicate, item, current, applied_ok=applied_ok)
+            mapped = _mappings(predicate, item, current)
             try:
                 lowered = lower_entry(predicate, item, current)
             except (FormatError, ValidationError, ValueError) as exc:
@@ -1181,8 +1171,10 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
     definition equals the export's (unedited) or the head's (applied); a
     retirement is applied once the head no longer holds the definition.
     ``not_in_file`` never counts. An unreadable file is one pending change.
-    When the export itself cannot be read, the file is planned against the
-    head instead.
+    When the header cannot establish what the file meant (its export cannot be
+    read, or its vocabulary digest does not match), the file is kept: export
+    refuses, naming the header and the repair. Definitions only, on every
+    path: no Claim is read and no plan is run.
     """
 
     try:
@@ -1201,13 +1193,12 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
     except CoreError:
         exported = None
     if exported is None or exported.digest != file.based_on.vocabulary_digest:
-        try:
-            planned = _plan_members(
-                cx.at(head.coordinate), file, head, applied_ok=True, claims_at=head.coordinate
-            )
-        except (VocabularyFileError, FormatError, ValueError) as exc:
-            return [str(exc)]
-        return sorted({entry.definition for entry in planned.changes_only})
+        raise VocabularyExportRefused(
+            f"{VOCABULARY_FILE_PATH}: its based_on header does not match the export it names "
+            f"(at {file.based_on.git_oid[:12]}), so what its entries mean cannot be "
+            "established and its edits would be lost; restore the header, or pass --force to "
+            "replace the file with accepted state"
+        )
     pending: list[str] = []
     for kind in sorted(file.kinds, key=lambda item: item.encode("utf-8")):
         entry = file.kinds[kind]

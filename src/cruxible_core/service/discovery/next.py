@@ -1431,6 +1431,8 @@ def _mcp_repair_call(
     if operation == "cruxible.floor.export":
         return _mcp_call("cruxible_floor_export", mode="write")
     if operation == "cruxible.vocabulary.export":
+        if values.get("force") is True:
+            return _mcp_call("cruxible_vocabulary_export", force=True)
         return _mcp_call("cruxible_vocabulary_export")
     if operation == "cruxible.files.propose" and (source := text("source_id")):
         return _mcp_call(
@@ -1513,7 +1515,11 @@ def _sdk_repair_call(
     if operation == "cruxible.line.enable" and (line := text("line")):
         return _sdk_call("cx.line", line) + ".enable()"
     if operation == "cruxible.vocabulary.export":
-        return "cx.vocabulary.export()"
+        return (
+            _sdk_call("cx.vocabulary.export", force=True)
+            if values.get("force") is True
+            else ("cx.vocabulary.export()")
+        )
     if operation == "cruxible.line.evaluate" and (line := text("line")):
         since, until = text("since"), text("until")
         if since is None or until is None:
@@ -1667,8 +1673,10 @@ def _repair_command(
         # is the one this repair names in its facet's detail.
         pass
     elif operation == "cruxible.vocabulary.export":
-        # No operands: it writes the workspace's own vocabulary file.
-        pass
+        # It writes the workspace's own vocabulary file; --force replaces a file
+        # whose header cannot establish what it meant.
+        if values.get("force") is True:
+            parts.append("--force")
     elif operation == "cruxible.line.evaluate":
         line, since, until = values.get("line"), values.get("since"), values.get("until")
         if not all(isinstance(value, str) and value for value in (line, since, until)):
@@ -4705,6 +4713,14 @@ def _vocabulary_file_item(
         arguments={},
     )
     if drift.state == "invalid":
+        # Export keeps a file whose header cannot establish what it meant, so
+        # the repair that works is the forced one (or restoring the header).
+        repair = repair.model_copy(
+            update={
+                "required_change": "restore_the_header_or_replace_the_file_with_accepted_state",
+                "arguments": {"force": True},
+            }
+        )
         return _item(
             severity="repair",
             reason="vocabulary_file_baseline_invalid",

@@ -206,6 +206,53 @@ def test_export_keeps_a_new_definition_another_writer_accepted_differently(world
     assert cx.vocabulary.export().status == "written"
 
 
+def test_export_keeps_a_file_whose_header_does_not_match_and_reads_no_claim(
+    world,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review R7: an unestablished baseline keeps the file; the guard reads definitions only."""
+
+    _http, _instance_id, workspace, cx = world
+    for name in "abcdefghi":
+        _claim(cx, f"dev.item/{name}", "dev.item.state", "wontfix")
+    cx.refresh()
+    cx.vocabulary.export()
+
+    def edit(data):  # type: ignore[no-untyped-def]
+        fields = data["kinds"]["dev.item"]["fields"]
+        fields["collision"] = {"value": "string{max_len: 100}"}
+        fields["state"]["enum"]["wontfix"] = {"becomes": "done"}
+        data["based_on"]["vocabulary_digest"] = "sha256:" + "0" * 64
+
+    _edit(workspace, edit)
+    other = cx.changes(rationale="Someone else defines it first.")
+    other.field("dev.item", "collision", "string{max_len: 100}", many=True)
+    assert other.submit().outcome.status == "landed"
+    cx.refresh()
+    before = _file(workspace).read_bytes()
+
+    claim_reads: list[object] = []
+    original_batch = cx._client.get_batch
+    original_query = cx._client.query
+
+    def batch(instance_id, *, request):  # type: ignore[no-untyped-def]
+        claim_reads.extend(ref for ref in request.refs if ref.startswith("Claim:"))
+        return original_batch(instance_id, request=request)
+
+    def query(instance_id, *, request):  # type: ignore[no-untyped-def]
+        claim_reads.append(request)
+        return original_query(instance_id, request=request)
+
+    monkeypatch.setattr(cx._client, "get_batch", batch)
+    monkeypatch.setattr(cx._client, "query", query)
+    with pytest.raises(VocabularyExportRefused, match="header does not match") as refused:
+        cx.vocabulary.export()
+    assert "pass --force" in str(refused.value)
+    assert claim_reads == []
+    assert _file(workspace).read_bytes() == before
+    assert cx.vocabulary.export(force=True).status == "written"
+
+
 def test_apply_adds_and_edits_and_never_retires_what_the_file_leaves_out(world) -> None:  # type: ignore[no-untyped-def]
     _http, _instance_id, workspace, cx = world
     cx.vocabulary.export()
@@ -535,6 +582,13 @@ def test_next_and_orient_name_a_file_behind_accepted_state(world) -> None:  # ty
     _edit(workspace, lambda data: data["based_on"].update(git_oid="0" * 40))
     (invalid,) = rows()
     assert invalid.reason == "vocabulary_file_baseline_invalid"
+    # Export keeps a file it cannot read the meaning of: the repair is the forced one.
+    assert invalid.repair.command == "cx.vocabulary.export(force=True)"
+    from cruxible_client.contracts.text_display import render_orient
+
+    assert "cruxible vocabulary export --force" in render_orient(
+        cx.orient().model_dump(mode="json")
+    )
     assert cx.orient().vocabulary_file.state == "invalid"
 
     # Review R4: a malformed OID is an unreadable header, never a request error.

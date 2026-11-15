@@ -125,7 +125,13 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 if state == "behind"
                 else "baseline invalid"
             )
-            + ("" if state == "current" else "; refresh: cruxible vocabulary export")
+            + (
+                ""
+                if state == "current"
+                else "; refresh: cruxible vocabulary export"
+                if state == "behind"
+                else "; restore its header, or replace it: cruxible vocabulary export --force"
+            )
         )
     you = result.get("you")
     if you is not None:
