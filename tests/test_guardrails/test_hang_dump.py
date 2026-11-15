@@ -88,6 +88,43 @@ def test_a_stall_that_holds_the_gil_dumps_and_exits_after_its_timeout(
     assert frame in result.stderr
 
 
+def test_the_job_deadline_caps_a_late_test_s_own(tmp_path: Path) -> None:
+    """A hang due after the CI job ends is dumped at the job's deadline instead."""
+
+    import time
+
+    (tmp_path / "conftest.py").write_text(_CONFTEST)
+    (tmp_path / "test_stall.py").write_text(_STALL.replace("timeout(1)", "timeout(600)"))
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO),
+        "CRUXIBLE_TEST_DEADLINE": str(time.time() + 3),
+    }
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "--timeout",
+            "600",
+            "--timeout-method=thread",
+            "test_stall.py::test_stalls_holding_the_gil",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0
+    assert re.search(r"Timeout \(0:00:0[0-9.]*\)!", result.stderr), result.stderr[-2000:]
+    assert "test_stalls_holding_the_gil" in result.stderr
+    assert time.monotonic() - started < 60
+
+
 @pytest.mark.timeout(5)
 def test_the_watchdog_takes_the_mark_over_the_option(request: pytest.FixtureRequest) -> None:
     from tests.support.hang_dump import item_timeout

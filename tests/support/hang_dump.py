@@ -13,11 +13,19 @@ real stderr and exits the worker, so xdist reports the test as crashed with that
 stack and the shard finishes. Nothing is armed without a timeout (a local run
 without ``--timeout``), or when ``faulthandler_timeout`` is set, which uses the
 same watchdog.
+
+A test's own deadline is not enough on CI: one that starts late in the job and
+hangs would be due after the job is cancelled. ``CRUXIBLE_TEST_DEADLINE`` (Unix
+seconds; ci.yml sets it to the job's start plus its budget less a margin) caps
+every test's deadline, so the hang still dumps before the cancellation. A test
+running at that moment is dumped even if it is only slow: the job would have been
+cancelled with it running. Without the variable, only the per-test deadline holds.
 """
 
 from __future__ import annotations
 
 import faulthandler
+import os
 import sys
 import time
 from collections.abc import Generator
@@ -26,6 +34,17 @@ import pytest
 
 #: Seconds past a test's own timeout before the watchdog fires.
 GRACE_SECONDS = 60.0
+#: Unix seconds by which any test still running is dumped (the CI job's budget).
+JOB_DEADLINE_ENV = "CRUXIBLE_TEST_DEADLINE"
+
+
+def job_deadline() -> float | None:
+    """The job-wide deadline on the ``time.monotonic`` clock, or None when unset."""
+
+    raw = os.environ.get(JOB_DEADLINE_ENV, "").strip()
+    if not raw:
+        return None
+    return time.monotonic() + float(raw) - time.time()
 
 
 def item_timeout(item: pytest.Item) -> float | None:
@@ -79,6 +98,9 @@ class HangDumpPlugin:
         if timeout is None or float(item.config.getini("faulthandler_timeout") or 0) > 0:
             return (yield)
         self._deadline = time.monotonic() + timeout + GRACE_SECONDS
+        job = job_deadline()
+        if job is not None:
+            self._deadline = min(self._deadline, job)
         self._descriptor = _stderr_descriptor(item.config)
         self._arm()
         try:
