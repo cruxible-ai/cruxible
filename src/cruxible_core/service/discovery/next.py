@@ -3470,11 +3470,10 @@ def claim_citation_commitments(
     unavailable: list[_UnavailableCitation] = []
     for citation in claim_citation_references(claim):
         # A located section is a copy, so it does not have to contribute to
-        # the verdict. Its independent location still commits to drift.
-        location_copy = (
-            getattr(citation, "role", None) == "copy"
-            and getattr(citation, "origin", None) == "independent"
-        )
+        # the verdict. Its location still commits to drift: located own words
+        # (self_source) or an older pair's located copy (independent). A copy
+        # with no section label (unlocated own words) drops out below.
+        location_copy = getattr(citation, "role", None) == "copy"
         if citation.capture_digest not in effective_captures and not location_copy:
             continue
         # Present as of the read's landing position, or missing to it.

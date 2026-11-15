@@ -150,12 +150,18 @@ def _claim_sources(
     looked_up: set[str] = set()
     for digest in digests:
         source = found.get(digest)
-        if source is None or source.contract_digest == _SELF_SOURCE_DIGEST:
+        if source is None:
+            continue
+        # Unlocated own words come from no source; own words located in a file
+        # are that file's line (no second Capture locates them).
+        if source.contract_digest == _SELF_SOURCE_DIGEST and source.source == "cas":
             continue
         looked_up.add(source.contract_digest)
         contract = contracts.get(source.contract_digest)
-        if contract is not None and contract.identity == (
-            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity
+        if (
+            contract is not None
+            and contract.identity == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity
+            and source.source == "cas"
         ):
             continue
         pairs.append(

@@ -91,6 +91,7 @@ from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord,
     capture_contract_input_template,
 )
+from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_IDENTITY
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
 )
@@ -6473,10 +6474,21 @@ def _attestation_counts_text(attestation: Any) -> str:
     return _ATTESTATION_COUNT_WORDS[attestation.counts_reason].format(rule=attestation.rule)
 
 
+_UNLOCATED_OWN_WORDS_SOURCES = frozenset({"unknown", COORDINATOR_SELF_SOURCE_IDENTITY})
+
+
 def _citation_label(capture: Any) -> str:
-    """What a cited Capture is, in words: the Claim's own words, a passage, or evidence."""
+    """What a cited Capture is, in words: the Claim's own words, a passage, or evidence.
+
+    Own words found in a workspace file name it: their source is the file's
+    logical id, where unlocated own words name their producer (a qualified
+    ``Principal:``) or nothing.
+    """
 
     if capture.origin == "self_source":
+        source = str(capture.source or "")
+        if source and ":" not in source and source not in _UNLOCATED_OWN_WORDS_SOURCES:
+            return f"own words in {_public_name(source)}"
         return "own words"
     if capture.role == "copy":
         return f"passage of {_public_name(capture.source)}"

@@ -81,6 +81,10 @@ from cruxible_client.contracts.workspace_file import (
 )
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts.authoring.models import (
+        WorkingSelectionCoordinate,
+        WorkingSelectionObservation,
+    )
     from cruxible_client.contracts.projection import AcceptedCoordinate
 
 _CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -2454,17 +2458,100 @@ def capture_is_direct_self_source(
     )
 
 
+_COORDINATOR_RUN_PREFIX = "coordinator-self-source:"
+_CLAIM_IDENTITY_RE = re.compile(r"CLM-[0-9a-f]{32}")
+
+
+def coordinator_location_valid(envelope: CaptureEnvelopeAny) -> bool:
+    """Whether an envelope is the located form of a coordinator self-source.
+
+    Own words found in a workspace file carry the file as their source: an
+    external reference with exactly the foreign-span coordinate and selector
+    types, attested-only (the daemon holds the selected bytes, never the file),
+    retained in CAS, bound by the envelope's own producer binding, and a
+    selector that names the Claim the run id names alongside the working
+    selection the writer observed. The contract is not judged here; callers
+    pair this with the coordinator contract.
+    """
+
+    source = envelope.source
+    if not isinstance(source, ExternalSourceReference):
+        return False
+    selector = source.selector
+    if not isinstance(selector, dict) or set(selector) != {"claim_id", "working_selection"}:
+        return False
+    claim_id = selector["claim_id"]
+    if not (
+        source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+        and source.selector_type == FOREIGN_SOURCE_SELECTOR_TYPE
+        and source.replayability == "attested_only"
+        and envelope.commitment.materialization == "cas"
+        and envelope.commitment.digest_kind == "exact_bytes"
+        and source.producer_binding_digest == envelope.producer_binding_digest
+        and isinstance(claim_id, str)
+        and _CLAIM_IDENTITY_RE.fullmatch(claim_id) is not None
+        and envelope.run_coordinate.run_id == f"{_COORDINATOR_RUN_PREFIX}{claim_id.casefold()}"
+    ):
+        return False
+    return _located_window_valid(
+        source.coordinate,
+        selector["working_selection"],
+        byte_length=envelope.commitment.byte_length,
+    )
+
+
+def _located_window_valid(coordinate: object, window: object, *, byte_length: int | None) -> bool:
+    """The observed coordinate and working selection, exactly as the writer's models state them.
+
+    Each must be the canonical form of its model (a coordinate of the observed
+    file, a section's anchor window), the window must lie inside the observed
+    file and cover exactly the committed bytes, and it must carry the heading
+    path drift and re-binding name it by.
+    """
+
+    from cruxible_client.contracts.authoring.models import WorkingAnchorWindow
+
+    if not isinstance(coordinate, dict) or not isinstance(window, dict):
+        return False
+    try:
+        observed = _working_coordinate_adapter().validate_python(coordinate)
+        selection = WorkingAnchorWindow.model_validate(window)
+    except ValidationError:
+        return False
+    return (
+        observed.model_dump(mode="json") == coordinate
+        and selection.model_dump(mode="json") == window
+        and selection.section is not None
+        and selection.end_byte <= observed.source_byte_length
+        and byte_length == selection.end_byte - selection.start_byte
+    )
+
+
+@lru_cache(maxsize=1)
+def _working_coordinate_adapter() -> TypeAdapter[WorkingSelectionCoordinate]:
+    from cruxible_client.contracts.authoring.models import WorkingSelectionCoordinate
+
+    return TypeAdapter(WorkingSelectionCoordinate)
+
+
 def capture_is_coordinator_self_source(
     envelope: CaptureEnvelopeAny,
     *,
     contract: CaptureContractAny,
     claim_id: str,
 ) -> bool:
-    """Recognize the mandatory-retained coordinator profile at its Claim binding."""
+    """Recognize the mandatory-retained coordinator profile at its Claim binding.
+
+    The own words are retained bytes either way: unlocated (a CAS source) or
+    located in a workspace file (the external form `coordinator_location_valid`
+    admits, whose selector names this Claim as its run id does).
+    """
 
     return (
         is_coordinator_self_source_contract(contract)
-        and isinstance(envelope.source, CasSourceReference)
+        and (
+            isinstance(envelope.source, CasSourceReference) or coordinator_location_valid(envelope)
+        )
         and envelope.commitment.materialization == "cas"
         and envelope.run_coordinate.run_id == f"coordinator-self-source:{claim_id.casefold()}"
         and envelope.run_coordinate.executable_identity == contract.identity
@@ -3264,11 +3351,19 @@ def build_coordinator_self_source_capture(
     observed_at: datetime,
     accepted_coordinate: AcceptedCoordinate,
     accepted_contract: CaptureContractAny | None = None,
+    location: WorkingSelectionObservation | None = None,
 ) -> CaptureBuildResult:
-    """Retain exact self-source bytes before minting their coordinator envelope."""
+    """Retain exact self-source bytes before minting their coordinator envelope.
+
+    With ``location`` the own words were found in a workspace file: the one
+    Capture keeps the coordinator contract, binding and commitment and records
+    where the words stand (the file, its observed coordinate and the working
+    selection) as its source, so no second Capture locates them. Without it
+    the envelope's bytes are exactly the unlocated form's.
+    """
 
     governance_identifier(actor_id, label="coordinator self-source actor")
-    if not re.fullmatch(r"CLM-[0-9a-f]{32}", claim_id):
+    if not _CLAIM_IDENTITY_RE.fullmatch(claim_id):
         raise CaptureFormatError("coordinator self-source requires a Claim identity")
     contract = accepted_contract or COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     if not is_coordinator_self_source_contract(contract):
@@ -3284,31 +3379,89 @@ def build_coordinator_self_source_capture(
             "generation_root": accepted_coordinate.generation_root,
         },
     ).tagged
+    run_coordinate = CaptureRunCoordinateV1(
+        run_kind="provider",
+        run_id=f"{_COORDINATOR_RUN_PREFIX}{claim_id.casefold()}",
+        bound_generation=accepted_coordinate.generation_root,
+        executable_identity=contract.identity,
+        executable_digest=contract_digest_value,
+    )
+    if location is None:
+        receipt_digest = typed_digest(
+            Sha256Value,
+            "playbill-coordinator-self-source-receipt-v1",
+            {
+                "actor_id": actor_id,
+                "body_digest": body_digest,
+                "claim_id": claim_id,
+                "observed_at": _canonical_datetime(observed_at),
+            },
+        ).tagged
+        return build_cas_capture(
+            store=store,
+            contract=contract,
+            source_body=body,
+            run_coordinate=run_coordinate,
+            run_receipt_digest=receipt_digest,
+            producer=ArtifactIdentity(kind="Principal", name=actor_id),
+            producer_binding_digest=producer_binding_digest,
+            observed_at=observed_at,
+        )
+    if location.selected_content != body:
+        raise CaptureFormatError("a location must select exactly the own words' bytes")
+    if len(body) > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("CAS observation exceeds its CaptureContract byte budget")
+    coordinate = location.coordinate.model_dump(mode="json")
+    selector = {
+        "claim_id": claim_id,
+        "working_selection": location.selector.model_dump(mode="json"),
+    }
     receipt_digest = typed_digest(
         Sha256Value,
-        "playbill-coordinator-self-source-receipt-v1",
+        "playbill-coordinator-located-self-source-receipt-v1",
         {
             "actor_id": actor_id,
             "body_digest": body_digest,
             "claim_id": claim_id,
+            "coordinate": coordinate,
             "observed_at": _canonical_datetime(observed_at),
+            "selector": selector,
+            "source_id": location.source_id,
         },
     ).tagged
-    return build_cas_capture(
-        store=store,
-        contract=contract,
-        source_body=body,
-        run_coordinate=CaptureRunCoordinateV1(
-            run_kind="provider",
-            run_id=f"coordinator-self-source:{claim_id.casefold()}",
-            bound_generation=accepted_coordinate.generation_root,
-            executable_identity=contract.identity,
-            executable_digest=contract_digest_value,
+    stored = store.store(body)
+    if stored.digest != body_digest:
+        raise CasError("coordinator self-source body CAS digest did not reproduce")
+    envelope = CaptureEnvelopeV1(
+        capture_contract_digest=contract_digest_value,
+        source=ExternalSourceReference(
+            source_identity=location.source_id,
+            producer_binding_digest=producer_binding_digest,
+            coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
+            coordinate=coordinate,
+            selector_type=FOREIGN_SOURCE_SELECTOR_TYPE,
+            selector=selector,
+            replayability="attested_only",
         ),
+        commitment=EvidenceCommitment(
+            digest_kind="exact_bytes",
+            digest=body_digest,
+            byte_length=len(body),
+            materialization="cas",
+        ),
+        run_coordinate=run_coordinate,
         run_receipt_digest=receipt_digest,
         producer=ArtifactIdentity(kind="Principal", name=actor_id),
         producer_binding_digest=producer_binding_digest,
         observed_at=observed_at,
+    )
+    if not coordinator_location_valid(envelope):
+        raise CaptureFormatError("coordinator self-source location is malformed")
+    return _store_general_capture(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_materialized=True,
     )
 
 
@@ -3881,52 +4034,63 @@ def _verify_capture_once(
             or resolved_receipt.capture_contract_digest != envelope.capture_contract_digest
         ):
             raise CaptureFormatError("procedure Capture producer receipt does not correspond")
-    if envelope.source.kind not in contract_source_kinds(contract):
+    # Own words located in a workspace file: the coordinator contract's one
+    # external form. Its source kind, replayability, logical source and schemas
+    # are the located form's own law, not the contract's CAS profile; its
+    # retained bytes are still verified below like any external material.
+    located_self_source = is_coordinator_self_source_contract(
+        contract
+    ) and coordinator_location_valid(envelope)
+    if not located_self_source and envelope.source.kind not in contract_source_kinds(contract):
         raise CaptureFormatError("Capture source kind is not permitted by its contract")
     if envelope.commitment.materialization not in contract_materialization_modes(contract):
         raise CaptureFormatError("Capture materialization is not permitted by its contract")
     if isinstance(envelope.source, ExternalSourceReference):
-        if isinstance(
-            contract, CaptureContract | NamedCaptureContract
-        ) and envelope.source.replayability != (
-            "exact" if contract.replay == "exact" else "attested_only"
-        ):
-            raise CaptureFormatError("Capture replayability differs from its CaptureContract")
-        if (
-            isinstance(contract, CaptureContractV1)
-            and envelope.source.source_identity not in contract.logical_source_identities
-        ):
-            raise CaptureFormatError("Capture logical source is not declared by its contract")
-        if contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
-            schemas = (
-                envelope.source.coordinate_type,
-                envelope.source.selector_type,
-            )
-            if schemas not in {
-                ("authenticated-request-v1", "direct-claim-source-v1"),
-                (DIRECT_EXTERNAL_COORDINATE_TYPE, DIRECT_EXTERNAL_SELECTOR_TYPE),
+        if not located_self_source:
+            if isinstance(
+                contract, CaptureContract | NamedCaptureContract
+            ) and envelope.source.replayability != (
+                "exact" if contract.replay == "exact" else "attested_only"
+            ):
+                raise CaptureFormatError("Capture replayability differs from its CaptureContract")
+            if (
+                isinstance(contract, CaptureContractV1)
+                and envelope.source.source_identity not in contract.logical_source_identities
+            ):
+                raise CaptureFormatError("Capture logical source is not declared by its contract")
+            if contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
+                schemas = (
+                    envelope.source.coordinate_type,
+                    envelope.source.selector_type,
+                )
+                if schemas not in {
+                    ("authenticated-request-v1", "direct-claim-source-v1"),
+                    (DIRECT_EXTERNAL_COORDINATE_TYPE, DIRECT_EXTERNAL_SELECTOR_TYPE),
+                }:
+                    raise CaptureFormatError("direct Capture source schemas are not registered")
+                if schemas == (DIRECT_EXTERNAL_COORDINATE_TYPE, DIRECT_EXTERNAL_SELECTOR_TYPE):
+                    coordinate = envelope.source.coordinate
+                    selector = envelope.source.selector
+                    if not isinstance(coordinate, dict) or not isinstance(selector, dict):
+                        raise CaptureFormatError("direct external selection metadata is malformed")
+                    if (
+                        coordinate.get("source_coordinate_type")
+                        not in (DIRECT_EXTERNAL_COORDINATE_TYPES)
+                        or selector.get("source_selector_type")
+                        not in DIRECT_EXTERNAL_SELECTOR_TYPES
+                    ):
+                        raise CaptureFormatError(
+                            "direct external selection schema is not registered"
+                        )
+                    claim_id = selector.get("claim_id")
+                    if not isinstance(claim_id, str) or not claim_id.startswith("CLM-"):
+                        raise CaptureFormatError("direct external selection has no Claim identity")
+            elif envelope.source.coordinate_type not in {
+                pin.target.name for pin in capture_components(contract).coordinate_schema_pins
+            } or envelope.source.selector_type not in {
+                pin.target.name for pin in capture_components(contract).selector_schema_pins
             }:
-                raise CaptureFormatError("direct Capture source schemas are not registered")
-            if schemas == (DIRECT_EXTERNAL_COORDINATE_TYPE, DIRECT_EXTERNAL_SELECTOR_TYPE):
-                coordinate = envelope.source.coordinate
-                selector = envelope.source.selector
-                if not isinstance(coordinate, dict) or not isinstance(selector, dict):
-                    raise CaptureFormatError("direct external selection metadata is malformed")
-                if (
-                    coordinate.get("source_coordinate_type")
-                    not in (DIRECT_EXTERNAL_COORDINATE_TYPES)
-                    or selector.get("source_selector_type") not in DIRECT_EXTERNAL_SELECTOR_TYPES
-                ):
-                    raise CaptureFormatError("direct external selection schema is not registered")
-                claim_id = selector.get("claim_id")
-                if not isinstance(claim_id, str) or not claim_id.startswith("CLM-"):
-                    raise CaptureFormatError("direct external selection has no Claim identity")
-        elif envelope.source.coordinate_type not in {
-            pin.target.name for pin in capture_components(contract).coordinate_schema_pins
-        } or envelope.source.selector_type not in {
-            pin.target.name for pin in capture_components(contract).selector_schema_pins
-        }:
-            raise CaptureFormatError("external Capture source schemas are not exactly pinned")
+                raise CaptureFormatError("external Capture source schemas are not exactly pinned")
         if (
             envelope.commitment.materialization == "cas"
             and envelope.commitment.digest not in erased
@@ -3942,6 +4106,10 @@ def _verify_capture_once(
             )
             if len(material) > contract.selection_budget.max_bytes:
                 raise CaptureFormatError("external Capture material exceeds its contract")
+            # Located own words are exact retained bytes, as their CAS form is:
+            # the commitment's length must reproduce from them too.
+            if located_self_source and len(material) != envelope.commitment.byte_length:
+                raise CaptureFormatError("Capture source byte length does not reproduce")
             material_evidence = (
                 envelope.production_evidence if isinstance(envelope, CaptureEnvelope) else None
             )
@@ -4156,6 +4324,7 @@ __all__ = [
     "capture_is_direct_selection_bound",
     "capture_is_direct_self_source",
     "classify_capture_reuse",
+    "coordinator_location_valid",
     "capture_contract_path",
     "authorize_erasure",
     "CaptureErasureLookupProtocol",

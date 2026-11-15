@@ -690,15 +690,17 @@ def test_evidence_capture_source_renders_its_public_name(
 
 
 @pytest.mark.parametrize(
-    ("role", "origin", "status", "shown"),
+    ("role", "origin", "status", "source", "shown"),
     [
-        ("copy", "self_source", "admitted", "own words: admitted"),
-        ("copy", "independent", "not_evidence", "passage of docs.page: not evidence"),
-        ("evidence", "independent", "not_admitted", "evidence: not admitted"),
+        # Own words found in a file name it; unlocated own words name their writer.
+        ("copy", "self_source", "admitted", "docs.page", "own words in docs.page: admitted"),
+        ("copy", "self_source", "admitted", "Principal:owner", "own words: admitted"),
+        ("copy", "independent", "not_evidence", "docs.page", "passage of docs.page: not evidence"),
+        ("evidence", "independent", "not_admitted", "docs.page", "evidence: not admitted"),
     ],
 )
 def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
-    monkeypatch: pytest.MonkeyPatch, role: str, origin: str, status: str, shown: str
+    monkeypatch: pytest.MonkeyPatch, role: str, origin: str, status: str, source: str, shown: str
 ) -> None:
     from cruxible_client.contracts.get_reads import GetCaptureEvidence, GetEvidence
 
@@ -706,7 +708,7 @@ def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
         capture="CAP-0123456789ab",
         contract="CaptureContract:docs.page-v1",
         version=1,
-        source="docs.page",
+        source=source,
         observed_at=WHEN,
         role=role,
         origin=origin,  # type: ignore[arg-type]

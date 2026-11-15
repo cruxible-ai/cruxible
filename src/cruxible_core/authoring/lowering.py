@@ -88,6 +88,7 @@ from cruxible_client.contracts.capture_contract_inputs import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    FOREIGN_SOURCE_COORDINATE_TYPE,
     AcceptedCaptureContract,
     CaptureBuildResult,
     CaptureContractAny,
@@ -904,6 +905,34 @@ def _cited_associations(
         (*cited_observation(instance, item.capture_digest), item.role, item.origin)
         for item in citations
     }
+
+
+def _held_locations(
+    instance: PlaybillInstance, citations: Iterable[ClaimCitation], *, content: str
+) -> set[str]:
+    """The files a Claim's copies locate this content in.
+
+    Located own words carry their file; an older pair's located copy carries it
+    beside the own words. Reads only this Claim's copy citations.
+    """
+
+    access = BodyAccessContext(principal_id="playbill-authoring", can_read_body=True)
+    found: set[str] = set()
+    for item in citations:
+        if item.role != "copy":
+            continue
+        try:
+            envelope = capture_envelope(instance.body_store(), item.capture_digest, access=access)
+        except (CruxibleError, OSError, ValueError):
+            continue
+        source = envelope.source
+        if (
+            isinstance(source, ExternalSourceReference)
+            and source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+            and observed_content(envelope).digest == content
+        ):
+            found.add(source.source_identity)
+    return found
 
 
 def _canonical_object(
@@ -1773,7 +1802,18 @@ def _lower_claim(
     accepted_contract: AcceptedCaptureContract | None = None
     accepted_producer_digests: dict[str, str] = {}
     install_contract = True
+    located_path = ""
+    located_contract: CaptureContractAny | None = None
+    located_install = False
     contract: CaptureContractAny
+    if payload.located_at is not None and not isinstance(payload.source, SelfSourceBody):
+        _refuse(
+            "cruxible.authoring.location_mismatch",
+            "located_at",
+            "A location must cite the same bytes as the Claim's own words.",
+            repair_kind="observe_section",
+            repair_description="Observe the authored section again.",
+        )
     if isinstance(payload.source, SelfSourceBody):
         profile_path = capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
         previous_profile_bytes = candidate_base_tree.get(profile_path)
@@ -1786,15 +1826,54 @@ def _lower_claim(
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous_profile
         )
         install_contract = previous_profile != contract
-        built_capture = build_coordinator_self_source_capture(
-            store=instance.body_store(),
-            actor_id=actor_id,
-            claim_id=claim_id,
-            body=payload.source.content,
-            accepted_contract=contract,
-            observed_at=observed_at,
-            accepted_coordinate=public_base,
-        )
+        location = payload.located_at
+        if location is not None:
+            if location.selected_content != payload.source.content:
+                _refuse(
+                    "cruxible.authoring.location_mismatch",
+                    "located_at",
+                    "A location must cite the same bytes as the Claim's own words.",
+                    repair_kind="observe_section",
+                    repair_description="Observe the authored section again.",
+                )
+            # The file's contract is installed with its first own words (no pin:
+            # no Capture is taken under it), as the located copy did, so a later
+            # attestation citing the file finds its contract accepted.
+            located_path = capture_contract_path(
+                foreign_source_capture_contract(location.source_id).identity.name
+            )
+            previous_located = candidate_base_tree.get(located_path)
+            located_head = (
+                None
+                if previous_located is None
+                else parse_capture_contract(previous_located, path=located_path)
+            )
+            _refuse_retired_source(
+                located_head, source_id=location.source_id, offending_element="located_at"
+            )
+            located_contract = builtin_contract_for_write(
+                foreign_source_capture_contract(location.source_id), located_head
+            )
+            located_install = located_contract != located_head
+        try:
+            built_capture = build_coordinator_self_source_capture(
+                store=instance.body_store(),
+                actor_id=actor_id,
+                claim_id=claim_id,
+                body=payload.source.content,
+                accepted_contract=contract,
+                observed_at=observed_at,
+                accepted_coordinate=public_base,
+                location=location,
+            )
+        except _WORKING_SELECTION_REFUSALS as exc:
+            _refuse(
+                "cruxible.authoring.working_selection_refused",
+                "located_at",
+                f"The located selection cannot be captured: {exc}",
+                repair_kind="revise_selection",
+                repair_description="Select admitted prose outside projection blocks.",
+            )
         citation_role: CitationRole = "copy"
         citation_origin: CitationOrigin = "self_source"
     elif isinstance(payload.source, ExistingCaptureCitationSource):
@@ -1946,9 +2025,15 @@ def _lower_claim(
         capture_digest_value = built_capture.capture_digest
         capture_envelope = built_capture.envelope
 
+    # Located own words are judged where they stand: the observation's page
+    # (handed over when it declares a block) and the one Capture's location.
     _refuse_citation_into_projection_window(
         instance,
-        payload=payload,
+        payload=(
+            payload
+            if payload.located_at is None
+            else payload.model_copy(update={"source": payload.located_at})
+        ),
         envelope=capture_envelope,
         memo=(
             captures.recall_verified(payload.source.capture_digest)
@@ -1993,74 +2078,6 @@ def _lower_claim(
     )
     if rebound is not None:
         predecessor_citations = rebound.kept
-    located = None
-    located_citation = None
-    located_contract = None
-    located_install = False
-    if payload.located_at is not None:
-        location = payload.located_at
-        if (
-            not isinstance(payload.source, SelfSourceBody)
-            or location.selected_content != payload.source.content
-        ):
-            _refuse(
-                "cruxible.authoring.location_mismatch",
-                "located_at",
-                "A location must cite the same bytes as the Claim's own words.",
-                repair_kind="observe_section",
-                repair_description="Observe the authored section again.",
-            )
-        located_path = capture_contract_path(
-            foreign_source_capture_contract(location.source_id).identity.name
-        )
-        previous_contract = candidate_base_tree.get(located_path)
-        located_contract = (
-            None
-            if previous_contract is None
-            else parse_capture_contract(previous_contract, path=located_path)
-        )
-        _refuse_retired_source(
-            located_contract, source_id=location.source_id, offending_element="located_at"
-        )
-        located_successor = builtin_contract_for_write(
-            foreign_source_capture_contract(location.source_id), located_contract
-        )
-        located_install = located_successor != located_contract
-        located_contract = located_successor
-        try:
-            located = build_working_selection_capture(
-                store=instance.body_store(),
-                actor_id=actor_id,
-                claim_id=claim_id,
-                rationale=payload.rationale,
-                observed_at=observed_at,
-                accepted_coordinate=public_base,
-                source_id=location.source_id,
-                coordinate=location.coordinate.model_dump(mode="json"),
-                selector=location.selector.model_dump(mode="json"),
-                selected_content=location.selected_content,
-                accepted_contract=located_contract,
-            )
-        except _WORKING_SELECTION_REFUSALS as exc:
-            _refuse(
-                "cruxible.authoring.working_selection_refused",
-                "located_at",
-                f"The located selection cannot be captured: {exc}",
-                repair_kind="revise_selection",
-                repair_description="Select admitted prose outside projection blocks.",
-            )
-        located_contract = located.contract
-        _refuse_citation_into_projection_window(
-            instance,
-            payload=payload.model_copy(update={"source": location}),
-            envelope=located.envelope,
-        )
-        located_citation = build_claim_citation(
-            identity,
-            capture_digest=located.capture_digest,
-            role="copy",
-            origin="independent",
-        )
     capture_digests = tuple(
         sorted(
             {
@@ -2074,7 +2091,6 @@ def _lower_claim(
                     )
                 ),
                 capture_digest_value,
-                *(() if located is None else (located.capture_digest,)),
             },
             key=lambda item: item.encode("ascii"),
         )
@@ -2109,14 +2125,6 @@ def _lower_claim(
             previous=() if predecessor is None else predecessor.pins,
         ),
     ]
-    if located_contract is not None:
-        pins.append(
-            _claim_pin(
-                role="capture-contract",
-                target=located_contract.identity,
-                artifact_digest=capture_contract_digest(located_contract).tagged,
-            )
-        )
     for producer_identity in {
         capture_envelope.producer,
         capture_envelope.run_coordinate.executable_identity,
@@ -2185,7 +2193,7 @@ def _lower_claim(
             capture_digests=capture_digests,
             citations=merge_claim_citations(
                 predecessor_citations,
-                (citation,) + (() if located_citation is None else (located_citation,)),
+                (citation,),
             ),
             input_claim_digests=(
                 tuple(sorted(pin.artifact_digest for pin in derivation.inputs))
@@ -2338,13 +2346,14 @@ def _lower_claim(
     idempotent = (
         isinstance(payload.source, ExistingCaptureCitationSource) and bool(recited)
     ) or bool(reobserved)
-    if idempotent and located is not None:
-        idempotent = (
-            located.envelope.capture_contract_digest,
-            observed_content(located.envelope).digest,
-            "copy",
-            "independent",
-        ) in _cited_associations(instance, predecessor_citations)
+    if idempotent and payload.located_at is not None:
+        # Own words written again where they stand already are the same; the
+        # same words located for the first time (or in another file) are not.
+        idempotent = payload.located_at.source_id in _held_locations(
+            instance,
+            predecessor_citations,
+            content=observed_content(capture_envelope).digest,
+        )
     if idempotent:
         candidate_tree = fork_tree(candidate_base_tree)
         changed = ()
