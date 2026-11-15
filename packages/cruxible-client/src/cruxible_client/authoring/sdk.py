@@ -1415,7 +1415,7 @@ class ChangeSetDraft:
         value_type: FieldType | str,
         *,
         description: str | None = None,
-        many: bool = False,
+        many: bool | None = None,
         members: Mapping[str | int | bool, str] | None = None,
         key: bool = False,
         default_role: ClaimRole | str | None = None,
@@ -1430,13 +1430,17 @@ class ChangeSetDraft:
         own-words evidence rule plus one rule per ``sources`` entry, supported
         and current resolution, and ``[nfc, trim]`` for a string or enum value.
         ``members`` maps each enum member to what it means; ``many`` makes the
-        field hold several values. ``key=True`` marks a key: a
+        field hold several values (left out: one, or an edit's accepted
+        cardinality). ``key=True`` marks a key: a
         ``.subject_kind(name=kind)`` in this set that names no keys takes the
         key fields staged for its kind, in call order.
 
-        A field the instance already holds is edited: what is not given keeps
-        its accepted value, and its live Claims are carried to the new version,
-        as ``claim-type propose`` does. Retire one with ``.retire_claim_type``.
+        A field the instance already holds is edited: ``value_type`` is
+        restated, what is left out (``many``, ``description``, ``members``,
+        ``default_role``, ``canonical_form``) keeps its accepted value, and its
+        live Claims are carried to the new version, as ``claim-type propose``
+        does; ``sources`` shapes a new field's rules only. Retire one with
+        ``.retire_claim_type``.
 
         Next: more fields, ``.subject_kind(name=kind, description=...)``, then
         ``.prepare()`` for the lint, and ``.submit()``.
@@ -1450,11 +1454,11 @@ class ChangeSetDraft:
         if key and many:
             raise ValueError(f"{kind}.{name}: a key field holds one value; drop many=True")
         predicate = f"{kind}.{name}"
-        stated: dict[str, object] = {
-            "predicate": predicate,
-            "cardinality": "many" if many else "one",
-            "value": coerce_field_type(value_type),
-        }
+        predecessor = self._playbill._accepted_field(predicate)
+        stated: dict[str, object] = {"predicate": predicate, "value": coerce_field_type(value_type)}
+        # Left out (None), an edit keeps the accepted cardinality; a new field is one-valued.
+        if many is not None or predecessor is None:
+            stated["cardinality"] = "many" if many else "one"
         if description is not None:
             stated["description"] = description
         if members is not None:
@@ -1470,7 +1474,6 @@ class ChangeSetDraft:
         if canonical_form is not None:
             stated["canonical_form"] = tuple(canonical_form)
         record = ClaimTypeInputRecord.model_validate(stated)
-        predecessor = self._playbill._accepted_field(predicate)
         tree = (
             {}
             if predecessor is None

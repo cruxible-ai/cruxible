@@ -218,6 +218,29 @@ def test_a_field_lowers_through_the_short_forms_defaults(
     assert cx.get("dev.item/a").value is not None
 
 
+def test_editing_a_field_keeps_what_the_edit_leaves_out(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """Review F-001: an edit that left out many=True turned a many-valued field one-valued."""
+
+    http, instance_id, _ = playbill_http
+    cx = _cx(http, instance_id, tmp_path)
+    _field_vocabulary(cx)
+
+    edit = cx.changes(rationale="Say more about blocks.")
+    edit.field(
+        "dev.item", "blocks", "subject<dev.item>", description="Other items this one blocks."
+    )
+    assert edit.submit().outcome.status == "landed"
+    cx.refresh()
+    edited = ClaimType.model_validate(
+        cx.get("ClaimType:dev.item.blocks", detail="proof").value["envelope"]
+    )
+    assert edited.cardinality == "many"
+    assert edited.resolution_policy.cardinality == "many"
+    assert edited.description == "Other items this one blocks."
+
+
 def test_retiring_fields_is_a_change_set_step_that_retires_their_claims(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:

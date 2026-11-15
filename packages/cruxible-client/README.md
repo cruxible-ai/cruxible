@@ -1743,7 +1743,7 @@ field(
     value_type: FieldType | str,
     *,
     description: str | None = None,
-    many: bool = False,
+    many: bool | None = None,
     members: Mapping[str | int | bool, str] | None = None,
     key: bool = False,
     default_role: ClaimRole | str | None = None,
