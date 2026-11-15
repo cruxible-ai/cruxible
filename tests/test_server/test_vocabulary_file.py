@@ -9,8 +9,6 @@ on the SDK, the CLI and MCP.
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -134,32 +132,51 @@ def test_export_writes_every_definition_so_it_lowers_back_to_its_digest(world) -
     assert plan.preflight.verdict == "not_run"
 
 
-def test_export_refuses_to_replace_uncommitted_edits_without_force(world) -> None:  # type: ignore[no-untyped-def]
-    _http, _instance_id, workspace, cx = world
-    environment = {
-        **os.environ,
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@example.com",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@example.com",
-    }
-    subprocess.run(["git", "init", "-q", str(workspace)], check=True, env=environment)
-    cx.vocabulary.export()
-    _edit(workspace, lambda data: data["kinds"]["dev.item"].update(description="Edited."))
+def test_export_replaces_the_file_only_when_nothing_in_it_would_be_lost(world) -> None:  # type: ignore[no-untyped-def]
+    """No Git anywhere: the workspace is a plain folder."""
 
-    # Untracked edits, then committed ones: only the committed file is replaced.
-    with pytest.raises(VocabularyExportRefused, match="not committed"):
+    _http, _instance_id, workspace, cx = world
+    assert not (workspace / ".git").exists()
+    cx.vocabulary.export()
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"]["title"].update(description="Edited."),
+    )
+
+    # An edit accepted state lacks: export refuses, naming it.
+    with pytest.raises(VocabularyExportRefused, match=r"ClaimType:dev\.item\.title"):
         cx.vocabulary.export()
-    git = ["git", "-C", str(workspace)]
-    subprocess.run([*git, "add", VOCABULARY_FILE_PATH], check=True, env=environment)
-    subprocess.run([*git, "commit", "-qm", "vocabulary"], check=True, env=environment)
+    # Applied, nothing is lost: export replaces the file, no commit needed.
+    assert cx.vocabulary.apply().status == "landed"
+    cx.refresh()
     assert cx.vocabulary.export().status == "written"
-    _edit(workspace, lambda data: data["kinds"]["dev.item"].update(description="Again."))
-    with pytest.raises(VocabularyExportRefused, match="uncommitted edits"):
+
+    # Behind but unedited (someone else changed a field since): still replaced.
+    other = cx.changes(rationale="A concurrent edit.")
+    other.field("dev.item", "state", EnumType(members=tuple(STATE)), description="Theirs.")
+    assert other.submit().outcome.status == "landed"
+    cx.refresh()
+    assert cx.vocabulary.export().status == "written"
+    assert "Theirs." in _file(workspace).read_text(encoding="utf-8")
+
+    # A file that does not parse refuses; --force replaces it.
+    _file(workspace).write_text("format: [unclosed\n", encoding="utf-8")
+    with pytest.raises(VocabularyExportRefused, match="cannot be read"):
         cx.vocabulary.export()
-    assert cx.vocabulary.export(force=True).status == "written"
-    assert "Again." not in _file(workspace).read_text(encoding="utf-8")
+    # An enum mapping not yet applied is a pending change too.
+    cx.vocabulary.export(force=True)
+    _edit(
+        workspace,
+        lambda data: data["kinds"]["dev.item"]["fields"]["state"]["enum"].update(
+            wontfix={"becomes": "done"}
+        ),
+    )
+    with pytest.raises(VocabularyExportRefused, match=r"ClaimType:dev\.item\.state"):
+        cx.vocabulary.export()
+    assert cx.vocabulary.apply().status == "landed"
+    cx.refresh()
+    # The applied mapping names a member the enum no longer has: not lost.
+    assert cx.vocabulary.export().status == "written"
 
 
 def test_apply_adds_and_edits_and_never_retires_what_the_file_leaves_out(world) -> None:  # type: ignore[no-untyped-def]

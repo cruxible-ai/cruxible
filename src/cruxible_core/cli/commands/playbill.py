@@ -10288,7 +10288,7 @@ def _vocabulary_plan_lines(plan: VocabularyPlan) -> list[str]:
 
 
 @vocabulary_group.command("export")
-@click.option("--force", is_flag=True, help="Replace a file whose edits are not committed.")
+@click.option("--force", is_flag=True, help="Replace a file holding changes not in accepted state.")
 @json_option
 @handle_errors
 def export_vocabulary(force: bool, output_json: bool) -> None:

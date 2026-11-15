@@ -2212,7 +2212,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         force: Annotated[
-            bool, Field(description="Replace a file whose edits are not committed.")
+            bool, Field(description="Replace a file holding changes not in accepted state.")
         ] = False,
     ) -> VocabularyExportResult:
         """Write the accepted vocabulary to .cruxible/vocabulary.yaml in the MCP workspace."""

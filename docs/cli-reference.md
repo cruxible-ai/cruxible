@@ -4423,8 +4423,13 @@ otherwise (evidence rules, multi-kind predicates); every entry is checked by
 lowering it back to the accepted digest, and export refuses rather than write
 one that would change what it means. Its header, `based_on`, records the
 accepted coordinate it was read at and a digest of that vocabulary. Export
-refuses to replace a file whose bytes are not committed (`--force` replaces
-it). A kit-owned kind or field carries a `# kit: <id>` comment.
+replaces an existing file only when nothing in it would be lost: the file
+parses and, planned against accepted state, states no change of its own (an
+edit already applied, or a definition someone else changed since the file's
+export and the file restates unedited, is not lost; definitions it leaves out
+never count). Otherwise it refuses, naming the pending changes; `--force`
+replaces it. Git is not consulted, so edit, apply, export works in any folder.
+A kit-owned kind or field carries a `# kit: <id>` comment.
 
 ~~~yaml
 kinds:

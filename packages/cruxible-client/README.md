@@ -308,7 +308,7 @@ vocabulary.apply(path=None, *, rationale=None, accept="if_allowed") -> Vocabular
 
 The workspace's vocabulary file, `.cruxible/vocabulary.yaml`: every kind and field in one YAML input. `export()` writes the accepted vocabulary (shorthand where it round-trips, the full ClaimType input form otherwise, each entry checked by lowering it back); `plan()` reads at the export the file names and lists what it adds, replaces and retires, the Claims an enum mapping moves, and the daemon's write-free preflight; `apply()` submits the same members as one ordinary change set.
 
-**Conditions and effects:** a kind or field the file leaves out is untouched; only `retired: true` retires. An edited field pins the digest its export read, so one changed since refuses at preflight. Export refuses to replace a file whose edits are not committed unless `force=True`. The same request gives the same result as `cruxible vocabulary` and `cruxible_vocabulary_*`.
+**Conditions and effects:** a kind or field the file leaves out is untouched; only `retired: true` retires. An edited field pins the digest its export read, so one changed since refuses at preflight. Export replaces an existing file only when nothing in it would be lost (it parses and states no change accepted state lacks); otherwise it refuses, naming the pending changes, unless `force=True`. Git is not consulted. The same request gives the same result as `cruxible vocabulary` and `cruxible_vocabulary_*`.
 
 <a id="api-cruxible-enter"></a>
 

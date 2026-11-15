@@ -17,8 +17,6 @@ here runs per write or per tick.
 from __future__ import annotations
 
 import hashlib
-import os
-import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -577,50 +575,14 @@ def render_vocabulary_file(accepted: AcceptedVocabulary, *, instance_id: str) ->
     return rendered
 
 
-def _git_environment() -> dict[str, str]:
-    environment = {
-        key: os.environ[key]
-        for key in ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
-        if key in os.environ
-    }
-    environment.update(
-        {
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "LC_ALL": "C",
-        }
-    )
-    return environment
-
-
-def _uncommitted(root: Path) -> str | None:
-    """Why the existing file's bytes are not committed, or None when they are."""
-
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--", VOCABULARY_FILE_PATH],
-            check=False,
-            capture_output=True,
-            env=_git_environment(),
-            text=True,
-        )
-    except OSError:
-        return "the workspace is not in a Git repository, so its edits cannot be shown committed"
-    if result.returncode != 0:
-        return "the workspace is not in a Git repository, so its edits cannot be shown committed"
-    status = result.stdout.strip()
-    if not status:
-        return None
-    if status.startswith("??"):
-        return "it is not committed"
-    return "it has uncommitted edits"
-
-
 def export_vocabulary(cx: Cruxible, *, force: bool = False) -> VocabularyExportResult:
     """Write the accepted vocabulary to ``.cruxible/vocabulary.yaml``.
 
-    Refuses to replace a file whose bytes are not committed unless ``force``.
+    Replaces an existing file only when nothing in it would be lost: it
+    parses and, against accepted state, states no change of its own (an edit
+    already applied, or a definition only the export behind it held, is not
+    lost). Otherwise it refuses, naming the pending changes, unless ``force``.
+    Git is never consulted.
     """
 
     root = cx._workspace_root
@@ -640,11 +602,12 @@ def export_vocabulary(cx: Cruxible, *, force: bool = False) -> VocabularyExportR
     except FileNotFoundError:
         existing = None
     if existing is not None and existing != rendered and not force:
-        reason = _uncommitted(root)
-        if reason is not None:
+        pending = _pending_edits(cx, existing, accepted)
+        if pending:
             raise VocabularyExportRefused(
-                f"{VOCABULARY_FILE_PATH} would be replaced, but {reason}: commit it (or merge "
-                "your edits by hand after export), or pass --force to replace it"
+                f"{VOCABULARY_FILE_PATH} holds changes not in accepted state "
+                f"({', '.join(pending)}): apply them (`cruxible vocabulary apply`), or pass "
+                "--force to replace the file"
             )
     written = write_workspace_file(ensure_workspace_directory(root), VOCABULARY_FILE_PATH, rendered)
     kinds = {predicate.rpartition(".")[0] for predicate in accepted.claim_types} | set(
@@ -777,6 +740,10 @@ class _Planned:
     #: Kinds whose SubjectKind this plan changes (checked against the head at apply).
     subject_kinds: dict[str, SubjectKind | None] = field(default_factory=dict)
 
+    @property
+    def changes_only(self) -> list[VocabularyPlanEntry]:
+        return [entry for entry in self.entries if entry.action != "not_in_file"]
+
 
 def _changed(current: ClaimType, successor: ClaimType) -> tuple[str, ...]:
     before = current.model_dump(mode="json", exclude={"lifecycle"})
@@ -787,7 +754,11 @@ def _changed(current: ClaimType, successor: ClaimType) -> tuple[str, ...]:
 
 
 def _mappings(
-    predicate: str, entry: VocabularyField, current: ClaimType | None
+    predicate: str,
+    entry: VocabularyField,
+    current: ClaimType | None,
+    *,
+    applied_ok: bool = False,
 ) -> dict[str, VocabularyMemberMapping]:
     if not isinstance(entry.enum, dict):
         return {}
@@ -805,6 +776,9 @@ def _mappings(
             code="cruxible.vocabulary.mapping_invalid",
         )
     accepted = value_members(current.value)
+    if applied_ok:
+        # Against the head: a member already gone from the enum was mapped.
+        mapped = {member: mapping for member, mapping in mapped.items() if member in accepted}
     kept = {member for member, _ in _kept_members(entry)}
     for member, mapping in mapped.items():
         if member not in accepted:
@@ -988,7 +962,13 @@ def _mapped_claims(
     return changes, dependents, siblings
 
 
-def _plan_members(cx: Cruxible, file: VocabularyFile, accepted: AcceptedVocabulary) -> _Planned:
+def _plan_members(
+    cx: Cruxible,
+    file: VocabularyFile,
+    accepted: AcceptedVocabulary,
+    *,
+    applied_ok: bool = False,
+) -> _Planned:
     planned = _Planned()
     at = accepted.coordinate
     named_types: set[str] = set()
@@ -1057,7 +1037,7 @@ def _plan_members(cx: Cruxible, file: VocabularyFile, accepted: AcceptedVocabula
                     VocabularyPlanEntry(definition=definition, action="retire", kit=kit)
                 )
                 continue
-            mapped = _mappings(predicate, item, current)
+            mapped = _mappings(predicate, item, current, applied_ok=applied_ok)
             try:
                 lowered = lower_entry(predicate, item, current)
             except (FormatError, ValidationError, ValueError) as exc:
@@ -1111,6 +1091,52 @@ def _plan_members(cx: Cruxible, file: VocabularyFile, accepted: AcceptedVocabula
             )
         )
     return planned
+
+
+def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> list[str]:
+    """The changes a vocabulary file states that accepted state does not hold.
+
+    A change counts when the file's plan against the head has it (applied
+    edits do not) and, when the file's own export can still be read, its plan
+    against that export has it too (a definition someone changed since the
+    export, which the file still restates unedited, is not the file's edit).
+    ``not_in_file`` never counts. An unreadable file is one pending change.
+    """
+
+    try:
+        file = load_vocabulary_file(content)
+    except VocabularyFileError as exc:
+        return [f"the file cannot be read: {exc}"]
+    if file.instance != cx._instance_id:
+        return [f"the file was exported from instance {file.instance}"]
+
+    def changes(accepted: AcceptedVocabulary, *, applied_ok: bool) -> set[str]:
+        planned = _plan_members(cx.at(accepted.coordinate), file, accepted, applied_ok=applied_ok)
+        found = {entry.definition for entry in planned.changes_only}
+        found.update(f"Claim:{claim.claim}" for claim in planned.claims)
+        return found
+
+    try:
+        pending = changes(head, applied_ok=True)
+    except (VocabularyFileError, FormatError, ValueError) as exc:
+        return [str(exc)]
+    if not pending:
+        return []
+    try:
+        exported = read_accepted_vocabulary(
+            cx._client,
+            cx._instance_id,
+            at=file.based_on.coordinate,
+            evaluation_time=cx._evaluation_time(),
+        )
+    except CoreError:
+        return sorted(pending)
+    if exported.digest == file.based_on.vocabulary_digest:
+        try:
+            pending &= changes(exported, applied_ok=False)
+        except (VocabularyFileError, FormatError, ValueError):
+            pass
+    return sorted(pending)
 
 
 def _read_file(root: Path, path: str | Path | None) -> tuple[str, bytes]:
@@ -1349,7 +1375,7 @@ class Vocabulary:
 
         Shorthand where it says the same thing, the full ClaimType input form
         otherwise; every entry is checked by lowering it back. Refuses to
-        replace a file with uncommitted edits unless ``force``.
+        replace a file holding changes not in accepted state unless ``force``.
         Next: edit the file, then ``cx.vocabulary.plan()``.
         """
 
