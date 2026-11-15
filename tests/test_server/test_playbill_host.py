@@ -927,6 +927,135 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
     assert remote_url.endswith("ledger.git")
 
 
+def test_init_reports_the_advertisement_made_after_the_workspace_binds(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Initializing requests refreshes before the manager binds the workspace hook.
+
+    When the advertiser thread finished those first, init settled on their
+    ``not_attached`` outcome (a CI run of the test below). Forced here: the
+    binding waits until every earlier refresh has run.
+    """
+
+    del host_client
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    bind = PlaybillInstance.bind_workspace_advertiser
+    early: list[int] = []
+
+    def late_bind(self: PlaybillInstance, advertiser: Any, *, workspace_path: Path | None) -> None:
+        with self._advertisement_condition:
+            assert self._advertisement_condition.wait_for(
+                lambda: self._advertisement_thread is None, timeout=60
+            )
+            early.append(self._advertisement_completed)
+        bind(self, advertiser, workspace_path=workspace_path)
+
+    monkeypatch.setattr(PlaybillInstance, "bind_workspace_advertiser", late_bind)
+    workspace = tmp_path / "late-bind-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_late_bind",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    owner = generate_client_principal_key(
+        tmp_path / "late-bind-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(workspace,),
+    )
+    initialized = playbill_api.playbill_init(
+        "inst_late_bind",
+        principals=(owner.principal,),
+        workspace_attachment_authorized=True,
+    )
+    assert early and early[0] > 0  # the interleaving happened: refreshes ran unbound
+    assert initialized.workspace_advertisement.status == "updated"
+    assert initialized.workspace_advertisement.advertised_refs == (
+        "refs/remotes/cruxible-ledger/accepted",
+    )
+
+
+def test_init_open_and_rebind_each_refresh_the_bound_workspace_once(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exactly one bound refresh per init, open and rebind, however the worker interleaves.
+
+    Every bind here waits until the worker is idle, before binding and after, so
+    a refresh the binding queues runs on its own and is counted apart from the
+    manager's own request (``rebind_workspace`` asks after it binds).
+    """
+
+    del host_client
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    def idle(instance: PlaybillInstance) -> None:
+        with instance._advertisement_condition:
+            assert instance._advertisement_condition.wait_for(
+                lambda: instance._advertisement_thread is None, timeout=60
+            )
+
+    bind = PlaybillInstance.bind_workspace_advertiser
+
+    def isolated_bind(
+        self: PlaybillInstance, advertiser: Any, *, workspace_path: Path | None
+    ) -> None:
+        idle(self)
+        bind(self, advertiser, workspace_path=workspace_path)
+        idle(self)
+
+    monkeypatch.setattr(PlaybillInstance, "bind_workspace_advertiser", isolated_bind)
+    refs = playbill_manager_module.advertise_workspace_refs
+    calls: list[str] = []
+
+    def counted_refs(**kwargs: Any) -> Any:
+        calls.append(str(kwargs["workspace_root"]))
+        return refs(**kwargs)
+
+    monkeypatch.setattr(playbill_manager_module, "advertise_workspace_refs", counted_refs)
+    workspace = tmp_path / "counted-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_counted",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    owner = generate_client_principal_key(
+        tmp_path / "counted-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(workspace,),
+    )
+    initialized = playbill_api.playbill_init(
+        "inst_counted", principals=(owner.principal,), workspace_attachment_authorized=True
+    )
+    assert initialized.workspace_advertisement.status == "updated"
+    assert len(calls) == 1, calls
+
+    manager = get_playbill_manager()
+    manager.clear()
+    opened = manager.get("inst_counted")
+    assert opened.settled_workspace_advertisement().status == "updated"
+    assert len(calls) == 2, calls
+
+    manager.rebind_workspace("inst_counted")
+    assert opened.settled_workspace_advertisement().status == "updated"
+    assert len(calls) == 3, calls
+
+
 def test_propose_document_never_executes_workspace_instead_of_ssh_command(
     host_client: TestClient,
     tmp_path: Path,

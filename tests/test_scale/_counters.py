@@ -91,7 +91,9 @@ fire. The workspace advertiser is the product's background SQL thread (it reads
 the history index after every write), so ``trace_sqlite`` keeps it from starting
 and ``counting`` waits for one already running before it installs anything. A
 refresh a write queues stays pending; ``_worlds.settle_advertisement`` runs it
-on the measuring thread where a guard wants it counted.
+on the measuring thread where a guard wants it counted. The daemon's consumer
+runner (started by a daemon app's lifespan) is the other: ``counting`` refuses
+to open while it runs, and a test measuring through a daemon app stops it first.
 
 One instruction is one step whatever it does inside: a B-tree seek is one step
 at any table size, which is what lets a per-key lookup stay flat, but so is
@@ -635,6 +637,23 @@ def _await_advertisers() -> None:
             )
 
 
+def _refuse_running_consumers() -> None:
+    """Fail at once while the daemon's consumer runner runs: its SQL would deadlock a window.
+
+    A daemon app's lifespan starts it (``TestClient`` as a context manager), and its
+    loop and workers open instances through the manager, traced once a window's
+    root is: a statement of theirs beside a handler install hangs past every timeout.
+    """
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    if get_playbill_manager().consumer_runner.running:
+        raise AssertionError(
+            "the consumer runner runs SQL beside a window's step-counter installs and can "
+            "deadlock it; stop it first: get_playbill_manager().consumer_runner.close()"
+        )
+
+
 def _untraced_entry_points() -> list[str]:
     """The SQLite connect entry points that are not the tracing wrapper."""
 
@@ -902,6 +921,7 @@ def counting(root: Path) -> Iterator[Window]:
     global _WINDOW, _REBINDER, _ATTRIBUTING
     assert _WINDOW is None, "measured windows do not nest"
     _await_advertisers()
+    _refuse_running_consumers()
     _install_audit_hook()
     if _REBINDER is None:
         _REBINDER = _Rebinder()

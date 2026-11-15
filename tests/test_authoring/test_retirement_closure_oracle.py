@@ -161,6 +161,24 @@ def _change_set(*members: object) -> ChangeSetAuthoringPayload:
     )
 
 
+def _stable_order(claim: ClaimArtifact) -> tuple[str, str, str]:
+    """A run-independent order: the base world's two Claims have random IDs.
+
+    ``derivation_world`` accepts its first Claims (a status and a slug) through
+    a coordinator minting random IDs, so ordering by ID moved them among the
+    others on every run, and every ``rng.sample`` below drew a different world
+    and different seeds (CI once fell one short of the coverage bound).
+    (qualifier, ClaimType) is unique here, so this order, and every seed, is the
+    same each run.
+    """
+
+    return (
+        claim.statement.qualifier or "",
+        claim.statement.claim_type.name,
+        claim.identity.name,
+    )
+
+
 def _claims(instance: Any) -> dict[str, ClaimArtifact]:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     return {
@@ -197,7 +215,7 @@ class _World:
         activate_submitted(self.instance, self.owner, submitted)
         # Two layers of derived Claims, accepted as historical records.
         for layer, count in ((1, 5), (2, 4)):
-            accepted = sorted(_claims(self.instance).values(), key=lambda c: c.identity.name)
+            accepted = sorted(_claims(self.instance).values(), key=_stable_order)
             members = [
                 _derived(
                     self.template,
@@ -208,8 +226,9 @@ class _World:
             ]
             lowered = self._lower(_change_set(*members))
             _accept_historical_derivation_tree(self.instance, lowered.proposed_tree)
-        self.claims = sorted(_claims(self.instance).values(), key=lambda c: c.identity.name)
+        self.claims = sorted(_claims(self.instance).values(), key=_stable_order)
         assert sum(bool(c.backing.input_claim_digests) for c in self.claims) == 9
+        assert len({_stable_order(c)[:2] for c in self.claims}) == len(self.claims)
 
     def intent(self, payload: ChangeSetAuthoringPayload) -> Any:
         return self.coordinator.create(

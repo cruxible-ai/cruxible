@@ -195,12 +195,23 @@ def _refuse_case_fold_siblings(
     so those levels need no look at all. Every other directory that gains a name
     is checked against its folded child names (``_head_folds``): carried from the
     parent directory's by this delta's own additions and removals, or listed once.
+
+    Every other directory the delta touches gets a new tree object ID with the
+    same names (or fewer), so its remembered folds are carried to that ID too
+    (``_carry_folds``). Without that, a generation that only edits or removes
+    files in a directory leaves its folds cold, and the next one that adds a name
+    there lists the whole directory: work that grows with the instance.
     """
     added: dict[str, set[str]] = {}
     removed: dict[str, set[str]] = {}
+    touched: set[str] = set()
     looked: set[str] = set()
     for change in changes:
         parts = change.path.split("/")
+        # Each directory on the path gets a new tree object ID; below a case-rigid
+        # top no folds are kept, so only the root is touched there.
+        for depth in range(1 if parts[0] in case_rigid_tops else len(parts)):
+            touched.add("/".join(parts[:depth]))
         if change.status == "D" and change.oid is None:
             # The shallowest name the head no longer holds leaves its directory
             # (which the head still holds). Below a case-rigid top no directory's
@@ -242,6 +253,14 @@ def _refuse_case_fold_siblings(
                 raise ProjectionFormatError(
                     "ledger tree paths are not canonical and collision-free"
                 )
+    for directory in touched.difference(added):
+        _carry_folds(
+            repository,
+            directory,
+            base_oid=base_oid,
+            head_oid=head_oid,
+            removed=removed.get(directory, set()),
+        )
 
 
 # A directory's child names by case fold, per directory tree object ID (its
@@ -313,11 +332,7 @@ def _head_folds(
             listed.setdefault(sibling.casefold(), []).append(sibling)
         folds = PersistentMap((fold, tuple(sorted(group))) for fold, group in listed.items())
     else:
-        folds = base
-        for name in removed:
-            fold = name.casefold()
-            kept = tuple(item for item in folds.get(fold, ()) if item != name)
-            folds = folds.set(fold, kept) if kept else folds.delete(fold)
+        folds = _without(base, removed)
         for name in added:
             fold = name.casefold()
             group = folds.get(fold, ())
@@ -326,6 +341,43 @@ def _head_folds(
     if head_tree is not None:
         _remember_folds(head_tree, folds)
     return folds
+
+
+def _without(
+    folds: PersistentMap[tuple[str, ...]], removed: set[str]
+) -> PersistentMap[tuple[str, ...]]:
+    """Folds less the names a delta removed."""
+    for name in removed:
+        fold = name.casefold()
+        kept = tuple(item for item in folds.get(fold, ()) if item != name)
+        folds = folds.set(fold, kept) if kept else folds.delete(fold)
+    return folds
+
+
+def _carry_folds(
+    repository: GitLedger,
+    directory: str,
+    *,
+    base_oid: str,
+    head_oid: str,
+    removed: set[str],
+) -> None:
+    """Remember a directory's folds under its head tree when the delta adds no name there.
+
+    Its head names are its parent names less the ones this delta removed, so a
+    remembered parent carries exactly; a cold parent stays cold (nothing is
+    listed here), and so does a directory the head no longer holds.
+    """
+    directory_oid = getattr(repository, "directory_tree_oid", None)
+    if directory_oid is None:
+        return
+    head_tree = directory_oid(head_oid, directory)
+    if head_tree is None or _remembered_folds(head_tree) is not None:
+        return
+    folds = _remembered_folds(directory_oid(base_oid, directory))
+    if folds is None:
+        return
+    _remember_folds(head_tree, _without(folds, removed))
 
 
 @functools.lru_cache(maxsize=32)

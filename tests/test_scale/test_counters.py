@@ -316,6 +316,27 @@ def test_a_window_fails_beside_an_advertiser_that_does_not_finish(
         thread.join()
 
 
+def test_a_window_fails_while_the_daemon_consumer_runner_runs(root: Path) -> None:
+    """A daemon app's consumers run SQL through the manager: refused, never a hang."""
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    runner = get_playbill_manager().consumer_runner
+    release = threading.Event()
+    runner.thread = threading.Thread(target=release.wait, name="cruxible-consumer-runner")
+    runner.thread.start()
+    try:
+        with pytest.raises(AssertionError, match="consumer_runner.close"):
+            with counting(root):
+                pass
+    finally:
+        release.set()
+        runner.thread.join()
+        runner.thread = None
+    with counting(root):
+        pass
+
+
 def test_other_threads_do_not_count_opens_spawns_or_calls(root: Path) -> None:
     from cruxible_client.contracts import claims
     from cruxible_client.contracts.claims import ClaimFormatError
