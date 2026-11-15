@@ -81,7 +81,10 @@ from cruxible_client.contracts.workspace_file import (
 )
 
 if TYPE_CHECKING:
-    from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
+    from cruxible_client.contracts.authoring.models import (
+        WorkingSelectionCoordinate,
+        WorkingSelectionObservation,
+    )
     from cruxible_client.contracts.projection import AcceptedCoordinate
 
 _CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -2478,11 +2481,9 @@ def coordinator_location_valid(envelope: CaptureEnvelopeAny) -> bool:
     if not isinstance(selector, dict) or set(selector) != {"claim_id", "working_selection"}:
         return False
     claim_id = selector["claim_id"]
-    return (
+    if not (
         source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
         and source.selector_type == FOREIGN_SOURCE_SELECTOR_TYPE
-        and isinstance(source.coordinate, dict)
-        and isinstance(selector["working_selection"], dict)
         and source.replayability == "attested_only"
         and envelope.commitment.materialization == "cas"
         and envelope.commitment.digest_kind == "exact_bytes"
@@ -2490,7 +2491,47 @@ def coordinator_location_valid(envelope: CaptureEnvelopeAny) -> bool:
         and isinstance(claim_id, str)
         and _CLAIM_IDENTITY_RE.fullmatch(claim_id) is not None
         and envelope.run_coordinate.run_id == f"{_COORDINATOR_RUN_PREFIX}{claim_id.casefold()}"
+    ):
+        return False
+    return _located_window_valid(
+        source.coordinate,
+        selector["working_selection"],
+        byte_length=envelope.commitment.byte_length,
     )
+
+
+def _located_window_valid(coordinate: object, window: object, *, byte_length: int | None) -> bool:
+    """The observed coordinate and working selection, exactly as the writer's models state them.
+
+    Each must be the canonical form of its model (a coordinate of the observed
+    file, a section's anchor window), the window must lie inside the observed
+    file and cover exactly the committed bytes, and it must carry the heading
+    path drift and re-binding name it by.
+    """
+
+    from cruxible_client.contracts.authoring.models import WorkingAnchorWindow
+
+    if not isinstance(coordinate, dict) or not isinstance(window, dict):
+        return False
+    try:
+        observed = _working_coordinate_adapter().validate_python(coordinate)
+        selection = WorkingAnchorWindow.model_validate(window)
+    except ValidationError:
+        return False
+    return (
+        observed.model_dump(mode="json") == coordinate
+        and selection.model_dump(mode="json") == window
+        and selection.section is not None
+        and selection.end_byte <= observed.source_byte_length
+        and byte_length == selection.end_byte - selection.start_byte
+    )
+
+
+@lru_cache(maxsize=1)
+def _working_coordinate_adapter() -> TypeAdapter[WorkingSelectionCoordinate]:
+    from cruxible_client.contracts.authoring.models import WorkingSelectionCoordinate
+
+    return TypeAdapter(WorkingSelectionCoordinate)
 
 
 def capture_is_coordinator_self_source(

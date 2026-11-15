@@ -344,6 +344,7 @@ def _location(body: bytes = _LOCATED_BODY, source_id: str = "repo.notes"):  # ty
     import hashlib
 
     from cruxible_client.contracts.authoring.models import (
+        SectionSelector,
         WorkingAnchorWindow,
         WorkingDigestCoordinate,
         WorkingSelectionObservation,
@@ -363,6 +364,7 @@ def _location(body: bytes = _LOCATED_BODY, source_id: str = "repo.notes"):  # ty
             start_byte=len(page) - len(body),
             end_byte=len(page),
             observed_occurrence_count=1,
+            section=SectionSelector(path=("Decision",)),
         ),
     )
 
@@ -561,20 +563,97 @@ def test_located_own_words_reproduce_their_commitment_length(tmp_path: Path) -> 
 
     contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     store, _location_used, result = _located(tmp_path)
-    for forged_from in (
-        result.envelope,
-        build_coordinator_self_source_capture(
-            store=store,
-            actor_id="owner",
-            claim_id=_LOCATED_CLAIM,
-            body=_LOCATED_BODY,
-            observed_at=NOW,
-            accepted_coordinate=_accepted_coordinate(),
-        ).envelope,
-    ):
-        forged = forged_from.model_copy(
-            update={"commitment": forged_from.commitment.model_copy(update={"byte_length": 0})}
-        )
+    unlocated = build_coordinator_self_source_capture(
+        store=store,
+        actor_id="owner",
+        claim_id=_LOCATED_CLAIM,
+        body=_LOCATED_BODY,
+        observed_at=NOW,
+        accepted_coordinate=_accepted_coordinate(),
+    ).envelope
+    located = result.envelope
+    source = located.source
+    selector = dict(source.selector)  # type: ignore[union-attr, arg-type]
+    window = dict(selector["working_selection"])
+    short = len(_LOCATED_BODY) - 1
+    # A window shrunk with the declared length keeps the location consistent;
+    # the retained bytes still say otherwise.
+    window["end_byte"] = window["start_byte"] + short
+    selector["working_selection"] = window
+    forgeries = (
+        unlocated.model_copy(
+            update={"commitment": unlocated.commitment.model_copy(update={"byte_length": 0})}
+        ),
+        located.model_copy(
+            update={
+                "source": source.model_copy(update={"selector": selector}),
+                "commitment": located.commitment.model_copy(update={"byte_length": short}),
+            }
+        ),
+    )
+    for forged in forgeries:
         digest = store.store(render_capture_envelope(forged)).digest
         with pytest.raises(CaptureFormatError, match="byte length does not reproduce"):
             verify_capture(digest, store=store, contract=contract)
+    # Declared alone, the wrong length is not even the located form.
+    lying = located.model_copy(
+        update={"commitment": located.commitment.model_copy(update={"byte_length": 0})}
+    )
+    digest = store.store(render_capture_envelope(lying)).digest
+    with pytest.raises(CaptureFormatError):
+        verify_capture(digest, store=store, contract=contract)
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    ["empty", "no_section", "outside_file", "not_canonical", "unknown_coordinate"],
+)
+def test_a_located_capture_needs_a_real_file_coordinate_and_section_window(
+    tmp_path: Path, forgery: str
+) -> None:
+    """The located form is granted only to a usable location (the review's probe).
+
+    An empty coordinate and working selection, a window with no heading path,
+    one past the observed file's end, a non-canonical spelling or an unknown
+    coordinate kind is not a location drift or re-binding can use.
+    """
+
+    from cruxible_client.contracts.captures import (
+        CaptureFormatError,
+        coordinator_location_valid,
+        render_capture_envelope,
+    )
+
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    store, _location_used, result = _located(tmp_path)
+    envelope = result.envelope
+    source = envelope.source
+    coordinate = dict(source.coordinate)  # type: ignore[union-attr, arg-type]
+    window = dict(source.selector["working_selection"])  # type: ignore[union-attr, index]
+    if forgery == "empty":
+        coordinate, window = {}, {}
+    elif forgery == "no_section":
+        window.pop("section")
+    elif forgery == "outside_file":
+        coordinate["source_byte_length"] = window["end_byte"] - 1
+    elif forgery == "not_canonical":
+        # The model fills in the section's extent: the stored bytes are not its form.
+        window["section"] = {"path": ["Decision"]}
+    else:
+        coordinate["kind"] = "observed_somewhere"
+    forged = envelope.model_copy(
+        update={
+            "source": source.model_copy(
+                update={
+                    "coordinate": coordinate,
+                    "selector": {"claim_id": _LOCATED_CLAIM, "working_selection": window},
+                }
+            )
+        }
+    )
+    assert not coordinator_location_valid(forged)
+    digest = store.store(render_capture_envelope(forged)).digest
+    with pytest.raises(CaptureFormatError):
+        verify_capture(digest, store=store, contract=contract)
+    reuse = classify_capture_reuse(forged, contract=contract, store=store, claim_id=_LOCATED_CLAIM)
+    assert reuse == "claim_bound_mismatch"
