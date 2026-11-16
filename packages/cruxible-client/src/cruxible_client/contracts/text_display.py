@@ -27,7 +27,11 @@ if TYPE_CHECKING:
         NextRepairRequirement,
         NextStatus,
     )
-    from cruxible_client.contracts.authoring_landing import AuthoringLanded, AuthoringProposed
+    from cruxible_client.contracts.authoring_landing import (
+        AuthoringLanded,
+        AuthoringProposed,
+        AuthoringRefused,
+    )
     from cruxible_client.contracts.proposal_summary import (
         ProposalReviewSummary,
         ReviewChange,
@@ -864,7 +868,7 @@ def render_review_summary(
 # -- authoring landings and intents --------------------------------------------
 
 
-def landing_lines(outcome: AuthoringLanded | AuthoringProposed) -> list[str]:
+def landing_lines(outcome: AuthoringLanded | AuthoringProposed | AuthoringRefused) -> list[str]:
     """Whether an authored change landed, or why it stopped and what to run."""
 
     if outcome.status == "landed":
@@ -899,7 +903,7 @@ def render_intent(
     revision: object,
     state: str,
     proposal_id: str | None,
-    outcome: AuthoringLanded | AuthoringProposed | None,
+    outcome: AuthoringLanded | AuthoringProposed | AuthoringRefused | None,
     diagnostics: Sequence[Any],
 ) -> str:
     """An authoring intent: its state, its proposal and outcome, and why it refused."""

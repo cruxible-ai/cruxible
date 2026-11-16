@@ -25,7 +25,7 @@ class AuthoringLanded(BaseModel):
 
 
 class AuthoringProposed(BaseModel):
-    """Why submit stopped; a refused preflight has no proposal yet."""
+    """Why submit stopped short of landing a proposal it made, or one not yet ready."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -35,7 +35,6 @@ class AuthoringProposed(BaseModel):
         "independent_approval_required",
         "activation_not_permitted",
         "accept_never",
-        "preflight_refused",
         "not_ready_to_activate",
         "head_moved",
     ]
@@ -50,6 +49,29 @@ class AuthoringProposed(BaseModel):
         return "\n".join(landing_lines(self))
 
 
+class AuthoringRefused(BaseModel):
+    """Submit proposed nothing: the payload failed its preflight.
+
+    The intent's preflight diagnostics name each fault. Preflight already
+    re-checks a refused intent at the head, so running it again changes
+    nothing: the repair is a revised payload, resubmitted to the same intent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["refused"] = "refused"
+    reason: Literal["preflight_refused"] = "preflight_refused"
+    message: str
+    next: str | None = None
+
+    def __str__(self) -> str:
+        """Why it refused and what to run; ``repr()`` stays the full model."""
+
+        from cruxible_client.contracts.text_display import landing_lines
+
+        return "\n".join(landing_lines(self))
+
+
 AuthoringLanding: TypeAlias = Annotated[
-    AuthoringLanded | AuthoringProposed, Field(discriminator="status")
+    AuthoringLanded | AuthoringProposed | AuthoringRefused, Field(discriminator="status")
 ]

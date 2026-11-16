@@ -59,8 +59,14 @@ class _SubmitClient:
                     ],
                 }
             }
-        return contracts.AuthoringSubmitResultRecord(
-            outcome=contracts.AuthoringProposed(
+        outcome: contracts.AuthoringRefused | contracts.AuthoringProposed
+        if self.state == "preflight_refused":
+            outcome = contracts.AuthoringRefused(
+                message="refused: the payload failed preflight and nothing was proposed",
+                next=f"cruxible authoring submit REVISED_PAYLOAD --intent-id {intent_id}",
+            )
+        else:
+            outcome = contracts.AuthoringProposed(
                 proposal_id=PROPOSAL_ID,
                 reason="independent_approval_required"
                 if self.state == "awaiting_external_approval"
@@ -71,11 +77,13 @@ class _SubmitClient:
                 next=f"cruxible proposal approve {PROPOSAL_ID}"
                 if self.state == "awaiting_external_approval"
                 else None,
-            ),
+            )
+        return contracts.AuthoringSubmitResultRecord(
+            outcome=outcome,
             intent=intent,
             status=contracts.CandidateStatusRecord(
                 state=self.state,
-                proposal_id=PROPOSAL_ID,
+                proposal_id=None if self.state == "preflight_refused" else PROPOSAL_ID,
                 current_accepted_coordinate=COORDINATE,
             ),
         )
@@ -89,7 +97,6 @@ class _SubmitClient:
     ("state", "marker"),
     [
         ("awaiting_external_approval", "needs an external approval"),
-        ("preflight_refused", "not ready_to_activate"),
         ("draft", "not ready_to_activate"),
     ],
 )
@@ -134,7 +141,14 @@ def test_refused_brief_prints_the_typed_reason_on_one_line(
 
     result = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--brief"])
 
-    assert result.exit_code == 0, result.output
+    # gapc-19: nothing was proposed, so the outcome reads refused and the exit fails.
+    assert result.exit_code == 1, result.output
+    assert "outcome: refused (preflight_refused)" in result.output
+    assert "proposal:" not in result.output
+    assert f"next: cruxible authoring submit REVISED_PAYLOAD --intent-id {INTENT_ID}" in (
+        result.output
+    )
+    assert "authoring preflight" not in result.output
     assert (
         "reason: cruxible.claim.subject_unresolved: The requested Subject does not exist."
         in result.output
@@ -249,22 +263,24 @@ def _record(outcome: Any, *, members: tuple[dict[str, Any], ...] = ()) -> Any:
 def test_a_refused_submit_prints_the_brief_block_and_keeps_the_record_behind_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    refused = _record(
-        contracts.AuthoringProposed(
-            reason="preflight_refused", message="preflight refused: 1 diagnostic"
-        )
-    )
+    refused = _record(contracts.AuthoringRefused(message="preflight refused: 1 diagnostic"))
     client = _SubmitClient("draft")
     client.submit_authoring_intent = lambda *_a, **_k: refused  # type: ignore[method-assign]
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
 
     text = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID])
-    assert text.exit_code == 0, text.output
-    assert "outcome: submitted (draft)" in text.output
+    assert text.exit_code == 1, text.output
+    assert "outcome: refused (preflight_refused)" in text.output
     assert "reason: preflight refused: 1 diagnostic" in text.output
     assert "{" not in text.stdout
     full = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--json"])
-    assert json.loads(full.stdout)["outcome"]["reason"] == "preflight_refused"
+    assert full.exit_code == 1, full.output
+    assert json.loads(full.stdout)["outcome"] == {
+        "status": "refused",
+        "reason": "preflight_refused",
+        "message": "preflight refused: 1 diagnostic",
+        "next": None,
+    }
 
 
 def test_a_landed_change_that_adds_a_line_names_line_enable_next(

@@ -5479,32 +5479,37 @@ def submit_authoring_intent(
 
     submitted = _server_call(call, command_name="cruxible authoring submit")
     outcome = submitted.outcome
-    refused = (
-        not isinstance(outcome, contracts.AuthoringLanded) and outcome.reason == "preflight_refused"
-    )
+    refused = isinstance(outcome, contracts.AuthoringRefused)
     if output_brief or (refused and not output_json):
         if isinstance(outcome, contracts.AuthoringLanded):
-            landed = True
-            coordinate = outcome.accepted_coordinate.git_oid
+            headline = "accepted"
+            coordinate: str | None = outcome.accepted_coordinate.git_oid
             reason = None
             next_command = _landed_line_next(submitted.members)
         else:
-            landed = False
+            headline = (
+                f"refused ({outcome.reason})"
+                if isinstance(outcome, contracts.AuthoringRefused)
+                else f"submitted ({submitted.status.state})"
+            )
             coordinate = None
             reason = outcome.message
             next_command = outcome.next
         _emit_brief(
-            outcome="accepted" if landed else f"submitted ({submitted.status.state})",
+            outcome=headline,
             ids={
                 "intent": str(submitted.intent.get("intent_id")),
-                "proposal": outcome.proposal_id,
+                "proposal": getattr(outcome, "proposal_id", None),
                 "coordinate": coordinate,
             },
             reason=_submit_refusal_reason(submitted) or reason,
             next_command=next_command,
         )
-        return
-    _emit_json(submitted.model_dump(mode="json"))
+    else:
+        _emit_json(submitted.model_dump(mode="json"))
+    if refused:
+        # Nothing was proposed: a script reading the exit code must not see success.
+        raise click.exceptions.Exit(1)
 
 
 def _landed_line_next(members: Sequence[Mapping[str, Any]]) -> str | None:

@@ -252,3 +252,38 @@ def test_an_unknown_or_foreign_intent_is_a_typed_refusal(tmp_path: Path) -> None
     assert error_to_response(foreign.value)[0] == 403
     # Callers that read a missing intent as nothing to do still catch it.
     assert issubclass(AuthoringIntentRefused, AuthoringIntentStoreError)
+
+
+def test_a_refused_one_shot_submit_lands_as_refused_naming_a_revised_payload(
+    tmp_path: Path,
+) -> None:
+    """gapc-19: a refused submit read `proposed` with a preflight rerun as its next step."""
+
+    from cruxible_client import contracts
+    from cruxible_core.service.authoring.landing import service_land_authoring_submit
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(
+        instance,
+        owner,
+        contract=foreign_source_capture_contract("repo.work-items"),
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    submitted = coordinator.compile_and_submit(
+        actor=actor,
+        payload=_working_payload(occurrence_count=2),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert submitted.status.state == "preflight_refused"
+
+    record = service_land_authoring_submit(
+        coordinator, actor=actor, submitted=submitted, accept="if_allowed", may_activate=True
+    )
+
+    assert isinstance(record.outcome, contracts.AuthoringRefused)
+    assert record.outcome.status == "refused"
+    assert record.outcome.next == (
+        f"cruxible authoring submit REVISED_PAYLOAD --intent-id {submitted.intent.intent_id}"
+    )
+    assert record.status.proposal_id is None

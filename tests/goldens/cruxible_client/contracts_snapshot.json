@@ -15810,7 +15810,6 @@
               "independent_approval_required",
               "activation_not_permitted",
               "accept_never",
-              "preflight_refused",
               "not_ready_to_activate",
               "head_moved"
             ],
@@ -15835,7 +15834,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "Why submit stopped; a refused preflight has no proposal yet.",
+        "description": "Why submit stopped short of landing a proposal it made, or one not yet ready.",
         "properties": {
           "message": {
             "title": "Message",
@@ -15870,7 +15869,6 @@
               "independent_approval_required",
               "activation_not_permitted",
               "accept_never",
-              "preflight_refused",
               "not_ready_to_activate",
               "head_moved"
             ],
@@ -16046,6 +16044,110 @@
         "repair"
       ]
     },
+    "AuthoringRefused": {
+      "fields": {
+        "message": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "message",
+          "required": true,
+          "schema": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "next": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next"
+          }
+        },
+        "reason": {
+          "default": "preflight_refused",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "const": "preflight_refused",
+            "default": "preflight_refused",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "status": {
+          "default": "refused",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "const": "refused",
+            "default": "refused",
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Submit proposed nothing: the payload failed its preflight.\n\nThe intent's preflight diagnostics name each fault. Preflight already\nre-checks a refused intent at the head, so running it again changes\nnothing: the repair is a revised payload, resubmitted to the same intent.",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next"
+          },
+          "reason": {
+            "const": "preflight_refused",
+            "default": "preflight_refused",
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "const": "refused",
+            "default": "refused",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AuthoringRefused",
+        "type": "object"
+      },
+      "required_fields": [
+        "message"
+      ]
+    },
     "AuthoringSubmitResultRecord": {
       "fields": {
         "claim_revision": {
@@ -16118,7 +16220,8 @@
             "discriminator": {
               "mapping": {
                 "landed": "#/$defs/AuthoringLanded",
-                "proposed": "#/$defs/AuthoringProposed"
+                "proposed": "#/$defs/AuthoringProposed",
+                "refused": "#/$defs/AuthoringRefused"
               },
               "propertyName": "status"
             },
@@ -16128,6 +16231,9 @@
               },
               {
                 "$ref": "#/$defs/AuthoringProposed"
+              },
+              {
+                "$ref": "#/$defs/AuthoringRefused"
               }
             ],
             "title": "Outcome"
@@ -16434,7 +16540,7 @@
           },
           "AuthoringProposed": {
             "additionalProperties": false,
-            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "description": "Why submit stopped short of landing a proposal it made, or one not yet ready.",
             "properties": {
               "message": {
                 "title": "Message",
@@ -16469,7 +16575,6 @@
                   "independent_approval_required",
                   "activation_not_permitted",
                   "accept_never",
-                  "preflight_refused",
                   "not_ready_to_activate",
                   "head_moved"
                 ],
@@ -16488,6 +16593,45 @@
               "message"
             ],
             "title": "AuthoringProposed",
+            "type": "object"
+          },
+          "AuthoringRefused": {
+            "additionalProperties": false,
+            "description": "Submit proposed nothing: the payload failed its preflight.\n\nThe intent's preflight diagnostics name each fault. Preflight already\nre-checks a refused intent at the head, so running it again changes\nnothing: the repair is a revised payload, resubmitted to the same intent.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "reason": {
+                "const": "preflight_refused",
+                "default": "preflight_refused",
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "refused",
+                "default": "refused",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "title": "AuthoringRefused",
             "type": "object"
           },
           "BlockedCheck": {
@@ -17160,7 +17304,8 @@
             "discriminator": {
               "mapping": {
                 "landed": "#/$defs/AuthoringLanded",
-                "proposed": "#/$defs/AuthoringProposed"
+                "proposed": "#/$defs/AuthoringProposed",
+                "refused": "#/$defs/AuthoringRefused"
               },
               "propertyName": "status"
             },
@@ -17170,6 +17315,9 @@
               },
               {
                 "$ref": "#/$defs/AuthoringProposed"
+              },
+              {
+                "$ref": "#/$defs/AuthoringRefused"
               }
             ],
             "title": "Outcome"
@@ -22394,7 +22542,7 @@
           },
           "AuthoringProposed": {
             "additionalProperties": false,
-            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "description": "Why submit stopped short of landing a proposal it made, or one not yet ready.",
             "properties": {
               "message": {
                 "title": "Message",
@@ -22429,7 +22577,6 @@
                   "independent_approval_required",
                   "activation_not_permitted",
                   "accept_never",
-                  "preflight_refused",
                   "not_ready_to_activate",
                   "head_moved"
                 ],
@@ -22448,6 +22595,45 @@
               "message"
             ],
             "title": "AuthoringProposed",
+            "type": "object"
+          },
+          "AuthoringRefused": {
+            "additionalProperties": false,
+            "description": "Submit proposed nothing: the payload failed its preflight.\n\nThe intent's preflight diagnostics name each fault. Preflight already\nre-checks a refused intent at the head, so running it again changes\nnothing: the repair is a revised payload, resubmitted to the same intent.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "reason": {
+                "const": "preflight_refused",
+                "default": "preflight_refused",
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "refused",
+                "default": "refused",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "title": "AuthoringRefused",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -22659,7 +22845,8 @@
                     "discriminator": {
                       "mapping": {
                         "landed": "#/$defs/AuthoringLanded",
-                        "proposed": "#/$defs/AuthoringProposed"
+                        "proposed": "#/$defs/AuthoringProposed",
+                        "refused": "#/$defs/AuthoringRefused"
                       },
                       "propertyName": "status"
                     },
@@ -22669,6 +22856,9 @@
                       },
                       {
                         "$ref": "#/$defs/AuthoringProposed"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringRefused"
                       }
                     ]
                   },
@@ -23580,7 +23770,7 @@
           },
           "AuthoringProposed": {
             "additionalProperties": false,
-            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "description": "Why submit stopped short of landing a proposal it made, or one not yet ready.",
             "properties": {
               "message": {
                 "title": "Message",
@@ -23615,7 +23805,6 @@
                   "independent_approval_required",
                   "activation_not_permitted",
                   "accept_never",
-                  "preflight_refused",
                   "not_ready_to_activate",
                   "head_moved"
                 ],
@@ -23634,6 +23823,45 @@
               "message"
             ],
             "title": "AuthoringProposed",
+            "type": "object"
+          },
+          "AuthoringRefused": {
+            "additionalProperties": false,
+            "description": "Submit proposed nothing: the payload failed its preflight.\n\nThe intent's preflight diagnostics name each fault. Preflight already\nre-checks a refused intent at the head, so running it again changes\nnothing: the repair is a revised payload, resubmitted to the same intent.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "reason": {
+                "const": "preflight_refused",
+                "default": "preflight_refused",
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "refused",
+                "default": "refused",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "title": "AuthoringRefused",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -23845,7 +24073,8 @@
                     "discriminator": {
                       "mapping": {
                         "landed": "#/$defs/AuthoringLanded",
-                        "proposed": "#/$defs/AuthoringProposed"
+                        "proposed": "#/$defs/AuthoringProposed",
+                        "refused": "#/$defs/AuthoringRefused"
                       },
                       "propertyName": "status"
                     },
@@ -23855,6 +24084,9 @@
                       },
                       {
                         "$ref": "#/$defs/AuthoringProposed"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringRefused"
                       }
                     ]
                   },
@@ -73679,7 +73911,8 @@
                 "discriminator": {
                   "mapping": {
                     "landed": "#/$defs/AuthoringLanded",
-                    "proposed": "#/$defs/AuthoringProposed"
+                    "proposed": "#/$defs/AuthoringProposed",
+                    "refused": "#/$defs/AuthoringRefused"
                   },
                   "propertyName": "status"
                 },
@@ -73689,6 +73922,9 @@
                   },
                   {
                     "$ref": "#/$defs/AuthoringProposed"
+                  },
+                  {
+                    "$ref": "#/$defs/AuthoringRefused"
                   }
                 ]
               },
@@ -73833,7 +74069,7 @@
           },
           "AuthoringProposed": {
             "additionalProperties": false,
-            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "description": "Why submit stopped short of landing a proposal it made, or one not yet ready.",
             "properties": {
               "message": {
                 "title": "Message",
@@ -73868,7 +74104,6 @@
                   "independent_approval_required",
                   "activation_not_permitted",
                   "accept_never",
-                  "preflight_refused",
                   "not_ready_to_activate",
                   "head_moved"
                 ],
@@ -73887,6 +74122,45 @@
               "message"
             ],
             "title": "AuthoringProposed",
+            "type": "object"
+          },
+          "AuthoringRefused": {
+            "additionalProperties": false,
+            "description": "Submit proposed nothing: the payload failed its preflight.\n\nThe intent's preflight diagnostics name each fault. Preflight already\nre-checks a refused intent at the head, so running it again changes\nnothing: the repair is a revised payload, resubmitted to the same intent.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "reason": {
+                "const": "preflight_refused",
+                "default": "preflight_refused",
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "refused",
+                "default": "refused",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "title": "AuthoringRefused",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -74173,7 +74447,8 @@
                 "discriminator": {
                   "mapping": {
                     "landed": "#/$defs/AuthoringLanded",
-                    "proposed": "#/$defs/AuthoringProposed"
+                    "proposed": "#/$defs/AuthoringProposed",
+                    "refused": "#/$defs/AuthoringRefused"
                   },
                   "propertyName": "status"
                 },
@@ -74183,6 +74458,9 @@
                   },
                   {
                     "$ref": "#/$defs/AuthoringProposed"
+                  },
+                  {
+                    "$ref": "#/$defs/AuthoringRefused"
                   }
                 ]
               },
@@ -75356,7 +75634,7 @@
           },
           "AuthoringProposed": {
             "additionalProperties": false,
-            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "description": "Why submit stopped short of landing a proposal it made, or one not yet ready.",
             "properties": {
               "message": {
                 "title": "Message",
@@ -75391,7 +75669,6 @@
                   "independent_approval_required",
                   "activation_not_permitted",
                   "accept_never",
-                  "preflight_refused",
                   "not_ready_to_activate",
                   "head_moved"
                 ],
@@ -75410,6 +75687,45 @@
               "message"
             ],
             "title": "AuthoringProposed",
+            "type": "object"
+          },
+          "AuthoringRefused": {
+            "additionalProperties": false,
+            "description": "Submit proposed nothing: the payload failed its preflight.\n\nThe intent's preflight diagnostics name each fault. Preflight already\nre-checks a refused intent at the head, so running it again changes\nnothing: the repair is a revised payload, resubmitted to the same intent.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "reason": {
+                "const": "preflight_refused",
+                "default": "preflight_refused",
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "refused",
+                "default": "refused",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "title": "AuthoringRefused",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -75621,7 +75937,8 @@
                     "discriminator": {
                       "mapping": {
                         "landed": "#/$defs/AuthoringLanded",
-                        "proposed": "#/$defs/AuthoringProposed"
+                        "proposed": "#/$defs/AuthoringProposed",
+                        "refused": "#/$defs/AuthoringRefused"
                       },
                       "propertyName": "status"
                     },
@@ -75631,6 +75948,9 @@
                       },
                       {
                         "$ref": "#/$defs/AuthoringProposed"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringRefused"
                       }
                     ]
                   },

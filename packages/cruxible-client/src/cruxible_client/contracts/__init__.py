@@ -57,6 +57,9 @@ from cruxible_client.contracts.authoring_landing import (
 from cruxible_client.contracts.authoring_landing import (
     AuthoringProposed as AuthoringProposed,
 )
+from cruxible_client.contracts.authoring_landing import (
+    AuthoringRefused as AuthoringRefused,
+)
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord as CaptureContractInputRecord,
