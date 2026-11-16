@@ -343,7 +343,9 @@ transport rather than sharing its SQLite files and ledger. The lock is an
 killed daemon never blocks the next start.
 
 `server stop` is the way to stop a daemon: it asks the running daemon over the
-configured transport to shut down gracefully, then waits for the release and
+configured transport (the root options go before the group, as in
+`cruxible --server-socket PATH server stop`, or set `CRUXIBLE_SERVER_SOCKET`;
+`--socket` is a `server start` option) to shut down gracefully, then waits for the release and
 says what it actually observed. Reaching for `kill` or a terminal multiplexer's
 quit instead kills the launching shell and orphans the daemon, which is how one
 state root ends up served by several live processes.

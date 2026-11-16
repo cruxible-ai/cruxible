@@ -485,9 +485,11 @@ def server_start_cmd(
 def server_stop_cmd(output_json: bool, timeout: float, state_root: Path | None) -> None:
     """Stop the running daemon gracefully and release its state-root lock.
 
-    A CLIENT command: it asks the daemon over the configured transport
-    (`--server-url` / `--server-socket` or the matching env vars) to shut itself
-    down. Reaching for `kill` or a terminal-multiplexer quit instead kills the
+    A CLIENT command: it asks the daemon over the configured transport to shut
+    itself down. Name the daemon with the root options before the group
+    (`cruxible --server-socket PATH server stop`, or `--server-url URL`) or with
+    `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_SERVER_URL`; `--socket` belongs to
+    `server start` only. Reaching for `kill` or a terminal-multiplexer quit instead kills the
     launching shell and orphans the daemon, leaving a second process serving the
     same state root.
 
@@ -703,8 +705,9 @@ def server_status_cmd(output_json: bool, state_root: Path | None) -> None:
     """Report a running daemon's version, state root, transport, auth, and instances.
 
     A CLIENT command: it queries an already-running daemon over the configured
-    transport (`--server-url` / `--server-socket` or the matching env vars). If
-    no daemon is reachable it fails with a clear message rather than hanging.
+    transport: the root options before the group (`cruxible --server-socket PATH
+    server status`, or `--server-url URL`) or the matching env vars. If no daemon
+    is reachable it fails with a clear message rather than hanging.
     """
     client = _get_client(state_root)
     if client is None:
