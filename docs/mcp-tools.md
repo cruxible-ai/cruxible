@@ -465,7 +465,10 @@ them that require a Capture), `ProcedureMandate` (`name`, `procedure`,
 Triggers, Lines, SubjectKinds, mandates and QueryDefinitions. Their columns filter by type (integers
 and `expires_at` also compare with `lt` .. `gte`) and order typed, nulls last. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
-`contains` (case-insensitive text); filters combine as all-of. A field is a
+`contains` (case-insensitive text); filters combine as all-of. `exists: true`
+matches a field holding any live Claim, an explicit none included; `exists:
+false` only a field with no Claim. Filter on a value (`eq`) to match real
+values. A field is a
 predicate's full name, its name after the `KIND.` prefix (`adoption_state`),
 `subject_id`, or `alias.field` after `follow: [{field, as}]`; columns show that
 short name unless it is itself another predicate's full name or a reserved name

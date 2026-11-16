@@ -121,7 +121,8 @@ which exists before `init` too.
   to commit: `kit add` and `kit remove`. Commit with `--commit`.
 - A change that cannot be undone previews unless asked to commit, and commits
   only with the preview's coordinate: `instance decommission`,
-  `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
+  `credential revoke`, `credential rotate`, `ledger set-mirror`, `capture
+  erase` and `curation overrule`. Commit with
   `--commit --at OID`; without `--at` it refuses
   `cruxible.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
@@ -917,8 +918,12 @@ or prefix must name one Capture, resolved exactly as the write verbs resolve
 `cruxible.capture.not_found` points at `orient --section captures`, and
 `cruxible.capture.ref_scan_exhausted` asks for a longer handle when more share
 the prefix than one bounded lookup examines).
-Uses body-read permission and never refetches the external source. The SDK equivalent
-is `cx.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
+Uses body-read permission and never refetches the external source. There is no
+text form yet: the retained bytes are base64 in `material.body_access.body_base64`
+(`cruxible capture read CAP-… | jq -r .material.body_access.body_base64 | base64 -d`
+prints them; see [Reading a Capture's bytes](evidence-and-admission.md#reading-a-captures-bytes)).
+The SDK equivalent is `cx.capture(digest)`, whose `.text()` and `.json()` decode the
+bytes; its `.ref` can be passed to Claim authoring as `supported_by`.
 
 `capture erase` destroys one Capture's retained body: its CAS commitment and
 CAS source, the bytes replay reads. The envelope, its digest, its contract, the
@@ -2392,6 +2397,11 @@ many-valued column matches any of its values), list only live rows unless a
 numbers, instants as instants), nulls last, ties by name. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`f exists` matches a Subject whose field holds a live Claim, including an explicit
+none (a KEV field read in full that shows `none of security.catalog/cisa-kev`);
+`f !exists` matches only a field with no Claim at all, one nobody has answered.
+To find a field holding a real value, filter on the value
+(`listed_in=security.catalog/cisa-kev`); `f=none` refuses.
 `--follow field:alias` hops forward along one of KIND's Subject-valued predicates;
 `--follow-in field:alias` hops backwards along another kind's predicate whose values
 name KIND's Subjects (for example `query project.task --follow-in
@@ -3986,6 +3996,10 @@ cruxible write --schema
 `write` accepts `docs` with heading paths as lists. Append adds a child subtree
 (`under: []` appends at EOF); replace replaces a subtree (`section: []` selects
 the preamble after frontmatter). Optional `expect` is the prior subtree digest.
+Only an append at the root (`under: []`) creates a missing file. An append
+`under` a heading needs the file and that heading to exist, and replace needs
+the file: otherwise the write refuses `cruxible.doc.section_not_found` and writes nothing.
+To start a file under a heading, append the heading at the root first.
 A created file contains your text, including any frontmatter you supply, and
 gets a catalog entry. No `type` option is inferred.
 An operation may declare an `id`; `{kind: section, ref: ID}` cites the section
@@ -4023,6 +4037,16 @@ to another file refuses `cruxible.doc.catalog_name_exists` before anything is
 sent, with the repair to catalogue the file under a name of your own and cite
 it. A path outside the workspace, a missing file and an anchor not found
 exactly once refuse, each with a repair.
+
+The anchor in `PATH#ANCHOR` is text on one line (the form is
+`^[^#]+#.+$`, so a newline in it fails the request's schema), found exactly
+once in the file, and those bytes are what the Claim cites. To rest a Claim on
+a multi-line passage, anchor the one line that decides it, a line that stays
+put when the lines around it change; in a Markdown page a `section` citation
+cites a heading's whole body instead. A line that appears more than once in
+the file cannot be anchored, since any text taken from it is found more than
+once: the write refuses with the occurrences' byte offsets (`anchor resolved
+to N occurrences at byte offsets [...]`). Anchor a nearby line that is unique.
 
 Use `write - --workspace-root DIR` for stdin and `write --schema` for the
 payload schema. Docs-only writes create no change set. Accepted and
