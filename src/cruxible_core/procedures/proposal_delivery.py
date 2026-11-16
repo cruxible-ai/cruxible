@@ -70,14 +70,12 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimArtifact,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
     parse_claim,
 )
 from cruxible_client.contracts.content_memo import seal
-from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_client.contracts.mandate_scope import SettleScopeGap
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -116,6 +114,7 @@ from cruxible_core.authoring.lowering import (
     subject_creation_paths,
 )
 from cruxible_core.evidence.claim_reobservations import (
+    ClaimReobservationRefused,
     ClaimReobservationStore,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -2318,169 +2317,52 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV1,
         unchanged: tuple[UnchangedChildReceiptAny, ...],
     ) -> dict[str, ReobservationRefusalReason]:
-        """Record the terminal's unchanged items as ONE content transition (ruling 1d).
+        """Record each unchanged item's re-observation of a Claim whose row changed.
 
-        Each unchanged item restated its Claim on a Capture the Claim does not
-        cite. When that Capture observed the very content the Claim cites, the
-        run's fetch already recorded it as a content observation (ruling 1a),
-        and nothing more is recorded. Otherwise the bytes changed but the
-        Claim's value and key did not (D-R8): the terminal records one
-        transition saying the Claims citing that content under its contract
-        were re-checked in the new Capture, except the terminal's Claims citing
-        it that changed instead. Its size is the contents that moved and the
-        Claims excepted, never the Claims citing them.
+        An item whose Claim's own row this run's extract step observed is never
+        here (the row observation is its freshness, 2026-11-16 c). One here
+        restated its Claim on a Capture whose row differs elsewhere but proves
+        the same value and key (D-R8): a per-Claim record, sized by the change.
 
-        An item is refused (and so never counted re-observed) when its Capture
-        does not verify as daemon-admitted evidence at the current head, its
-        Claim is no longer live there, or the Claim already cites it; the
-        terminal still completes and its receipt names the reason.
+        The store admits each one at the current head under its append lock
+        (``ClaimReobservationStore.record``). One it refuses there -- the Claim
+        retired, or no longer citing that contract and content, since the run's
+        base; or the very Capture the Claim already cites -- is not recorded.
+        The terminal still completes, and its receipt still names the child as
+        it was at the admitted base, with the reason its re-observation was
+        refused (returned here by item key), so the run never counts it
+        re-observed.
         """
 
         refused: dict[str, ReobservationRefusalReason] = {}
         if not unchanged:
             return refused
-        from cruxible_client.contracts.captures import observed_content
-        from cruxible_core.evidence.claim_reobservations import ContentTransition
-        from cruxible_core.service.evidence.capture_reads import (
-            CaptureReadInvalid,
-            verify_accepted_capture,
-        )
-
-        coordinate = self.instance.accepted_coordinate()
-        access = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-        envelopes: dict[str, CaptureEnvelopeAny | None] = {}
-        admitted: dict[str, bool] = {}
-
-        def envelope_of(digest: str) -> CaptureEnvelopeAny | None:
-            if digest not in envelopes:
-                try:
-                    envelopes[digest] = parse_capture_envelope(
-                        self.instance.body_store().read(digest, access=access)
-                    )
-                except (CruxibleError, ValueError):
-                    envelopes[digest] = None
-            return envelopes[digest]
-
-        def verified(digest: str) -> bool:
-            if digest not in admitted:
-                try:
-                    result = verify_accepted_capture(
-                        self.instance,
-                        coordinate,
-                        digest,
-                        access=access,
-                        captures=self.instance.capture_verification_context(),
-                    )
-                    admitted[digest] = not isinstance(result, str)
-                except (CaptureReadInvalid, CruxibleError, ReadRefusalError, ValueError):
-                    admitted[digest] = False
-            return admitted[digest]
-
-        def cited_key(claim: ClaimArtifact) -> tuple[str, str] | None:
-            evidence = claim.backing.procedure_evidence
-            cited = getattr(getattr(evidence, "value", None), "capture_digest", None)
-            if not isinstance(cited, str):
-                return None
-            held = envelope_of(cited)
-            if held is None:
-                return None
-            return held.capture_contract_digest, observed_content(held).digest
-
         store = ClaimReobservationStore(self.instance)
-        witnesses: dict[object, None] = {}
-        transitions: list[ContentTransition] = []
-        moved_instants: list[datetime] = []
-        #: Live Claims citing content whose own item did not re-check: a moved
-        #: content's transition must except them, or it would refresh them.
-        unchecked: dict[str, tuple[str, str]] = {}
+        cited_envelopes: dict[str, CaptureEnvelopeAny] = {}
+        verified_witnesses: dict[object, None] = {}
         for child in unchanged:
             if not isinstance(child, TerminalEgressChildReceiptV3):
                 continue  # a reused Subject observes nothing
             claim_id = PurePosixPath(child.path).stem
-            path = claim_path(claim_id)
-            content = self.instance.blob_at(coordinate.git_oid, path)
-            claim = None if content is None else parse_claim(content, path=path)
-            capture = child.reobserving_capture_digest
-            if claim is None:
-                refused[child.item_key] = "claim_absent"
-                continue
-            if claim.lifecycle.state != "live":
-                refused[child.item_key] = "claim_not_live"
-                continue
-            if capture in claim.backing.capture_digests:
-                refused[child.item_key] = "capture_already_cited"
-                continue
-            source = cited_key(claim)
-            moved = envelope_of(capture)
-            if moved is None or not verified(capture):
-                refused[child.item_key] = "capture_not_admitted"
-                if source is not None:
-                    unchecked[claim_id] = source
-                continue
-            if source is None:
-                refused[child.item_key] = "content_not_cited"
-                continue
-            receipt = request.claims_evidence.get(child.item_key)
-            witness = None if receipt is None else receipt.absence
-            if witness is not None and (
-                store._witness_refusal(  # noqa: SLF001
-                    witness, envelope=moved, coordinate=coordinate, verified=witnesses
+            try:
+                store.record(
+                    claim_id=claim_id,
+                    capture_digest=child.reobserving_capture_digest,
+                    actor_id=request.actor_context.actor_id,
+                    extraction=request.claims_evidence.get(child.item_key),
+                    cited_envelopes=cited_envelopes,
+                    verified_witnesses=verified_witnesses,
+                    extracted_value=(
+                        change.value
+                        if isinstance(
+                            (change := request.claims_changes.get(child.item_key)),
+                            CoreReobservationChange,
+                        )
+                        else None
+                    ),
                 )
-                is not None
-            ):
-                # An absence re-checks only when every Capture its enumeration
-                # read stands here (D-R37 a6), not only the one it cites.
-                refused[child.item_key] = "absence_witness_unverified"
-                unchecked[claim_id] = source
-                continue
-            target = (moved.capture_contract_digest, observed_content(moved).digest)
-            if source == target:
-                continue  # the run's fetch recorded this content's observation
-            if source[0] != target[0]:
-                refused[child.item_key] = "content_not_cited"
-                continue
-            transitions.append(
-                ContentTransition(
-                    contract_digest=source[0],
-                    from_content_digest=source[1],
-                    to_capture_digest=capture,
-                    to_content_digest=target[1],
-                )
-            )
-            # The acquiring call's span (ruling 1b), carried in the durable
-            # request so recovery records the same; a request written before
-            # spans were carried falls back to the envelope's instant.
-            moved_instants.extend(
-                request.observation_spans.get(capture, (moved.observed_at, moved.observed_at))
-            )
-        if not transitions:
-            return refused
-        moved_from = {(item.contract_digest, item.from_content_digest) for item in transitions}
-        excepted: list[str] = [
-            claim_id for claim_id, source in unchecked.items() if source in moved_from
-        ]
-        for change in request.claims_changes.values():
-            # The terminal's own Claims that changed instead: a revision's
-            # predecessor or a retirement's Claim, when it cites moved content.
-            changed = getattr(change, "predecessor", None) or getattr(change, "claim_id", None)
-            if isinstance(change, CoreReobservationChange) or not isinstance(changed, str):
-                continue
-            changed_id = changed.removeprefix("Claim:")
-            raw = self.instance.blob_at(coordinate.git_oid, claim_path(changed_id))
-            if raw is None:
-                continue
-            key = cited_key(parse_claim(raw, path=claim_path(changed_id)))
-            if key is not None and key in moved_from:
-                excepted.append(changed_id)
-        store.transition(
-            transitions,
-            excepted=excepted,
-            earliest=min(moved_instants),
-            latest=max(moved_instants),
-            run_id=request.run_id,
-            node_id=request.node_id,
-            actor_id=request.actor_context.actor_id,
-        )
+            except ClaimReobservationRefused as exc:
+                refused[child.item_key] = exc.reason
         return refused
 
     def recover_existing(

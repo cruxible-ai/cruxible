@@ -1313,7 +1313,7 @@ def service_evaluate_playbill_claim_verdict(
     reading = reobservations_at(
         instance,
         coordinate=coordinate,
-        claim_id=accepted.claim.identity.name,
+        claim=accepted.claim,
         captures=captures,
         at=evaluation_time,
     )

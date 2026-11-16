@@ -1686,37 +1686,44 @@ members were observed; nothing is recorded per Claim. A Claim citing a Capture
 of one of those contents under its contract reads that observation as its
 freshness, whichever run's item (if any) restated it.
 
-So an item restating a live Claim on the Capture it cites, or on another
-Capture of the very content it cites, changes nothing and records nothing: a
-claims terminal whose every item is such a restatement has no item at all,
-prepares no intent, and journals one short record whose counts say how many
-items restated accepted state (the node summary's `no_op`). An item whose
-Capture holds new bytes in which the Claim's value and record key are
-unchanged (the catalog changed elsewhere) is an unchanged child of the
-terminal (`playbill-terminal-egress-child-receipt-v3`: the Claim's path, its
-current artifact digest, the re-observing Capture and when it observed the
-content; `unchanged` on the run's terminal child), counted `re_observed`. Such
-a terminal records one content transition: the Claims citing that content
-under its contract were re-checked in the new Capture, except the terminal's
-Claims citing it that changed instead. Its size is the contents that moved and
-the Claims excepted, never the Claims citing them, and a later run finding the
-same move again records nothing new. A terminal whose every item is unchanged
-completes with no proposal and no authority exercised: its receipt
+Each extract step also records its whole extracted row set as one row
+observation: every record is a row identified by its Capture's contract and
+logical source, its record key and its typed values (never where in the
+document it sat), and the set is the same whatever bytes carried the rows. A
+complete absence enumeration records one observation of its enumerated keys
+the same way. A Claim produced from an extracted record reads the latest
+observation of a row set holding its row as its freshness; an absence reads
+only complete enumerations with the same keys, never its first page's
+contents. Nothing is recorded per Claim: the same rows in new bytes are one
+head update.
+
+So an item restating a live Claim on the Capture it cites, on another Capture
+of the very content it cites, or on a record whose row this run's extract step
+observed, changes nothing and records nothing: a claims terminal whose every
+item is such a restatement has no item at all, prepares no intent, and
+journals one short record whose counts say how many items restated accepted
+state (the node summary's `no_op`). An item whose record's row changed while
+the Claim's value and record key did not (another field changed) is an
+unchanged child of the terminal (`playbill-terminal-egress-child-receipt-v3`:
+the Claim's path, its current artifact digest, the re-observing Capture and
+when it observed the content; `unchanged` on the run's terminal child),
+counted `re_observed`, and recorded as a per-Claim re-observation: sized by
+the change. A terminal whose every item is unchanged completes with no
+proposal and no authority exercised: its receipt
 (`playbill-terminal-egress-unchanged-receipt-v1`) reports every child
-unchanged. A terminal that records a transition journals its `prepared` intent
-before delivery like any proposal terminal: a run that dies around delivery is
-finished by startup recovery, which re-derives and checks the unchanged
-children, records the transition idempotently, emits the unchanged receipt and
-finalizes the attempt.
+unchanged. Such a terminal journals its `prepared` intent before delivery like
+any proposal terminal: a run that dies around delivery is finished by startup
+recovery, which re-derives and checks the unchanged children, records their
+re-observations idempotently, emits the unchanged receipt and finalizes the
+attempt.
 
 An observation counts for freshness through the content it observed. Under a
 ClaimType's `evidence_freshness.stale_after`, a cited Capture expires at the
 latest instant its contract and content were observed -- its own
 `observed_at`, the greatest earliest member instant among the calls that
-observed that content (an older call recorded later never moves it back), a
-transition from that content (and the observations of the content it moved
-to, unless the transition excepts the Claim), or a per-Claim re-observation an
-authored restatement recorded -- plus `stale_after`. Only observations
+observed that content or the row or enumeration the Claim depends on (an
+older call recorded later never moves it back), or a per-Claim re-observation
+-- plus `stale_after`. Only observations
 recorded by the evaluation instant count, so a verdict evaluated at an earlier
 instant reproduces byte for byte and its committed expirations still verify.
 The recording instant is the daemon's live wall clock, owned by the store:
@@ -1733,7 +1740,8 @@ observing Procedure call at the evaluation instant, however long its history
 (kept in full for audit), however many runs observed it, or however many
 different result sets held it. A prediction settles on the best observation
 made while the predicted Claim version was live whose call ended by the
-deadline, never on one made after the version was retired. An observation that set an expiry is named in
+deadline, never on one made after the version was retired. An observation
+that set an expiry is named in
 the verdict's `freshness_expirations` entry (`reobserved_by`,
 `reobserved_at`). A Capture's minimum retention counts from the latest
 instant its contents were observed, not its envelope's first observation. A

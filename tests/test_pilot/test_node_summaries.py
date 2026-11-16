@@ -159,7 +159,6 @@ def test_a_refused_reobservation_is_reported_not_counted(
         ClaimReobservationRefused,
         ClaimReobservationStore,
     )
-    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
 
     instance, root = pilot_world(tmp_path, "kev.json")
     activate(instance, run(instance, root))
@@ -168,18 +167,21 @@ def test_a_refused_reobservation_is_reported_not_counted(
     document = json.loads(path.read_text())
     document["catalogVersion"] = "2026.11.01"
     path.write_text(json.dumps(document))
-    record = ProposalTerminalEgressSink._record_reobservations
+    record = ClaimReobservationStore.record
     refused: list[str] = []
 
-    def refuse_two(self, request, unchanged):  # type: ignore[no-untyped-def]
-        reasons = record(self, request, unchanged)
-        for child in unchanged[:2]:
-            refused.append(child.path.rsplit("/", 1)[-1].removesuffix(".json"))
-            reasons[child.item_key] = "claim_not_live"
-        return reasons
+    def refuse_two(self, *, claim_id: str, **kwargs: Any):  # type: ignore[no-untyped-def]
+        if len(refused) < 2:
+            refused.append(claim_id)
+            raise ClaimReobservationRefused("test refusal", reason="claim_not_live")
+        return record(self, claim_id=claim_id, **kwargs)
 
-    monkeypatch.setattr(ProposalTerminalEgressSink, "_record_reobservations", refuse_two)
-    del ClaimReobservationRefused
+    monkeypatch.setattr(ClaimReobservationStore, "record", refuse_two)
+    # The rows are taken to have changed elsewhere too, so each unchanged item
+    # reaches delivery (the same rows would be one row observation instead).
+    from cruxible_core.procedures import claims_terminal
+
+    monkeypatch.setattr(claims_terminal, "_observed_same_row", lambda *_a, **_k: False)
     again = run(instance, root, minute=1)
     restated = _summaries(again)["write"]
     (egress,) = again.terminal_egress

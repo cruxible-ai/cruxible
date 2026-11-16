@@ -74,8 +74,9 @@ def test_a_bad_record_is_refused_alone_its_siblings_write_and_nothing_retires(
     write_sbom(root, APP, [A, bad, C, "pkg:pypi/d@1"])
     state = run(instance, root, source, minute=1)
     assert state.status == "succeeded", json.dumps(state.terminal.model_dump(mode="json"))
-    # D is new and writes; A and C are re-observed; B does NOT retire.
-    assert _changes(state) == ["claim", "reobservation", "reobservation", "subject"]
+    # D is new and writes; A and C hold the same rows, which the extract
+    # step's row observation refreshes (2026-11-16 c); B does NOT retire.
+    assert _changes(state) == ["claim", "subject"]
     assert state.completeness is not None and not state.completeness.complete
     assert {item.kind for item in state.completeness.reasons} >= {"invalid_record"}
     diagnostics = [d for egress in state.terminal_egress for d in egress.claims_diagnostics]
@@ -100,7 +101,10 @@ def _counted(tmp_path: Path, size: int, *, bad: int) -> int:
         source = Sbom()
         write_sbom(root, APP, good)
         activate(instance, run(instance, root, source))
-        members: list[object] = list(good)
+        # Both shapes re-read new bytes holding the same good records (reordered
+        # when none is bad), so each maps a new Capture's rows: the difference
+        # is the refused records' alone.
+        members: list[object] = list(reversed(good)) if not bad else list(good)
         for index in range(bad):
             members.insert(index * 3, ["not", "a", "record", index])
         write_sbom(root, APP, members)

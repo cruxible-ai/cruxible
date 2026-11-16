@@ -615,6 +615,41 @@ class HistoryReader:
             )
         )
 
+    def member_version_bounds(
+        self, path: str, digest: str, live_at: str
+    ) -> tuple[int, int | None] | None:
+        """The generations one member version was live in: [first, end).
+
+        ``live_at`` is the Git oid of a generation where the path held
+        ``digest``. Seeks on the path index around it, never a walk over the
+        path's versions: the last other version before it, the version's first
+        occurrence after that, and the first other version after it (``None``
+        while still live). None when ``live_at`` is unknown.
+        """
+
+        located = self.generation_for_oid(live_at)
+        if located is None:
+            return None
+        at = located.sequence
+        before = self._connection.execute(
+            "SELECT sequence FROM accepted_member_locations WHERE member_path=? AND sequence<=? "
+            "AND artifact_digest IS NOT ? ORDER BY sequence DESC LIMIT 1",
+            (path, at, digest),
+        ).fetchone()
+        first = self._connection.execute(
+            "SELECT sequence FROM accepted_member_locations WHERE member_path=? AND sequence>? "
+            "AND sequence<=? AND artifact_digest=? ORDER BY sequence LIMIT 1",
+            (path, -1 if before is None else int(before[0]), at, digest),
+        ).fetchone()
+        if first is None:
+            return None
+        after = self._connection.execute(
+            "SELECT sequence FROM accepted_member_locations WHERE member_path=? AND sequence>? "
+            "AND sequence<=? AND artifact_digest IS NOT ? ORDER BY sequence LIMIT 1",
+            (path, at, self.sequence, digest),
+        ).fetchone()
+        return int(first[0]), None if after is None else int(after[0])
+
     def member_locations(
         self, paths: Sequence[str]
     ) -> dict[str, tuple[AcceptedMemberLocation, ...]]:

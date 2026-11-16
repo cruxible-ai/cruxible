@@ -143,7 +143,13 @@ def test_changed_extract_spec_reobserves_equal_values_and_revises_only_changed_v
         )
         for stored in journal.select_records(store.stream, partition_id="reobservations")
     ]
-    assert [item["tag"] for item in observed] == ["cruxible-content-observation-v1"] * 2
+    # Each run: one content observation (the fetch) and one row observation
+    # (the extract step), in that order.
+    assert [item["tag"] for item in observed] == [
+        "cruxible-content-observation-v1",
+        "cruxible-row-observation-v1",
+    ] * 2
+    observed = [item for item in observed if item["tag"] == "cruxible-content-observation-v1"]
     # D-R14: the same bytes under the revised Procedure record its new lineage.
     import json
 

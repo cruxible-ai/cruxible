@@ -16,7 +16,6 @@ from cruxible_client.contracts.claims import claim_citation_references
 from cruxible_core.evidence.claim_reobservations import (
     ClaimReobservationJournalCorrupt,
     ClaimReobservationStore,
-    ContentTransition,
     ObservedContent,
     ReobservationReader,
     cited_content_keys,
@@ -104,69 +103,54 @@ def test_one_observation_per_call_refreshes_every_claim_citing_the_content(
     ) == _START + timedelta(hours=3.9)
 
 
-def test_a_transition_rechecks_the_cited_content_except_the_changed_claims(
-    tmp_path: Path,
-) -> None:
+def test_a_row_observation_refreshes_a_row_whatever_bytes_carried_it(tmp_path: Path) -> None:
+    """Ruling 2026-11-16 (a)-(c): one record per extract step, keyed by its rows.
+
+    New bytes holding the same rows are the same set: a head update, no new
+    set member rows, and a Claim depending on a row reads the later call.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import ReobservationKey, RowMap
+
     instance, _owner = _freshness_world(tmp_path, stale_after=_HOUR)
-    claim, _cited_capture, key = _cited(instance)
+    claim, cited, key = _cited(instance)
     store = ClaimReobservationStore(instance)
-    moved = ContentTransition(
-        contract_digest=key.contract_digest,
-        from_content_digest=key.observed_content_digest,
-        to_capture_digest=_OTHER,
-        to_content_digest="sha256:" + "2" * 64,
-    )
-    instance.recording_clock = lambda: _START + timedelta(hours=2)
-    first = store.transition(
-        [moved],
-        excepted=[claim.identity.name],
-        earliest=_START + timedelta(hours=1.5),
-        latest=_START + timedelta(hours=1.6),
-        run_id="RUN-a",
-        node_id="claims",
-        actor_id="o",
-    )
-    # This Claim changed in the new bytes: the transition does not refresh it.
-    assert _verdict(instance, _START + timedelta(hours=2.1)).verdict == "stale_evidence"
-    instance.recording_clock = lambda: _START + timedelta(hours=3)
-    second = store.transition(
-        [moved],
-        excepted=[],
-        earliest=_START + timedelta(hours=2.5),
-        latest=_START + timedelta(hours=2.6),
-        run_id="RUN-b",
-        node_id="claims",
-        actor_id="o",
-    )
-    assert second != first
-    verdict = _verdict(instance, _START + timedelta(hours=3))
-    assert verdict.verdict == "supported"
-    assert verdict.freshness_expirations[0].reobserved_at == _START + timedelta(hours=2.5)
-    # The same moves again are already recorded: nothing new is appended.
-    instance.recording_clock = lambda: _START + timedelta(hours=3.2)
-    assert (
-        store.transition(
-            [moved],
-            excepted=[],
-            earliest=_START + timedelta(hours=3.1),
-            latest=_START + timedelta(hours=3.1),
-            run_id="RUN-c",
-            node_id="claims",
+    row = "sha256:" + "7" * 64
+    other = "sha256:" + "8" * 64
+    hours = lambda value: _START + timedelta(hours=value)  # noqa: E731
+
+    def observe(at, capture, earliest, latest):  # type: ignore[no-untyped-def]
+        instance.recording_clock = lambda: at
+        return store.observe_rows(
+            (
+                RowMap(
+                    capture, "sha256:" + "5" * 64, key.contract_digest, (("/0", row), ("/1", other))
+                ),
+            ),
+            earliest=earliest,
+            latest=latest,
+            run_id="RUN-x",
+            node_id="extract",
             actor_id="o",
         )
-        == second
-    )
-    # Later fetches of the new bytes keep re-checking the old content's Claims.
-    _observe(
-        store,
-        _START + timedelta(hours=4),
-        [ObservedContent(key.contract_digest, moved.to_content_digest, _OTHER)],
-        earliest=_START + timedelta(hours=3.8),
-        latest=_START + timedelta(hours=3.9),
-    )
-    later = _verdict(instance, _START + timedelta(hours=4))
-    assert later.verdict == "supported"
-    assert later.freshness_expirations[0].reobserved_at == _START + timedelta(hours=3.8)
+
+    observe(hours(2.2), cited, hours(2), hours(2.1))
+    reader = ReobservationReader(instance)
+    assert reader.row_of(cited, "sha256:" + "5" * 64, "/0") == (key.contract_digest, row)
+    depends = (ReobservationKey(cited, key.contract_digest, row),)
+    (evidence,) = reader.latest(claim.identity.name, depends, hours(3)).evidence
+    assert evidence.observed_at == hours(2)
+    with store._locked() as conn:  # noqa: SLF001
+        members = conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0]
+    # The same rows in new bytes (another Capture): the same set, a later call.
+    observe(hours(4.2), _OTHER, hours(4), hours(4.1))
+    with store._locked() as conn:  # noqa: SLF001
+        assert conn.execute("SELECT COUNT(*) FROM observed_sets").fetchone()[0] == members
+        assert conn.execute("SELECT COUNT(*) FROM observation_sets").fetchone()[0] == 1
+    (evidence,) = reader.latest(claim.identity.name, depends, hours(5)).evidence
+    assert evidence.observed_at == hours(4)
+    assert reader.row_of(_OTHER, "sha256:" + "5" * 64, "/1") == (key.contract_digest, other)
+    # Nothing was recorded per Claim.
     assert store.history(claim.identity.name) == ()
 
 
@@ -217,20 +201,58 @@ def test_a_settlement_selects_the_observation_made_while_the_version_was_live(
     store = ClaimReobservationStore(instance)
     mine = [ObservedContent(key.contract_digest, key.observed_content_digest, cited)]
     hours = lambda value: _START + timedelta(hours=value)  # noqa: E731
+    live_at = instance.accepted_coordinate().git_oid
     _observe(store, hours(2.2), mine, earliest=hours(2), latest=hours(2.1))
     retire_claim(instance, owner, claim.identity.name)
     _observe(store, hours(3.2), mine, earliest=hours(3), latest=hours(3.1))
     reader = ReobservationReader(instance)
     found = reader.latest_version_record(
-        claim.identity.name, version, observed_by=hours(4), keys=(key,)
+        claim.identity.name, version, observed_by=hours(4), live_at=live_at, keys=(key,)
     )
     assert found is not None and found.record.observed_at == hours(2)
     assert (
         reader.latest_version_record(
-            claim.identity.name, version, observed_by=hours(2.05), keys=(key,)
+            claim.identity.name, version, observed_by=hours(2.05), live_at=live_at, keys=(key,)
         )
         is None
     )
+
+
+def test_a_settlement_finds_the_best_observation_inside_a_later_live_interval(
+    tmp_path: Path,
+) -> None:
+    """Review 2b F-003: the global best lies before the version's interval.
+
+    The version (here the retired artifact, live from its generation on) saw
+    a delayed call with an older earliest instant after a fresher one; the
+    settlement reads the fresher (90), never the latest-recorded (50), and
+    never the one before the interval (100).
+    """
+
+    from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
+    from tests.core_support._published_world import retire_claim
+
+    instance, owner = _freshness_world(tmp_path, stale_after=_HOUR)
+    claim, cited, key = _cited(instance)
+    store = ClaimReobservationStore(instance)
+    mine = [ObservedContent(key.contract_digest, key.observed_content_digest, cited)]
+    hours = lambda value: _START + timedelta(hours=value)  # noqa: E731
+    _observe(store, hours(1.2), mine, earliest=hours(1), latest=hours(1.1))
+    retire_claim(instance, owner, claim.identity.name)
+    head = instance.accepted_coordinate()
+    path = claim_path(claim.identity.name)
+    version = claim_artifact_digest(parse_claim(instance.tree_at(head.git_oid)[path], path=path))
+    _observe(store, hours(1.5), mine, earliest=hours(0.9), latest=hours(1.4))
+    _observe(store, hours(1.6), mine, earliest=hours(0.5), latest=hours(1.5))
+    reader = ReobservationReader(instance)
+    found = reader.latest_version_record(
+        claim.identity.name,
+        version.tagged,
+        observed_by=hours(3),
+        live_at=head.git_oid,
+        keys=(key,),
+    )
+    assert found is not None and found.record.observed_at == hours(0.9)
 
 
 def _vm_steps(reader: ReobservationReader, call):  # type: ignore[no-untyped-def]
@@ -276,9 +298,20 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
             (set_digest,) = {
                 row[0] for row in conn.execute("SELECT set_digest FROM observation_sets")
             }
+        # One unrelated call recorded a month after it ended (F-007): its delay
+        # must not widen any deadline read of this key over the whole history.
+        unrelated = [ObservedContent(key.contract_digest, "sha256:" + "9" * 64, _OTHER)]
+        sequence = _observe(
+            store,
+            _START,
+            unrelated,
+            earliest=_START - timedelta(days=31),
+            latest=_START - timedelta(days=30),
+        )
+        assert sequence is not None
         # The same call's history, projected as unchanged calls would leave it.
         with store._locked() as conn:  # noqa: SLF001
-            generation = conn.execute("SELECT generation FROM instants").fetchone()[0]
+            generation = conn.execute("SELECT generation FROM instants LIMIT 1").fetchone()[0]
             for index in range(1, size):
                 at = _START + timedelta(minutes=index)
                 store._apply_shared(  # noqa: SLF001
@@ -297,6 +330,7 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
         reader = ReobservationReader(instance)
         name = claim.identity.name
         version = claim_artifact_digest(claim).tagged
+        live_at = instance.accepted_coordinate().git_oid
         end = _START + timedelta(days=30)
         costs[size] = {
             "latest": _vm_steps(reader, lambda: reader.latest(name, (key,), end)),
@@ -315,7 +349,11 @@ def test_freshness_reads_do_not_grow_with_observation_history(tmp_path: Path) ->
         def settle() -> None:
             try:
                 reader.latest_version_record(
-                    name, version, observed_by=_START + timedelta(minutes=40), keys=(key,)
+                    name,
+                    version,
+                    observed_by=_START + timedelta(minutes=40),
+                    live_at=live_at,
+                    keys=(key,),
                 )
             except ClaimReobservationJournalCorrupt:
                 pass

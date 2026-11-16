@@ -40,8 +40,6 @@ TERMINAL_RECEIPT_CHILDREN_V1 = "playbill-terminal-receipt-children-v1"
 
 #: The request fields that grow with the terminal's items.
 _REQUEST_ITEM_FIELDS = ("items", "claims_changes", "claims_evidence")
-#: Item-sized request fields a request may omit (empty).
-_OPTIONAL_REQUEST_ITEM_FIELDS = ("observation_spans",)
 #: The preparation fields that grow with the terminal's items.
 _PREPARED_ITEM_FIELDS = ("item_paths", "unchanged")
 
@@ -82,9 +80,7 @@ def split_terminal_egress_payload(
         )
     request = split.get("request")
     if isinstance(request, Mapping) and all(field in request for field in _REQUEST_ITEM_FIELDS):
-        moved = _REQUEST_ITEM_FIELDS + tuple(
-            field for field in _OPTIONAL_REQUEST_ITEM_FIELDS if field in request
-        )
+        moved = _REQUEST_ITEM_FIELDS
         header = {key: value for key, value in request.items() if key not in moved}
         header["items_digest"] = store(
             canonical_bytes(

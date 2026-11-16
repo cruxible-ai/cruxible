@@ -846,9 +846,13 @@ def expand_claims(
                 if len(matched) == 1:
                     diagnostics.same += 1
                     held_claim = matched[0]
-                    if receipt.value.capture_digest not in held_claim.backing.capture_digests and (
-                        not _observed_same_content(
+                    if (
+                        receipt.value.capture_digest not in held_claim.backing.capture_digests
+                        and not _observed_same_content(
                             receipt.value.capture_digest, held_claim, state=state, context=context
+                        )
+                        and not _observed_same_row(
+                            receipt.value, held_claim, state=state, executor=executor
                         )
                     ):
                         changes.append(
@@ -1056,6 +1060,46 @@ def bind_claim_input(
         target=ArtifactIdentity(kind="Claim", name=identity),
         artifact_digest=digest,
     ), tuple(captures)
+
+
+def _observed_same_row(value: Any, held_claim: ClaimArtifact, *, state: Any, executor: Any) -> bool:
+    """Whether this run's extract step observed the very row the live Claim depends on.
+
+    The step published its whole row set as one observation (2026-11-16 a),
+    which a Claim produced from a row reads as its freshness whatever bytes
+    carried it: restating the Claim on it records nothing more. The held
+    Claim's row is its cited record's, mapped when its Capture was observed.
+    False when this run did not observe the record's Capture or the held row
+    is unknown.
+    """
+
+    from cruxible_client.contracts.claim_evidence import ExtractedBasis
+
+    held = held_claim.backing.procedure_evidence
+    port = getattr(executor, "capture_observations", None)
+    rows: dict[tuple[str, str, str], str] = getattr(state, "extracted_rows", {})
+    if (
+        not isinstance(value, ExtractedBasis)
+        or held is None
+        or port is None
+        or not isinstance(held.value, ExtractedBasis)
+        or not _observed_now(state, value.capture_digest)
+    ):
+        return False
+    current = rows.get((value.capture_digest, value.extract_spec_digest, value.record_locator))
+    cited = held.value
+    known = rows.get((cited.capture_digest, cited.extract_spec_digest, cited.record_locator))
+    if known is None:
+        known = port.row_of(cited.capture_digest, cited.extract_spec_digest, cited.record_locator)
+    return current is not None and known == current
+
+
+def _observed_now(state: Any, capture: str) -> bool:
+    """Whether this run fetched ``capture``, or derived it only from Captures it fetched."""
+
+    from cruxible_core.procedures.execution import _capture_span
+
+    return hasattr(state, "capture_spans") and _capture_span(state, capture) is not None
 
 
 def _observed_same_content(

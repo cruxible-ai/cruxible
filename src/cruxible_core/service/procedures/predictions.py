@@ -49,7 +49,7 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.evidence.claim_reobservations import (
     RecordedReobservation,
     ReobservationReader,
-    cited_content_keys,
+    claim_reobservation_keys,
 )
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -244,11 +244,15 @@ def _version_reobservation(
         generation_root=reference.coordinate.generation_root,
         compiler_digest=reference.coordinate.compiler_digest,
     )
-    keys = cited_content_keys(
-        instance, coordinate=coordinate, capture_digests=claim.backing.capture_digests
+    keys = claim_reobservation_keys(
+        instance, coordinate=coordinate, claim=claim, captures=claim.backing.capture_digests
     )
     found = ReobservationReader.of(instance).latest_version_record(
-        reference.identity.name, reference.artifact_digest, observed_by=observed_by, keys=keys
+        reference.identity.name,
+        reference.artifact_digest,
+        observed_by=observed_by,
+        live_at=reference.coordinate.git_oid,
+        keys=keys,
     )
     if found is None:
         return None

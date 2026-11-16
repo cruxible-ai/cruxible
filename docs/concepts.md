@@ -431,9 +431,10 @@ shows:
   catalog is recorded once per fetch, keyed by the content it observed (an
   identical re-fetch reuses the Capture already held), and keeps every Claim
   citing that content fresh: a ClaimType's evidence age counts from the latest
-  observation of the content, not the first Capture. When the catalog's bytes
-  changed but the fitment did not, the run records that the Claims citing the
-  old content were re-checked in the new bytes.
+  observation of the content, not the first Capture. Each extract step also
+  records the rows it read: when the catalog's bytes changed but the fitment's
+  row did not, that one row observation keeps the Claim fresh, with nothing
+  recorded per Claim.
 - **A different value** is a new statement, proposed as a revision like any
   other change. Claims that depend on the old value are not revised for you:
   `next` resurfaces them, and an agent decides what the change means for each.
@@ -762,8 +763,8 @@ closed `next` lists the prediction as `prediction_settleable` with the settle
 command. An observation counts at the time its Claim version was accepted, or
 at the time a later fetch observed the content that same unchanged version
 cites: a run's fetch is recorded once, keyed by the content it observed, and
-settle uses the latest such observation of that version's cited content (or a
-recorded re-check of it in new bytes) whose fetch had ended by the window's
+settle uses the latest such observation of that version's cited content (or of
+the row it was produced from) whose fetch had ended by the window's
 close, if it lies inside the window (a later one past the close does not hide
 it). An observation counts at its call's earliest member instant, and only
 when its call ended by the close: a call that ran across the close does not

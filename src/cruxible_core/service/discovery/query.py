@@ -50,7 +50,7 @@ from cruxible_core.errors import DataValidationError
 from cruxible_core.evidence.claim_reobservations import (
     ReobservationKey,
     ReobservationReader,
-    content_keys_on,
+    claim_keys_on,
     reobservations_at,
 )
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
@@ -244,11 +244,11 @@ def _fact_row(
         # A re-observed lineage reads its freshness at each evaluation instant,
         # one indexed probe per cited (contract, content).
         live = instance
-        claim_id = claim.identity.name
+        held = claim
         row.attach_reobservations(
             lambda at: (
                 reobservations_at(
-                    live, coordinate=coordinate, claim_id=claim_id, captures=captures, at=at
+                    live, coordinate=coordinate, claim=held, captures=captures, at=at
                 ).evidence
             )
         )
@@ -598,8 +598,11 @@ class _AcceptedQueryFactsRead:
             def reobservation_keys(
                 claim: ClaimArtifact, captures: tuple[Any, ...]
             ) -> tuple[ReobservationKey, ...] | None:
-                keys = content_keys_on(
-                    projection.typed.connection, [item.capture_digest for item in captures]
+                keys = claim_keys_on(
+                    projection.typed.connection,
+                    observed,
+                    claim,
+                    [item.capture_digest for item in captures],
                 )
                 return keys if observed.observed(claim.identity.name, keys) else None
 

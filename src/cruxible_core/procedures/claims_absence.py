@@ -283,6 +283,7 @@ def append_absence(
             expect_coordinate=admission.accepted_coordinate,
         )
         seal(witness)
+        _observe_enumeration(witness, executor=executor, admission=admission, state=state)
     if not complete:
         diagnostics.add(
             ClaimsDiagnostic(
@@ -718,6 +719,43 @@ def append_absence(
                                 "context": context,
                             },
                         )
+
+
+def _observe_enumeration(
+    witness: AbsenceWitness, *, executor: Any, admission: Any, state: Any
+) -> None:
+    """Publish a complete enumeration's observation when this run fetched all of it (F-001).
+
+    An absence Claim is fresh as of the latest complete enumeration with the
+    same keys (``enumeration_digest``), never as of one page's contents. One
+    shared record per complete enumeration; nothing when a witness Capture
+    was admitted rather than fetched now.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import enumeration_digest
+
+    port = getattr(executor, "capture_observations", None)
+    from cruxible_core.procedures.execution import _capture_span
+
+    spans = [_capture_span(state, capture) for capture in witness.captures]
+    contract = state.capture_contracts.get(witness.capture)
+    if port is None or contract is None or any(span is None for span in spans):
+        return
+    known = [span for span in spans if span is not None]
+    port.observe_enumeration(
+        contract_digest=contract,
+        enumeration=enumeration_digest(witness),
+        capture_digest=witness.capture,
+        earliest=min(span[0] for span in known),
+        latest=max(span[1] for span in known),
+        run_id=admission.run_id,
+        node_id=witness.node_id,
+        actor_id=admission.actor_context.actor_id,
+        lineage={
+            "procedure": admission.procedure_identity.qualified,
+            "procedure_artifact_digest": admission.procedure_artifact_digest,
+        },
+    )
 
 
 def _pairs_by_end(

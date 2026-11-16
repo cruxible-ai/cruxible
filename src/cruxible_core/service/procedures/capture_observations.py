@@ -19,7 +19,12 @@ from typing import Any
 from cruxible_client.contracts.captures import CaptureEnvelope, parse_capture_envelope
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_core.evidence.capture_erasures import CaptureErasureStore, erasure_journal_present
-from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore, ObservedContent
+from cruxible_core.evidence.claim_reobservations import (
+    ClaimReobservationStore,
+    ObservedContent,
+    ReobservationReader,
+    RowMap,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.read_positions import body_present
@@ -68,6 +73,56 @@ class InstanceCaptureObservations:
         self.instance.body_store().capture_envelopes.remember_content_key(
             content_key, capture_digest
         )
+
+    def observe_rows(
+        self,
+        maps: tuple[RowMap, ...],
+        *,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: dict[str, str] | None = None,
+    ) -> None:
+        ClaimReobservationStore(self.instance).observe_rows(
+            maps,
+            earliest=earliest,
+            latest=latest,
+            run_id=run_id,
+            node_id=node_id,
+            actor_id=actor_id,
+            lineage=lineage,
+        )
+
+    def observe_enumeration(
+        self,
+        *,
+        contract_digest: str,
+        enumeration: str,
+        capture_digest: str,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: dict[str, str] | None = None,
+    ) -> None:
+        ClaimReobservationStore(self.instance).observe_enumeration(
+            contract_digest=contract_digest,
+            enumeration=enumeration,
+            capture_digest=capture_digest,
+            earliest=earliest,
+            latest=latest,
+            run_id=run_id,
+            node_id=node_id,
+            actor_id=actor_id,
+            lineage=lineage,
+        )
+
+    def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
+        found = ReobservationReader.of(self.instance).row_of(capture_digest, spec_digest, locator)
+        return None if found is None else found[1]
 
     def observe(
         self,

@@ -110,7 +110,7 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.extract import ExtractNode
+from cruxible_client.contracts.procedures.extract import ExtractNode, extract_spec_digest
 from cruxible_client.contracts.procedures.graph import (
     analyze_procedure,
     late_state_taps,
@@ -1348,6 +1348,37 @@ class CaptureObservationsProtocol(Protocol):
 
     def remember(self, content_key: str, capture_digest: str) -> None:
         """Name the new Capture these contents' next identical re-fetch reuses."""
+
+    def observe_rows(
+        self,
+        maps: tuple[Any, ...],
+        *,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: dict[str, str] | None = None,
+    ) -> None:
+        """Record one extract step's observation of its whole row set."""
+
+    def observe_enumeration(
+        self,
+        *,
+        contract_digest: str,
+        enumeration: str,
+        capture_digest: str,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+        lineage: dict[str, str] | None = None,
+    ) -> None:
+        """Record a complete absence enumeration's observation."""
+
+    def row_of(self, capture_digest: str, spec_digest: str, locator: str) -> str | None:
+        """The row one extracted record of a Capture was observed as, if any."""
 
     def observe(
         self,
@@ -2738,6 +2769,14 @@ class _RunState:
     #: recorded as a content observation: an item restating a Claim on another
     #: Capture of the same content observed nothing a Claim needs (ruling 1a).
     observed_contents: dict[str, tuple[str, str]] = dataclass_field(default_factory=dict)
+    #: Each Capture this run stored new, by its reuse key: named reusable only
+    #: once its ``produced_capture`` is journaled (F-008).
+    pending_reuse_keys: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each fetched Capture's logical source: part of its rows' identity.
+    capture_sources: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each extracted record's row, by (Capture, extract spec digest, locator):
+    #: an item whose Claim's own row this run observed restates nothing.
+    extracted_rows: dict[tuple[str, str, str], str] = dataclass_field(default_factory=dict)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
@@ -4136,7 +4175,7 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, LayoutExtractNode):
-            self._run_extract(self._extract_spec(node), state=state)
+            self._run_extract(self._extract_spec(node), state=state, admission=admission)
             return None
         if isinstance(node, CallNode):
             self._run_provider_v4(
@@ -5162,6 +5201,9 @@ class ProcedureExecutor:
             )
             for item in built.values():
                 state.capture_spans[item.capture_digest] = span
+                state.capture_sources[item.capture_digest] = str(
+                    getattr(item.envelope.source, "source_identity", "")
+                )
             if self.capture_observations is not None:
                 for item in built.values():
                     state.observed_contents[item.capture_digest] = (
@@ -5405,7 +5447,13 @@ class ProcedureExecutor:
                 details={"node_id": node.node_id, "reason": exc.message},
             ) from exc
 
-    def _run_extract(self, node: ExtractNode, *, state: _RunState) -> None:
+    def _run_extract(
+        self,
+        node: ExtractNode,
+        *,
+        state: _RunState,
+        admission: ProcedureRunAdmission | None = None,
+    ) -> None:
         """Read one Capture's records, typed, by its CaptureContract's decoding.
 
         Over a list of Captures, each member's records are read the same way
@@ -5415,7 +5463,7 @@ class ProcedureExecutor:
         call = state.outputs.get(node.capture_alias)
         capture_digest = call.get(node.capture_field) if isinstance(call, dict) else None
         if isinstance(capture_digest, list):
-            self._run_list_extract(node, capture_digest, state=state)
+            self._run_list_extract(node, capture_digest, state=state, admission=admission)
             return
         if not isinstance(capture_digest, str):
             raise _RunRefusal(
@@ -5446,6 +5494,7 @@ class ProcedureExecutor:
                 details=exc.details or None,
             ) from exc
         self._bind_extract(node, outcome, state=state)
+        self._observe_rows(node, ((capture_digest, outcome),), state=state, admission=admission)
 
     def _extract_inputs(
         self, node: ExtractNode, capture_digest: str, *, state: _RunState
@@ -5473,7 +5522,12 @@ class ProcedureExecutor:
         return content, contract, row
 
     def _run_list_extract(
-        self, node: ExtractNode, members: Sequence[object], *, state: _RunState
+        self,
+        node: ExtractNode,
+        members: Sequence[object],
+        *,
+        state: _RunState,
+        admission: ProcedureRunAdmission | None = None,
     ) -> None:
         """Extract over a list of Captures: every member's records, merged (D-R37 a5).
 
@@ -5541,6 +5595,81 @@ class ProcedureExecutor:
             outcome,
             state=state,
             items=tuple(member_tokens[source] for source in sources),
+        )
+        self._observe_rows(
+            node,
+            tuple(zip(cast(Sequence[str], members), outcomes, strict=True)),
+            state=state,
+            admission=admission,
+        )
+
+    def _observe_rows(
+        self,
+        node: ExtractNode,
+        parts: Sequence[tuple[str, ExtractOutcome]],
+        *,
+        state: _RunState,
+        admission: ProcedureRunAdmission | None,
+    ) -> None:
+        """Publish the step's whole extracted row set as one observation (2026-11-16 a).
+
+        Each record is a row keyed by its Capture's contract and logical
+        source, its record key and its value; the set is Capture-free, so the
+        same rows in new bytes are the same set (a head update, no per-Claim
+        write). Published only when every Capture read was fetched by this run
+        (an admitted Capture was not observed now), with the acquiring calls'
+        span (ruling 1b). Remembers each record's row for the claims terminal.
+        The loop is over the step's own records, once per run.
+        """
+
+        from cruxible_core.evidence.claim_reobservations import RowMap, row_digest
+        from cruxible_core.procedures.extract import _Record, held_wire, wire_value
+
+        spec = extract_spec_digest(node)
+        maps: list[RowMap] = []
+        for capture, outcome in parts:
+            contract = state.capture_contracts.get(capture, "")
+            source = state.capture_sources.get(capture, "")
+            rows = []
+            for item in outcome.held:
+                if not isinstance(item, _Record):
+                    continue
+                row = row_digest(
+                    contract,
+                    source,
+                    {name: wire_value(value) for name, value in item.key.items()},
+                    # A field's value and state, never where in the document
+                    # it sat: the same rows reordered are the same rows.
+                    {
+                        name: {
+                            part: held for part, held in held_wire(value).items() if part != "at"
+                        }
+                        for name, value in item.fields.items()
+                    },
+                )
+                state.extracted_rows[(capture, spec, item.locator)] = row
+                rows.append((item.locator, row))
+            maps.append(RowMap(capture, spec, contract, tuple(sorted(rows))))
+        spans = [_capture_span(state, capture) for capture, _outcome in parts]
+        if (
+            self.capture_observations is None
+            or admission is None
+            or not parts
+            or any(span is None for span in spans)
+        ):
+            return
+        known = [span for span in spans if span is not None]
+        self.capture_observations.observe_rows(
+            tuple(maps),
+            earliest=min(span[0] for span in known),
+            latest=max(span[1] for span in known),
+            run_id=admission.run_id,
+            node_id=node.node_id,
+            actor_id=admission.actor_context.actor_id,
+            lineage={
+                "procedure": admission.procedure_identity.qualified,
+                "procedure_artifact_digest": admission.procedure_artifact_digest,
+            },
         )
 
     def _bind_extract(
@@ -6543,7 +6672,6 @@ class ProcedureExecutor:
                 claims_changes=state.claims_changes.get(node.node_id, ()),
                 derivations=state.derivations,
                 capture_root_cache=state.capture_root_cache,
-                capture_spans=state.capture_spans,
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -6836,7 +6964,6 @@ class ProcedureExecutor:
         claims_changes: tuple[CoreClaimsChange, ...] = (),
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
-        capture_spans: Mapping[str, tuple[datetime, datetime]] | None = None,
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -6899,17 +7026,6 @@ class ProcedureExecutor:
                 if claims_evidence
                 else {}
             ),
-            # The acquiring call's span for each Capture an item cites: one
-            # entry per distinct cited Capture, so O(the terminal's items).
-            observation_spans={
-                cited: capture_spans[cited]
-                for receipt in claims_evidence
-                if receipt is not None
-                and isinstance(cited := getattr(receipt.value, "capture_digest", None), str)
-                and cited in capture_spans
-            }
-            if capture_spans and claims_evidence
-            else {},
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
@@ -8459,6 +8575,25 @@ def _extract_only_keys(node: ExtractNode, *, state: _RunState) -> list[dict[str,
             node_id=node.node_id,
         )
     return cast(list[dict[str, object]], resolved)
+
+
+def _capture_span(
+    state: _RunState, capture: str, seen: frozenset[str] = frozenset()
+) -> tuple[datetime, datetime] | None:
+    """When this run observed a Capture: its acquiring call's span, or for one it
+    derived, the span of all its inputs (None when any input was not fetched now)."""
+
+    span = state.capture_spans.get(capture)
+    if span is not None:
+        return span
+    inputs = state.derivations.get(capture)
+    if not inputs or capture in seen:
+        return None
+    found = [_capture_span(state, item, seen | {capture}) for item in inputs]
+    if any(item is None for item in found):
+        return None
+    known = [item for item in found if item is not None]
+    return min(item[0] for item in known), max(item[1] for item in known)
 
 
 def _member_request_digest(
