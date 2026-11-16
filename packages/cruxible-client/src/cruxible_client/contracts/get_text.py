@@ -411,6 +411,12 @@ def proposed_reason_lines(reason: Any) -> list[str]:
     ]
 
 
+def _card_cell(part: object) -> str:
+    """One card cell: a reserved stored name in its public spelling, anything else as text."""
+
+    return public_name(part) if isinstance(part, str) else str(part)
+
+
 def render_get(
     result: Any,
     *,
@@ -526,19 +532,28 @@ def render_get(
                     for row in value:
                         lines.append("  " + provider_operation_line(row))
                     continue
+                # Reserved names read in their public spelling throughout the
+                # card, as its next: lines do; the JSON keeps the stored ids.
                 if isinstance(value, list) and all(isinstance(item, dict) for item in value):
                     lines.append(f"{key}:")
                     for item in value:
-                        lines.append("  " + "  ".join(str(part) for part in item.values()))
+                        lines.append("  " + "  ".join(_card_cell(part) for part in item.values()))
                     continue
                 if isinstance(value, dict):
                     value = "  ".join(
-                        f"{name}={', '.join(map(str, part)) if isinstance(part, list) else part}"
+                        f"{name}="
+                        + (
+                            ", ".join(map(_card_cell, part))
+                            if isinstance(part, list)
+                            else _card_cell(part)
+                        )
                         for name, part in value.items()
                     )
+                elif isinstance(value, str):
+                    value = public_name(value)
                 if isinstance(value, list):
                     # Names are never cut: a truncated name is not a usable reference.
-                    lines.append(f"{key}: {printable(', '.join(map(str, value)))}")
+                    lines.append(f"{key}: {printable(', '.join(map(_card_cell, value)))}")
                     continue
                 lines.append(f"{key}: {get_value_text(value, width=200, evidence_hint=False)}")
         if card.get("flags"):

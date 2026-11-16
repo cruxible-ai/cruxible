@@ -711,7 +711,8 @@ def test_a_get_card_names_evidence_and_backlinked_files_by_path() -> None:
     assert shown.endswith("location in introduction/forms.py: admitted")
     assert "source=intro/forms.py" in capture_line(file_paths=_MOVED)
     assert "source=doc-introduction-forms.py" in capture_line()
-    assert render_get(backlinks, file_paths=_PATHS) == "cites Claim CLM-1 introduction/forms.py#Forms"
+    linked = render_get(backlinks, file_paths=_PATHS)
+    assert linked == "cites Claim CLM-1 introduction/forms.py#Forms"
     assert render_get(backlinks) == "cites Claim CLM-1 doc-introduction-forms.py#Forms"
 
     # The SDK card read the catalog with the answer; str() reads nothing.
@@ -745,3 +746,40 @@ def test_catalog_file_paths_maps_names_to_current_paths_and_never_raises(
     # An unreadable catalog maps nothing rather than failing the read.
     (tmp_path / ".cruxible" / "files.yaml").write_text("entries: [")
     assert dict(catalog_file_paths(tmp_path)) == {}
+
+
+def test_a_get_card_body_prints_reserved_names_in_their_public_spelling() -> None:
+    """A card prints one spelling in its body and its next: lines; JSON keeps the stored id."""
+
+    from cruxible_client.contracts.get_reads import GetResult
+    from cruxible_client.contracts.get_text import render_get
+
+    stored = "CaptureContract:playbill.coordinator-self-source-v1"
+    result = GetResult.model_validate(
+        {
+            "ref": stored,
+            "kind": "capture_contract",
+            "detail": "summary",
+            "coordinate": {"git_oid": _OID[:12], "generation": 3},
+            "evaluation_time": "2026-11-15T00:00:00Z",
+            "card": {
+                "contract": stored,
+                "version": 1,
+                "lifecycle": "live",
+                "captures": {"latest": "playbill.foreign-source.doc-notes.md"},
+                "admitted_by": ["ClaimType:dev.item.status", stored],
+                "next": ["cruxible get CaptureContract:cruxible.coordinator-self-source-v1"],
+            },
+        }
+    )
+
+    text = render_get(result)
+    assert text is not None
+    assert "contract: CaptureContract:cruxible.coordinator-self-source-v1" in text.splitlines()
+    assert "captures: latest=cruxible.foreign-source.doc-notes.md" in text.splitlines()
+    assert (
+        "admitted_by: ClaimType:dev.item.status, "
+        "CaptureContract:cruxible.coordinator-self-source-v1"
+    ) in text.splitlines()
+    assert "playbill." not in text
+    assert result.model_dump(mode="json")["card"]["contract"] == stored
