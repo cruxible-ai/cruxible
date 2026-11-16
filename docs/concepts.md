@@ -277,7 +277,7 @@ passage, file or fetched response it came from, not a paraphrase. A Claim's
 evidence is one or more of:
 
 - **its author's own words**: the `--because` text every write carries;
-- **a citation**: a passage quoted from a catalogued workspace file
+- **a citation**: a passage quoted from a workspace file
   (`--evidence-file PATH#ANCHOR`, `cx.file(path).anchor(...)` in the SDK), like
   the line of the supplier's catalog above;
 - **a Capture**: retained evidence recorded under a CaptureContract, for
@@ -361,8 +361,10 @@ evidence, verdicts, freshness and attestations in full.
 ### Files, citations and Documents
 
 The file catalog, `.cruxible/files.yaml`, gives each workspace file a stable
-name. An entry needs only a `name` and a `locator` (its path) to be cited;
-`cruxible files add NAME PATH` writes one. Two different things can rest on a
+name, a handle mapped to the file's current path so citations survive the file
+moving. You cite a file by its path; a write that cites a file the catalog
+does not name yet catalogues it under a name derived from the path, and
+`cruxible files add NAME PATH` chooses the name yourself. Two different things can rest on a
 catalogued file:
 
 | | Citation | Document |
