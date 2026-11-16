@@ -485,7 +485,9 @@ class JournalProducerReceiptResolver:
             try:
                 payload = read_payload(self._bodies, record.payload_digest, access=self._access)
                 if record.event_kind == "source_request_derived":
-                    cited = payload.get("request_body_digest") if isinstance(payload, dict) else None
+                    cited = (
+                        payload.get("request_body_digest") if isinstance(payload, dict) else None
+                    )
                     if isinstance(cited, str):
                         used.append(cited)
                     payload = join_derived_source_request_read(
