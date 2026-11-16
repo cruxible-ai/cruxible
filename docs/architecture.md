@@ -286,6 +286,15 @@ paths, or signed format identifiers.
 
 A terminal publishes its item-dependency records as one fenced append group.
 The records retain their individual sequence numbers, digests and hash chain.
+What every item's closure shares (the Captures and reads the whole terminal
+consumed) is stored once per terminal; each item record
+(`playbill-procedure-item-dependencies-v2`) names that shared set by digest and
+holds only what its item consumed beyond it, and reads join the two back into
+the exact manifest (an item's `manifest_digest` keeps its rule over the whole
+closure; v1 records stay readable). A Procedure's Query read stores its result
+body without its evaluation instant, in a small record that names the body and
+keeps the instant and result digest, so an identical read stores almost
+nothing new; replay restores the exact view and checks the result digest.
 One reservation sidecar names the group's CAS payloads before they are written;
 the sidecar is removed only after the complete group is appended and indexed.
 The journal remains authoritative and its SQLite indexes are rebuildable.
