@@ -217,6 +217,11 @@ The pieces:
   change what this Procedure extracts until it is accepted again.
 - **The claims step** writes one Claim per record, keyed by the record's key.
 
+A Procedure that ends in a claims step, or whose only effect is posting to the
+inbox, returns nothing: it needs no `output` and no `returns`. Declare an
+output (and what fills it, `returns`) only when the run's result is itself
+something to read.
+
 `procedure.spec()` is the exact spec every surface submits; `get` shows an
 accepted Procedure in the same form, each typed reference rendered as its
 `$...` text for review, with each slot's capability pinned by digest:

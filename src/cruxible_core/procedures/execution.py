@@ -3831,7 +3831,10 @@ class ProcedureExecutor:
                             state.alias_tokens(frozenset({node.as_})) | state.control
                         )
                         state.return_complete = state.completeness.at_sink(_node_reads(node))
-                    elif isinstance(node, ClaimsNode) and definition.returns is None:
+                    elif (
+                        isinstance(node, (ClaimsNode, InboxEgressNode))
+                        and definition.returns is None
+                    ):
                         result = {}
                         state.return_tokens = state.control
                     elif isinstance(node, CaptureEgressNode):
