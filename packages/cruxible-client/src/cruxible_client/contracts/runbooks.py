@@ -436,6 +436,9 @@ class RunbookPreviewInputLimits(_StrictRunbookModel):
     records: int | None = Field(default=None, exclude_if=lambda value: value is None)
     #: The most files a glob read takes.
     max_files: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: A fetch request's own ``max_bytes`` (the Line's parameter), when it sets
+    #: one; the landed Capture is still held to ``max_bytes``.
+    request_max_bytes: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RunbookPreviewInput(_StrictRunbookModel):

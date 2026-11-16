@@ -302,6 +302,14 @@ class WorkspaceFiles:
         path = Path(requested)
         resolved = (path if path.is_absolute() else self.workspace / path).expanduser().resolve()
         matches = self.entries_for_path(resolved)
+        if not matches:
+            # F8: a write citing the file catalogues it itself; a selection does not.
+            raise SourceSelectionError(
+                f"path {requested!s} is not in the workspace file catalog, and a selection "
+                "reads only catalogued files; cite it in a write instead "
+                '(evidence=FileEvidence(file="PATH#ANCHOR")), which catalogues it, or '
+                "catalogue it first: cruxible files add PATH"
+            )
         if len(matches) != 1:
             raise SourceSelectionError(
                 f"path {requested!s} maps to {len(matches)} catalogued files; exactly one required"

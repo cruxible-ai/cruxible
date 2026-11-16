@@ -1989,7 +1989,9 @@ def test_accept_never_and_a_tier_without_activation_stop_at_the_proposal(
     never = _write(instance, _set(WI1, "status", "ready"), accept="never")
     assert never.status == "awaiting_approval"
     assert never.approval is not None and never.approval.reason == "accept_never"
-    assert never.approval.approve is None and never.next == never.approval.activate
+    # Kept for review (coldcli-02): next is a reviewer's approval, not activation.
+    assert never.approval.approve is not None and never.next == never.approval.approve
+    assert "approve" in never.next and "activate" not in never.next
     tier = _write(instance, _set(WI2, "status", "ready"), who=caller(may_activate=False))
     assert tier.status == "awaiting_approval"
     assert tier.approval is not None and tier.approval.reason == "activation_not_permitted"
@@ -2022,11 +2024,8 @@ def test_a_low_tier_caller_gets_no_runnable_higher_tier_call_whatever_the_reason
         "independent_approval_required" if independent else "accept_never"
     )
     assert outcome.approval.activate.startswith("someone who can runs ")
-    if independent:
-        assert outcome.approval.approve is not None
-        assert outcome.approval.approve.startswith("someone who can runs ")
-    else:
-        assert outcome.approval.approve is None
+    assert outcome.approval.approve is not None
+    assert outcome.approval.approve.startswith("someone who can runs ")
     assert outcome.next is not None and outcome.next.startswith("someone who can runs ")
     # A caller whose tier admits both keeps the plain, runnable calls.
     allowed = _write(

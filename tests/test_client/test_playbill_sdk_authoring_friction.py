@@ -147,7 +147,7 @@ def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
             raise TimeoutError("Remote outcome unknown")
         if operation in ("prepare", "reprepare"):
             return intent._preflight
-        return SimpleNamespace(intent=intent._raw, status=None, outcome=None)
+        return SimpleNamespace(intent=intent._raw, status=None, outcome=None, warnings=())
 
     monkeypatch.setattr(pb._client, methods[operation], response, raising=False)
     options = {"draft": draft} if operation == "reprepare" else {}

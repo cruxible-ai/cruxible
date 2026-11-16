@@ -176,7 +176,7 @@ def test_dry_run_no_accept_and_at_reach_the_request(served: _ServiceClient) -> N
     proposed = _run("set", WI1, "status", "ready", "--because", "x", "--no-accept", "--at", at)
     assert proposed.exit_code == 0, proposed.output
     assert "awaiting approval" in proposed.output
-    assert "next: cruxible proposal activate" in proposed.output
+    assert "next: cruxible proposal approve" in proposed.output
     request = served.requests[-1]
     assert request.accept == "never" and request.at == at
 

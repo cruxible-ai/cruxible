@@ -3361,7 +3361,7 @@ class Cruxible:
         limit: int | None = None,
         cursor: str | None = None,
     ) -> api.ProposalList:
-        """One page of proposals, newest first; follow ``next_cursor`` while truncated.
+        """One page of proposals, oldest admission first; follow ``next_cursor`` while truncated.
 
         Next: ``cx.get(entry.proposal_id)`` to read one, or ``cx.proposal(id).review()``.
         """
@@ -3397,6 +3397,8 @@ class Cruxible:
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
 
+        Only catalogued files are selected (an uncatalogued path refuses). A write
+        citing a file as ``FileEvidence(file="PATH#ANCHOR")`` catalogues it itself.
         Next: ``cx.file(path).section("Heading", "Child")`` or ``.anchor("text found once")``;
         pass the selection as ``supported_by=``.
         """

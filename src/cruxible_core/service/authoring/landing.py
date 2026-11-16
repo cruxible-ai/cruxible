@@ -326,12 +326,17 @@ def _stopped(
             ),
         )
     if reason == "accept_never":
+        # Kept for review: a reviewer approves it, and that approval activates it.
         return _proposed(
             proposal_id,
             reason="accept_never",
-            message='not activated: the caller requested accept="never"',
-            repair=activate,
-            delegated=not may_activate,
+            message=(
+                'not activated: the caller requested accept="never"; a reviewer approves '
+                "it, which activates it"
+            ),
+            repair=RepairOperation(
+                operation="cruxible.proposal.approve", arguments={"proposal_id": proposal_id}
+            ),
         )
     return _proposed(
         proposal_id,

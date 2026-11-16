@@ -1799,6 +1799,12 @@ def body_group() -> None:
 @json_option
 @handle_errors
 def store_body(path: str, output_json: bool) -> None:
+    """Store PATH's bytes (`-` reads stdin) as an inert body and print its digest.
+
+    The bytes are stored, never interpreted; a Document proposal names the
+    digest as its body.
+    """
+
     content = read_payload_bytes(path)
     result = _server_call(
         lambda client, instance_id: client.store_body(instance_id, content),
@@ -2939,9 +2945,22 @@ def capture_group() -> None:
 
 @capture_group.command("read")
 @click.argument("capture_digest")
-@click.option("--max-bytes", type=click.IntRange(min=0), default=4 * 1024 * 1024, show_default=True)
+@click.option(
+    "--max-bytes",
+    type=click.IntRange(min=0),
+    default=4 * 1024 * 1024,
+    show_default=True,
+    help="The most body bytes returned.",
+)
 @handle_errors
 def read_capture(capture_digest: str, max_bytes: int) -> None:
+    """Verify and read one retained Capture: its envelope and body, as JSON.
+
+    CAPTURE_DIGEST is the Capture's digest. The body is base64 (`body`), at most
+    --max-bytes of it; reading it needs body-read permission. An erased or
+    unavailable body answers `unavailable` with its reason.
+    """
+
     from cruxible_client.contracts.capture_reads import CaptureReadRequest
 
     result = _server_call(
@@ -5092,8 +5111,9 @@ def list_predictions(claim: str, output_json: bool) -> None:
     The daemon resolves the Claim's current accepted version and returns the
     accepted resolution contracts whose hypothesis is that exact version, retired
     ones included; contracts testing an earlier version of the Claim are not
-    listed. Pending (unaccepted) predictions and settlement outcomes are read with
-    `cruxible get ResolutionContract:NAME` and `cruxible next`.
+    listed. A pending (unaccepted) prediction is a proposal: `cruxible proposal list`
+    names it and `cruxible get PROPOSAL_ID` reads it. An accepted one and its
+    settlement are read with `cruxible get ResolutionContract:NAME` and `cruxible next`.
     """
 
     request = contracts.ResolutionContractsRequest(hypothesis=claim)
@@ -8737,8 +8757,9 @@ def enable_line(line: str, dry_run: bool | None, at: str | None, output_json: bo
 def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Stop LINE admitting work on its own; runs already admitted keep going.
 
-    Disabling a Line whose enablement already stopped changes nothing. A
-    retired Line can be disabled too.
+    Disabling a Line whose enablement already stopped changes nothing. A Line
+    never enabled has no enablement to stop and refuses
+    (`cruxible.line.never_enabled`). A retired Line can be disabled too.
     """
 
     result = _server_call(
@@ -9120,7 +9141,11 @@ def _runbook_input_lines(item: Any) -> list[str]:
         facts.append(f"at most {limits.max_files} files")
     if limits.max_bytes is not None:
         each = " each" if limits.max_files is not None else ""
-        facts.append(f"at most {_byte_size_text(limits.max_bytes)}{each}")
+        # coldcli-15: the budget is the CaptureContract's; a fetch's own
+        # max_bytes (the Line parameter) is a separate, request-side limit.
+        facts.append(f"at most {_byte_size_text(limits.max_bytes)}{each} per its CaptureContract")
+    if limits.request_max_bytes is not None and limits.request_max_bytes != limits.max_bytes:
+        facts.append(f"request max_bytes {_byte_size_text(limits.request_max_bytes)}")
     if item.parameter is not None:
         facts.append(f"parameter {item.parameter}")
     text = f"needs  {_RUNBOOK_INPUT_NOUNS[item.kind]} {where}"

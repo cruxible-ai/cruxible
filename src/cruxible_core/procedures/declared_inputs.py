@@ -56,6 +56,8 @@ class DeclaredInput:
     max_files: int | None = None
     #: A fetch's permitted origins from the Line's acquisition rule (None: any).
     origins: tuple[str, ...] | None = None
+    #: The fetch request's own ``max_bytes`` (a literal or a Line parameter), when set.
+    request_max_bytes: int | None = None
 
 
 def parameter_reference(value: object) -> str | None:
@@ -219,6 +221,9 @@ def declared_inputs(
                     rule = line.acquisition.get(f"{node.as_}.{field}")
                     if rule is not None and rule.origins is not None:
                         origins = (origins or set()) | set(rule.origins)
+            raw_max = node_input.get("max_bytes")
+            if isinstance(raw_max, str):
+                raw_max = parameters.get(parameter_reference(raw_max) or "")
             found.append(
                 DeclaredInput(
                     node_id=node.node_id,
@@ -228,6 +233,11 @@ def declared_inputs(
                     workspace=None,
                     capture_contract=capture,
                     origins=None if origins is None else tuple(sorted(origins)),
+                    request_max_bytes=(
+                        raw_max
+                        if isinstance(raw_max, int) and not isinstance(raw_max, bool)
+                        else None
+                    ),
                 )
             )
     return tuple(found)

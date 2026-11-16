@@ -4609,10 +4609,11 @@ def _approval(
     surface: ReadSurface,
     proposal_id: str,
 ) -> ApprovalNeeded:
+    # A write kept with accept="never" is kept for review: someone else
+    # approves it (which activates it), as an independent approval would.
+    reviewed = reason in {"independent_approval_required", "accept_never"}
     approvers = (
-        _eligible_approvers(instance, head, creator=caller.actor.actor_id)
-        if reason == "independent_approval_required"
-        else ()
+        _eligible_approvers(instance, head, creator=caller.actor.actor_id) if reviewed else ()
     )
     return ApprovalNeeded(
         reason=reason,
@@ -4628,7 +4629,7 @@ def _approval(
                 ),
                 permitted=caller.may_approve,
             )
-            if reason == "independent_approval_required"
+            if reviewed
             else None
         ),
         activate=_for_caller(
