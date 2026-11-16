@@ -181,6 +181,29 @@ def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path
         check=False,
     )
     assert stub_excluded.returncode == 0
+    # So does the file catalog's edit lock, beside the tracked catalog.
+    for path, ignored in ((".cruxible/files.yaml.lock", 0), (".cruxible/files.yaml", 1)):
+        checked = subprocess.run(
+            ["git", "-C", str(workspace), "check-ignore", "--quiet", path], check=False
+        )
+        assert checked.returncode == ignored, path
+
+
+def test_an_existing_exclusion_gains_the_catalog_lock_on_the_next_config_write(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    exclude = workspace / ".git/info/exclude"
+    older = b"# mine\n/.cruxible/coverage.json\n/.cruxible/identity.json\n/.cruxible/world.pyi\n"
+    exclude.write_bytes(older)
+
+    write_workspace_config(
+        workspace, instance_id="inst_local", server_url="https://playbill.example.test"
+    )
+
+    assert exclude.read_bytes() == older + b"/.cruxible/files.yaml.lock\n"
 
 
 @pytest.mark.parametrize(

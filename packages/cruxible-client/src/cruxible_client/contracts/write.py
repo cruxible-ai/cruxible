@@ -174,6 +174,14 @@ class NoneValue(_StrictWriteModel):
     # under an ``object`` inverse; the object's key value under ``object_key``).
     none: ClaimValue | None = Field(description="null, or the value (key) not held.")
 
+    @model_serializer(mode="wrap")
+    def _none_is_the_value(self, handler: Any) -> dict[str, Any]:
+        # ``none: null`` is the whole value, not an unset member: a dump with
+        # exclude_none (the transport's request bodies) must still carry it.
+        result: dict[str, Any] = handler(self)
+        result["none"] = self.none
+        return result
+
 
 #: What a set or add writes: a value, or a none.
 WriteValue: TypeAlias = ClaimValue | NoneValue
