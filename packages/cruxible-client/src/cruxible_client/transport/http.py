@@ -261,10 +261,17 @@ class CruxibleClient:
         version, _snapshot_digest = self._version_info()
         return version
 
-    def daemon_identity(self) -> tuple[str, str | None]:
-        """Return the daemon's version and the boot id of its process image."""
+    def daemon_identity(self, *, timeout: float | None = None) -> tuple[str, str | None]:
+        """Return the daemon's version and the boot id of its process image.
 
-        response = self._client.get("/version")
+        ``timeout`` bounds this one probe (connect and read), for a caller that
+        polls against its own deadline; by default the client's budget applies.
+        """
+
+        if timeout is None:
+            response = self._client.get("/version")
+        else:
+            response = self._client.get("/version", timeout=httpx.Timeout(timeout))
         payload = self._parse_json(response)
         version = payload.get("version")
         if not isinstance(version, str):

@@ -209,6 +209,15 @@ def test_the_socket_is_bound_owner_only(short_dir: Path) -> None:
         sock.close()
 
 
+def test_the_listener_is_close_on_exec_so_a_restart_does_not_carry_it(short_dir: Path) -> None:
+    """`server restart` re-execs in place; an inherited listener would accept unserved."""
+    sock = server_app.bind_private_unix_socket(short_dir / "d.sock")
+    try:
+        assert sock.get_inheritable() is False
+    finally:
+        sock.close()
+
+
 def test_run_server_serves_the_owner_only_socket_by_descriptor(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, short_dir: Path
 ) -> None:

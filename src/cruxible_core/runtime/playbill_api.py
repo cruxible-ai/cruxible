@@ -223,6 +223,7 @@ from cruxible_core.service.discovery.coverage import (
     service_resolve_playbill_coverage,
 )
 from cruxible_core.service.discovery.curation import (
+    OVERRULE_CHANGE_KIND,
     CurationError,
     PlaybillBlockObserveRequestV1,
     PlaybillCurationAcceptFixedRequestV1,
@@ -3035,7 +3036,7 @@ def playbill_curation_overrule(
             else PlaybillCurationOverruleRequestV1.model_validate(request)
         )
     )
-    with change_entry(parsed.dry_run, "direct"):
+    with change_entry(parsed.dry_run, OVERRULE_CHANGE_KIND):
         result = service_overrule_playbill_curation(
             get_playbill_manager().get(instance_id),
             request=parsed,

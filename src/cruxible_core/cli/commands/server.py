@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 import click
+import httpx
 
 from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.errors import CoreError, DaemonOperationScopeError
@@ -77,6 +78,10 @@ _lifecycle_state_root_option = click.option(
 
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
 _RESTART_POLL_INTERVAL_SECONDS = 0.25
+
+# Longest one version probe may wait during that poll. A listener that accepts
+# but never answers must cost one probe, not the client's whole read budget.
+_RESTART_PROBE_TIMEOUT_SECONDS = 5.0
 
 # Client RPCs (status/restart/stop) need a reachable daemon; surface a single,
 # actionable line instead of a hang or an opaque transport traceback when the
@@ -188,6 +193,17 @@ def _step_text(line: dict[str, object]) -> str:
     return f"  done in {line.get('elapsed_s')} s: {text}"
 
 
+def _is_timeout(exc: BaseException) -> bool:
+    """Whether a probe failed for want of an answer rather than a refusal."""
+
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, (httpx.TimeoutException, TimeoutError)):
+            return True
+        cause = cause.__cause__
+    return False
+
+
 def _wait_for_daemon(
     client: DaemonLifecycleClient,
     timeout: float,
@@ -219,10 +235,18 @@ def _wait_for_daemon(
             for line in startup_log.poll():
                 click.echo(_step_text(line), err=True)
                 deadline = time.monotonic() + timeout
+        probe_timeout = min(
+            _RESTART_PROBE_TIMEOUT_SECONDS,
+            max(deadline - time.monotonic(), _RESTART_POLL_INTERVAL_SECONDS),
+        )
         try:
-            version, boot_id = client.daemon_identity()
+            version, boot_id = client.daemon_identity(timeout=probe_timeout)
         except Exception as exc:  # connection refused while the image is replaced
-            last_error = exc
+            last_error = (
+                RuntimeError(f"a version probe got no answer within {probe_timeout:.1f}s")
+                if _is_timeout(exc)
+                else exc
+            )
             still_old = False
         else:
             identifiable = boot_id is not None and bool(boot_id.strip())

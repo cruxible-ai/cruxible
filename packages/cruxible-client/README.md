@@ -1355,7 +1355,7 @@ curation_overrule(
 
 Records, permanently, that a detected pattern does not apply here; it is never raised again.
 
-**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge. `dry_run` checks and appends nothing; `at` pins the commit.
+**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge. It cannot be undone, so it previews by default (`dry_run` unset or true appends nothing) and commits only with `dry_run=False` and `at`, the preview's `coordinate.git_oid`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -5162,7 +5162,7 @@ version() -> str
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-daemon_identity() -> tuple[str, str | None]
+daemon_identity(*, timeout: float | None = None) -> tuple[str, str | None]
 ```
 
 The daemon's version and the boot id of its process image, from `/version`. A
