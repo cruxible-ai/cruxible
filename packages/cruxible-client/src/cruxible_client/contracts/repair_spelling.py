@@ -372,6 +372,8 @@ def _sdk_repair_call(
 
     if operation == "cruxible.line.enable" and (line := text("line")):
         return _sdk_call("cx.line", line) + ".enable()"
+    if operation == "cruxible.runbook.run" and (runbook := text("runbook")):
+        return _sdk_call("cx.runbook", runbook) + ".run()"
     if operation == "cruxible.vocabulary.export":
         return (
             _sdk_call("cx.vocabulary.export", force=True)
@@ -1300,8 +1302,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         sdk=_sdk_line("dispatch", "occurrence_id", "limit"),
         required=("line",),
     ),
-    # A Runbook runs on the CLI and MCP; the SDK's Cruxible has no Runbook verb
-    # (CruxibleClient.run_runbook does). An action runs on the CLI alone.
+    # A Runbook runs on every client; an action runs on the CLI alone.
     "cruxible.runbook.run": RepairSpelling(
         cli="runbook run",
         cli_args=("runbook",),
@@ -1309,6 +1310,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         cli_flags={"dry_run": "--dry-run"},
         mcp="cruxible_runbook_run",
         mcp_args={"runbook": "runbook"},
+        sdk=lambda values: _sdk_call("cx.runbook", _operand(values, "runbook")) + ".run()",
         required=("runbook",),
     ),
     "cruxible.action.run": RepairSpelling(

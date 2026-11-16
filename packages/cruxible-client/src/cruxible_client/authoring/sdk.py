@@ -207,6 +207,7 @@ from cruxible_client.contracts.get_reads import (
     GetSubjectHistory,
 )
 from cruxible_client.contracts.identity_normalizers import KeyNormalizer
+from cruxible_client.contracts.kits import KitStatus
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     CaptureContractAdmission,
@@ -242,6 +243,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContract,
     ResolutionContractReference,
 )
+from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     Contract,
@@ -2660,6 +2662,39 @@ class Proposal:
             self._playbill._instance_id, self.proposal_id, dry_run=dry_run, at=at
         )
 
+    def reject(
+        self, reason: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalRejectResult:
+        """Reject another actor's open or stale proposal, with the reason its author reads.
+
+        A reviewer's terminal statement: the proposal leaves the open inventory
+        and every settlement door refuses it. Your own proposal you withdraw
+        instead (the refusal says so). Needs graph write. ``dry_run=True``
+        checks it and records nothing.
+
+        Next: ``cx.get(proposal.proposal_id)`` shows who rejected it and why.
+        """
+        cx = self._playbill
+        return cx._client.reject_proposal(
+            cx._instance_id, self.proposal_id, reason=reason, dry_run=dry_run, at=at
+        )
+
+    def withdraw(
+        self, reason: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.ProposalWithdrawResult:
+        """Withdraw your own open or stale proposal: it will never be activated.
+
+        Only its author withdraws it; anyone else is refused
+        ``cruxible.proposal.withdraw_not_author``, whose repair is to reject it.
+        ``dry_run=True`` checks it and records nothing.
+
+        Next: author the change again for a new proposal, if it is still wanted.
+        """
+        cx = self._playbill
+        return cx._client.withdraw_proposal(
+            cx._instance_id, self.proposal_id, reason=reason, dry_run=dry_run, at=at
+        )
+
     def __repr__(self) -> str:
         return f"Proposal({self.proposal_id!r})"
 
@@ -4810,6 +4845,34 @@ class Cruxible:
 
         return Line(self, name.removeprefix("Line:"))
 
+    def runbook(self, name: str) -> Runbook:
+        """A handle on one accepted Runbook by name: preview it, or run it now.
+
+        Next: ``cx.runbook(name).preview()`` for what each step reads and writes,
+        then ``.run()``.
+        """
+
+        return Runbook(self, name.removeprefix("Runbook:"))
+
+    def whoami(self) -> api.WhoAmI:
+        """Who this connection acts as, whether it can author here, and why not.
+
+        ``can_author`` and ``authoring_refusal`` carry the code, detail and repair
+        authoring would return. Next: the refusal's repair, when there is one.
+        """
+
+        return self._client.whoami(self._instance_id)
+
+    def kits(self) -> KitStatus:
+        """The kits installed here, their versions, providers and pending adds.
+
+        Adding or removing a kit stays a CLI step: ``cruxible kit add`` reads the
+        kit directory or registry, and ``cruxible kit status`` also checks for a
+        newer release. Next: ``cx.next()`` names a kit add that waits on review.
+        """
+
+        return self._client.kit_status(self._instance_id)
+
     def inbox(self) -> Inbox:
         """The Line inbox: what Lines sent to intelligence, and your dispositions of it.
 
@@ -5985,6 +6048,49 @@ class Line:
             **({"parameters": dict(parameters)} if parameters is not None else {}),
         )
         return ProcedureRun(cx, result)
+
+
+class Runbook:
+    """A handle on one accepted Runbook by name. Each call reaches the daemon.
+
+    ``run`` runs its steps now, in order, each Line as your manual run and
+    each action fired as ``action run`` fires it; it stops at the first step
+    that fails or sends writes to review.
+
+    Next: ``runbook.preview()``, then ``runbook.run()``.
+    """
+
+    def __init__(self, cx: Cruxible, name: str) -> None:
+        self._playbill = cx
+        self.name = name
+
+    @property
+    def ref(self) -> str:
+        """The ``get`` reference for this Runbook's card. Next: ``cx.get(runbook.ref)``."""
+
+        return f"Runbook:{self.name}"
+
+    def preview(self) -> RunbookPreview:
+        """What each step can read, write, call, settle and set off; nothing runs.
+
+        Next: ``runbook.run()``.
+        """
+        cx = self._playbill
+        return cx._client.preview_runbook(cx._instance_id, self.name)
+
+    def run(self) -> RunbookRunResult:
+        """Run the Runbook now under your authority; the result lists every step.
+
+        Needs governed write. A step that fails stops the run (later steps are
+        ``not_run``); a stop for review is not a failure.
+
+        Next: ``cx.get(runbook.ref)`` for its latest runs, or the stopped step's run.
+        """
+        cx = self._playbill
+        return cx._client.run_runbook(cx._instance_id, self.name)
+
+    def __repr__(self) -> str:
+        return f"Runbook({self.name!r})"
 
 
 class Inbox:

@@ -1525,6 +1525,51 @@ Returns a handle on one accepted Line by name. Each handle call reaches the daem
 | `.ref` | `"Line:<name>"`, for `cx.get(line.ref)`. |
 | `.name` | The Line's name. |
 
+<a id="api-cruxible-runbook"></a>
+
+### `Cruxible.runbook`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+runbook(name: str) -> Runbook
+```
+
+Returns a handle on one accepted Runbook by name. Each handle call reaches the daemon.
+
+**Conditions and effects:** Does not read or write by itself.
+
+| Method | Effect |
+|---|---|
+| `.preview() -> RunbookPreview` | What each step can read, write, call, settle, propose and set off, from accepted definitions only; nothing runs. |
+| `.run() -> RunbookRunResult` | Run the steps now, in order, each Line as your manual run and each action fired as `action run` fires it; stops at the first step that fails or sends writes to review. Needs governed write. |
+| `.ref` | `"Runbook:<name>"`, for `cx.get(runbook.ref)`. |
+| `.name` | The Runbook's name. |
+
+<a id="api-cruxible-whoami"></a>
+
+### `Cruxible.whoami`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+whoami() -> api.WhoAmI
+```
+
+Who this connection acts as and where that came from, its permission mode and principal registration, and whether it can author here: `can_author` and `authoring_refusal` carry the code, detail and repair authoring would return.
+
+<a id="api-cruxible-kits"></a>
+
+### `Cruxible.kits`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+kits() -> KitStatus
+```
+
+The kits installed here: versions, provider packages and their install state, requirements, and any kit add waiting on review. Adding, removing or checking for a newer release stays a CLI step (`cruxible kit add`, `kit remove`, `kit status`), which reads the kit directory or registry.
+
 <a id="api-cruxible-inbox"></a>
 
 ### `Cruxible.inbox`
@@ -2589,6 +2634,30 @@ readmit(*, dry_run: bool | None=None, at: str | None=None) -> api.ProposalReadmi
 ```
 
 Recompiles retained authoring/write or Procedure input at head (other origins readmit bytes) under a fresh proposal ID; review it normally. Activate and approve may return `ProposalRecompiled`, naming the new ID and `members_identical`; no approval carries. `changed_members` lists up to 50 sorted member paths with an `added`, `replaced`, or `removed` change; `changed_members_truncated` marks a longer list.
+
+<a id="api-proposal-reject"></a>
+
+### `Proposal.reject`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+reject(reason: str, *, dry_run: bool | None=None, at: str | None=None) -> api.ProposalRejectResult
+```
+
+A reviewer's terminal statement on another actor's open or stale proposal, with the reason its author reads: the proposal leaves the open inventory and every settlement door refuses it. Your own proposal you withdraw instead (the refusal says so). Needs graph write; `dry_run=True` checks it and records nothing.
+
+<a id="api-proposal-withdraw"></a>
+
+### `Proposal.withdraw`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+withdraw(reason: str, *, dry_run: bool | None=None, at: str | None=None) -> api.ProposalWithdrawResult
+```
+
+Withdraws your own open or stale proposal: it will never be activated. Only its author withdraws it; anyone else is refused `cruxible.proposal.withdraw_not_author`, whose repair is `Proposal.reject`.
 
 <a id="api-proposal-approve"></a>
 
