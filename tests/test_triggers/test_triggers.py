@@ -827,3 +827,18 @@ def test_a_version_seven_journal_gains_the_missed_version_in_place(tmp_path: Pat
     with sqlite3.connect(journal_path(world)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (8,)
     assert [row.count for row in missed_trigger_instants(world)] == [3]
+
+
+def test_an_unserved_actions_timer_records_no_missed_instants(tmp_path: Path) -> None:
+    """Review finding 4: an accepted Trigger aimed at curation.detect (not served in
+    0.5.0) is still read for history, but nothing would run it, so its outage is
+    never recorded or offered as `action run curation.detect`."""
+
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    curation = _cadence("Trigger:curation-hourly", "curation.detect", timedelta(hours=1))
+    fire(world, NOW + timedelta(hours=1), triggers=(curation, HOURLY))
+    restart = NOW + timedelta(hours=4, minutes=30)
+    fire(world, restart, triggers=(curation, HOURLY), since=restart)
+    assert [row.trigger for row in missed_trigger_instants(world)] == ["Trigger:sweep-hourly"]

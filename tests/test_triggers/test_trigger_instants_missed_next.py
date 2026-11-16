@@ -143,3 +143,30 @@ def test_a_lines_outages_sum_into_one_row_per_trigger(tmp_path: Path) -> None:
         now=restarted + timedelta(seconds=6),
     )
     assert _next(instance, restarted) == []
+
+
+def test_a_recorded_outage_of_an_unserved_action_offers_no_repair(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A record left from before the unserved guard (or replayed history) is not
+    shown: `action run curation.detect` would refuse, and nothing clears the row."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.triggers import journal
+    from cruxible_core.triggers.journal import MissedInstants
+
+    instance, _workspace = runbook_world(tmp_path)
+    at = instance.accepted_evaluation_time(instance.accepted_coordinate().git_oid)
+    trigger = SimpleNamespace(
+        trigger="Trigger:curation-hourly", action="curation.detect", version=""
+    )
+    monkeypatch.setattr(journal, "internal_triggers", lambda _instance: (trigger,))
+    monkeypatch.setattr(
+        journal,
+        "missed_trigger_instants",
+        lambda _instance: (
+            MissedInstants("Trigger:curation-hourly", "curation.detect", at, at, at, 3),
+        ),
+    )
+    assert _next(instance, at) == []

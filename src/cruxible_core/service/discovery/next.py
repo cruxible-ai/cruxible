@@ -4830,7 +4830,7 @@ def _trigger_missed_items(
 
     if not access_profile.permits("instance"):
         return ()
-    from cruxible_client.contracts.triggers import RUNBOOK_FIRE_PREFIX
+    from cruxible_client.contracts.triggers import RUNBOOK_FIRE_PREFIX, UNSERVED_INTERNAL_ACTIONS
     from cruxible_core.service.runbooks import latest_runbook_run
     from cruxible_core.triggers.journal import (
         internal_triggers,
@@ -4845,6 +4845,10 @@ def _trigger_missed_items(
     items = []
     for row in missed:
         current = live.get(row.trigger)
+        if row.action in UNSERVED_INTERNAL_ACTIONS:
+            # An accepted Trigger aimed at an action this release does not
+            # serve: nothing runs it, and its repair would refuse.
+            continue
         if current is None or (row.version and row.version != current.version):
             # Retired, or succeeded since (another target or schedule): the
             # record is its predecessor's, and nothing owes it now.

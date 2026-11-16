@@ -40,6 +40,7 @@ from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
     RUNBOOK_FIRE_PREFIX,
+    UNSERVED_INTERNAL_ACTIONS,
     AcceptedTrigger,
     GenerationAcceptedSchedule,
     Trigger,
@@ -625,7 +626,9 @@ def _missed(
             item.schedule
         ):
             continue
-        if housekeeping_trigger(item.trigger):
+        if housekeeping_trigger(item.trigger) or item.action in UNSERVED_INTERNAL_ACTIONS:
+            # Housekeeping is refreshed by its next instant; an unserved action
+            # (curation in 0.5.0) has nothing that would run it.
             continue
         after = item.accepted_at
         if item.trigger in covered:
