@@ -443,3 +443,130 @@ def test_a_claims_step_types_a_rows_subject_against_the_claim_value(value: str) 
     _claims_check(f"subject<{SUBJECT_KIND}>", value)
     with pytest.raises(ClaimsTypingRefused, match="not assignable"):
         _claims_check("subject<other.kind>", value)
+
+
+# -- a claims run over Query rows: a derivation from an exact Claim read -----------------
+
+
+def test_a_derivation_over_query_rows_writes_each_rows_subject(tmp_path: Path) -> None:
+    """A Claim written from Query rows is a derivation: it cites the Claim it read.
+
+    The row's Subject is the Claim's subject by key (a column) and its value
+    (``$item.bindings.vuln``); the status Claim read is the derivation's input.
+    """
+
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimValueRef,
+        QueryEntry,
+        QueryProjection,
+        QueryProjectionField,
+    )
+    from tests.test_procedures.test_claims_terminal import (
+        KIND,
+        PREDICATE,
+        activate,
+        candidate_claims,
+        claim_type,
+        claims_spec,
+        claims_world,
+        install,
+        run,
+    )
+
+    same = claim_type(
+        KIND + ".same_as",
+        f"subject<{KIND}>",
+        permitted_roles=("derivation",),
+        default_role=None,
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
+            rules=(
+                ClaimEvidenceAdmissionRule(
+                    rule_id="derived",
+                    claim_roles=("derivation",),
+                    capture_contracts=("test.orders-v1",),
+                    admission="derivational",
+                    subject_binding="exact_claim_subject",
+                ),
+            )
+        ),
+    )
+    instance, root = claims_world(
+        tmp_path,
+        {"entries": [{"id": "CVE-2026-0001", "status": "open"}]},
+        types=(claim_type(), same),
+    )
+    install(instance, claims_spec())
+    first = run(instance, root)
+    (status,) = candidate_claims(instance, first)
+    activate(instance, first)
+    subject_path = status.statement.subject.artifact_path
+    subject_id = subject_path.removeprefix(f"subjects/{KIND}/").removesuffix(".json")
+
+    row = validate_contract({"name": ROW, "version": 1, "fields": {"cve": "string{max_len: 256}"}})
+    query = work_item_query("security.vulnerabilities").model_copy(
+        update={
+            "entry": QueryEntry(binding="vuln", subject_kinds=(KIND,)),
+            "result_binding": "vuln",
+            "projection": QueryProjection(
+                fields=(
+                    QueryProjectionField(
+                        name="cve",
+                        value=QueryClaimValueRef(binding="vuln", predicate=KIND + ".cve_id"),
+                    ),
+                )
+            ),
+            "row_contract": ContractRef(name=ROW, version=1, digest=contract_digest(row).tagged),
+        }
+    )
+    query = type(query).model_validate(query.model_dump(mode="python", by_alias=True))
+    accept_tree(
+        instance,
+        {
+            contract_path(ROW, 1): render_contract(row),
+            query_definition_path(query.identity.name): render_query_definition(query),
+            claim_type_path(same.predicate): render_claim_type(same),
+        },
+        name="row-derivation",
+    )
+    install(
+        instance,
+        procedure_spec(
+            "test.row-derivation",
+            reference_text=True,
+            input={},
+            output={},
+            steps=[
+                {"read": "status", "claim_type": PREDICATE, "subject": subject_id},
+                {"read": "vulns", "query": query.identity.name},
+                {
+                    "id": "write",
+                    "for_each": "$steps.vulns.rows",
+                    "subject": {"kind": KIND, "key": {"cve_id": "$item.cve"}},
+                    "claims": [
+                        {
+                            "type": same.predicate,
+                            "value": "$item.bindings.vuln",
+                            "role": "derivation",
+                            "inputs": ["$steps.status"],
+                            "rationale": "The row's Subject; status {$steps.status.value}.",
+                        }
+                    ],
+                },
+            ],
+        ),
+        line_name="row-derivation-line",
+    )
+
+    second = run(instance, root, minute=1, line="row-derivation-line")
+
+    (claim,) = candidate_claims(instance, second)
+    assert claim.statement.predicate == same.predicate
+    assert claim.statement.role == "derivation"
+    assert claim.statement.subject.artifact_path == subject_path
+    assert claim.statement.object.kind == "subject"
+    assert claim.statement.object.address.artifact_path == subject_path
