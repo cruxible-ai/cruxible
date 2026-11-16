@@ -1,5 +1,6 @@
 """Backlinks over HTTP through the SDK: the daemon's index, the workspace's drift."""
 
+import pytest
 import yaml
 
 from cruxible_client.contracts.backlinks import BacklinksRequest
@@ -72,3 +73,22 @@ def test_sdk_link_about_a_section_and_guides_a_claim_type(playbill_http, tmp_pat
     assert entry["links"] == [{"relation": "guides", "target_identity": target}]
     (guide,) = cx.backlinks(target).links
     assert guide.relation == "guides"
+
+
+def test_sdk_guides_link_holds_the_context_coordinate(playbill_http, tmp_path):
+    """Omitted at pins the context's coordinate, as the about lane and every write do."""
+
+    cx, _instance, workspace = _context(playbill_http, tmp_path)
+    noted = cx.note("notes.md", text="# Guide\nText.\n", about=(f"{KIND}/wi-1",), because="x")
+    assert noted.status == "accepted", noted
+    target = f"ClaimType:{KIND}.status"
+    pinned = cx.at(cx.coordinate)
+    # The head moves past the pinned context.
+    moved = cx.note("other.md", text="# Other\nMore.\n", about=(f"{KIND}/wi-2",), because="y")
+    assert moved.status == "accepted", moved
+    before = (workspace / ".cruxible" / "files.yaml").read_text()
+    with pytest.raises(Exception, match="state_moved"):
+        pinned.link("notes.md", guides=(target,))
+    assert (workspace / ".cruxible" / "files.yaml").read_text() == before
+    # at=None deliberately opts out of the pin; the current context holds the head.
+    assert pinned.link("notes.md", guides=(target,), at=None).catalog_written

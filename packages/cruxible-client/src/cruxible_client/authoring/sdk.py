@@ -3884,7 +3884,8 @@ class Cruxible:
             )
         if because is not None:
             raise TypeError("because= goes with about=; a guides= link is a Document proposal")
-        pinned = None if isinstance(at, _Unset) else self._write_at(at)
+        # The context's coordinate by default, as every write; at=None opts out.
+        pinned = self._write_at(at)
         guided = link_guides(
             self._client,
             self._instance_id,
