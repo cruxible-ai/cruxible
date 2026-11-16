@@ -52,6 +52,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRe
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
+    CasDigest,
     Sha256Value,
     canonical_bytes,
     normalize_canonical,
@@ -486,6 +487,94 @@ class AcceptedStateRunMaterial(_StrictExecutionModel):
         if self.input.result_digest != run_value_digest("state-result", self.value):
             raise ValueError("accepted-state material does not reproduce its result digest")
         return self
+
+
+def _cas_material_digest(value: str) -> str:
+    CasDigest.from_tagged(value)
+    return value
+
+
+class StateTapMaterialV2(_StrictExecutionModel):
+    """A Query read's retained material: its timeless result body and the run's instant.
+
+    A Query result restated at another evaluation instant differs only in
+    ``result.evaluated_at``, ``receipt.evaluation_time`` and the receipt's
+    ``result_digest`` (which covers the instant). The result is stored without
+    them, so the same answer at the same coordinate, Query and parameters is
+    one body however often it is read; this small record keeps the three
+    values, and replay puts them back before checking the run input's
+    ``result_digest`` over the whole value, as it always was.
+    """
+
+    tag: Literal["playbill-state-tap-material-v2"] = "playbill-state-tap-material-v2"
+    result_body_digest: str
+    evaluated_at: str = Field(description="Reads EVALUATION INSTANT.")
+    receipt_evaluation_time: str = Field(description="Reads EVALUATION INSTANT.")
+    receipt_result_digest: str
+
+    _body = field_validator("result_body_digest")(_cas_material_digest)
+
+    def restore(self, timeless: CanonicalValue) -> CanonicalValue:
+        """The exact view the run read: ``timeless`` with this read's instant put back."""
+
+        if not isinstance(timeless, dict):
+            raise ValueError("a timeless state-tap body must be an object")
+        result, receipt = timeless.get("result"), timeless.get("receipt")
+        if not isinstance(result, dict) or not isinstance(receipt, dict):
+            raise ValueError("a timeless state-tap body names no result and receipt")
+        if "evaluated_at" in result or {"evaluation_time", "result_digest"} & set(receipt):
+            raise ValueError("a timeless state-tap body still carries its instant")
+        return normalize_canonical(
+            {
+                **timeless,
+                "result": {**result, "evaluated_at": self.evaluated_at},
+                "receipt": {
+                    **receipt,
+                    "evaluation_time": self.receipt_evaluation_time,
+                    "result_digest": self.receipt_result_digest,
+                },
+            }
+        )
+
+
+def retain_state_tap_material(
+    bodies: ContentAddressedBodyStore, node: ReadNode, value: CanonicalValue
+) -> str:
+    """Store one read's view; return the digest its run input names (``material_body_digest``).
+
+    A Query read stores its result without the evaluation instant
+    (deduplicated across runs and steps reading the same answer) and a
+    :class:`StateTapMaterialV2` naming it. A Claim read stores its value whole.
+    """
+
+    result = value.get("result") if isinstance(value, dict) else None
+    receipt = value.get("receipt") if isinstance(value, dict) else None
+    if (
+        node.reads_claims
+        or not isinstance(value, dict)
+        or not isinstance(result, dict)
+        or not isinstance(receipt, dict)
+        or not isinstance(result.get("evaluated_at"), str)
+        or not isinstance(receipt.get("evaluation_time"), str)
+        or not isinstance(receipt.get("result_digest"), str)
+    ):
+        return bodies.store(canonical_bytes(value)).digest
+    timeless_result = {key: item for key, item in result.items() if key != "evaluated_at"}
+    timeless_receipt = {
+        key: item
+        for key, item in receipt.items()
+        if key not in {"evaluation_time", "result_digest"}
+    }
+    body = bodies.store(
+        canonical_bytes({**value, "result": timeless_result, "receipt": timeless_receipt})
+    )
+    material = StateTapMaterialV2(
+        result_body_digest=body.digest,
+        evaluated_at=cast(str, result["evaluated_at"]),
+        receipt_evaluation_time=cast(str, receipt["evaluation_time"]),
+        receipt_result_digest=cast(str, receipt["result_digest"]),
+    )
+    return bodies.store(canonical_bytes(material.model_dump(mode="json"))).digest
 
 
 class ProcedureResourceBudgetV1(_StrictExecutionModel):
@@ -1991,14 +2080,14 @@ def read_state_tap(
             details={"node_id": node.node_id, "reason": str(exc)},
         ) from exc
     value = state_tap_view(node, read.value)
-    retained = bodies.store(canonical_bytes(value))
+    retained = retain_state_tap_material(bodies, node, value)
     common = dict(
         input_name=node.as_,
         read_coordinate=accepted_coordinate,
         parameters_digest=run_value_digest("state-parameters", read_parameters),
         result_digest=run_value_digest("state-result", value),
         effective_query_budgets=read.effective_budgets,
-        material_body_digest=retained.digest,
+        material_body_digest=retained,
     )
     run_input = (
         AcceptedClaimRunInputV1.model_validate(
@@ -3146,6 +3235,51 @@ class ProcedureExecutor:
                     "source_acquisition_plan_mismatch: Source closure does not reproduce"
                 )
 
+    def _retained_body(self, digest: str, *, access: BodyAccessContext) -> CanonicalValue:
+        """One retained body's canonical value; typed failures for missing or altered bytes."""
+
+        try:
+            retained = self.bodies.read(digest, access=access)
+        except Exception as exc:
+            raise _OperationalFailure("cas_unavailable_at_replay") from exc
+        try:
+            value = normalize_canonical(json.loads(retained))
+        except Exception as exc:
+            raise _OperationalFailure("replay_material_mismatch") from exc
+        if canonical_bytes(value) != retained:
+            raise _OperationalFailure("replay_material_mismatch")
+        return value
+
+    def _retained_state_value(
+        self, run_input: AcceptedStateRunInput, *, access: BodyAccessContext
+    ) -> CanonicalValue:
+        """The exact value an admitted read returned, from its retained material.
+
+        A Query read's material is a :class:`StateTapMaterialV2` naming its
+        timeless result body; a Claim read's (and a Query read retained
+        before that record existed) is the value itself. Either way the value
+        must reproduce the run input's ``result_digest``.
+        """
+
+        value = self._retained_body(run_input.material_body_digest, access=access)
+        if (
+            isinstance(run_input, AcceptedStateRunInputV2)
+            and isinstance(value, dict)
+            and value.get("tag") == "playbill-state-tap-material-v2"
+        ):
+            try:
+                material = StateTapMaterialV2.model_validate(value)
+            except ValidationError as exc:
+                raise _OperationalFailure("replay_material_mismatch") from exc
+            timeless = self._retained_body(material.result_body_digest, access=access)
+            try:
+                value = material.restore(timeless)
+            except ValueError as exc:
+                raise _OperationalFailure("replay_material_mismatch") from exc
+        if run_value_digest("state-result", value) != run_input.result_digest:
+            raise _OperationalFailure("replay_material_mismatch")
+        return value
+
     def _seed_state(self, prepared: PreparedProcedureRun) -> _RunState:
         """Bind every admitted plane's material and its provenance before node one."""
 
@@ -3166,24 +3300,7 @@ class ProcedureExecutor:
                 principal_id="procedure-runtime",
                 can_read_body=True,
             )
-            try:
-                retained = self.bodies.read(
-                    accepted_state.input.material_body_digest,
-                    access=access,
-                )
-            except Exception as exc:
-                raise _OperationalFailure("cas_unavailable_at_replay") from exc
-            try:
-                retained_value = normalize_canonical(json.loads(retained))
-            except Exception as exc:
-                raise _OperationalFailure("replay_material_mismatch") from exc
-            if (
-                canonical_bytes(retained_value) != retained
-                or run_value_digest("state-result", retained_value)
-                != accepted_state.input.result_digest
-            ):
-                raise _OperationalFailure("replay_material_mismatch")
-            value = retained_value
+            value = self._retained_state_value(accepted_state.input, access=access)
             digest = run_input_digest(accepted_state.input)
             name = accepted_state.input.input_name
             state.outputs[name] = normalize_canonical(value)
