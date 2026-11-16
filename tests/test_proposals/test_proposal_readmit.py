@@ -650,6 +650,12 @@ def test_a_refused_readmit_names_the_real_exit_by_origin_never_readmit(
     # The command is the structured repair, spelled by each client; the prose says it.
     assert ("withdraw prop-1 with a reason" in message) is not approver
     assert "cruxible " not in message.split(": ", 1)[1]
+    from cruxible_client.contracts.repair_spelling import render_repair
+
+    # Every client prints a runnable exit for it, and none of them is readmit.
+    assert render_repair(error.repair, surface="cli").startswith("cruxible ")
+    for surface in ("cli", "mcp", "sdk"):
+        assert "readmit" not in render_repair(error.repair, surface=surface)  # type: ignore[arg-type]
 
 
 def test_a_late_signer_is_told_a_generated_migration_cannot_land_and_who_reruns_it(
