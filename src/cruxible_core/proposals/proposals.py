@@ -2062,7 +2062,10 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
 
         lookup = tree_claims_lookup(context.candidate_tree)
         try:
-            validate_row_references(procedure.definition, lookup)
+            # A newer check than any recorded acceptance law: it judges new
+            # proposals only, never a member replayed under its recorded law.
+            if context.historical_law_coordinate is None and not context.rechecking:
+                validate_row_references(procedure.definition, lookup)
             validate_claims_templates(procedure.definition, lookup)
         except ValueError as exc:
             return _MemberVerdict(

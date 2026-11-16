@@ -570,3 +570,54 @@ def test_a_derivation_over_query_rows_writes_each_rows_subject(tmp_path: Path) -
     assert claim.statement.subject.artifact_path == subject_path
     assert claim.statement.object.kind == "subject"
     assert claim.statement.object.address.artifact_path == subject_path
+
+
+# -- the row-reference check judges new proposals, never a recorded law's replay ----------
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_the_row_reference_check_never_runs_under_a_recorded_law(
+    monkeypatch: pytest.MonkeyPatch, historical: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
+    from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+    from cruxible_core.proposals import proposals
+    from tests.support.procedures import procedure_artifact
+
+    artifact = procedure_artifact(_inbox_definition({"item": "$item.subject_id"}))
+    law = ACCEPTANCE_LAWS.resolve_member(artifact_tag=artifact.artifact_format)
+    reached: list[str] = []
+    monkeypatch.setattr(
+        proposals,
+        "evaluate_procedure_law",
+        lambda *_a, **_k: (
+            reached.append("law") or SimpleNamespace(verdict="refused", diagnostics=())
+        ),
+    )
+    context = SimpleNamespace(
+        path=procedure_path(artifact.identity.name),
+        content=render_procedure(artifact),
+        parent_content=None,
+        candidate_tree={
+            query_definition_path(QUERY): render_query_definition(work_item_query()),
+        },
+        current=SimpleNamespace(compiler=None),
+        acceptance_laws=ACCEPTANCE_LAWS,
+        historical_law_coordinate=(
+            (law.coordinate.identifier, law.coordinate.digest) if historical else None
+        ),
+        rechecking=False,
+    )
+
+    verdict = proposals._procedure_member(context)
+
+    codes = [diagnostic.code for diagnostic in verdict.diagnostics]
+    if historical:
+        # Replayed under its recorded law, the member meets only that law's checks.
+        assert "cruxible.procedure.item_reference_unresolved" not in codes
+        assert reached == ["law"]
+    else:
+        assert codes == ["cruxible.procedure.item_reference_unresolved"]
+        assert reached == []
