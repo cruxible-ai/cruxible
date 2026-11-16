@@ -982,6 +982,10 @@ class _Diff:
         # Paths the kit installed that this instance retired since (S7): kept
         # retired, still the kit's (they stay in the receipt).
         self.kept_retired: dict[str, str] = {}
+        # Live definitions the install retains without writing them (unchanged
+        # or kept), with the content this instance holds: the S7 dependency
+        # check reads their own pins.
+        self.retained_live: dict[str, tuple[ArtifactDependencyStateV1, dict[str, Any]]] = {}
         # Identity -> dependents counted beyond the pin closure (evidence-rule
         # consumers of a CaptureContract, with their closures).
         self.semantic_counts: dict[str, int] = {}
@@ -991,19 +995,39 @@ def _refuse_retired_dependencies(
     diff: _Diff,
     pins_of: Mapping[str, tuple[str, ...]],
     states: Mapping[str, ArtifactDependencyStateV1],
+    payloads: Mapping[str, dict[str, Any]],
+    held: Mapping[str, bytes] | None,
 ) -> None:
-    """Refuse when a definition the kit still installs pins one kept retired (S7)."""
+    """Refuse when a live definition the install leaves pins one kept retired (S7).
 
-    for path in sorted(diff.writes):
-        for pinned in pins_of.get(path, ()):
+    The written definitions are read from the release; the ones retained
+    without a write (unchanged or kept) from the content this instance holds,
+    so a local edit that dropped the dependency does not refuse.
+    """
+
+    if not diff.kept_retired:
+        return
+    needs: dict[str, tuple[str, ...]] = {path: pins_of.get(path, ()) for path in diff.writes}
+    for path, (held_state, held_payload) in diff.retained_live.items():
+        found = dict(
+            _dependency_order(
+                {**states, path: held_state},
+                {**payloads, path: held_payload},
+                within={path},
+                outside=held,
+            )
+        )
+        needs[path] = found.get(path, ())
+    for path in sorted(needs):
+        for pinned in needs[path]:
             if pinned in diff.kept_retired:
                 dependent = states[path].identity.qualified
                 retired = diff.kept_retired[pinned]
                 raise RequestRefusedError(
                     "cruxible.kit.retired_dependency",
-                    f"{dependent}, which this release installs, depends on {retired}, which "
-                    "this instance retired; the kit keeps your retirement, so it cannot "
-                    "install the dependent",
+                    f"{dependent}, which stays live with this kit, depends on {retired}, which "
+                    "this instance retired; the kit keeps your retirement, so the dependent "
+                    "cannot stay live",
                     repair=HandEditRepair(
                         hand_edit=HandEditInstruction(
                             target=retired,
@@ -1025,10 +1049,14 @@ def _refuse_retired_provider_dependents(
     retired = {step.build: step.provider_id for step in steps if step.action == "kept_retired"}
     if not retired:
         return
-    for path in sorted(diff.writes):
-        if path not in contents:
-            continue
-        state = _artifact_state(path, contents[path])
+    # Written definitions by their release content; the ones retained without a
+    # write (unchanged or kept) by the content this instance holds.
+    candidates = {
+        path: _artifact_state(path, contents[path]) for path in diff.writes if path in contents
+    }
+    candidates.update({path: held for path, (held, _payload) in diff.retained_live.items()})
+    for path in sorted(candidates):
+        state = candidates[path]
         for pin in state.pins:
             if (
                 isinstance(pin, ArtifactPin)
@@ -1039,9 +1067,9 @@ def _refuse_retired_provider_dependents(
                 build = f"Provider:{pin.target.name}"
                 raise RequestRefusedError(
                     "cruxible.kit.retired_dependency",
-                    f"{dependent}, which this release installs, depends on {build}, which "
-                    "this instance retired; the kit keeps your retirement, so it cannot "
-                    "install the dependent",
+                    f"{dependent}, which stays live with this kit, depends on {build}, which "
+                    "this instance retired; the kit keeps your retirement, so the dependent "
+                    "cannot stay live",
                     repair=HandEditRepair(
                         hand_edit=HandEditInstruction(
                             target=build,
@@ -1170,6 +1198,7 @@ def _diff_release(
             raise immutable_capability_error(path)
         live = current_state.lifecycle.state == "live"
         if live and _without_lifecycle(current_payload) == _without_lifecycle(payload):
+            diff.retained_live[path] = (current_state, current_payload)
             diff.plan.append(KitPathPlan(path=path, action="unchanged", identity=identity))
             diff.installed[release_digest] = current_state.artifact_digest
             diff.content[path] = kit_content_digest(current_payload)
@@ -1193,6 +1222,8 @@ def _diff_release(
         previously = kept.get(path)
         if previously is not None and previously.release_digest == release_digest:
             # Kept on purpose against this same release version: not asked again.
+            if live:
+                diff.retained_live[path] = (current_state, current_payload)
             diff.plan.append(
                 KitPathPlan(
                     path=path,
@@ -1224,6 +1255,8 @@ def _diff_release(
         )
         if keeping:
             assert consequence is not None
+            if live:
+                diff.retained_live[path] = (current_state, current_payload)
             diff.plan.append(
                 KitPathPlan(
                     path=path,
@@ -1258,7 +1291,7 @@ def _diff_release(
         diff.writes[path] = content
         diff.installed[release_digest] = digest
         diff.content[path] = kit_content_digest(payload)
-    _refuse_retired_dependencies(diff, pins_of, states)
+    _refuse_retired_dependencies(diff, pins_of, states, payloads, held)
     return diff, owned
 
 
