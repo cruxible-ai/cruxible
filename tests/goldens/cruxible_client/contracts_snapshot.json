@@ -34478,6 +34478,394 @@
         "payload_preview"
       ]
     },
+    "InboxRow": {
+      "fields": {
+        "item_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item_id",
+          "required": true,
+          "schema": {
+            "pattern": "^INB-[0-9a-f]{64}$",
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "line": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line",
+          "required": true,
+          "schema": {
+            "title": "Line",
+            "type": "string"
+          }
+        },
+        "seen": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "seen",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Seen",
+            "type": "integer"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "unread",
+              "acknowledged",
+              "dismissed",
+              "linked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-row-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-row-v1",
+            "default": "cruxible-inbox-row-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "title",
+          "required": true,
+          "schema": {
+            "title": "Title",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+        "properties": {
+          "item_id": {
+            "pattern": "^INB-[0-9a-f]{64}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "string"
+          },
+          "seen": {
+            "minimum": 1,
+            "title": "Seen",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "acknowledged",
+              "dismissed",
+              "linked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-inbox-row-v1",
+            "default": "cruxible-inbox-row-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "line",
+          "kind",
+          "title",
+          "status",
+          "seen"
+        ],
+        "title": "InboxRow",
+        "type": "object"
+      },
+      "required_fields": [
+        "item_id",
+        "kind",
+        "line",
+        "seen",
+        "status",
+        "title"
+      ]
+    },
+    "InboxRows": {
+      "fields": {
+        "line_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "line_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Filter"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
+        "rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rows",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/InboxRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "status_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          }
+        },
+        "tag": {
+          "default": "cruxible-inbox-rows-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-inbox-rows-v1",
+            "default": "cruxible-inbox-rows-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "InboxRow": {
+            "additionalProperties": false,
+            "description": "One inbox item as a list shows it by default: what it is, and how often seen.\n\n``kind`` is the terminal (Procedure node) that posted it; ``title`` a\none-line reading of its payload (a ``title``, ``name``, ``summary``,\n``subject`` or ``id`` field, else its canonical JSON), cut to\n``INBOX_ROW_TITLE_MAX_CHARS``. ``inbox get`` returns every field.",
+            "properties": {
+              "item_id": {
+                "pattern": "^INB-[0-9a-f]{64}$",
+                "title": "Item Id",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "seen": {
+                "minimum": 1,
+                "title": "Seen",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-inbox-row-v1",
+                "default": "cruxible-inbox-row-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "line",
+              "kind",
+              "title",
+              "status",
+              "seen"
+            ],
+            "title": "InboxRow",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One page of inbox items as compact rows, most recently posted first.",
+        "properties": {
+          "line_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Filter"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/InboxRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "status_filter": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unread",
+                  "acknowledged",
+                  "dismissed",
+                  "linked"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          },
+          "tag": {
+            "const": "cruxible-inbox-rows-v1",
+            "default": "cruxible-inbox-rows-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "InboxRows",
+        "type": "object"
+      },
+      "required_fields": [
+        "rows"
+      ]
+    },
     "InboxSighting": {
       "fields": {
         "posted_at": {

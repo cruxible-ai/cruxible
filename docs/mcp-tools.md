@@ -406,7 +406,7 @@ rules (`<call>.<field>` to `max_age`, `on_unavailable`, `on_stale`, ...).
 | `cruxible_runbook_preview` | (`runbook`: the Runbook's name) What each Runbook step can read, write, call, settle, propose and set off, and its order problems, from accepted definitions only: nothing runs and no outcome is predicted. | `READ_ONLY` |
 | `cruxible_line_evaluate` | Evaluate a historical range (`since`, `until`) into pending work; never executes. `dry_run` only reports what the range makes eligible (a read, no range needed); enqueueing needs governed write. | `READ_ONLY` |
 | `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller's authority, up to `limit` (default 100) per call; follow `cursor` for more. | `READ_ONLY` |
-| `cruxible_inbox_list` | List one page of the Line inbox, newest postings first, with a bounded payload preview; filter by `line` and `status`, follow `next_cursor`. | `READ_ONLY` |
+| `cruxible_inbox_list` | List one page of the Line inbox as compact rows (id, Line, kind, title, status, seen count), newest postings first; filter by `line` and `status`, follow `next_cursor`; `cruxible_inbox_get` reads one whole. | `READ_ONLY` |
 | `cruxible_inbox_get` | Read one inbox item whole: envelope (Line, node, dedupe key, occurrences, first and recent sightings with their source Captures, disposition), payload as posted (at most 65,536 bytes), and its 10 most recent dispositions (`disposition_count` says how many in all). | `READ_ONLY` |
 | `cruxible_inbox_ack` | Acknowledge an inbox item: seen, owed nothing further. | `GOVERNED_WRITE` |
 | `cruxible_inbox_dismiss` | Dismiss an inbox item with a recorded `reason`. | `GOVERNED_WRITE` |

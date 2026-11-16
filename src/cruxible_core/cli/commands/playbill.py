@@ -146,6 +146,7 @@ from cruxible_client.contracts.kits import (
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
+from cruxible_client.contracts.line_inbox import compact_inbox_list
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import (
@@ -160,7 +161,6 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireRequest,
 )
 from cruxible_client.contracts.public_names import public_name as _public_name
-from cruxible_client.contracts.read_values import shown_plain
 from cruxible_client.contracts.repair_spelling import render_repair
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
@@ -8443,25 +8443,31 @@ def _inbox_row(envelope: Any) -> str:
 def inbox_list(
     line: str | None, status: str | None, limit: int, cursor: str | None, output_json: bool
 ) -> None:
-    """List inbox items, most recently posted first."""
+    """List inbox items, most recently posted first, one compact row each.
 
-    result = _server_call(
-        lambda client, instance_id: client.list_inbox(
-            instance_id, line=line, status=cast(Any, status), limit=limit, cursor=cursor
-        ),
-        command_name="cruxible inbox list",
+    Each row is the item's id, status, Line, posting terminal, seen count and a
+    one-line title; `inbox get ITEM` shows every field and the whole payload.
+    """
+
+    result = compact_inbox_list(
+        _server_call(
+            lambda client, instance_id: client.list_inbox(
+                instance_id, line=line, status=cast(Any, status), limit=limit, cursor=cursor
+            ),
+            command_name="cruxible inbox list",
+        )
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if not result.entries:
+    if not result.rows:
         click.echo("No inbox items.")
         return
-    click.echo("STATUS  ITEM  LINE  SEEN  LAST_POSTED")
-    for entry in result.entries:
-        click.echo(_inbox_row(entry.item))
-        preview = shown_plain(entry.payload_preview)
-        click.echo(f"  {preview if isinstance(preview, str) else json.dumps(preview)}")
+    click.echo("STATUS  ITEM  LINE  KIND  SEEN  TITLE")
+    for row in result.rows:
+        click.echo(
+            f"{row.status}  {row.item_id[:16]}  {row.line}  {row.kind}  {row.seen}  {row.title}"
+        )
     _echo_list_continuation(result.next_cursor)
 
 

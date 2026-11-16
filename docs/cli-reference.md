@@ -3350,7 +3350,10 @@ cruxible inbox link ITEM (--proposal ID | --subject KIND/ID) [--json]
 ~~~
 
 The Line inbox holds what Lines sent to intelligence: the items a `post_inbox`
-terminal selected and could not decide. It is operational state (a journal and
+terminal selected and could not decide. `inbox list` (and MCP and the SDK) shows
+one compact row per item: id, status, Line, kind (the posting terminal), seen
+count and a one-line title read from the payload; `inbox get` shows every field
+and the whole payload. It is operational state (a journal and
 a rebuildable index under the instance's exhaust), never accepted state.
 
 Each item is its payload exactly as posted -- untyped instance data -- inside a

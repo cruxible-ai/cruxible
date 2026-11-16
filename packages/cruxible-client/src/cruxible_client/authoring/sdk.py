@@ -5972,14 +5972,19 @@ class Inbox:
         status: api.InboxItemStatus | None = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> api.InboxList:
-        """One page of items, most recently posted first; follow ``next_cursor``.
+    ) -> api.InboxRows:
+        """One page of items as compact rows (id, Line, kind, title, status, seen
+        count), most recently posted first; follow ``next_cursor``.
 
-        Next: ``inbox.get(entry.item.item_id)`` to read one whole.
+        Next: ``inbox.get(row.item_id)`` to read one whole.
         """
+        from cruxible_client.contracts.line_inbox import compact_inbox_list
+
         cx = self._playbill
-        return cx._client.list_inbox(
-            cx._instance_id, line=line, status=status, limit=limit, cursor=cursor
+        return compact_inbox_list(
+            cx._client.list_inbox(
+                cx._instance_id, line=line, status=status, limit=limit, cursor=cursor
+            )
         )
 
     def get(self, item_id: str) -> api.InboxItem:

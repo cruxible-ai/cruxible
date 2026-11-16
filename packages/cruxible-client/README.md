@@ -1457,22 +1457,23 @@ write.
 
 | Method | Effect |
 |---|---|
-| `.list(*, line=None, status=None, limit=None, cursor=None) -> InboxList` | One page, most recently posted first, with a bounded `payload_preview` per item; follow `next_cursor`. `line` is a Line name; `status` is `unread`, `acknowledged`, `dismissed` or `linked`. |
+| `.list(*, line=None, status=None, limit=None, cursor=None) -> InboxRows` | One page of compact rows, most recently posted first; follow `next_cursor`. `line` is a Line name; `status` is `unread`, `acknowledged`, `dismissed` or `linked`. |
 | `.get(item_id) -> InboxItem` | One item whole: envelope, payload and its 10 most recent dispositions, newest first (`item.disposition_count` counts them all). `item_id` may be a unique `INB-` prefix of 12+ hex digits. |
 | `.ack(item_id) -> InboxDispositionResult` | Acknowledge it: seen, owed nothing further. Repeating the current decision records nothing (`recorded=False`). |
 | `.dismiss(item_id, *, reason) -> InboxDispositionResult` | Dismiss it with a recorded reason. |
 | `.link(item_id, *, proposal=None, subject=None) -> InboxDispositionResult` | Link it to the proposal you wrote, or to an accepted Subject (`kind/id`, such as a note). Name exactly one. |
 
-An `InboxList` holds `entries`, `truncated` and `next_cursor`. Each entry is an
-`InboxListEntry` with `item` (the envelope: `item_id`, `status`, `line`,
-`occurrences`, sightings, `disposition`) and `payload_preview`; pass
-`entry.item.item_id`, a string, to `.get`, `.ack`, `.dismiss` or `.link`:
+An `InboxRows` holds `rows`, `truncated` and `next_cursor`. Each `InboxRow` is
+`item_id`, `line`, `kind` (the posting terminal), `title` (a one-line reading
+of the payload, at most 80 characters), `status` and `seen` (how many runs
+posted it); `.get(item_id)` returns the whole item. Pass `row.item_id` to
+`.get`, `.ack`, `.dismiss` or `.link`:
 
 ```text
 page = cx.inbox().list(status="unread")
-for entry in page.entries:
-    print(entry.item.item_id, entry.item.line, entry.payload_preview)
-cx.inbox().ack(page.entries[0].item.item_id)
+for row in page.rows:
+    print(row.item_id, row.line, row.title)
+cx.inbox().ack(page.rows[0].item_id)
 ```
 
 <a id="api-writebatch"></a>

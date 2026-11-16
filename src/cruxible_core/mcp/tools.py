@@ -56,6 +56,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
+from cruxible_client.contracts.line_inbox import compact_inbox_list
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
@@ -1761,10 +1762,18 @@ def register_tools(
             int, Field(ge=1, le=contracts.INBOX_LIST_MAX_LIMIT)
         ] = contracts.INBOX_LIST_DEFAULT_LIMIT,
         cursor: str | None = None,
-    ) -> contracts.InboxList:
-        """List one page of Line inbox items; pass next_cursor back while truncated."""
-        return handlers.handle_playbill_inbox_list(
-            require_instance_id(instance_id), line=line, status=status, limit=limit, cursor=cursor
+    ) -> contracts.InboxRows:
+        """List one page of Line inbox items as compact rows (id, Line, kind, title,
+        status, seen count); cruxible_inbox_get reads one whole. Pass next_cursor
+        back while truncated."""
+        return compact_inbox_list(
+            handlers.handle_playbill_inbox_list(
+                require_instance_id(instance_id),
+                line=line,
+                status=status,
+                limit=limit,
+                cursor=cursor,
+            )
         )
 
     @_tool

@@ -126,15 +126,17 @@ def test_the_sdk_lists_reads_and_judges_inbox_items(playbill_http, tmp_path, mon
     inbox = sdk.inbox()
 
     page = inbox.list(line=line.identity.name, status="unread", limit=2)
-    assert page.truncated and len(page.entries) == 2
+    assert page.truncated and len(page.rows) == 2
     rest = inbox.list(line=f"Line:{line.identity.name}", status="unread", cursor=page.next_cursor)
-    entries = (*page.entries, *rest.entries)
+    rows = (*page.rows, *rest.rows)
     assert not rest.truncated
-    assert sorted(entry.item.item_id for entry in entries) == sorted(
-        {entry.item.item_id for entry in entries}
-    )
-    assert all(isinstance(entry.payload_preview, ShownObject) for entry in entries)
-    first, second, third = (entry.item.item_id for entry in entries)
+    assert sorted(row.item_id for row in rows) == sorted({row.item_id for row in rows})
+    # S1: compact rows; the payload reads as a one-line title.
+    assert sorted(row.title for row in rows) == sorted(f'{{"cve":"{row["cve"]}"}}' for row in ROWS)
+    assert {(row.status, row.seen, row.line) for row in rows} == {
+        ("unread", 1, line.identity.qualified)
+    }
+    first, second, third = (row.item_id for row in rows)
 
     whole = inbox.get(first[:16])
     assert whole.item.item_id == first and whole.payload in ROWS
@@ -155,7 +157,7 @@ def test_the_sdk_lists_reads_and_judges_inbox_items(playbill_http, tmp_path, mon
     assert linked.item.disposition is not None
     assert linked.item.disposition.target.proposal_id == proposals[0].proposal_id  # type: ignore[union-attr]
 
-    assert inbox.list(status="unread").entries == ()
+    assert inbox.list(status="unread").rows == ()
     assert [item.disposition for item in inbox.get(first).recent_dispositions] == ["acknowledged"]
 
 
@@ -164,7 +166,7 @@ def test_refusals_name_the_list_repair(playbill_http, tmp_path, monkeypatch):
         playbill_http, tmp_path, monkeypatch
     )
     inbox = sdk.inbox()
-    item = inbox.list(limit=1).entries[0].item.item_id
+    item = inbox.list(limit=1).rows[0].item_id
 
     with pytest.raises(CruxibleError) as missing:
         inbox.get("INB-" + "0" * 12)
@@ -191,7 +193,7 @@ def test_the_cli_lists_and_judges_inbox_items(playbill_http, tmp_path, monkeypat
 
     listed = runner.invoke(commands.inbox_group, ["list", "--line", line.identity.name, "--json"])
     assert listed.exit_code == 0, listed.output
-    items = [entry["item"]["item_id"] for entry in json.loads(listed.output)["entries"]]
+    items = [row["item_id"] for row in json.loads(listed.output)["rows"]]
     assert len(items) == 3
     human = runner.invoke(commands.inbox_group, ["list", "--status", "unread"])
     assert human.exit_code == 0, human.output
@@ -222,3 +224,47 @@ def test_a_long_payload_previews_as_truncated_text() -> None:
     assert shown.length > 500 and shown.preview.startswith('{"text":"xxx')
     assert payload_preview({"short": 1}) == ShownObject(object={"short": 1})
     assert payload_preview("plain") == "plain"
+
+
+def test_a_compact_row_titles_its_payload_in_one_bounded_line() -> None:
+    from cruxible_client.contracts.line_inbox import (
+        INBOX_ROW_TITLE_MAX_CHARS,
+        InboxList,
+        InboxListEntry,
+        compact_inbox_list,
+    )
+
+    def entry(payload: object, index: int) -> dict[str, object]:
+        sighting = {"run_id": f"run-{index}", "posted_at": "2026-10-01T00:00:00Z"}
+        digest = "sha256:" + f"{index}" * 64
+        return InboxListEntry.model_validate(
+            {
+                "item": {
+                    "item_id": "INB-" + f"{index}" * 64,
+                    "status": "unread",
+                    "line": "Line:triage",
+                    "procedure": "Procedure:triage",
+                    "procedure_artifact_digest": digest,
+                    "node_id": "ask",
+                    "occurrences": 3,
+                    "first_sighting": sighting,
+                    "recent_sightings": [sighting],
+                    "dedupe_key": digest,
+                    "payload_digest": digest,
+                    "payload_bytes": 10,
+                },
+                "payload_preview": payload_preview(payload),
+            }
+        ).model_dump(mode="json")
+
+    page = InboxList.model_validate(
+        {
+            "entries": [
+                entry({"title": "Patch lodash\\n now", "cve": "CVE-1"}, 1),
+                entry("x" * 500, 2),
+            ]
+        }
+    )
+    first, second = compact_inbox_list(page).rows
+    assert (first.title, first.kind, first.seen) == ("Patch lodash\\n now", "ask", 3)
+    assert len(second.title) == INBOX_ROW_TITLE_MAX_CHARS and second.title.endswith("…")

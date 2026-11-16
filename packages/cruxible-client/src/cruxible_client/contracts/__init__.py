@@ -167,6 +167,8 @@ from cruxible_client.contracts.line_inbox import InboxLinkSubject as InboxLinkSu
 from cruxible_client.contracts.line_inbox import InboxLinkTarget as InboxLinkTarget
 from cruxible_client.contracts.line_inbox import InboxList as InboxList
 from cruxible_client.contracts.line_inbox import InboxListEntry as InboxListEntry
+from cruxible_client.contracts.line_inbox import InboxRow as InboxRow
+from cruxible_client.contracts.line_inbox import InboxRows as InboxRows
 from cruxible_client.contracts.line_inbox import InboxSighting as InboxSighting
 from cruxible_client.contracts.operational_reads import GetRunNode
 from cruxible_client.contracts.orient import (
