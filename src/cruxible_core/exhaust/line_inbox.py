@@ -457,15 +457,34 @@ class LineInboxStore:
             group = str(data["items_digest"])
             held = self._group(conn, group)
             joined = (0 if held is None else held[0]) + 1
+            group_seen = conn.execute(
+                "SELECT last_seen FROM inbox_groups WHERE group_digest=?", (group,)
+            ).fetchone()
+            # A recovered batch posted before the group's latest sighting
+            # (F-006) is folded into each member's own envelope instead: the
+            # group's window then only ever holds sightings in posting order,
+            # so its newest entries and an item's first sighting stay exact.
+            # Paid once per out-of-order batch, sized by that batch.
+            backdated = group_seen is not None and _instant(data["posted_at"]) < _instant(
+                group_seen[0]
+            )
             if items:
                 # The batch is one sighting of its group: one row, not one per
                 # item. The newest sightings are kept by the group's own count
                 # (``n``): an item reads those after the count it joined at.
-                window = [
-                    {"n": joined, "run_id": data["run_id"], "posted_at": data["posted_at"]},
-                    *([] if held is None else held[1]),
-                ][:INBOX_RECENT_SIGHTINGS]
-                seen = format_datetime(max(_instant(item["posted_at"]) for item in window))
+                window = (
+                    list(held[1])
+                    if backdated and held is not None
+                    else [
+                        {"n": joined, "run_id": data["run_id"], "posted_at": data["posted_at"]},
+                        *([] if held is None else held[1]),
+                    ][:INBOX_RECENT_SIGHTINGS]
+                )
+                seen = (
+                    str(group_seen[0])
+                    if backdated and group_seen is not None
+                    else format_datetime(_instant(data["posted_at"]))
+                )
                 conn.execute(
                     "INSERT OR REPLACE INTO inbox_groups VALUES(?,?,?,?,?)",
                     (group, items[0]["line"], seen, joined, json.dumps(window, sort_keys=True)),
@@ -474,6 +493,8 @@ class LineInboxStore:
                     "UPDATE group_status SET last_seen=? WHERE group_digest=?", (seen, group)
                 )
             for ordinal, posting in enumerate(items):
+                if backdated and self._sight_member(conn, posting, group=group, joined=joined):
+                    continue
                 if self._apply_posting(conn, posting, batch=True, group=(group, joined)):
                     created += 1
                     _note_activity(
@@ -659,6 +680,57 @@ class LineInboxStore:
                 item_id,
             ),
         )
+
+    def _sight_member(
+        self, conn: sqlite3.Connection, posting: dict[str, Any], *, group: str, joined: int
+    ) -> bool:
+        """Fold an out-of-order sighting into a group member's own envelope (F-006).
+
+        The member's group sightings so far are folded in first (counting this
+        one: the group's count includes it), then this one's instant is applied
+        by when its run posted; its base moves to the group's new count, so the
+        group's window is never read for it. False when the
+        item is not a member of ``group`` (the ordinary path applies it).
+        """
+
+        item_id = posting["item_id"]
+        member = conn.execute(
+            "SELECT group_digest FROM items WHERE item_id=?", (item_id,)
+        ).fetchone()
+        if member is None or member[0] != group:
+            return False
+        self._fold(conn, item_id)
+        row = conn.execute("SELECT envelope FROM items WHERE item_id=?", (item_id,)).fetchone()
+        current = InboxItemEnvelope.model_validate_json(row[0])
+        sighting = InboxSighting(
+            run_id=posting["run_id"],
+            posted_at=_instant(posting["posted_at"]),
+            source_capture_digests=tuple(posting["source_capture_digests"]),
+        )
+        recent = sorted((*current.recent_sightings, sighting), key=_sighting_order, reverse=True)[
+            :INBOX_RECENT_SIGHTINGS
+        ]
+        # The fold counted this sighting already (the group's count includes
+        # it); only its instant is folded here.
+        updated = InboxItemEnvelope.model_validate(
+            {
+                **current.model_dump(),
+                "first_sighting": min(
+                    current.first_sighting, sighting, key=_sighting_order
+                ).model_dump(),
+                "recent_sightings": [item.model_dump() for item in recent],
+            }
+        )
+        conn.execute(
+            "UPDATE items SET envelope=?,last_seen=?,group_base=? WHERE item_id=?",
+            (
+                updated.model_dump_json(),
+                format_datetime(updated.last_sighting.posted_at),
+                joined,
+                item_id,
+            ),
+        )
+        return True
 
     def _apply_posting(
         self,

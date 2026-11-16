@@ -606,3 +606,47 @@ def test_a_resighted_batch_writes_one_group_row_and_no_item_row_at_two_sizes(
                 "RUN-1",
             ]
             assert store.get(envelope.item_id).envelope == envelope
+
+
+def test_grouped_sightings_keep_their_true_first_and_latest_after_out_of_order_recovery(
+    tmp_path: Path,
+) -> None:
+    """F-006: recovered batches posted earlier than the group's latest sighting.
+
+    More recovered batches than the recent window arrive after a newer
+    posting; separately a backdated batch predates the first. Each item still
+    reads the true latest and first postings, its count and its newest window.
+    """
+
+    items = [{"cve": f"CVE-{index}"} for index in range(3)]
+    for name, minutes in (
+        ("latest", (10, 100, 20, 21, 22, 23, 24)),
+        ("first", (100, 0, 200, 201, 202, 203, 204)),
+    ):
+        (tmp_path / name).mkdir()
+        _instance, store, write = _world(tmp_path / name)
+        for index, minute in enumerate(minutes):
+            store.post(
+                [
+                    _posting(
+                        item,
+                        run_id=f"RUN-{index}",
+                        item_key=f"item-{position}",
+                        at=NOW + timedelta(minutes=minute),
+                    )
+                    for position, item in enumerate(items)
+                ],
+                **write,  # type: ignore[arg-type]
+            )
+        entries, _cursor = store.page(line=None, status=None, limit=10, cursor=None)
+        assert len(entries) == len(items)
+        for entry in entries:
+            envelope = entry.envelope
+            assert envelope.occurrences == len(minutes), name
+            assert envelope.last_sighting.posted_at == NOW + timedelta(minutes=max(minutes)), name
+            assert envelope.first_sighting.posted_at == NOW + timedelta(minutes=min(minutes)), name
+            newest = sorted(minutes, reverse=True)[: len(envelope.recent_sightings)]
+            assert [item.posted_at for item in envelope.recent_sightings] == [
+                NOW + timedelta(minutes=minute) for minute in newest
+            ], name
+            assert store.get(envelope.item_id).envelope == envelope
