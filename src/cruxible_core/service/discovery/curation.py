@@ -15,7 +15,7 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.change_control import DryRun, PreviewAt
+from cruxible_client.contracts.change_control import ChangeKind, DryRun, PreviewAt
 from cruxible_client.contracts.declared_blocks import (
     DeclaredBlockPageObservation,
     ProjectionMarkerSummary,
@@ -179,12 +179,18 @@ def validate_playbill_block_observe_request(
         ) from exc
 
 
+#: An overrule closes its item for good and its pattern is never raised again:
+#: it cannot be undone, so it previews by default and commits only with ``at``.
+OVERRULE_CHANGE_KIND: ChangeKind = "irreversible"
+
+
 class PlaybillCurationOverruleRequestV1(_StrictCurationModel):
     tag: Literal["playbill-curation-overrule-request-v1"] = "playbill-curation-overrule-request-v1"
     item_id: str
     expected_latest_event_digest: str
     reason: str = Field(min_length=1)
     attribution_refs: tuple[str, ...] = ()
+    #: Cannot be undone: previews by default, commits with ``at``.
     dry_run: DryRun = None
     at: PreviewAt = None
 
@@ -1015,14 +1021,19 @@ def _record_ruling(
     generation: int,
     actor_context: GovernedActorContext,
     operation: str,
+    kind: ChangeKind = "direct",
 ) -> PlaybillCurationActionResultV1:
-    """Append one ruling, or (previewing) run every check the append runs (R12)."""
+    """Append one ruling, or (previewing) run every check the append runs (R12).
+
+    ``kind`` is the ruling's change kind: an overrule cannot be undone, so it
+    previews by default and commits only with ``at``.
+    """
 
     with change_scope(
         instance,
         dry_run=request.dry_run,
         at=request.at,
-        kind="direct",
+        kind=kind,
         operation=operation,
         describe=f"recording a curation ruling on {item_id}",
     ) as mode:
@@ -1063,7 +1074,7 @@ def service_overrule_playbill_curation(
     instance.require_writable()
     # The whole ruling runs behind a preview's guards: reading the accepted
     # history and proposal evidence may catch derived indexes up on disk.
-    with change_entry(request.dry_run, "direct"):
+    with change_entry(request.dry_run, OVERRULE_CHANGE_KIND):
         item = _open_item(instance, request.item_id, allow_quarantined=True)
         coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         generation = _generation(instance, coordinate)
@@ -1083,6 +1094,7 @@ def service_overrule_playbill_curation(
             generation=generation,
             actor_context=actor_context,
             operation="cruxible.curation.overrule",
+            kind=OVERRULE_CHANGE_KIND,
         )
 
 

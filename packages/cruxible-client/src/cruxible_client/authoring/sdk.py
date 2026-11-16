@@ -5525,7 +5525,9 @@ class Cruxible:
     ) -> api.CurationActionResult:
         """Record, permanently, that a detector pattern does not apply here.
 
-        ``dry_run`` checks the ruling and appends nothing; ``at`` pins the commit.
+        It cannot be undone, so it previews by default (``dry_run`` unset or
+        true appends nothing); commit with ``dry_run=False`` and ``at`` set to
+        the preview's ``coordinate.git_oid``.
 
         Next: ``cx.curation_list()``; the pattern is never raised again.
         """

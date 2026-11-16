@@ -9206,7 +9206,10 @@ def curation_overrule(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Close an item as not applying here, permanently: its pattern is never raised again."""
+    """Close an item as not applying here, permanently: its pattern is never raised again.
+
+    It cannot be undone, so it previews by default; commit with ``--commit --at OID``.
+    """
 
     result = _server_call(
         lambda client, instance_id: client.overrule_curation(

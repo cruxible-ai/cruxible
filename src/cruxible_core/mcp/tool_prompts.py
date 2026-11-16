@@ -362,7 +362,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_curation_overrule": (
         "Beta curation (detection only with an authored curation-detect Trigger). "
         "Use when a detected pattern does not apply here: closes the item permanently, and the "
-        "pattern is never raised again."
+        "pattern is never raised again. It cannot be undone: preview, then commit with "
+        "dry_run=false and at=<the preview's coordinate git_oid>."
     ),
     "cruxible_curation_accept_fixed": (
         "Beta curation (detection only with an authored curation-detect Trigger). "
