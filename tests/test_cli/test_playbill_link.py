@@ -240,3 +240,29 @@ def test_a_catalog_entry_without_links_digests_as_before() -> None:
 
     entry = FileCatalogEntry(name="a", locator="a.md")
     assert "links" not in entry.model_dump(mode="json")
+
+
+def test_an_entry_edited_during_the_proposal_is_not_overwritten(
+    served: _Served, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The catalog lock is not held across the daemon call: compare, then write."""
+
+    (tmp_path / "guide.md").write_text("# Guide\nText.\n")
+    assert _run("files", "add", "guide.md", "--root", str(tmp_path)).exit_code == 0
+    propose = _Served.propose_file_bundle
+
+    def edit_meanwhile(self: _Served, *args: Any, **kwargs: Any) -> Any:
+        # Another local command edits the entry while the proposal is out.
+        catalog = tmp_path / ".cruxible" / "files.yaml"
+        entries = _entries(tmp_path)
+        entries["doc-guide.md"]["required_tier"] = "admin"
+        catalog.write_text(
+            yaml.safe_dump({"catalog_kind": "portable", "entries": list(entries.values())})
+        )
+        return propose(self, *args, **kwargs)
+
+    monkeypatch.setattr(_Served, "propose_file_bundle", edit_meanwhile)
+    result = _run("link", "guide.md", "--guides", STATUS)
+    assert result.exit_code == 1 and "changed this entry meanwhile" in result.output
+    entry = _entries(tmp_path)["doc-guide.md"]
+    assert entry["required_tier"] == "admin" and "links" not in entry

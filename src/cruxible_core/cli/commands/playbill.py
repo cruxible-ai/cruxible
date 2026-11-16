@@ -6614,10 +6614,14 @@ def link(
             "not submitted", code=exc.error_code, message=exc.detail, repair=exc.repair_line
         )
         raise SystemExit(1) from None
-    refused = not outcome.catalog_written and not outcome.proposal.status.startswith("would_")
+    refused = (
+        not outcome.catalog_written
+        and not outcome.catalog_conflict
+        and not outcome.proposal.status.startswith("would_")
+    )
     if output_json:
         _emit_json(outcome.model_dump(mode="json"))
-        if refused:
+        if refused or outcome.catalog_conflict:
             raise SystemExit(1)
         return
     result = outcome.proposal
@@ -6637,6 +6641,12 @@ def link(
             f"Preview at {result.accepted_coordinate.git_oid}; nothing was written. "
             f"Commit it: rerun without --dry-run, with --at {result.accepted_coordinate.git_oid}"
         )
+    elif outcome.catalog_conflict:
+        click.echo(
+            "files.yaml changed this entry meanwhile, so the links were not recorded there; "
+            "run the same link again to record them"
+        )
+        raise SystemExit(1)
     elif refused:
         click.echo("The proposal was refused; files.yaml is unchanged")
         raise SystemExit(1)

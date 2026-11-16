@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-16:link-verb",
-    "surface_digest": "sha256:659659aa87817338f8d2ea43be6b480090247e45caec5ab1c5a74afd2dbb5932"
+    "surface_digest": "sha256:aff270224beda9ce8ca20b441cfd1f3eb45c2dcdac63370654a68a0876689e02"
   },
   "surface": {
     "cli_leaves": [
@@ -2707,7 +2707,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_link",
         "input_schema_digest": "sha256:c4922ef8c36505cbf2c533e44e79657a3186afab0ba76da3a8ee4452f9a625d8",
         "name": "cruxible_link",
-        "output_schema_digest": "sha256:b58bc76be3ec39aaa2d72ee6167eb39480ec6974ef3bcb0e806a64a3b44e24c9",
+        "output_schema_digest": "sha256:651247f8591ea5c3f16006d71e4a2f59ae2152cb4370417b847f8d1138ed8c31",
         "permission": "GOVERNED_WRITE"
       },
       {

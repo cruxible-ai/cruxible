@@ -4265,7 +4265,10 @@ path or a catalog name. There are two links, in two lanes:
   declares its Document in place under that name (kind `guidance`, title from
   its first heading, scope `guidance`), so the file still compiles to one
   Document. `files.yaml` is written only once the proposal stands (landed or
-  awaiting approval): a dry run or a refused proposal leaves it unchanged.
+  awaiting approval): a dry run or a refused proposal leaves it unchanged. The
+catalog lock is not held across the daemon call; an entry another command
+changed meanwhile is left as it reads and the link exits 1 asking to run it
+again (`catalog_conflict`).
 
 `--unlink` removes the named links. Arguments that mix the two refuse before
 anything is sent, each saying which link is which: a Subject given to

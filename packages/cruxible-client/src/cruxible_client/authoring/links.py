@@ -108,6 +108,9 @@ class GuidanceLinkOutcome(BaseModel):
     document_id: str
     links: tuple[DocumentLink, ...]
     catalog_written: bool
+    #: The proposal stood but the entry changed in files.yaml meanwhile, so it
+    #: was left as it now reads; run the link again to record it.
+    catalog_conflict: bool = False
     declared_document: bool = False
     proposal: contracts.ProposalInspection
 
@@ -269,7 +272,9 @@ def link_guides(
     The proposal is ``files propose``'s, compiled from the file's current bytes
     and the entry's links as they will read. The catalog is written only after
     the proposal stands (landed, or awaiting approval), never on a dry run, so
-    a refused link leaves ``files.yaml`` as it was. An evidence-only entry
+    a refused link leaves ``files.yaml`` as it was. The catalog lock is held to
+    read the entry and again to write it, not across the daemon call: an entry
+    changed in between is left alone (``catalog_conflict``). An evidence-only entry
     (one a write catalogued, ``doc-<path>``) declares its Document in place,
     under its catalog name: the file keeps one entry and compiles to one
     Document.
@@ -297,9 +302,15 @@ def link_guides(
         entry, path = _guidance_entry(files, file, root=root)
         catalog_path = _portable_catalog_path(root)
         portable = _read_portable(catalog_path)
-        if not any(
-            isinstance(item, FileCatalogEntry) and item.name == entry.name for item in portable
-        ):
+        original = next(
+            (
+                item
+                for item in portable
+                if isinstance(item, FileCatalogEntry) and item.name == entry.name
+            ),
+            None,
+        )
+        if original is None:
             raise WriteRefusalError(
                 LINK_FILE_UNREGISTERED,
                 f"{entry.name} is catalogued only in the local overlay; guidance is recorded "
@@ -325,51 +336,59 @@ def link_guides(
                 governance_scope=(GUIDANCE_SCOPE,),
             )
         revised = FileCatalogEntry.model_validate({**fields, "links": (*others, *current.values())})
-        catalog = FileCatalog(
-            catalog_kind=files.catalog.catalog_kind,
-            entries=tuple(
-                revised if isinstance(item, FileCatalogEntry) and item.name == entry.name else item
-                for item in files.catalog.entries
-            ),
-        )
-        bundle: FileCompilationBundle = compile_client_file_context(
-            client, instance_id, catalog=catalog, repository_root=root, aliases={}
-        )
-        inspection = client.propose_file_bundle(
-            instance_id,
-            bundle=bundle.model_dump(mode="json"),
-            file=revised.name,
-            proposal_name=proposal_name or f"link-{revised.name}"[:120],
-            dry_run=True if dry_run else None,
-            at=at,
-            accept=accept,
-        )
-        # The proposal stands when it was admitted as a candidate: landed, or
-        # waiting on an approver. A refused evaluation records nothing.
-        evaluation = inspection.proposal.get("evaluation")
-        standing = (
-            inspection.status == "admitted"
-            and isinstance(evaluation, dict)
-            and evaluation.get("verdict") == "candidate"
-        )
-        written = False
-        if standing and not dry_run:
-            _write_portable(
-                catalog_path,
-                tuple(
-                    revised
-                    if isinstance(item, FileCatalogEntry) and item.name == revised.name
-                    else item
-                    for item in portable
-                ),
-            )
-            written = True
+    catalog = FileCatalog(
+        catalog_kind=files.catalog.catalog_kind,
+        entries=tuple(
+            revised if isinstance(item, FileCatalogEntry) and item.name == entry.name else item
+            for item in files.catalog.entries
+        ),
+    )
+    bundle: FileCompilationBundle = compile_client_file_context(
+        client, instance_id, catalog=catalog, repository_root=root, aliases={}
+    )
+    inspection = client.propose_file_bundle(
+        instance_id,
+        bundle=bundle.model_dump(mode="json"),
+        file=revised.name,
+        proposal_name=proposal_name or f"link-{revised.name}"[:120],
+        dry_run=True if dry_run else None,
+        at=at,
+        accept=accept,
+    )
+    # The proposal stands when it was admitted as a candidate: landed, or
+    # waiting on an approver. A refused evaluation records nothing.
+    evaluation = inspection.proposal.get("evaluation")
+    standing = (
+        inspection.status == "admitted"
+        and isinstance(evaluation, dict)
+        and evaluation.get("verdict") == "candidate"
+    )
+    # Compare-and-write: the lock is not held across the daemon call, so the
+    # entry is re-read under it and replaced only if nobody changed it since.
+    written = conflict = False
+    if standing and not dry_run:
+        with _catalog_lock(root):
+            portable = _read_portable(catalog_path)
+            now = [
+                item
+                for item in portable
+                if isinstance(item, FileCatalogEntry) and item.name == entry.name
+            ]
+            if now == [original]:
+                _write_portable(
+                    catalog_path,
+                    tuple(revised if item == original else item for item in portable),
+                )
+                written = True
+            else:
+                conflict = True
     assert revised.document_id is not None
     return GuidanceLinkOutcome(
         file=revised.name,
         document_id=revised.document_id,
         links=revised.links,
         catalog_written=written,
+        catalog_conflict=conflict,
         declared_document=declared,
         proposal=inspection,
     )
