@@ -56,6 +56,7 @@ from cruxible_core.procedures.execution import (
     parse_admission_payload,
     procedure_line_journal_stream,
 )
+from cruxible_core.procedures.terminal_payloads import join_derived_source_request_read
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 
 if TYPE_CHECKING:
@@ -480,6 +481,10 @@ class JournalProducerReceiptResolver:
             self._current_run = record.run_id or ""
             try:
                 payload = read_payload(self._bodies, record.payload_digest, access=self._access)
+                if record.event_kind == "source_request_derived":
+                    payload = join_derived_source_request_read(
+                        payload, self._bodies, access=self._access
+                    )
                 if isinstance(payload, UnavailablePayload):
                     self._note(
                         record_digest=stored.record_digest,

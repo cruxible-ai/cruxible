@@ -480,9 +480,14 @@ def _payloads(prepared, fixture):  # type: ignore[no-untyped-def]
         prepared.admission.journal_stream,
         prepared.admission.journal_partition_id,
     )
+    from cruxible_core.procedures.terminal_payloads import join_derived_source_request
+
     access = BodyAccessContext(principal_id="unit-test", can_read_body=True)
     return records, [
-        parse_journal_payload(fixture.bodies.read(item.record.payload_digest, access=access))
+        join_derived_source_request(
+            parse_journal_payload(fixture.bodies.read(item.record.payload_digest, access=access)),
+            lambda digest: fixture.bodies.read(digest, access=access),
+        )
         for item in records
     ]
 

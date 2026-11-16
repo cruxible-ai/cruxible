@@ -242,6 +242,21 @@ def _journal(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]
     return [member for payload in payloads for member in _acquisition_members(instance, payload)]
 
 
+def _consumed(instance: Any, final: Any) -> list[str]:
+    """A final record's consumed Captures: one run-free body its consumption cites."""
+
+    from cruxible_core.procedures.execution import consumed_captures
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    assert final["consumption"]["v"] == 2
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    captures = consumed_captures(
+        final["consumption"], lambda digest: instance.body_store().read(digest, access=access)
+    )
+    assert captures is not None
+    return captures
+
+
 def _acquisition_members(instance: Any, payload: Any) -> list[dict[str, Any]]:
     """A call's one ``source_acquisition`` record, as its members (each with its node)."""
 
@@ -474,7 +489,7 @@ def _result_digests(tmp_path: Path, name: str, left: bytes) -> tuple[str, str, l
     return (
         state.semantic_replay_key_digest,
         state.semantic_result_digest,
-        sorted(final["consumption"]["captures"]),
+        sorted(_consumed(instance, final)),
     )
 
 
@@ -561,7 +576,7 @@ def test_a_refused_runs_result_digest_commits_the_selected_siblings_fetched_byte
     assert state.terminal.code == "cruxible.acquisition.stale"
     assert _journal(instance, state.run_id, "produced_capture") == []
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
-    assert final["consumption"]["captures"] == []
+    assert _consumed(instance, final) == []
     assert final["semantic_result_digest"] == state.semantic_result_digest
 
     (fetched,) = observed
@@ -621,7 +636,7 @@ def test_a_halted_runs_result_digest_commits_an_omitted_fields_fetched_bytes(
     produced = _journal(instance, state.run_id, "produced_capture")
     assert [item["field"] for item in produced] == ["left"]
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
-    assert sorted(final["consumption"]["captures"]) == [produced[0]["capture_digest"]]
+    assert sorted(_consumed(instance, final)) == [produced[0]["capture_digest"]]
     assert final["semantic_result_digest"] == state.semantic_result_digest
 
     (fetched,) = observed
@@ -682,7 +697,7 @@ def test_an_out_contract_refusal_commits_the_captures_built_before_it(
         assert state.terminal.code == "contract_output_refused", state.terminal
         assert _journal(instance, state.run_id, "produced_capture") == []
         (final,) = _journal(instance, state.run_id, "attempt_finalized")
-        assert final["consumption"]["captures"] == []
+        assert _consumed(instance, final) == []
         assert final["semantic_result_digest"] == state.semantic_result_digest
         runs.append((state, final))
 
@@ -708,3 +723,25 @@ def test_an_out_contract_refusal_commits_the_captures_built_before_it(
     assert result([first[0], *changed[1:]]) != digest
     assert result([*changed[:1], first[1]]) != digest
     assert result(()) != digest
+
+
+def test_a_consumption_cites_one_run_free_body_and_v1_still_reads() -> None:
+    """Notes step 1 (J): a run's node and final records cite one consumed-Captures body."""
+
+    import hashlib
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.procedures.execution import CONSUMED_CAPTURES_BODY_V1, consumed_captures
+
+    captures = ["sha256:" + "a" * 64, "sha256:" + "b" * 64]
+    body = canonical_bytes({"tag": CONSUMED_CAPTURES_BODY_V1, "captures": captures})
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    store = {digest: body}
+    v2 = {"v": 2, "captures_digest": digest, "count": 2}
+    assert consumed_captures(v2, store.__getitem__) == captures
+    # A count, a tag or bytes the body does not reproduce read as unknown.
+    assert consumed_captures({**v2, "count": 3}, store.__getitem__) is None
+    assert consumed_captures(v2, {digest: body + b" "}.__getitem__) is None
+    # Records written before the body still read; an unversioned one is unknown.
+    assert consumed_captures({"v": 1, "captures": captures}, store.__getitem__) == captures
+    assert consumed_captures({"captures": captures}, store.__getitem__) is None

@@ -21,6 +21,7 @@ from pydantic import TypeAdapter
 from cruxible_client.contracts import ProcedureRunState
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.errors import CasError
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
     RUN_CARD_LIST_MEMBERS_MAX,
@@ -768,7 +769,7 @@ def run_consumed_captures(
     with no node fired yet has consumed nothing.
     """
 
-    from cruxible_core.procedures.execution import CONSUMPTION_VERSION
+    from cruxible_core.procedures.execution import consumed_captures
 
     if run_id is None:
         return (), True
@@ -789,18 +790,20 @@ def run_consumed_captures(
         digests.append(locators[0].final_payload_digest)
     found: set[str] = set()
     known = True
+    bodies = instance.body_store()
     for digest in digests:
         payload = run_payload(instance, digest)
-        consumption = payload.get("consumption") if isinstance(payload, Mapping) else None
-        captures = consumption.get("captures") if isinstance(consumption, Mapping) else None
-        if (
-            not isinstance(consumption, Mapping)
-            or consumption.get("v") != CONSUMPTION_VERSION
-            or not isinstance(captures, list)
-        ):
+        try:
+            captures = consumed_captures(
+                payload.get("consumption") if isinstance(payload, Mapping) else None,
+                lambda body: bytes(bodies.read(body, access=_ACCESS)),
+            )
+        except (CasError, OSError, ValueError):
+            captures = None  # a lost or damaged consumption body: unknown
+        if captures is None:
             known = False
             continue
-        found.update(str(item) for item in captures)
+        found.update(captures)
     return tuple(sorted(found)), known
 
 

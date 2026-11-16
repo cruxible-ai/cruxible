@@ -353,6 +353,7 @@ from cruxible_core.procedures.terminal_dependencies import (
     witnessed_list_capture,
 )
 from cruxible_core.procedures.terminal_payloads import (
+    split_derived_source_request,
     split_terminal_egress_payload,
     splits_terminal_egress,
 )
@@ -2487,7 +2488,41 @@ class _TransformInputInvalid(ExecutionError):
 
 #: The journaled consumption record's version. A node or final record without
 #: it was written before C14 provenance and is read as unknown (fail closed).
-CONSUMPTION_VERSION = 1
+#: Version 1 lists the consumed Captures inline; version 2 cites them as one
+#: run-free body (``CONSUMED_CAPTURES_BODY_V1``), so a run's node and final
+#: records no longer each restate every Capture it fetched.
+CONSUMPTION_VERSION = 2
+CONSUMED_CAPTURES_BODY_V1 = "playbill-consumed-captures-v1"
+
+
+def consumed_captures(consumption: object, read_body: Callable[[str], bytes]) -> list[str] | None:
+    """The Captures one journaled consumption names, either version; None when unknown.
+
+    ``read_body`` returns the verified CAS bytes of a digest; a version-2
+    record's body must be the canonical list it names. Unknown (no version,
+    another version, a malformed or noncanonical body) reads as None, and
+    every caller fails closed on it.
+    """
+
+    if not isinstance(consumption, Mapping):
+        return None
+    version = consumption.get("v")
+    if version == 1:
+        captures = consumption.get("captures")
+        return [str(item) for item in captures] if isinstance(captures, list) else None
+    if version != 2 or not isinstance(consumption.get("captures_digest"), str):
+        return None
+    content = read_body(str(consumption["captures_digest"]))
+    body = json.loads(content)
+    if (
+        not isinstance(body, dict)
+        or body.get("tag") != CONSUMED_CAPTURES_BODY_V1
+        or not isinstance(body.get("captures"), list)
+        or canonical_bytes(body) != content
+        or len(body["captures"]) != consumption.get("count")
+    ):
+        return None
+    return [str(item) for item in body["captures"]]
 
 
 def _fetched_captures(state: _RunState) -> list[str]:
@@ -2535,12 +2570,6 @@ def _acquired_member(
             else {"member_request_digest": member_request_digest}
         ),
     }
-
-
-def _consumed(state: _RunState) -> dict[str, object]:
-    """The run's consumed Captures so far, versioned: an empty set is proven empty."""
-
-    return {"consumption": {"v": CONSUMPTION_VERSION, "captures": sorted(state.consumed_captures)}}
 
 
 @dataclass(frozen=True)
@@ -2604,6 +2633,8 @@ class _RunState:
     #: a child's. Journaled on every node_fired and on finalization, so a
     #: reader of a running or finished run knows what its values derive from (C14).
     consumed_captures: set[str] = dataclass_field(default_factory=set)
+    #: The consumed set the last consumption body was stored for, and its digest.
+    consumption_body: tuple[frozenset[str], str] | None = None
     #: Every Capture an acquiring call built this run, added when its builder
     #: returns, whether or not it went on to bind (D-R37 f1). Distinct from
     #: ``consumed_captures``: a Capture behind an out-Contract refusal, or a
@@ -3123,7 +3154,7 @@ class ProcedureExecutor:
             "semantic_result_digest": semantic_result_digest,
             # What the run consumed, versioned, so a reader tells proven-empty from
             # a record written before C14 provenance (fail closed; D-R25 R4).
-            **_consumed(state),
+            **self._consumed(state),
             # The reads the run made mid-run (D-R38), apart from its admitted
             # inputs; recorded only when it made one, so other runs keep their bytes.
             **(
@@ -3820,7 +3851,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "succeeded",
                         **self._diagnostic_report(node.node_id, state),
-                        **_consumed(state),
+                        **self._consumed(state),
                         **({} if summary is None else {"summary": summary.model_dump(mode="json")}),
                     },
                 )
@@ -3836,7 +3867,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "refused",
                         **self._diagnostic_report(node.node_id, state),
-                        **_consumed(state),
+                        **self._consumed(state),
                     },
                 )
                 raise
@@ -3852,7 +3883,7 @@ class ProcedureExecutor:
                         "kind": node.kind,
                         "verdict": "failed",
                         **self._diagnostic_report(node.node_id, state),
-                        **_consumed(state),
+                        **self._consumed(state),
                     },
                 )
                 raise
@@ -5906,15 +5937,19 @@ class ProcedureExecutor:
         # The child's completion records an incomplete return (data or control
         # lineage); the invoke's output is that AND the inputs it passed.
         child_complete = final.get("return_complete", True) is not False
-        consumption = final.get("consumption")
-        consumed = consumption.get("captures") if isinstance(consumption, dict) else None
-        if (
-            not isinstance(consumption, dict)
-            or consumption.get("v") != CONSUMPTION_VERSION
-            or not isinstance(consumed, list)
-        ):
+        try:
+            consumed = consumed_captures(
+                final.get("consumption"),
+                lambda digest: bytes(self.bodies.read(digest, access=access)),
+            )
+        except (CasError, OSError) as exc:
+            raise _OperationalFailure(
+                "replay_material_unavailable",
+                details={"payload_digest": child_records[-1].record.payload_digest},
+            ) from exc
+        if consumed is None:
             raise ExecutionError("nested completion records no Capture consumption")
-        state.consumed_captures.update(str(digest) for digest in consumed)
+        state.consumed_captures.update(consumed)
         budget = ProcedureRunBudget.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
         state.capture_bytes += budget.capture_bytes
@@ -7688,6 +7723,31 @@ class ProcedureExecutor:
             )
         raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
 
+    def _consumed(self, state: _RunState) -> dict[str, object]:
+        """The run's consumed Captures so far, versioned: an empty set is proven empty.
+
+        The sorted list is one run-free body, stored when the set changes
+        (once per distinct set in a run): every later node record that
+        consumed nothing new cites the same body.
+        """
+
+        held = state.consumption_body
+        if held is None or held[0] != state.consumed_captures:
+            captures = sorted(state.consumed_captures)
+            digest = self.bodies.store(
+                canonical_bytes({"tag": CONSUMED_CAPTURES_BODY_V1, "captures": captures}),
+                journal_payload=True,
+            ).digest
+            held = (frozenset(state.consumed_captures), digest)
+            state.consumption_body = held
+        return {
+            "consumption": {
+                "v": CONSUMPTION_VERSION,
+                "captures_digest": held[1],
+                "count": len(held[0]),
+            }
+        }
+
     def _append_event(
         self,
         admission: ProcedureRunAdmission,
@@ -7695,6 +7755,12 @@ class ProcedureExecutor:
         event_kind: JournalEventKindV1,
         payload: object,
     ) -> StoredProcedureJournalRecordV1:
+        if event_kind == "source_request_derived" and isinstance(payload, Mapping):
+            # The request value is a run-free body: an unchanged request is one object.
+            payload = split_derived_source_request(
+                payload,
+                store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+            )
         if event_kind == "terminal_egress" and splits_terminal_egress(payload):
             # A claims terminal's per-item parts are run-free bodies the record
             # cites: an unchanged list is one object, shared across records.

@@ -205,6 +205,16 @@ def join_terminal_egress_read(
     same typed answer ``read_payload`` gives for a lost payload.
     """
 
+    return _join_read(join_terminal_egress_payload, payload, bodies, access=access)
+
+
+def _join_read(
+    join: Callable[[object, Callable[[str], bytes]], object],
+    payload: CanonicalValue | UnavailablePayload,
+    bodies: Any,
+    *,
+    access: BodyAccessContext,
+) -> CanonicalValue | UnavailablePayload:
     if isinstance(payload, UnavailablePayload):
         return payload
     missing: list[str] = []
@@ -217,9 +227,55 @@ def join_terminal_egress_read(
             raise
 
     try:
-        return cast(CanonicalValue, join_terminal_egress_payload(payload, read))
+        return cast(CanonicalValue, join(payload, read))
     except (CasError, OSError):
         return UnavailablePayload(missing[-1])
+
+
+#: A derived Source request's value, run-free, cited by its journal record.
+DERIVED_SOURCE_REQUEST_BODY_V1 = "playbill-derived-source-request-body-v1"
+
+
+def split_derived_source_request(
+    payload: Mapping[str, Any], *, store: Callable[[bytes], str]
+) -> dict[str, Any]:
+    """Move a ``source_request_derived`` record's request value into a run-free body.
+
+    The request (a fetch's coordinates, a component list) grows with what the
+    call asks for and is a function of the run's inputs; the record keeps its
+    run binding and ``request_digest`` inline.
+    """
+
+    if "request" not in payload:
+        return dict(payload)
+    split = {key: value for key, value in payload.items() if key != "request"}
+    split["request_body_digest"] = store(
+        canonical_bytes({"tag": DERIVED_SOURCE_REQUEST_BODY_V1, "request": payload["request"]})
+    )
+    return split
+
+
+def join_derived_source_request(payload: object, read_body: Callable[[str], bytes]) -> object:
+    """The exact inline ``source_request_derived`` payload, either shape."""
+
+    if not isinstance(payload, Mapping) or "request_body_digest" not in payload:
+        return payload
+    joined = {key: value for key, value in payload.items() if key != "request_body_digest"}
+    joined["request"] = _body(
+        read_body, payload["request_body_digest"], tag=DERIVED_SOURCE_REQUEST_BODY_V1
+    )["request"]
+    return joined
+
+
+def join_derived_source_request_read(
+    payload: CanonicalValue | UnavailablePayload,
+    bodies: Any,
+    *,
+    access: BodyAccessContext,
+) -> CanonicalValue | UnavailablePayload:
+    """Join a ``source_request_derived`` read; a lost request body is unavailable."""
+
+    return _join_read(join_derived_source_request, payload, bodies, access=access)
 
 
 def _is_split(payload: Mapping[str, Any]) -> bool:
@@ -234,6 +290,10 @@ def _is_split(payload: Mapping[str, Any]) -> bool:
 
 
 __all__ = [
+    "DERIVED_SOURCE_REQUEST_BODY_V1",
+    "join_derived_source_request",
+    "join_derived_source_request_read",
+    "split_derived_source_request",
     "TERMINAL_CHILDREN_V1",
     "TERMINAL_PREPARED_ITEMS_V1",
     "TERMINAL_RECEIPT_CHILDREN_V1",

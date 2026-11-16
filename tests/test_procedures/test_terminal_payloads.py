@@ -146,3 +146,31 @@ def test_a_split_record_whose_body_is_lost_reads_unavailable() -> None:
     store.held[lost] = b"{}"
     with pytest.raises(TerminalPayloadError):
         join_terminal_egress_payload(split, store.read)
+
+
+def test_a_derived_source_request_cites_its_value_as_a_run_free_body() -> None:
+    from cruxible_core.procedures.terminal_payloads import (
+        join_derived_source_request,
+        split_derived_source_request,
+    )
+
+    store = _Store()
+    payload = {
+        "tag": "playbill-procedure-derived-source-request-v1",
+        "run_id": "run-1",
+        "occurrence_path": "source/osv",
+        "request": {"purls": [f"pkg:pypi/p{index}@1" for index in range(50)]},
+        "request_digest": _digest("request-run-1"),
+    }
+    split = split_derived_source_request(payload, store=store.store)
+    assert "request" not in split and split["occurrence_path"] == "source/osv"
+    assert join_derived_source_request(split, store.read) == payload
+    # Another run asking the same thing stores nothing new.
+    held = dict(store.held)
+    again = split_derived_source_request(
+        {**payload, "run_id": "run-2", "request_digest": _digest("request-run-2")},
+        store=store.store,
+    )
+    assert store.held == held and again["request_body_digest"] == split["request_body_digest"]
+    # A record written inline before the split passes through.
+    assert join_derived_source_request(payload, store.read) == payload

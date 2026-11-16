@@ -271,7 +271,10 @@ from cruxible_core.procedures.terminal_dependencies import (
     CaptureRootCache,
     TerminalItemDependencyManifest,
 )
-from cruxible_core.procedures.terminal_payloads import join_terminal_egress_read
+from cruxible_core.procedures.terminal_payloads import (
+    join_derived_source_request_read,
+    join_terminal_egress_read,
+)
 from cruxible_core.providers.operation_index import (
     accepted_capability_side,
     memoized_slot_fitter,
@@ -2469,6 +2472,8 @@ def _state_from_records(
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if stored.record.event_kind == "terminal_egress":
             payload = join_terminal_egress_read(payload, bodies, access=access)
+        elif stored.record.event_kind == "source_request_derived":
+            payload = join_derived_source_request_read(payload, bodies, access=access)
         if isinstance(payload, UnavailablePayload):
             return _unavailable_run_state(stored, admission=admission)
         if (
