@@ -449,6 +449,29 @@ def _actor_id(instance_id: str) -> str:
     return actor.actor_id
 
 
+def _governed_actor_id(instance_id: str) -> str:
+    """The actor of a governed act on a proposal, which must be an accepted principal.
+
+    Approving, activating, rejecting, withdrawing and readmitting a proposal
+    record who did it. An auth-off request that names no principal acts as the
+    implicit local operator (``operator``), which is not a principal: it cannot
+    author, and it may not settle or close a proposal either. It is refused with
+    the same ``cruxible.identity.principal_unconfigured`` refusal and repair
+    authoring and ``whoami`` give it, so no receipt names a non-principal. A
+    principal registered under the name ``operator`` is an ordinary principal
+    and passes.
+    """
+
+    actor_id = _actor_id(instance_id)
+    if _credential_actor_context() is None:
+        refusal = principal_refusal(
+            get_playbill_manager().get(instance_id), actor_id, configured=False
+        )
+        if refusal is not None:
+            raise refusal
+    return actor_id
+
+
 def _require_writer(instance_id: str) -> None:
     """The write boundary for an instance mutation that records no actor.
 
@@ -1220,7 +1243,7 @@ def playbill_readmit_proposal(
         result = service_readmit_playbill_proposal(
             get_playbill_manager().get(instance_id),
             proposal_id=proposal_id,
-            actor_id=_actor_id(instance_id),
+            actor_id=_governed_actor_id(instance_id),
             dry_run=dry_run,
             at=at,
         )
@@ -1240,7 +1263,7 @@ def playbill_withdraw_proposal(
         result = service_withdraw_playbill_proposal(
             get_playbill_manager().get(instance_id),
             proposal_id=proposal_id,
-            actor_id=_actor_id(instance_id),
+            actor_id=_governed_actor_id(instance_id),
             reason=reason,
             withdrawn_at=canonical_candidate_timestamp(utc_now()),
             # No bound instance scope IS the daemon-wide operator credential (or
@@ -1266,7 +1289,7 @@ def playbill_reject_proposal(
         result = service_reject_playbill_proposal(
             get_playbill_manager().get(instance_id),
             proposal_id=proposal_id,
-            actor_id=_actor_id(instance_id),
+            actor_id=_governed_actor_id(instance_id),
             reason=reason,
             rejected_at=canonical_candidate_timestamp(utc_now()),
             dry_run=dry_run,
@@ -1482,7 +1505,7 @@ def playbill_submit_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
         attestation=attestation,
-        authenticated_submitter=_actor_id(instance_id),
+        authenticated_submitter=_governed_actor_id(instance_id),
         activate_when_complete=not hold,
         may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
         may_activate_compiler_upgrade=_permits(
@@ -1503,7 +1526,7 @@ def playbill_activate(
     proposal_id: str,
 ) -> contracts.ProposalActivationResult:
     check_permission("cruxible_proposal_activate", instance_id=instance_id)
-    activated_by = _actor_id(instance_id)
+    activated_by = _governed_actor_id(instance_id)
     result = service_activate_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,

@@ -125,6 +125,43 @@ def test_an_unregistered_claim_reads_but_is_refused_every_write(
         }
 
 
+def test_the_implicit_operator_may_not_settle_or_close_a_proposal(
+    daemon: tuple[TestClient, Path], tmp_path: Path
+) -> None:
+    """An auth-off request naming no principal acts as ``operator``, which is no
+    principal: every door that records who settled or closed a proposal refuses it
+    with the whoami repair, before any proposal is read (gapa-05)."""
+
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    proposal = f"sha256:{'0' * 64}"
+    base = f"/api/v1/{INSTANCE}/proposals/{proposal}"
+    attestation = {
+        "signer_id": "alice",
+        "signing_semantic_root": f"sha256:{'1' * 64}",
+        "payload_digest": f"sha256:{'2' * 64}",
+        "sig": "3" * 128,
+    }
+
+    who = client.get(f"/api/v1/{INSTANCE}/whoami").json()
+    refused = {
+        "activate": client.post(f"{base}/activate"),
+        "approve": client.post(f"{base}/approvals", json={"attestation": attestation}),
+        "reject": client.post(f"{base}/reject", json={"reason": "no"}),
+        "withdraw": client.post(f"{base}/withdraw", json={"reason": "no"}),
+        "readmit": client.post(f"{base}/readmit", json={"dry_run": True}),
+    }
+
+    assert who["actor_id_source"] == "local_operator"
+    assert who["authoring_refusal"]["code"] == "cruxible.identity.principal_unconfigured"
+    for door, response in refused.items():
+        assert response.status_code == 403, (door, response.text)
+        body = response.json()
+        assert body["error_code"] == "cruxible.identity.principal_unconfigured", door
+        assert "set CRUXIBLE_PRINCIPAL_ID" in body["message"], door
+        assert body["repair"] == who["authoring_refusal"]["repair"], door
+
+
 def test_a_malformed_claim_is_refused_before_it_names_anyone(
     daemon: tuple[TestClient, Path],
 ) -> None:

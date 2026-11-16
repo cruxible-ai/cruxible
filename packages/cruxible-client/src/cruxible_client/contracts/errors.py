@@ -401,6 +401,31 @@ class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
         )
 
 
+class ProposalReadmitNotAuthor(ProposalAdmissionError):
+    """Readmission refused: only the proposal's author readmits it.
+
+    A readmission re-admits the author's change under the author's name, so
+    another principal may not do it for them. A reviewer who will not approve
+    the stale change rejects it with a reason, so the author learns why.
+    """
+
+    error_code = "cruxible.proposal.readmit_not_author"
+
+    def __init__(self, proposal_id: str, *, author: str) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.author = author
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.reject", arguments={"proposal_id": proposal_id}
+        )
+        super().__init__(
+            f"{self.error_code}: only its author {author!r} may readmit proposal "
+            f"{proposal_id}; ask them to, or reject it with `cruxible proposal reject "
+            f"{proposal_id} --reason TEXT` so they learn why"
+        )
+
+
 class ProposalReadmitNotStale(ProposalAdmissionError):
     """Readmission refused: only a stale proposal is readmitted, and this one is not."""
 
@@ -765,6 +790,7 @@ __all__ = [
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
     "ProposalReadmitAlreadyAccepted",
+    "ProposalReadmitNotAuthor",
     "ProposalReadmitNotStale",
     "ProposalReadmitRequiresResubmission",
     "ProposalContentUnavailable",
