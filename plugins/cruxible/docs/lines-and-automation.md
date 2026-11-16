@@ -231,7 +231,7 @@ $ cruxible get Procedure:catalog.acme-discontinued
       "capability": {
         "name": "workspace.file",
         "version": 1,
-        "digest": "sha256:b751c693…"
+        "digest": "sha256:bf3721f9…"
       }
     }
   },
@@ -453,8 +453,8 @@ A Trigger does nothing until the Line is enabled:
 ~~~text
 $ cruxible line enable catalog.acme-discontinued
 Line:catalog.acme-discontinued: enabled
-Enabled by: YOUR_ID at 2026-10-21T19:46:01.895912+00:00
-Matched through: 2026-10-21T19:46:01.895912+00:00
+Enabled by: owner at 2026-11-16T05:19:30.392139+00:00
+Matched through: 2026-11-16T05:19:30.392139+00:00
 Pending: 0 automatic, 0 awaiting explicit dispatch
 ~~~
 
@@ -467,10 +467,16 @@ $ cruxible next
 Status: line enablements stalled=0 stopped=1  next=cruxible orient --section lines
 repair  consumer_stalled  Line:catalog.acme-discontinued  next=cruxible.line.enable
   repair: cruxible line enable catalog.acme-discontinued
+...
 ~~~
 
 Triggers fire only forward: a new Trigger never runs for times before it was
-accepted, and enabling a Line never runs ticks it missed. `line disable`
+accepted, and enabling a Line never runs ticks it missed. A scheduled Trigger
+fires only while the daemon is running: an instant that passes while it is
+down is not run when it comes back (see [Recovering missed
+work](#recovering-missed-work)). A Runbook's scheduled runs never overlap:
+instants that come due while its run is still going are folded into one run
+right after it, and nothing reports the folded instants. `line disable`
 stops it; a run already going finishes. `cruxible get Line:NAME` shows its
 Triggers, enablements and recent runs, and `get ProcedureRun:RUN-…` reads one
 run step by step.
@@ -573,29 +579,45 @@ change itself, and history still says where each value came from:
 
 ~~~text
 $ cruxible line run catalog.acme-discontinued
+RUN-940d287e…: succeeded
+Counts: written 1 (settled 1, proposed 0); unchanged 2; refused 0; inbox 0
 ...
-Settled settle: accepted d0f3a27bdecf… (proposal sha256:dcc462a0…)
+Node step_3 claims succeeded: 1 written, 2 re-observed; settled
+Settled step_3: accepted c89506edf21a… (proposal sha256:3cb5836c…)
 
 $ cruxible get catalog.part/bp-2210 --detail history --field discontinued
 ...
 discontinued
-  seq 30  d0f3a27bdecf  2026-10-21T19:47:04.647060Z  by YOUR_ID  stated  true  [CLM-75027a8f…]
-      reason: Listed in Acme's discontinued-parts file.  (Procedure Procedure:catalog.acme-discontinued, run RUN-2fdbb704…)
+  seq 25  c89506edf21a  2026-11-16T03:16:16.099821Z  by owner  stated  true  [CLM-d3e180e09adfbacba10d0cb526402703]
+      reason: Listed in Acme's discontinued-parts file.  (Procedure Procedure:catalog.acme-discontinued, run RUN-940d287e178cb534838254e732ea5fe0298f1e2be8302b72277439194e68ba50)
 ~~~
 
 When the list names a part the condition doesn't hold for (here `sp-77`, which
-has no category yet), the run follows the mandate's fallback, and the whole
-change goes to review: the new values, plus a refresh of the evidence of the
-parts already recorded, since the file they rest on changed:
+has no category yet), the run follows the mandate's fallback: the new value
+goes to review, and the parts already recorded are re-observed, unchanged:
 
 ~~~text
-$ cruxible proposal review sha256:…
+$ cruxible line run catalog.acme-discontinued
+RUN-eee34670…: succeeded
+Counts: written 1 (settled 0, proposed 1); unchanged 3; refused 0; inbox 0
 ...
-Changes (4):
-  set catalog.part/bp-2210 discontinued: true  [CLM-74d21b57…]
-  refresh evidence catalog.part/wb-330 discontinued: true (value unchanged)  [CLM-ab549499…]
-  set catalog.part/sp-77 discontinued: true  [CLM-b8d73b81…]
-  refresh evidence catalog.part/af-208 discontinued: true (value unchanged)  [CLM-c31e37b5…]
+Node step_3 claims succeeded: 1 written, 3 re-observed; proposed
+Proposal step_3: sha256:2609fbe7… candidate sha256:55f6e360… (settle fell back: cruxible.settle.condition_false)
+  4 items: 1 changed, 3 unchanged
+...
+
+$ cruxible proposal review sha256:2609fbe7…
+...
+Values (1):
+  set catalog.part/sp-77 discontinued: true  [CLM-4b268b2e1e6a853adc4d68b6f0e094d0; verdict supported; role observation]
+    cites CAP-7a94e9180d6b acme.discontinued
+      | part,reason
+      | af-208,Replaced by af-210
+      | wb-330,End of line
+      | bp-2210,Superseded by bp-2290
+      | sp-77,End of line
+    because: Listed in Acme's discontinued-parts file.
+...
 ~~~
 
 Delegate facts copied verbatim from a source, like this list. Keep judgments
@@ -610,15 +632,17 @@ Line, `catalog.acme-notices`, posts each notice to the **inbox** instead:
 
 ~~~text
 $ cruxible next
+...
 repair  line_inbox_unread  Line:catalog.acme-notices  next=cruxible.inbox.list
   repair: cruxible inbox list --line catalog.acme-notices --status unread
+...
 
 $ cruxible inbox list --line catalog.acme-notices --status unread
 STATUS  ITEM  LINE  SEEN  LAST_POSTED
-unread  INB-b73819240332  Line:catalog.acme-notices  -  2026-10-21T19:46:06.044545+00:00
-  {"notice": "2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate under heavy braking."}
-unread  INB-0152266fe7d8  Line:catalog.acme-notices  -  2026-10-21T19:46:06.044545+00:00
+unread  INB-961a51ad102e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.513063+00:00
   {"notice": "2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
+unread  INB-877f3d1e627e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.513063+00:00
+  {"notice": "2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate under heavy braking."}
 ~~~
 
 `inbox get ITEM` shows the whole item and the run and Capture behind it. The
@@ -662,11 +686,11 @@ For MCP-only clients, the same write is one `cruxible_write` call:
 Then link the item to the note, and dismiss the other:
 
 ~~~text
-$ cruxible inbox link INB-b73819240332 --subject catalog.note/acme-recall-bp-2210-4471
-linked  INB-b73819240332  Line:catalog.acme-notices  -  2026-10-21T19:46:06.044545+00:00
+$ cruxible inbox link INB-877f3d1e627e --subject catalog.note/acme-recall-bp-2210-4471
+linked  INB-877f3d1e627e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.513063+00:00
 
-$ cruxible inbox dismiss INB-0152266fe7d8 --reason "Prices are re-quoted from the November price list."
-dismissed  INB-0152266fe7d8  Line:catalog.acme-notices  -  2026-10-21T19:46:06.044545+00:00
+$ cruxible inbox dismiss INB-961a51ad102e --reason "Prices are re-quoted from the November price list."
+dismissed  INB-961a51ad102e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.513063+00:00
 ~~~
 
 When a Line posts the same item again, it is counted as seen again and keeps
@@ -676,8 +700,10 @@ the same rows twice:
 ~~~text
 $ cruxible inbox list --line catalog.acme-notices
 STATUS  ITEM  LINE  SEEN  LAST_POSTED
-dismissed (+1 since)  INB-b73819240332  Line:catalog.acme-notices  x2  2026-10-22T02:41:25.215491+00:00
-...
+dismissed (+1 since)  INB-961a51ad102e  Line:catalog.acme-notices  x2  2026-11-16T03:18:48.151453+00:00
+  {"notice": "2026-10-21 Price change: all wiper blades up 5% from 2026-11-01."}
+linked (+1 since)  INB-877f3d1e627e  Line:catalog.acme-notices  x2  2026-11-16T03:18:48.151453+00:00
+  {"notice": "2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate under heavy braking."}
 ~~~
 
 An item you linked to a proposal comes back unread if that proposal is
@@ -687,21 +713,27 @@ rejected or withdrawn, since your decision no longer stands.
 
 A daemon that was down didn't run what was due meanwhile, and it never runs
 missed work on its own. After a restart, `next` lists each gap with the exact
-command that covers it:
+command that covers it. Here the Line's Trigger ran on a one-minute cadence
+and the daemon was stopped for about three minutes:
 
 ~~~text
 $ cruxible next
-repair  line_coverage_gap  Line:catalog.acme-notices  next=cruxible.line.evaluate
-  repair: cruxible line evaluate catalog.acme-notices --since 2026-10-21T19:48:40.974240+00:00 --until 2026-10-21T19:51:32.748324+00:00 --dispatch
+repair  line_coverage_gap  Line:catalog.acme-discontinued  next=cruxible.line.evaluate
+  repair: cruxible line evaluate catalog.acme-discontinued --since 2026-11-16T05:20:51.533979+00:00 --until 2026-11-16T05:24:04.296892+00:00 --dispatch
+...
 
-$ cruxible line evaluate catalog.acme-notices --since 2026-10-21T19:48:40.974240+00:00 --until 2026-10-21T19:51:32.748324+00:00 --dispatch
-Line:catalog.acme-notices: met (2 occurrences)
-sha256:6c5718bb…: admitted run=RUN-7a89b406…
-sha256:8e6dfbe7…: admitted run=RUN-6a46e70d…
+$ cruxible line evaluate catalog.acme-discontinued --since 2026-11-16T05:20:51.533979+00:00 --until 2026-11-16T05:24:04.296892+00:00 --dispatch
+Line:catalog.acme-discontinued: met (3 occurrences)
+sha256:3b50bdfb…: admitted run=RUN-b82e07df…
+sha256:3c6aed43…: admitted run=RUN-885f1947…
+sha256:c28c3222…: admitted run=RUN-2a82cfb5…
 ~~~
 
 `--dispatch` runs what it finds; without it, `evaluate` only records the
-missed occurrences, and `line dispatch` runs them later.
+missed occurrences, and `line dispatch` runs them later. Only a Trigger aimed
+at a Line leaves a gap row: a missed instant of a Trigger aimed at a Runbook
+is not reported, so after downtime run the Runbook yourself (`cruxible runbook
+run NAME`).
 
 ## Automation that comes with a kit
 
