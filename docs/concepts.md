@@ -428,9 +428,12 @@ observation. What a new observation does to accepted state depends on what it
 shows:
 
 - **The same value again** changes no Claim. Re-checking the supplier's
-  catalog and finding the same fitment is recorded beside the Claim, and keeps
-  it fresh: a ClaimType's evidence age counts from the latest re-observation,
-  not the first Capture.
+  catalog is recorded once per fetch, keyed by the content it observed (an
+  identical re-fetch reuses the Capture already held), and keeps every Claim
+  citing that content fresh: a ClaimType's evidence age counts from the latest
+  observation of the content, not the first Capture. When the catalog's bytes
+  changed but the fitment did not, the run records that the Claims citing the
+  old content were re-checked in the new bytes.
 - **A different value** is a new statement, proposed as a revision like any
   other change. Claims that depend on the old value are not revised for you:
   `next` resurfaces them, and an agent decides what the change means for each.
@@ -757,12 +760,16 @@ Settling is an explicit act; nothing settles a prediction on its own. Any
 accepted observation inside the window can settle it, and once the window has
 closed `next` lists the prediction as `prediction_settleable` with the settle
 command. An observation counts at the time its Claim version was accepted, or
-at the time a later Capture re-observed that same unchanged version: when a
-run observes a value its live Claim already states, the re-observation is
-recorded, and settle uses that version's latest re-observation made by the
-window's close if it lies inside the window (a later one past the close does
-not hide it). The Claim itself does not change; the settlement cites the
-re-observing Capture and its record. Settle names the bound an observation
+at the time a later fetch observed the content that same unchanged version
+cites: a run's fetch is recorded once, keyed by the content it observed, and
+settle uses the latest such observation of that version's cited content (or a
+recorded re-check of it in new bytes) whose fetch had ended by the window's
+close, if it lies inside the window (a later one past the close does not hide
+it). An observation counts at its call's earliest member instant, and only
+when its call ended by the close: a call that ran across the close does not
+count for that prediction. The version must have been live when the
+observation was recorded. The Claim itself does not change; the settlement
+cites the observing Capture and its record. Settle names the bound an observation
 misses: `prediction_observation_predates_contract` when it was made at or
 before the prediction was accepted (an unchanged value stated earlier needs a
 later re-observation), `prediction_window_not_open` when it precedes the

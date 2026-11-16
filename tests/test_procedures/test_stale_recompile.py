@@ -492,8 +492,10 @@ def test_a_line_proposal_wholly_live_at_the_head_closes_as_answered(tmp_path: Pa
     from cruxible_client.contracts.projection import AcceptedCoordinate
 
     assert stale_unreadmitted_proposals(instance, AcceptedCoordinate.from_internal(head)) == ()
-    # The unchanged item's re-observation is recorded, as delivery records it.
-    assert len(ClaimReobservationStore(instance).history(live)) == 1
+    # The unchanged item restated the live Claim on a Capture of the content it
+    # cites: that fetch was its run's content observation (ruling 1a), so
+    # delivery records nothing for the Claim.
+    assert ClaimReobservationStore(instance).history(live) == ()
 
 
 def test_a_refused_line_recompile_names_the_lines_next_run_not_readmit(

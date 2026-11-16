@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 from collections import Counter
@@ -13,7 +14,12 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
-from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
+from cruxible_client.contracts.captures import (
+    capture_retention_policy,
+    observed_content,
+    parse_capture_envelope,
+)
+from cruxible_client.contracts.cas_contracts import CasObjectMetadata
 from cruxible_client.contracts.claim_evidence import (
     ClaimEvidenceReceipt,
     ClaimsDiagnostic,
@@ -42,6 +48,7 @@ from cruxible_core.procedures.claims_units import (
     claims_item_change_digest,
     finalize_creation_identities,
 )
+from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, capture_content_key
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -59,9 +66,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractAny as CaptureContract,
-)
-from cruxible_client.contracts.captures import (
+    CaptureBuildResult,
     CaptureDerivation,
     CaptureEnvelopeV1,
     CaptureFormatError,
@@ -72,6 +77,9 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     derive_input_template_digest,
     validate_provider_external_capture_result,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.errors import (
     CasError,
@@ -1328,6 +1336,49 @@ class ReadCeilingExceeded(ExecutionError):
     @classmethod
     def _value(cls, value: object) -> object:
         return normalize_canonical(value)
+
+
+class CaptureObservationsProtocol(Protocol):
+    """The instance's Capture reuse and content observations, for an acquiring call."""
+
+    def held_capture(self, content_key: str, *, commitment_digest: str) -> tuple[str, Any] | None:
+        """The held Capture (digest, envelope) of these contents, when it may be reused."""
+
+    def observe(
+        self,
+        contents: tuple[tuple[str, str, str], ...],
+        *,
+        earliest: datetime,
+        latest: datetime,
+        run_id: str,
+        node_id: str,
+        actor_id: str,
+    ) -> None:
+        """Record one call's observation of (contract, content, Capture) contents."""
+
+
+class _DeferredEnvelopeStore:
+    """A Capture store that holds built envelopes back until they are known to be new."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.envelopes: dict[str, bytes] = {}
+        self.reused: set[str] = set()
+
+    def store(self, content: bytes) -> CasObjectMetadata:
+        if content.startswith(ENVELOPE_HEAD):
+            digest = CasDigest(hashlib.sha256(content).hexdigest()).tagged
+            self.envelopes[digest] = bytes(content)
+            return CasObjectMetadata(
+                digest=digest, present=True, byte_length=len(content), redacted=False
+            )
+        return cast(CasObjectMetadata, self._inner.store(content))
+
+    def verify(self, digest: str) -> bool:
+        return bool(self._inner.verify(digest))
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+        return bytes(self._inner.read(digest, access=access))
 
 
 class StateTapReaderProtocol(Protocol):
@@ -2642,6 +2693,13 @@ class _RunState:
     #: halt must not erase it from the result digest just because it was never
     #: selected or consumed.
     fetched_captures: set[str] = dataclass_field(default_factory=set)
+    #: Each Capture this run fetched (built or reused), and the earliest and
+    #: latest instants its acquiring call observed its members (ruling 1b).
+    capture_spans: dict[str, tuple[datetime, datetime]] = dataclass_field(default_factory=dict)
+    #: Each fetched Capture's (contract, observed content) whose fetch this run
+    #: recorded as a content observation: an item restating a Claim on another
+    #: Capture of the same content observed nothing a Claim needs (ruling 1a).
+    observed_contents: dict[str, tuple[str, str]] = dataclass_field(default_factory=dict)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
     #: Acquiring calls whose Capture list dropped a failed member (D-R37 a4).
@@ -2775,8 +2833,11 @@ class ProcedureExecutor:
         key_rules: KeyCanonicalizer | None = None,
         claims_context: ClaimsContext | None = None,
         state_reader: StateTapReaderProtocol | None = None,
+        capture_observations: CaptureObservationsProtocol | None = None,
     ) -> None:
         self.journal = journal
+        # Capture reuse and content observations (rulings 1a, 1c), instance-bound.
+        self.capture_observations = capture_observations
         self.bodies = bodies
         self.material_reservations = ProcedureMaterialReservationStore(bodies.reservation_root)
         self.run_index = run_index
@@ -4887,7 +4948,12 @@ class ProcedureExecutor:
             reservations=self.material_reservations,
             admission=admission,
         )
+        # With an observations port, each built envelope is held back until it
+        # is known to be new: an identical re-fetch reuses the held Capture.
+        deferred = _DeferredEnvelopeStore(reserved_store)
+        building = reserved_store if self.capture_observations is None else deferred
         built: dict[str, Any] = {}
+        reused: set[str] = set()
         bodies: dict[str, bytes] = {}
         for field in fields:
             if field in dropped:
@@ -4912,7 +4978,7 @@ class ProcedureExecutor:
                 continue
             try:
                 built[field] = build_provider_external_capture_v2(
-                    store=reserved_store,
+                    store=building,
                     contract=contract,
                     result=wire,
                     receipt=receipts[field][0],
@@ -4924,6 +4990,10 @@ class ProcedureExecutor:
                     provider_output=outputs[field],
                     derivation=derivation if field in derived_fields else None,
                 )
+                if self.capture_observations is not None:
+                    built[field] = self._held_or_new(built[field], deferred, reserved_store)
+                    if built[field].capture_digest in deferred.reused:
+                        reused.add(field)
                 # D-R37 f1: fetched the moment its builder returns, before
                 # the out-Contract check or any acquisition rule below can
                 # refuse; independent of selection and consumption. A derived
@@ -5010,6 +5080,9 @@ class ProcedureExecutor:
                 results[field],
                 default_authorized=rules[field].input_name in self.default_authorizations,
                 evaluation_time=admission.occurrence_evaluation_time,
+                # A reused Capture's envelope says when its contents were first
+                # observed; its age is this fetch's.
+                observed_at=wires[field].observed_at if field in built else None,
             )
             for field in fields
             if field not in dropped
@@ -5037,6 +5110,36 @@ class ProcedureExecutor:
             # When the call's members were observed: their own fetch instants.
             observed=tuple(wires[field].observed_at for field in built),
         )
+        if built:
+            span = (
+                min(wires[field].observed_at for field in built),
+                max(wires[field].observed_at for field in built),
+            )
+            for item in built.values():
+                state.capture_spans[item.capture_digest] = span
+            if self.capture_observations is not None:
+                for item in built.values():
+                    state.observed_contents[item.capture_digest] = (
+                        item.envelope.capture_contract_digest,
+                        observed_content(item.envelope).digest,
+                    )
+                # The fetch is the observation (ruling 1a): one record for the
+                # call, keyed by the contents it observed, new or reused.
+                self.capture_observations.observe(
+                    tuple(
+                        (
+                            item.envelope.capture_contract_digest,
+                            observed_content(item.envelope).digest,
+                            item.capture_digest,
+                        )
+                        for item in built.values()
+                    ),
+                    earliest=span[0],
+                    latest=span[1],
+                    run_id=admission.run_id,
+                    node_id=node.node_id,
+                    actor_id=admission.actor_context.actor_id,
+                )
         for field in fields:
             if decisions[field].disposition == "refused":
                 # The attempted reads remain journaled, but an ineligible
@@ -5103,6 +5206,7 @@ class ProcedureExecutor:
                 occurrence_path=occurrence.occurrence_path,
                 invocation_receipt_digest=receipts[field][1],
                 member_request_digest=member_requests.get(field),
+                new=field not in reused,
             )
             if field in members:
                 bound_members.setdefault(rules[field].input_name, []).append(
@@ -5145,6 +5249,44 @@ class ProcedureExecutor:
             # nothing (D-R41).
             state.glob_lists.add(node.as_)
         reserved_store.release()
+
+    def _held_or_new(
+        self,
+        item: Any,
+        deferred: _DeferredEnvelopeStore,
+        reserved_store: ReservedCaptureStore,
+    ) -> Any:
+        """The held Capture an identical re-fetch reproduces, else this new one, stored.
+
+        The key is the built envelope less its run-bound fields (ruling 1c). A
+        held Capture whose envelope or body is gone, damaged or erased is never
+        reused (the port refuses it); the new envelope is then stored, and is
+        what the next identical re-fetch reuses.
+        """
+
+        assert self.capture_observations is not None
+        content = deferred.envelopes.pop(item.capture_digest)
+        key = capture_content_key(json.loads(content))
+        held = (
+            None
+            if key is None
+            else self.capture_observations.held_capture(
+                key, commitment_digest=item.envelope.commitment.digest
+            )
+        )
+        if held is None or held[0] == item.capture_digest:
+            if reserved_store.store(content).digest != item.capture_digest:
+                raise ExecutionError("Capture envelope CAS digest did not reproduce")
+            return item
+        digest, envelope = held
+        deferred.reused.add(digest)
+        return CaptureBuildResult(
+            contract_digest=item.contract_digest,
+            envelope=envelope,
+            capture_digest=digest,
+            commitment_digest=envelope.commitment.digest,
+            source_body_materialized=item.source_body_materialized,
+        )
 
     def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
         """The exact bytes of a Capture this run committed or was admitted."""
@@ -5738,13 +5880,17 @@ class ProcedureExecutor:
         occurrence_path: str,
         invocation_receipt_digest: str,
         member_request_digest: str | None = None,
+        new: bool = True,
     ) -> frozenset[DependencyToken]:
         """Bind one selected capture output: its Capture, budget, evidence and association.
 
         A list member is one of its field's Captures: its record names its
         identity (D-R37 a2), and its list's one outcome is recorded by the
         caller once every member is bound. Returns the tokens the call's
-        value carries for it.
+        value carries for it. A reused Capture (``new`` false) is bound
+        exactly the same, but journals no ``produced_capture``: this run
+        produced nothing new, so Capture-landing Triggers and source tallies,
+        which count that record, count new Captures only (ruling 1c).
         """
 
         digest = acquisition.capture_digest
@@ -5761,6 +5907,48 @@ class ProcedureExecutor:
             state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
                 input_name=rule.input_name, disposition="acquired", capture_digests=(digest,)
             )
+        if new:
+            self._produced_capture(
+                admission,
+                records,
+                node=node,
+                rule=rule,
+                field=field,
+                acquisition=acquisition,
+                occurrence_path=occurrence_path,
+                invocation_receipt_digest=invocation_receipt_digest,
+                member_request_digest=member_request_digest,
+            )
+        state.source_capture_associations.append(
+            ProcedureSourceCaptureAssociation(
+                occurrence_path=occurrence_path,
+                field=field,
+                invocation_receipt_digest=invocation_receipt_digest,
+                capture_digest=digest,
+            )
+        )
+        return frozenset(
+            {
+                produced_capture_token(digest),
+                receipt_token(acquisition.receipt.digest),
+                policy_token(acquisition.envelope.capture_contract_digest),
+            }
+        )
+
+    def _produced_capture(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        *,
+        node: CallNode,
+        rule: AcquisitionRule,
+        field: str,
+        acquisition: ExternalCaptureAcquisitionV1,
+        occurrence_path: str,
+        invocation_receipt_digest: str,
+        member_request_digest: str | None,
+    ) -> None:
+        digest = acquisition.capture_digest
         self._append_event(
             admission,
             records,
@@ -5787,21 +5975,6 @@ class ProcedureExecutor:
                     "recorded_at": format_datetime(self.clock.now()),
                 },
             },
-        )
-        state.source_capture_associations.append(
-            ProcedureSourceCaptureAssociation(
-                occurrence_path=occurrence_path,
-                field=field,
-                invocation_receipt_digest=invocation_receipt_digest,
-                capture_digest=digest,
-            )
-        )
-        return frozenset(
-            {
-                produced_capture_token(digest),
-                receipt_token(acquisition.receipt.digest),
-                policy_token(acquisition.envelope.capture_contract_digest),
-            }
         )
 
     def _run_child(
@@ -6201,8 +6374,18 @@ class ProcedureExecutor:
                 )
             # A fan-out over an empty list has nothing to emit: no egress is
             # prepared or delivered (a proposal with no member is no proposal),
-            # and the run ends at this terminal with its typed result.
-            self._note_delivery(node, state, delivery="empty", emitted=0, truncation=None)
+            # and the run ends at this terminal with its typed result. A claims
+            # terminal whose every item restated exactly what is live (the
+            # held Capture, or another of the content it cites) has no item
+            # either: it is unchanged, and its record's counts say so (1e).
+            diagnostics = state.claims_diagnostics.get(node.node_id)
+            self._note_delivery(
+                node,
+                state,
+                delivery="unchanged" if diagnostics is not None and diagnostics.same else "empty",
+                emitted=0,
+                truncation=None,
+            )
             return
         required = TERMINAL_REQUIRED_RUNGS[node.kind]
         payload: dict[str, object] = {

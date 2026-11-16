@@ -762,22 +762,23 @@ def test_a_reobservation_recorded_after_the_check_forces_the_full_condition_path
     from cruxible_core.proposals.proposals import ProposalService
 
     instance, root, line, parent, claim_id = _seeded_parent(tmp_path)
-    # Read the parent's file again, unchanged; keep its re-observation to record later.
-    pending: list[dict[str, Any]] = []
+    # Read the parent's file again, unchanged; keep its fetch's content
+    # observation (ruling 1a) to record later.
+    pending: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     with _patched(
         ClaimReobservationStore,
-        "record",
-        lambda _original: lambda self, **kwargs: pending.append(kwargs),
+        "observe",
+        lambda _original: lambda self, *args, **kwargs: pending.append((args, kwargs)),
     ):
         again = SD.run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
     assert again.status == "succeeded", again.terminal
-    (kwargs,) = pending
-    assert kwargs["claim_id"] == claim_id
+    ((args, kwargs),) = pending
     assert ClaimReobservationStore(instance).history(claim_id) == ()
+    held = ClaimReobservationStore(instance).head_sequence()
     _write_child(root)
 
     def reobserve(_submitted: dict[str, Any]) -> None:
-        assert ClaimReobservationStore(instance).record(**kwargs) is not None
+        assert ClaimReobservationStore(instance).observe(*args, **kwargs) is not None
         assert instance.accepted_coordinate() == parent
 
     checks: Counter[str] = Counter()
@@ -804,7 +805,7 @@ def test_a_reobservation_recorded_after_the_check_forces_the_full_condition_path
         state = SD.run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=20))
     after = instance.prepared_evaluations.status()
     assert seen, state.terminal
-    assert ClaimReobservationStore(instance).history(claim_id)
+    assert ClaimReobservationStore(instance).head_sequence() > held
     egress = SD._egress(state)
     assert egress.settle_outcome == "settled", egress
     assert counts["handed"] == 1, counts

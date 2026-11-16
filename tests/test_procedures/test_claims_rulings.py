@@ -53,13 +53,15 @@ def test_same_kev_values_in_changed_catalog_reobserve_without_a_proposal(tmp_pat
     assert not again.terminal_egress[0].target_paths
     assert instance.accepted_coordinate() == before
     store = ClaimReobservationStore(instance)
-    from datetime import timedelta
+    from datetime import UTC, datetime, timedelta
 
     from cruxible_client.contracts.captures import observed_content, parse_capture_envelope
 
+    # Ruling 1d: one transition for the terminal, nothing per Claim.
+    later = datetime.now(UTC) + timedelta(days=1)
+    reobserving = set()
     for claim in claims:
-        (observation,) = store.history(claim.identity.name)
-        assert observation.capture_digest not in claim.backing.capture_digests
+        assert store.history(claim.identity.name) == ()
         original = parse_capture_envelope(
             instance.body_store().read(
                 claim.backing.procedure_evidence.value.capture_digest,
@@ -75,11 +77,31 @@ def test_same_kev_values_in_changed_catalog_reobserve_without_a_proposal(tmp_pat
                     observed_content(original).digest,
                 ),
             ),
-            observation.recorded_at + timedelta(seconds=1),
+            later,
         )
         assert reading.evidence[0].observed_at > original.observed_at
-        assert reading.evidence[0].reobserving_capture_digest == observation.capture_digest
-    assert store.head_sequence() == len(claims)
+        assert reading.evidence[0].reobserving_capture_digest not in claim.backing.capture_digests
+        reobserving.add(reading.evidence[0].reobserving_capture_digest)
+    assert len(reobserving) == 1  # the one changed catalog re-checked every Claim
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_OBSERVATION_TAG,
+        CONTENT_TRANSITION_TAG,
+    )
+    from cruxible_core.exhaust.records import parse_journal_payload
+
+    journal = store._journal(create=False)  # noqa: SLF001
+    assert journal is not None
+    tags = [
+        parse_journal_payload(
+            instance.body_store().read(
+                stored.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )["tag"]
+        for stored in journal.select_records(store.stream, partition_id="reobservations")
+    ]
+    assert tags.count(CONTENT_TRANSITION_TAG) == 1
+    assert set(tags) == {CONTENT_OBSERVATION_TAG, CONTENT_TRANSITION_TAG}
 
 
 @pytest.mark.parametrize("selected", [(), ("extract_refused",)])
@@ -278,23 +300,25 @@ def test_reobservation_recovery_replays_the_core_changes_once(
     class Crash(BaseException):
         pass
 
-    original = ClaimReobservationStore.record
+    original = ClaimReobservationStore.transition
 
-    def crash_after_append(self, **kwargs):
-        original(self, **kwargs)
+    def crash_after_append(self, *args, **kwargs):
+        original(self, *args, **kwargs)
         raise Crash()
 
-    monkeypatch.setattr(ClaimReobservationStore, "record", crash_after_append)
+    monkeypatch.setattr(ClaimReobservationStore, "transition", crash_after_append)
     with pytest.raises(Crash):
         run(instance, root, minute=1)
     monkeypatch.undo()
+    store = ClaimReobservationStore(instance)
+    appended = store.head_sequence()
     recovered = service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(minutes=2))
     assert set(recovered.values()) == {"delivered"}
     assert instance.accepted_coordinate() == before
-    store = ClaimReobservationStore(instance)
+    # Recovery delivers again and finds its transition recorded: nothing new.
     for claim in claims:
-        assert len(store.history(claim.identity.name)) == 1
-    assert store.head_sequence() == len(claims)
+        assert store.history(claim.identity.name) == ()
+    assert store.head_sequence() == appended
 
 
 def test_duplicate_finding_bounds_locators_but_keeps_the_full_count(tmp_path: Path) -> None:

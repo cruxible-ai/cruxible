@@ -22,7 +22,7 @@ from cruxible_client.contracts.claim_evidence import (
     FindingKind,
 )
 from cruxible_client.contracts.claim_types import effective_canonical_form
-from cruxible_client.contracts.claims import claim_artifact_digest
+from cruxible_client.contracts.claims import ClaimArtifact, claim_artifact_digest
 from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.procedures.claims import ClaimsNode, rationale_references
 from cruxible_client.contracts.procedures.extract import (
@@ -846,7 +846,11 @@ def expand_claims(
                 if len(matched) == 1:
                     diagnostics.same += 1
                     held_claim = matched[0]
-                    if receipt.value.capture_digest not in held_claim.backing.capture_digests:
+                    if receipt.value.capture_digest not in held_claim.backing.capture_digests and (
+                        not _observed_same_content(
+                            receipt.value.capture_digest, held_claim, state=state, context=context
+                        )
+                    ):
                         changes.append(
                             CoreReobservationChange(
                                 rationale="Re-observed the same declared value.",
@@ -1052,3 +1056,24 @@ def bind_claim_input(
         target=ArtifactIdentity(kind="Claim", name=identity),
         artifact_digest=digest,
     ), tuple(captures)
+
+
+def _observed_same_content(
+    capture: str, held_claim: ClaimArtifact, *, state: Any, context: Any
+) -> bool:
+    """Whether ``capture`` observed the very content the live Claim's evidence cites.
+
+    The run recorded its fetch of ``capture`` as a content observation (ruling
+    1a), which every Claim citing a Capture of that (contract, content) reads
+    as its freshness: restating the Claim on it records nothing more, exactly
+    as restating it on the Capture it cites. False when the run recorded no
+    observation of ``capture`` or the cited content is not indexed.
+    """
+
+    fetched = getattr(state, "observed_contents", {}).get(capture)
+    lookup = getattr(context, "capture_content", None)
+    evidence = held_claim.backing.procedure_evidence
+    if fetched is None or lookup is None or evidence is None:
+        return False
+    cited = getattr(evidence.value, "capture_digest", None)
+    return isinstance(cited, str) and lookup(cited) == fetched

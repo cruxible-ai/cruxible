@@ -56,6 +56,7 @@ from cruxible_core.procedures.reference_binding import (
     resolved_pin,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.procedures.capture_observations import InstanceCaptureObservations
 from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
     ReservedCaptureStore,
@@ -443,6 +444,7 @@ class ServedNestedProcedureRunner:
             enum_resolver=accepted_enum_resolver(self.instance, self.coordinate),
             contract_resolver=accepted_contract_resolver(self.instance, self.coordinate),
             key_rules=accepted_key_rules(self.instance, self.coordinate),
+            capture_observations=InstanceCaptureObservations(self.instance),
             clock=self.clock,
             nested_runner=replace(self, prefix=child_prefix),
             parent_context=context,

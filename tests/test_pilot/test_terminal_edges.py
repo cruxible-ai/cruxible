@@ -241,7 +241,10 @@ def test_evidence_refresh_obeys_the_same_replaces_policy(tmp_path: Path) -> None
     assert second.terminal_egress[0].proposal_id is None
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 
-    assert len(ClaimReobservationStore(instance).history(prior.identity.name)) == 1
+    # Ruling 1d: the terminal records one transition, nothing per Claim.
+    store = ClaimReobservationStore(instance)
+    assert store.history(prior.identity.name) == ()
+    assert store.head_sequence() == 3  # two fetches' observations and the transition
     # An explicit empty replaces list cannot refresh even an observation.
     spec = procedure_spec(
         base=claims_spec(

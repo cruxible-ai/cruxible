@@ -133,6 +133,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ActionRunRequest", "wait_timeout_seconds"): "VALIDITY WINDOW",
     ("ReobservationReading", "sequence"): "SETTLEMENT ORDER",
     ("RecordedReobservation", "sequence"): "SETTLEMENT ORDER",
+    # A content observation's journal sequence: where a read's position cuts it.
+    ("_Point", "sequence"): "SETTLEMENT ORDER",
     ("LandingHead", "sequence"): "SETTLEMENT ORDER",
     ("Landing", "sequence"): "SETTLEMENT ORDER",
     ("ReobservationReading", "boundaries"): "VALIDITY WINDOW",
@@ -610,6 +612,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_ProcessOutcome", "duration_seconds"): "VALIDITY WINDOW",
     ("_RecordedCurationPatternObservedV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("_RunState", "wall_clock_microseconds"): "VALIDITY WINDOW",
+    # When each fetched Capture's acquiring call observed its members (ruling 1b).
+    ("_RunState", "capture_spans"): "EVALUATION INSTANT",
 }
 
 # Discovered by name, carrying no clock value: a supplier of instants, a boolean

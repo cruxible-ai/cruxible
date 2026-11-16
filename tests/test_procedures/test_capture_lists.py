@@ -792,3 +792,71 @@ def test_a_later_witness_members_unreadable_envelope_refuses_as_unavailable(
         producer_receipt_resolver=None,
     )
     assert refusal == "Absence witness bytes are no longer retained; acquire the source again."
+
+
+def _run_at(instance: Any, members: list[dict[str, Any]], at: Any) -> Any:
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.support.operation_world import Operator, actor
+    from tests.test_procedures.test_b2_operations import Clock
+
+    return service_run_playbill_line(
+        instance,
+        path_identity_digest=LINE_NAME,
+        request=LineRunRequest(line=LINE_NAME),
+        actor_context=actor().model_copy(update={"timestamp": at}),
+        caller_rung=2,
+        daemon_clock=Clock(at),
+        provider_runtime_operator=Operator(Invoker(output=answer(members))),  # type: ignore[arg-type]
+    )
+
+
+def test_an_identical_refetch_reuses_each_held_capture_and_journals_no_landing(
+    tmp_path: Path,
+) -> None:
+    """Ruling 1c: the same contract, request, bytes and binding reuse the held Capture.
+
+    The rerun binds the Captures the first run produced and journals no
+    produced_capture (Capture-landing Triggers and tallies count new Captures
+    only); its acquisition members body is the first run's, and its fetch is
+    one content observation. A member whose held Capture is recorded missing
+    is built anew, never reused.
+    """
+
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from tests.support.operation_world import NOW
+
+    instance = pages_world(tmp_path)
+    members = [page(body, index) for index, body in enumerate(bodies(3))]
+    first, _ = run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+    assert first.status == "succeeded", first.terminal
+    held = first.result["pages"]
+    observations = ClaimReobservationStore(instance).head_sequence()
+
+    again = _run_at(instance, members, NOW + timedelta(hours=1))
+
+    assert again.status == "succeeded", again.terminal
+    assert again.result["pages"] == held
+    assert journal(instance, again.run_id, "produced_capture") == []
+    (first_record,) = _raw_records(instance, first.run_id, "source_acquisition")
+    (second_record,) = _raw_records(instance, again.run_id, "source_acquisition")
+    assert second_record["members_digest"] == first_record["members_digest"]
+    assert ClaimReobservationStore(instance).head_sequence() == observations + 1
+    # The held envelope of the second member is recorded missing: that member
+    # is fetched into a new Capture, the others are still reused.
+    store = instance.body_store()
+    path = store._path(held[1])  # noqa: SLF001
+    path.chmod(0o600)
+    path.unlink()
+    store._damaged(held[1], "missing")  # noqa: SLF001
+    third = _run_at(instance, members, NOW + timedelta(hours=2))
+    assert third.status == "succeeded", third.terminal
+    pages = third.result["pages"]
+    assert pages[0] == held[0] and pages[2] == held[2] and pages[1] != held[1]
+    assert [
+        item["capture_digest"] for item in journal(instance, third.run_id, "produced_capture")
+    ] == [pages[1]]

@@ -1665,58 +1665,88 @@ evidence either way, and a carry never loses backing. A re-bind
 drifted citation it names with the new one, and keeps the rest. The same statement,
 citation role and origin, under the same verified Capture contract and observed
 content (the same file bytes, the same fetched body, the same words), changes no
-Claim; its admissible re-observation is recorded separately. No revision, no
+Claim; its observation is recorded separately. No revision, no
 citation growth, no proposal. A new association on already-cited content
 (another role, origin or Capture contract) is kept as a revision. On new
 content the Claim's evidence is refreshed by revising it. A Procedure item that
 names no Claim to revise but restates a live one (its Subjects resolved through
 aliases first) targets that Claim's lineage, never a second Claim of the same
-statement: on new content it revises it, on content it already cites the item
-changes nothing and its receipt child says so
-(`playbill-terminal-egress-child-receipt-v3`: the Claim's path, its current
-artifact digest, the re-observing Capture and when it observed the content;
-`unchanged` on the run's terminal child). A terminal whose every item is
-unchanged completes with no proposal and no authority exercised: its receipt
-(`playbill-terminal-egress-unchanged-receipt-v1`) reports every child unchanged.
-It still records re-observations, a durable effect, so it journals its
-`prepared` intent before delivery like any proposal terminal: a run that dies
-around delivery is finished by startup recovery, which re-derives and checks
-the unchanged children, records them idempotently (one already recorded keeps
-its instant), emits the unchanged receipt and finalizes the attempt.
+statement.
 
-A no-op re-observation still counts for freshness. It is recorded on the
-evidence plane as an append-only re-observation -- its Claim, its Capture, the
-contract, the observed content and when it observed it -- when, at the current
-head read under the record's own lock, the Claim is live, the restating Capture
-is daemon-admitted and verifies there, it observed exactly the content of a
+A run's fetch that reproduces a Capture already held -- the same contract,
+source, request, selector, exact bytes, producer binding and derivation inputs
+-- reuses that Capture instead of storing a new one; its envelope's
+`observed_at` says when those contents were first observed. A reused Capture
+is not a new landing: Capture-landing Triggers and source tallies count new
+Captures only. A held Capture whose envelope or body was recorded missing,
+damaged or erased is never reused. Each acquiring call records its fetch once,
+as one content observation keyed by the contract and observed content of every
+member it fetched, new or reused, with the earliest and latest instants its
+members were observed; nothing is recorded per Claim. A Claim citing a Capture
+of one of those contents under its contract reads that observation as its
+freshness, whichever run's item (if any) restated it.
+
+So an item restating a live Claim on the Capture it cites, or on another
+Capture of the very content it cites, changes nothing and records nothing: a
+claims terminal whose every item is such a restatement has no item at all,
+prepares no intent, and journals one short record whose counts say how many
+items restated accepted state (the node summary's `no_op`). An item whose
+Capture holds new bytes in which the Claim's value and record key are
+unchanged (the catalog changed elsewhere) is an unchanged child of the
+terminal (`playbill-terminal-egress-child-receipt-v3`: the Claim's path, its
+current artifact digest, the re-observing Capture and when it observed the
+content; `unchanged` on the run's terminal child), counted `re_observed`. Such
+a terminal records one content transition: the Claims citing that content
+under its contract were re-checked in the new Capture, except the terminal's
+Claims citing it that changed instead. Its size is the contents that moved and
+the Claims excepted, never the Claims citing them, and a later run finding the
+same move again records nothing new. A terminal whose every item is unchanged
+completes with no proposal and no authority exercised: its receipt
+(`playbill-terminal-egress-unchanged-receipt-v1`) reports every child
+unchanged. A terminal that records a transition journals its `prepared` intent
+before delivery like any proposal terminal: a run that dies around delivery is
+finished by startup recovery, which re-derives and checks the unchanged
+children, records the transition idempotently, emits the unchanged receipt and
+finalizes the attempt.
+
+An observation counts for freshness through the content it observed. Under a
+ClaimType's `evidence_freshness.stale_after`, a cited Capture expires at the
+latest instant its contract and content were observed -- its own
+`observed_at`, a content observation's earliest member instant, a transition
+from that content (and the later observations of the content it moved to,
+unless the transition excepts the Claim), or a per-Claim re-observation an
+authored restatement recorded -- plus `stale_after`. Only observations
+recorded by the evaluation instant count, so a verdict evaluated at an earlier
+instant reproduces byte for byte and its committed expirations still verify.
+The recording instant is the daemon's live wall clock, owned by the store:
+every path (a direct write, a manual run, explicit or armed dispatch, each
+nested level, recovery) records through it, never through a run's frozen
+evaluation clock, and a call observed after that instant records nothing. The
+durable recording stamp is that instant raised to the previous record's when
+the clock has gone back: that one value is the journal record's `recorded_at`,
+so records append in recorded order by construction, a rebuild reproduces the
+projection exactly, and a journal out of recorded order is refused as corrupt
+(`cruxible.claim.reobservation_journal_corrupt`). The latest applicable
+observation of a cited contract and content is read with a few seeks at the
+evaluation instant, however long its history (kept in full for audit) or
+however many runs observed it. An observation that set an expiry is named in
+the verdict's `freshness_expirations` entry (`reobserved_by`,
+`reobserved_at`). A Capture's minimum retention counts from the latest
+instant its contents were observed, not its envelope's first observation. A
+Procedure's unchanged item whose Claim was retired, or whose Capture does not
+verify, after the run's base keeps its receipt child, names the refusal
+reason, and records nothing for it.
+
+A write that restates a live Claim on a new Capture of content it cites
+records a per-Claim re-observation -- its Claim, its Capture, the contract,
+the observed content and when it observed it -- when, at the current head read
+under the record's own lock, the Claim is live, the restating Capture is
+daemon-admitted and verifies there, it observed exactly the content of a
 Capture the Claim cites under the same contract, it is not that very Capture,
 and it was not observed after the record is made. The record is not a Claim
-revision and moves no generation; a record already made stays readable whatever
-later happens to its Claim. Under a ClaimType's `evidence_freshness.stale_after`,
-a cited Capture expires at the latest `observed_at` among it and its recorded
-re-observations of the same contract and content, plus `stale_after`. Only
-re-observations recorded by the evaluation instant count, so a verdict evaluated
-at an earlier instant reproduces byte for byte and its committed expirations
-still verify. Admission checks the Capture's observation against the daemon
-clock's actual instant, in a preview and a commit alike. That clock is the
-daemon's live wall clock, owned by the store: every path (a direct write, a
-manual run, explicit or armed dispatch, each nested level, recovery) records
-through it, never through a run's frozen evaluation clock. The durable
-recording stamp is that instant raised to the previous record's when the clock
-has gone back:
-that one value is the journal record's `recorded_at`, so records append in
-recorded order by construction, a rebuild reproduces the projection exactly,
-and a journal out of recorded order is refused as corrupt
-(`cruxible.claim.reobservation_journal_corrupt`). The latest applicable record of a cited contract and
-content is a step function of the recording instant: freshness reads it with
-one seek at the evaluation instant, however long the Claim's re-observation
-history (kept in full for audit) or however many observations were recorded
-late. A re-observation
-that set an expiry is named in the verdict's `freshness_expirations` entry
-(`reobserved_by`, `reobserved_at`). Anything else is refused
-(`cruxible.claim.reobservation_refused`) and refreshes nothing; a Procedure's
-unchanged item whose Claim was retired after the run's base keeps its receipt
-and records nothing. Re-observing on a schedule (say hourly, under a longer
+revision and moves no generation; a record already made stays readable
+whatever later happens to its Claim. Anything else is refused
+(`cruxible.claim.reobservation_refused`) and refreshes nothing. Re-observing on a schedule (say hourly, under a longer
 `stale_after`) keeps a Claim current without revising it. Through `propose
 --input` a new ClaimType takes `self` and `replace`. An edit follows JSON
 merge-patch against its predecessor: a field left out keeps the predecessor's

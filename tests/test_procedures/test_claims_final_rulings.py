@@ -14,7 +14,6 @@ from cruxible_client.contracts.authoring.inputs import (
     ProcedureMandateInput,
 )
 from cruxible_client.contracts.captures import observed_content, parse_capture_envelope
-from cruxible_client.contracts.claim_evidence import ClaimEvidenceReceipt
 from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.procedure_mandates import (
     parse_procedure_mandate,
@@ -130,52 +129,48 @@ def test_changed_extract_spec_reobserves_equal_values_and_revises_only_changed_v
         assert again.terminal_egress[0].proposal_id is None
         assert not again.terminal_egress[0].target_paths
     store = ClaimReobservationStore(instance)
-    assert store.head_sequence() == (1 if changed_value else 2)
+    # The same bytes reuse the held Capture (ruling 1c): an unchanged value
+    # restates exactly what is live, so nothing is recorded per Claim (1e);
+    # each run's fetch is one content observation of the content they cite.
+    for claim in original_claims:
+        assert store.history(claim.identity.name) == ()
     journal = store._journal(create=False)
     assert journal is not None
-    receipts = []
-    for stored in journal.select_records(store.stream, partition_id="reobservations"):
-        payload = parse_journal_payload(
+    tags = [
+        parse_journal_payload(
             instance.body_store().read(
                 stored.record.payload_digest,
                 access=BodyAccessContext(principal_id="test", can_read_body=True),
             )
+        )["tag"]
+        for stored in journal.select_records(store.stream, partition_id="reobservations")
+    ]
+    assert tags == ["cruxible-content-observation-v1"] * 2
+    claim = original_claims[0]
+    original = parse_capture_envelope(
+        instance.body_store().read(
+            claim.backing.procedure_evidence.value.capture_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
         )
-        receipt = ClaimEvidenceReceipt.model_validate(payload["extraction"])
-        assert (
-            receipt.procedure_digest
-            != original_claims[0].backing.procedure_evidence.procedure_digest
-        )
-        assert (
-            receipt.value.extract_spec_digest
-            != original_claims[0].backing.procedure_evidence.value.extract_spec_digest
-        )
-        claim = next(c for c in original_claims if c.identity.name == payload["claim_id"])
-        original = parse_capture_envelope(
-            instance.body_store().read(
+    )
+    from datetime import UTC, datetime, timedelta
+
+    reading = ReobservationReader.of(instance).latest(
+        claim.identity.name,
+        (
+            ReobservationKey(
                 claim.backing.procedure_evidence.value.capture_digest,
-                access=BodyAccessContext(principal_id="test", can_read_body=True),
-            )
-        )
-        (observation,) = store.history(claim.identity.name)
-        reading = ReobservationReader.of(instance).latest(
-            claim.identity.name,
-            (
-                ReobservationKey(
-                    claim.backing.procedure_evidence.value.capture_digest,
-                    original.capture_contract_digest,
-                    observed_content(original).digest,
-                ),
+                original.capture_contract_digest,
+                observed_content(original).digest,
             ),
-            observation.recorded_at,
-        )
-        assert reading.evidence[0].observed_at > original.observed_at
-        assert reading.evidence[0].reobserving_capture_digest == receipt.value.capture_digest
-        receipts.append(receipt)
-    assert len(receipts) == store.head_sequence()
-    # Rebuilding the audit projection preserves the new receipt in its journal.
-    store.path.unlink()
-    assert sum(len(store.history(c.identity.name)) for c in original_claims) == len(receipts)
+        ),
+        datetime.now(UTC) + timedelta(days=1),
+    )
+    assert reading.evidence[0].observed_at > original.observed_at
+    assert (
+        reading.evidence[0].reobserving_capture_digest
+        == claim.backing.procedure_evidence.value.capture_digest
+    )
     tree = instance.tree_at(before.git_oid)
     from cruxible_client.contracts.claims import claim_path, parse_claim
 

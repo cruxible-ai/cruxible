@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS derivations (capture_digest TEXT PRIMARY KEY) WITHOUT
 CREATE TABLE IF NOT EXISTS derivation_inputs (
  capture_digest TEXT NOT NULL, input_digest TEXT NOT NULL,
  PRIMARY KEY(capture_digest, input_digest)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS content_keys (
+ content_key TEXT PRIMARY KEY, capture_digest TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
 """
@@ -59,6 +61,39 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
+#: An envelope's fields that say where and when THIS fetch ran, never what was
+#: fetched: an identical re-fetch differs from the held Capture in these alone.
+_RUN_BOUND_FIELDS = frozenset(
+    {"run_coordinate", "producer_receipt_digest", "observed_at", "production_evidence"}
+)
+_REUSABLE_TAG = "playbill-capture-envelope-v2"
+
+
+def capture_content_key(envelope: object) -> str | None:
+    """What an identical re-fetch reproduces: the envelope less its run-bound fields.
+
+    The same contract, source (identity, coordinate, selector, replayability),
+    exact bytes, producer and producer binding, derivation inputs and source
+    effective time (ruling 1c). None for anything but a v2 envelope. A digest
+    over the remaining canonical fields: the stored envelope bytes are never
+    changed, so a key is a lookup, never a new format.
+    """
+
+    from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+
+    if not isinstance(envelope, dict) or envelope.get("tag") != _REUSABLE_TAG:
+        return None
+    return typed_digest(
+        Sha256Value,
+        "playbill-capture-content-key-v1",
+        {
+            key: value
+            for key, value in envelope.items()
+            if key not in _RUN_BOUND_FIELDS and key != "tag"
+        },
+    ).tagged
+
+
 def envelope_contract(head: bytes) -> str | None:
     """The contract digest an object's leading bytes name, if they open an envelope."""
 
@@ -71,6 +106,15 @@ def envelope_contract(head: bytes) -> str | None:
     ):
         return None
     return named.decode("ascii")
+
+
+def _content_key_of(content: bytes) -> str | None:
+    import json
+
+    try:
+        return capture_content_key(json.loads(content))
+    except ValueError:
+        return None
 
 
 class CaptureEnvelopeIndex:
@@ -107,14 +151,30 @@ class CaptureEnvelopeIndex:
         if contract is None:
             return
         inputs = self._derivation_inputs(content) if _DERIVED_MARK in content else None
+        content_key = _content_key_of(content)
         with self._connection() as connection:
             connection.execute("INSERT OR IGNORE INTO envelopes VALUES (?,?)", (contract, digest))
+            if content_key is not None:
+                # The latest stored Capture of these contents is the one a re-fetch
+                # reuses: a new one is stored only when none held was usable.
+                connection.execute(
+                    "INSERT OR REPLACE INTO content_keys VALUES (?,?)", (content_key, digest)
+                )
             if inputs is not None:
                 connection.executemany(
                     "INSERT OR IGNORE INTO derivation_inputs VALUES (?,?)",
                     [(digest, item) for item in inputs],
                 )
                 connection.execute("INSERT OR IGNORE INTO derivations VALUES (?)", (digest,))
+
+    def capture_for_content_key(self, content_key: str) -> str | None:
+        """The held Capture an identical re-fetch reproduces, if one was stored (a candidate)."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT capture_digest FROM content_keys WHERE content_key=?", (content_key,)
+            ).fetchone()
+        return None if row is None else str(row[0])
 
     def _derivation_inputs(self, content: bytes) -> tuple[str, ...] | None:
         """A derived envelope's input Captures, from its manifest (stored before it).

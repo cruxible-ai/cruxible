@@ -290,6 +290,7 @@ from cruxible_core.providers.provider_process_leases import (
 from cruxible_core.runtime.instance import PlaybillInstance, accepted_coordinate_at
 from cruxible_core.runtime.permissions import PermissionMode, get_capability_ceiling
 from cruxible_core.runtime.request_scope import projection_request
+from cruxible_core.service.procedures.capture_observations import InstanceCaptureObservations
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
 from cruxible_core.service.procedures.procedures import (
     PlaybillProcedureStateTapReader,
@@ -2422,6 +2423,29 @@ _LATE_READ_REFUSAL_CODES = frozenset(
 )
 
 
+def _selected_captures(
+    bodies: Any, payload: Mapping[str, Any], *, access: BodyAccessContext
+) -> set[str]:
+    """The Captures one call's v2 acquisition record selected (its members body, read once)."""
+
+    import json
+
+    digest = payload.get("members_digest")
+    if not isinstance(digest, str):
+        return set()
+    try:
+        body = json.loads(bodies.read(digest, access=access))
+    except (CruxibleError, OSError, ValueError):
+        return set()
+    members = body.get("members") if isinstance(body, dict) else None
+    return {
+        str(capture)
+        for member in (members if isinstance(members, list) else ())
+        if isinstance(member, dict) and isinstance(member.get("decision"), dict)
+        for capture in member["decision"].get("selected_capture_digests") or ()
+    }
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -2463,6 +2487,9 @@ def _state_from_records(
     #: Each completed invocation's input digest, by its receipt digest.
     completed_inputs: dict[str, str] = {}
     produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
+    #: Captures a call selected, from its one v2 acquisition record: an
+    #: association naming one with no produced-Capture event is a reused Capture.
+    acquired_captures: set[str] = set()
     terminal_egress: dict[str, ProcedureTerminalEgress] = {}
     children: list[ProcedureChildInvocation] = []
     findings: list[ClaimsDiagnostic] = []
@@ -2658,6 +2685,12 @@ def _state_from_records(
             provider_invocations[completed.invocation_id] = "completed"
             invocation_receipt_digests.append(completed.receipt_digest)
             completed_inputs[completed.receipt_digest] = completed.receipt.input_digest
+        if (
+            stored.record.event_kind == "source_acquisition"
+            and isinstance(payload, dict)
+            and payload.get("tag") == "playbill-procedure-source-acquisition-v2"
+        ):
+            acquired_captures.update(_selected_captures(bodies, payload, access=access))
         if stored.record.event_kind == "produced_capture" and isinstance(payload, dict):
             occurrence_path = payload.get("occurrence_path")
             invocation_receipt_digest = payload.get("invocation_receipt_digest")
@@ -2756,7 +2789,18 @@ def _state_from_records(
                 ),
             )
         )
-        if source_capture_associations != expected_source_associations:
+        # Every produced Capture is associated; any other association names a
+        # held Capture a call reused (ruling 1c): selected by that run's own
+        # acquisition record, under a completed invocation of the run.
+        produced_keys = set(expected_source_associations)
+        if not produced_keys.issubset(source_capture_associations) or any(
+            item not in produced_keys
+            and (
+                item.capture_digest not in acquired_captures
+                or item.invocation_receipt_digest not in invocation_receipt_digests
+            )
+            for item in source_capture_associations
+        ):
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: final Source Capture associations do not "
                 "reproduce produced-Capture events"
@@ -3816,6 +3860,7 @@ def service_run_playbill_procedure(
             contract_resolver=accepted_contract_resolver(instance, coordinate),
             key_rules=accepted_key_rules(instance, coordinate),
             claims_context=AcceptedClaimsContext(instance, coordinate),
+            capture_observations=InstanceCaptureObservations(instance),
             state_reader=PlaybillProcedureStateTapReader(
                 instance=instance, evaluation_time=evaluation_time
             ),
@@ -5006,6 +5051,7 @@ def _run_playbill_line(
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
                 key_rules=accepted_key_rules(instance, coordinate),
                 claims_context=AcceptedClaimsContext(instance, coordinate),
+                capture_observations=InstanceCaptureObservations(instance),
                 state_reader=PlaybillProcedureStateTapReader(
                     instance=instance, evaluation_time=evaluation_time
                 ),

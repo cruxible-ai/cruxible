@@ -7949,6 +7949,20 @@ def _proposed_children_lines(
     return lines
 
 
+def _restated_count(result: contracts.ProcedureRunState, egress: Any) -> int:
+    """How many of a claims terminal's items restated accepted state: its summary's count."""
+
+    for node in result.nodes:
+        summary = getattr(node, "summary", None)
+        if node.node == egress.node_id and getattr(summary, "kind", None) == "claims":
+            return int(
+                summary.re_observed  # type: ignore[union-attr]
+                + summary.no_op  # type: ignore[union-attr]
+                + sum(summary.reobservations_refused.values())  # type: ignore[union-attr]
+            )
+    return len(egress.children)
+
+
 def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     """Print what each terminal of the run did, and the handles a manager needs.
 
@@ -8004,11 +8018,13 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
                 click.echo(line)
         elif (
             egress.verdict == "delivered"
-            and egress.children
+            and egress.kind == "claims"
             and all(child.unchanged for child in egress.children)
+            and (count := _restated_count(result, egress)) > 0
         ):
-            # Every item restates accepted state, so no proposal was needed.
-            count = len(egress.children)
+            # Every item restates accepted state, so no proposal was needed. An
+            # item restating exactly what is live has no child at all (ruling
+            # 1e): the count is the node's summary's, not the children's.
             click.echo(
                 f"Terminal {egress.node_id}: nothing changed ({count} item"
                 f"{'s' if count != 1 else ''} restate{'' if count != 1 else 's'} accepted state)"
