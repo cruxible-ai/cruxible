@@ -678,3 +678,63 @@ def test_the_row_reference_check_never_runs_under_a_recorded_law(
     else:
         assert codes == ["cruxible.procedure.item_reference_unresolved"]
         assert reached == []
+
+
+# -- a path beneath a column is checked against the column's declared type --------------
+
+
+def _typed_lookup() -> Any:
+    owner = validate_contract({"name": "test.owner", "version": 1, "fields": {"name": "string"}})
+    pin = {"name": owner.name, "version": 1, "digest": contract_digest(owner).tagged}
+    row = validate_contract(
+        {
+            "name": ROW,
+            "version": 1,
+            "fields": {
+                "item_id": "string",
+                "status": "string",
+                "owner": {"type": {"kind": "contract", "contract": pin}},
+            },
+        }
+    )
+    from cruxible_client.contracts.query.grammar import QueryClaimValueRef, QueryProjectionField
+
+    query = _query(row)
+    assert query.projection is not None
+    owned = QueryProjectionField(
+        name="owner", value=QueryClaimValueRef(binding="item", predicate=SUBJECT_KIND + ".owner")
+    )
+    query = query.model_copy(
+        update={
+            "projection": query.projection.model_copy(
+                update={"fields": (*query.projection.fields, owned)}
+            )
+        }
+    )
+    definitions = {
+        f"QueryDefinition:{QUERY}": query,
+        row.identity.qualified: row,
+        owner.identity.qualified: owner,
+    }
+    return lambda identity: definitions.get(identity.qualified)
+
+
+@pytest.mark.parametrize("reference", ["$item.status", "$item.owner.name", "$item.owner"])
+def test_a_path_the_column_type_has_passes(reference: str) -> None:
+    validate_row_references(_inbox_definition({"item": reference}), _typed_lookup())
+
+
+@pytest.mark.parametrize(
+    ("reference", "said"),
+    [
+        ("$item.status.kind", "column status is string"),
+        ("$item.item_id.missing", "column item_id is string"),
+        ("$item.owner.email", "declares no field 'email'"),
+    ],
+)
+def test_a_path_beneath_a_column_its_type_lacks_refuses(reference: str, said: str) -> None:
+    with pytest.raises(ItemReferenceUnresolved) as refused:
+        validate_row_references(_inbox_definition({"item": reference}), _typed_lookup())
+
+    assert reference in str(refused.value) and said in str(refused.value)
+    assert refused.value.element == "fields.item"

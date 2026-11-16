@@ -207,6 +207,53 @@ def _offers(query: Any, path: Sequence[str]) -> bool:
     return len(path) == 2 and path[0] == "bindings" and path[1] in query.row_bindings
 
 
+def _member_problem(
+    column: str, field_type: Any, rest: Sequence[str], contract: Callable[[Any], Any]
+) -> str | None:
+    """Why ``rest`` does not descend into ``column``'s declared type, or ``None``.
+
+    Only a declared shape is judged: a nested Contract the lookup cannot resolve,
+    a record or a variant is left to the run.
+    """
+
+    from cruxible_client.contracts.shapes import (
+        FieldResultType,
+        ListType,
+        NestedType,
+        RecordType,
+        ResultType,
+        VariantType,
+        render_type,
+    )
+
+    current, path = field_type, list(rest)
+    while path:
+        member = path[0]
+        if isinstance(current, FieldResultType):
+            current = current.value
+        elif isinstance(current, ListType):
+            if member != "[*]" and not member.isdigit():
+                return (
+                    f"column {column} reaches a list there: read a position or [*], not {member!r}"
+                )
+            current, path = current.item, path[1:]
+        elif isinstance(current, NestedType):
+            nested = contract(current.contract)
+            if nested is None:
+                return None
+            if member not in nested.fields:
+                return (
+                    f"{current.contract.spelling} (in column {column}) declares no field "
+                    f"{member!r}; its fields are " + ", ".join(nested.fields)
+                )
+            current, path = nested.fields[member].type, path[1:]
+        elif isinstance(current, RecordType | ResultType | VariantType):
+            return None
+        else:
+            return f"column {column} is {render_type(current)}, which has no member {member!r}"
+    return None
+
+
 def _item_strings(value: object) -> Iterator[str]:
     from pydantic import BaseModel
 
@@ -298,6 +345,9 @@ def validate_row_references(definition: Any, lookup: Callable[[Any], Any]) -> No
     from cruxible_client.contracts.procedures.graph import reference_templates
     from cruxible_client.contracts.procedures.models import InboxEgressNode
 
+    def contract(ref: Any) -> Any:
+        return lookup(ArtifactIdentity(kind="Contract", name=f"{ref.name}/v{ref.version}"))
+
     producers: dict[object, object] = {
         getattr(node, "as_", None): node for node in definition.nodes
     }
@@ -315,6 +365,9 @@ def validate_row_references(definition: Any, lookup: Callable[[Any], Any]) -> No
         if query is None or not hasattr(query, "row_bindings"):
             continue
         name = query.identity.name
+        columns = query_columns(query)
+        row = None if query.row_contract is None else contract(query.row_contract)
+        column_types = {} if row is None else {n: f.type for n, f in row.fields.items()}
         rebuilt = None if lost is None else producers.get(rows_alias(node.for_each))
         declared = set(getattr(getattr(rebuilt, "spec", None), "fields", None) or ())
         for element, template in _elements(reference_templates(node)):
@@ -332,6 +385,22 @@ def validate_row_references(definition: Any, lookup: Callable[[Any], Any]) -> No
                             repair=f"Iterate the read's rows directly or through filter/dedupe "
                             f"only, or declare the value as a column of Query {name} and carry "
                             f"it through step {lost!r}.",
+                        )
+                    continue
+                if path and path[0] in columns and len(path) > 1:
+                    declared_type = column_types.get(path[0])
+                    problem = (
+                        None
+                        if declared_type is None
+                        else _member_problem(path[0], declared_type, path[1:], contract)
+                    )
+                    if problem is not None:
+                        raise ItemReferenceUnresolved(
+                            f"{reference} does not resolve: {problem}",
+                            node_id=node.node_id,
+                            element=element,
+                            repair=f"Read $item.{path[0]} itself, or declare the nested value "
+                            f"as its own column of Query {name}.",
                         )
                     continue
                 if _offers(query, path):
