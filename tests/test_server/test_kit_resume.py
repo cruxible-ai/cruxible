@@ -45,8 +45,9 @@ def _open_worlds(
     yield from _fresh_open_worlds(tmp_path, monkeypatch, independent=independent)
 
 
-def _resumes(world: Any) -> tuple[Any, ...]:
-    return playbill_api.playbill_kit_status(world.instance_id).resumes
+def _resumes(world: Any, *, kit_id: str | None = None) -> tuple[Any, ...]:
+    rows = playbill_api.playbill_kit_status(world.instance_id).resumes
+    return tuple(row for row in rows if kit_id is None or row.kit_id == kit_id)
 
 
 def _release(publisher: Any, bundled: Path, **options: Any) -> Any:
@@ -74,7 +75,11 @@ def test_the_activation_that_lands_the_last_install_proposes_the_definitions(
         (step,) = added.providers
         assert step.action == "awaiting_approval" and step.proposal_id is not None
         assert "proposed automatically" in (added.detail or "")
-        (waiting,) = _resumes(consumer)
+        # Under independent approval creation's base kit add stopped at its
+        # proposal too: kit status shows it as a proposed row beside acme's.
+        (base,) = _resumes(consumer, kit_id="base")
+        assert base.state == "proposed" and base.waiting_on == ()
+        (waiting,) = _resumes(consumer, kit_id="acme")
         assert (waiting.kit_id, waiting.state, waiting.waiting_on) == (
             "acme",
             "waiting",
@@ -86,7 +91,7 @@ def test_the_activation_that_lands_the_last_install_proposes_the_definitions(
         # proposes the kit's definitions as the principal who ran kit add.
         consumer.approve(step.proposal_id)
 
-        (resumed,) = _resumes(consumer)
+        (resumed,) = _resumes(consumer, kit_id="acme")
         assert resumed.state == "proposed" and resumed.waiting_on == ()
         assert resumed.proposal_id is not None
         assert f"procedures/{PROCEDURE}.json" not in _tree(consumer)
