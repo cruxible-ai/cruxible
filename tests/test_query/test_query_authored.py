@@ -823,3 +823,10 @@ def test_the_format_follows_the_offset_both_ways(resolver):
     )
     with pytest.raises(ValidationError, match="cruxible-query-definition-v3"):
         type(shifted).model_validate({**plain, "artifact_format": "cruxible-query-definition-v4"})
+
+
+@pytest.mark.parametrize("expression", ["incident.name == 3d", "1abc == 3", "incident.name == - 3"])
+def test_a_duration_or_sign_is_read_only_after_now(expression):
+    with pytest.raises(QuerySpecError) as caught:
+        parse_filter(expression)
+    assert caught.value.error_code == "cruxible.query.filter_invalid"

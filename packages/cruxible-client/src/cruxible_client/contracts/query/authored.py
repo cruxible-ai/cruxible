@@ -277,7 +277,12 @@ class _FilterParser:
 
     def operand(self, reference: bool = False) -> FilterOperand:
         token = self.take()
-        if token in {"(", ")", ",", "and", "or", "not", "exists"} or token in _SYMBOLS:
+        if (
+            token in {"(", ")", ",", "and", "or", "not", "exists", "+", "-"}
+            or token in _SYMBOLS
+            # A duration (`3d`) is read only after `now +` / `now -`, never alone.
+            or _DURATION.fullmatch(token)
+        ):
             self.fail(
                 "expected a reference, $parameter, or literal", self.tokens[self.index - 1][1]
             )
