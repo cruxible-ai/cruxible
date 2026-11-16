@@ -1417,6 +1417,35 @@ def _converge(
         )
 
 
+#: The identity refusals a block declaration meets after the page write; checked
+#: first, so no page carries a marker its instance would refuse to register.
+_DECLARER_REFUSALS = frozenset(
+    {
+        "cruxible.identity.principal_unconfigured",
+        "cruxible.identity.principal_absent",
+        "cruxible.identity.principal_revoked",
+        "cruxible.identity.credential_unbound",
+    }
+)
+
+
+class BlockDeclarerRefused(CruxibleError):
+    """The caller is no registered principal, so it may not declare a block it writes."""
+
+    def __init__(self, code: str, detail: str, repair: object) -> None:
+        self.error_code = code
+        self.repair = repair
+        super().__init__(f"{code}: {detail}")
+
+
+def _refuse_unattributed_declarer(client: CruxibleClient, instance_id: str) -> None:
+    """Refuse before any page write when the declaration that follows would refuse."""
+
+    refusal = client.whoami(instance_id).authoring_refusal
+    if refusal is not None and refusal.code in _DECLARER_REFUSALS:
+        raise BlockDeclarerRefused(refusal.code, refusal.detail, refusal.repair)
+
+
 def repin_projection_block(
     client: CruxibleClient,
     instance_id: str,
@@ -1663,6 +1692,9 @@ def repin_projection_block(
         raise ProjectionRepinError("replacement does not reproduce the declared block") from exc
     if dry_run:
         return stamp
+    # The declaration after the page write names who declared the block: refuse a
+    # caller that is no registered principal before the page changes.
+    _refuse_unattributed_declarer(client, instance_id)
     retain_local_manifests(root, manifests)
     load_projection_manifests(root, replacement)
     try:

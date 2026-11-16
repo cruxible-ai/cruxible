@@ -68,6 +68,13 @@ class _RepinClient:
         self.declared: list[dict[str, Any]] = []
         self.observed: list[Any] = []
 
+    def whoami(self, _instance_id: str) -> Any:
+        """A registered principal: nothing refuses the declaration."""
+
+        from types import SimpleNamespace
+
+        return SimpleNamespace(authoring_refusal=None)
+
     def observe_blocks(self, _instance_id: str, *, pages: Any) -> api.BlockObserveResult:
         """Record the pages a repin reports for block-churn detection."""
 
@@ -1236,3 +1243,48 @@ def test_a_converging_sync_leaves_an_unprovable_rendering_stale_and_unwritten(
         ("stale", "block_backing_changed")
     ]
     assert source.read_bytes() == before
+
+
+def test_a_caller_that_is_no_principal_is_refused_before_the_page_changes(
+    tmp_path: Path,
+) -> None:
+    """The declaration after the write records who declared the block, so an
+    implicit operator is refused with the whoami refusal before any page write."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.authoring.blocks import BlockDeclarerRefused
+    from cruxible_client.contracts.repairs import RepairOperation
+
+    source = _workspace(tmp_path)
+    before = source.read_bytes()
+    repair = RepairOperation(
+        operation="cruxible.orient",
+        arguments={"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
+    )
+
+    class _Unattributed(_RepinClient):
+        def whoami(self, _instance_id: str) -> Any:
+            return SimpleNamespace(
+                authoring_refusal=SimpleNamespace(
+                    code="cruxible.identity.principal_unconfigured",
+                    detail="this process names no principal",
+                    repair=repair,
+                )
+            )
+
+    client = _Unattributed()
+    with pytest.raises(BlockDeclarerRefused) as refused:
+        repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="runbook.md",
+            block_id="summary",
+            claims=("CLM-first",),
+            evaluation_time=NOW,
+        )
+    assert refused.value.error_code == "cruxible.identity.principal_unconfigured"
+    assert refused.value.repair == repair
+    assert source.read_bytes() == before
+    assert client.declared == []
