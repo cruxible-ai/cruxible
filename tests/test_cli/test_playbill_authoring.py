@@ -171,7 +171,11 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     compiled = runner.invoke(cli, [*common, "compile", str(payload)])
     submitted = runner.invoke(cli, [*common, "submit", "--intent-id", INTENT_ID])
 
-    assert compiled.exit_code == 0, compiled.output
+    # A refused compile exits 1 like a refused submit, naming the refusal on
+    # stderr beside the full record on stdout (coldkit-03).
+    assert compiled.exit_code == 1, compiled.output
+    assert json.loads(compiled.stdout)["verdict"] == "refused"
+    assert "refused: x: refused" in compiled.stderr
     assert submitted.exit_code == 0, submitted.output
     assert calls == [
         ("inst_authoring", authoring),

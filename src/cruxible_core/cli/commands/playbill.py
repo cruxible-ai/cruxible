@@ -5437,9 +5437,10 @@ def compile_authoring(payload: str, intent_id: str | None) -> None:
     example` prints templates). Without --intent-id, compile creates a new
     intent and reports its ID in certificate.intent_id; with --intent-id, the
     payload replaces that intent's payload. The result is the complete
-    preflight: verdict, certificate and every diagnostic. Nothing is proposed
-    until `authoring submit --intent-id ID`; for one-shot work, `authoring
-    submit PAYLOAD` compiles and submits in one call.
+    preflight: verdict, certificate and every diagnostic. A refused preflight
+    also names its diagnostics on stderr and exits 1, as submit does. Nothing is
+    proposed until `authoring submit --intent-id ID`; for one-shot work,
+    `authoring submit PAYLOAD` compiles and submits in one call.
     """
 
     # Parsed before any daemon call: a malformed payload names its field path
@@ -5453,7 +5454,13 @@ def compile_authoring(payload: str, intent_id: str | None) -> None:
         ),
         command_name="cruxible authoring compile",
     )
-    _emit_json(result.model_dump(mode="json"))
+    record = result.model_dump(mode="json")
+    _emit_json(record)
+    if result.verdict != "passed":
+        # The refusal submit would give, on stderr beside the record, and the
+        # same exit: a script or agent reading compile must not see success.
+        click.echo(f"refused: {_preflight_refusal_reason(record)}", err=True)
+        raise click.exceptions.Exit(1)
 
 
 @authoring_group.command("bind")
@@ -5691,7 +5698,12 @@ def _submit_refusal_reason(submitted: Any) -> str | None:
 
     if submitted.status.state != "preflight_refused" or not isinstance(submitted.intent, Mapping):
         return None
-    preflight = submitted.intent.get("last_preflight")
+    return _preflight_refusal_reason(submitted.intent.get("last_preflight"))
+
+
+def _preflight_refusal_reason(preflight: object) -> str:
+    """One transcript line for a refused preflight: every diagnostic and blocked check."""
+
     frontier = preflight.get("frontier") if isinstance(preflight, Mapping) else None
     diagnostics = frontier.get("diagnostics") if isinstance(frontier, Mapping) else None
     blocked_checks = frontier.get("blocked_checks") if isinstance(frontier, Mapping) else None

@@ -1885,7 +1885,8 @@ preflight the submit would run, with every refusal, and saves no intent. Durable
 intents are optional, for staged work on large definitions: `compile PAYLOAD`
 creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
 revises it (the daemon keeps every revision), and `submit --intent-id ID`
-submits it. `preflight` and `submit` check a refused intent whose base the
+submits it. Compile runs the same checks submit runs: a refused compile prints
+the record, names its diagnostics on stderr and exits 1, as submit does. `preflight` and `submit` check a refused intent whose base the
 accepted head moved past again at the head; when it passes there it advances to
 the head (same payload and identity, the next revision), and a payload fault
 still refuses. `get` and `list`
