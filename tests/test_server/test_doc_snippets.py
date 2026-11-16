@@ -368,29 +368,52 @@ def split_category(client: TestClient, instance_id: str, workspace: Path) -> Cru
 DEFAULT_PADS = "catalog.decision/ceramic-pads-default"
 
 
-def security_incident(client: TestClient, instance_id: str, workspace: Path) -> Cruxible:
-    """The security kit's incident fields (its reference, security.incident), and one CVE."""
+def security_judgment(client: TestClient, instance_id: str, workspace: Path) -> Cruxible:
+    """The security kit's app-level judgment pair, one occurrence, one CVE and the cited code."""
 
     fields = [
+        _field("security.occurrence.slug", key=True),
         _field("security.vulnerability.cve_id", key=True),
-        _field("security.incident.name", key=True),
-        _field("security.incident.window_start"),
+        _field("security.app_exposure.occurrence", objects=("security.occurrence",)),
+        _field("security.app_exposure.vulnerability", objects=("security.vulnerability",)),
         _field(
-            "security.incident.rotation_policy", schema=_enum("all_exposed", "on_found_or_unknown")
+            "security.app_exposure.justification",
+            schema=_enum(
+                "component_not_present",
+                "vulnerable_code_not_in_execute_path",
+                "vulnerable_code_cannot_be_controlled_by_adversary",
+                "inline_mitigations_already_exist",
+            ),
         ),
-        _field("security.incident.status", schema=_enum("closed", "open")),
-        _field("security.incident.vulnerability", many=True, objects=("security.vulnerability",)),
     ]
     kinds = {
+        "security.occurrence": ["security.occurrence.slug"],
         "security.vulnerability": ["security.vulnerability.cve_id"],
-        "security.incident": ["security.incident.name"],
+        "security.app_exposure": [
+            "security.app_exposure.occurrence",
+            "security.app_exposure.vulnerability",
+        ],
     }
     _define(client, instance_id, fields, kinds)
-    cx = _connect(client, instance_id, workspace)
-    cve = cx.set(
-        "security.vulnerability/CVE-2025-3248", "cve_id", "CVE-2025-3248", because="OSV lists it."
+    lab = workspace / "dockerized_labs/a9_uckv_lab/app.py"
+    lab.parent.mkdir(parents=True)
+    lab.write_text(
+        "import yaml\n\n\ndef load(file):\n"
+        "    data = yaml.load(file.stream, Loader=yaml.Loader)\n    return data\n",
+        encoding="utf-8",
     )
-    assert cve.status == "accepted", cve
+    cx = _connect(client, instance_id, workspace)
+    seeded = (
+        cx.changes(because="The SBOM import and OSV, as the page's run left them.")
+        .set(
+            "security.occurrence/sbom.cdx.json--pkg-pypi-pyyaml-5.1",
+            "slug",
+            "sbom.cdx.json--pkg-pypi-pyyaml-5.1",
+        )
+        .set("security.vulnerability/cve-2020-14343", "cve_id", "CVE-2020-14343")
+        .write()
+    )
+    assert seeded.status == "accepted", seeded
     return cx
 
 
@@ -406,7 +429,7 @@ PAGES: dict[str, WorldBuilder] = {
     "evolving-your-vocabulary.md": split_category,
     "for-ai-agents.md": car_parts,
     "lines-and-automation.md": car_parts,
-    "security-walkthrough.md": security_incident,
+    "security-walkthrough.md": security_judgment,
 }
 
 #: (doc, block line) -> why that block is not run.
