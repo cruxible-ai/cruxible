@@ -873,10 +873,14 @@ GROWS: dict[str, dict[str, str]] = {
         **_grows(_COVERAGE_SQL, "sql_statements", "sql_vm_steps"),
     },
     "read.audit.first_page": {
+        # Its digests no longer grow (strict XPASS, PR #29): the audit cursor binds
+        # every non-audit review-operational partition head, and with curation
+        # detection off the surface the world records no curation items, so that
+        # head no longer grows with the instance.
         **_grows(
             _AUDIT,
             "claim_parses",
-            *_DIGESTS,
+            "canonical_encodes",
             "file_opens",
             "sql_statements",
             "cas_body_reads",
