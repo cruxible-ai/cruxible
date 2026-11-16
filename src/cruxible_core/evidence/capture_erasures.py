@@ -297,6 +297,22 @@ class CaptureErasureStore:
             ).fetchone()
         return None if row is None else CaptureErasureRecord.model_validate_json(row[0])
 
+    def captures_with_prefix(self, hex_prefix: str, *, limit: int) -> tuple[str, ...]:
+        """Erased Capture digests starting with ``hex_prefix``: one index range."""
+
+        if not self.root.is_dir():
+            return ()
+        lower = "sha256:" + hex_prefix
+        with self._locked() as conn:
+            if conn is None:
+                return ()
+            rows = conn.execute(
+                "SELECT DISTINCT capture_digest FROM erasures "
+                "WHERE capture_digest>=? AND capture_digest<? ORDER BY capture_digest LIMIT ?",
+                (lower, lower + "\uffff", limit),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def for_bodies(self, body_digests: tuple[str, ...]) -> dict[str, RecordedCaptureErasure]:
         """The latest erasure recorded for each of these body objects that has one.
 

@@ -530,3 +530,35 @@ def test_erasing_bytes_stored_again_records_another_erasure_and_recovers(
     assert not world.instance.body_store()._path(world.body).exists()
     # Every generation still replays exactly.
     _full_recovery(world)
+
+
+def test_get_of_an_erased_capture_no_claim_cites_resolves_to_its_erasure(
+    world: ErasureWorld,
+) -> None:
+    """S5: a handle to an erased, uncited Capture answers its erasure, never not-found."""
+
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
+    assert retired.refusal is None, retired.refusal
+
+    for ref in (capture_handle(world.capture), f"Capture:{world.capture}"):
+        card = service_playbill_get(world.instance, request=GetRequest(ref=ref), access=READ).card
+        assert card.erased is not None, ref  # type: ignore[union-attr]
+        assert (card.erased.by, card.erased.because) == ("owner", BECAUSE)  # type: ignore[union-attr]
+        assert card.erased.at is not None  # type: ignore[union-attr]
+
+
+def test_get_of_an_erased_capture_never_cited_resolves_to_its_erasure(
+    world: ErasureWorld,
+) -> None:
+    """S5: an uncited Capture's handle still opens once its body is erased."""
+
+    from tests.support.capture_erasure_world import rescan
+
+    fresh = rescan(world)
+    _erase(world, dry_run=False, at=_erase(world, capture=fresh).coordinate.digest, capture=fresh)
+
+    for ref in (capture_handle(fresh), f"Capture:{fresh}"):
+        card = service_playbill_get(world.instance, request=GetRequest(ref=ref), access=READ).card
+        assert card.erased is not None, ref  # type: ignore[union-attr]
+        assert (card.erased.by, card.erased.because) == ("owner", BECAUSE)  # type: ignore[union-attr]
