@@ -616,6 +616,15 @@ def _claim_facts(
     if strict and raised:
         raise raised[0]
     reads.update(_read_key(read) for read in recording.keys())
+    if verdict is not None and verdict.freshness_expirations:
+        # A verdict that read freshness reads every observation of the content
+        # it cites (ruling 1a): one recorded for any Capture of that content
+        # re-derives this Claim. A Claim whose verdict ignores freshness is
+        # never reached by an observation.
+        reads.update(
+            f"observed:{key.contract_digest}|{key.observed_content_digest}"
+            for key in recording.reobservation_keys.get(claim.identity.name, ())
+        )
     lower, upper = (
         invariance_interval(boundaries, evaluation_time=at) if verdict is not None else (None, None)
     )
@@ -1259,10 +1268,12 @@ def _touched(
         landed |= consulting
     reobs = heads.reobs
     if heads.reobs != cursors.reobs:
-        for _sequence, claim_id in ClaimReobservationStore(instance).records_after(
+        lineages, observed = ClaimReobservationStore(instance).observed_after(
             cursors.reobs, through=heads.reobs
-        ):
-            claims.add(f"Claim:{claim_id}")
+        )
+        claims.update(f"Claim:{claim_id}" for claim_id in lineages)
+        # Keyed by content: only the Claims whose freshness read the content.
+        keys.update(f"observed:{contract}|{content}" for contract, content in observed)
     fired_at: datetime | None = None
     if heads.expire != cursors.expire:
         after = cursors.expire

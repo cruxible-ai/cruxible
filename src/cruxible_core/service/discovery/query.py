@@ -570,6 +570,9 @@ class _AcceptedQueryFactsRead:
             if isinstance(self._instance, PlaybillInstance)
             else None
         )
+        # Content observations (one per acquiring call) can refresh any Claim
+        # citing observed content: once any was recorded, every row reads them.
+        shared = reader is not None and reader.content_observed()
         for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
             # The full-history path historically looked up evidence before
             # parsing the Claim; live-only reads parsed lifecycle first and
@@ -601,7 +604,8 @@ class _AcceptedQueryFactsRead:
                             (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
                         )
                     ),
-                    reobserved=reader is not None and bool(reader.sequence(claim.identity.name)),
+                    reobserved=reader is not None
+                    and (shared or bool(reader.sequence(claim.identity.name))),
                     bodies=self._consulted_bodies,
                     key_normalizers=self._key_normalizers,
                 )
