@@ -1359,12 +1359,17 @@ def cannot_rebase(source: ProposalResult, *, late_signer: bool = False) -> tuple
     """
 
     leaf = _target_leaf(source)
-    kit_id = leaf.removeprefix("kit-").rpartition("-")[0] or "KIT"
-    kit = (
-        "is a kit change planned against an earlier state (kit ownership, "
-        "requirements, provider pins, local edits)",
-        f"commits kit {kit_id} again at the current head (kit add, or kit remove for a removal)",
-    )
+
+    def kit() -> tuple[str, str]:
+        kit_id = _kit_id(source) or "KIT"
+        return (
+            "is a kit change planned against an earlier state (kit ownership, "
+            "requirements, provider pins, local edits)",
+            f"removes kit {kit_id} again at the current head (kit remove)"
+            if _is_kit_removal(source)
+            else f"adds kit {kit_id} again at the current head (kit add)",
+        )
+
     if holds_claim_type_closure(source):
         if leaf.startswith("claim-type-migration-"):
             return (
@@ -1372,14 +1377,14 @@ def cannot_rebase(source: ProposalResult, *, late_signer: bool = False) -> tuple
                 "migrates the ClaimType again (preflight, then submit) at the current head",
             )
         if leaf.startswith("kit-"):
-            return kit
+            return kit()
         return (
             "holds a ClaimType among other members, a dependency closure built at its "
             "base, and has no retained input to rebuild it",
             "makes the change again at the current head",
         )
     if late_signer and leaf.startswith("kit-"):
-        return kit
+        return kit()
     return None
 
 
@@ -1402,19 +1407,50 @@ def requires_resubmission(source: ProposalResult) -> ProposalReadmitRequiresResu
     )
 
 
+def _kit_id(source: ProposalResult) -> str | None:
+    """The kit a ``kit-{id}-{digest}`` proposal changes, from its leaf; None otherwise."""
+
+    leaf = _target_leaf(source)
+    if not leaf.startswith("kit-"):
+        return None
+    return leaf.removeprefix("kit-").rpartition("-")[0] or None
+
+
+def _is_kit_removal(source: ProposalResult) -> bool:
+    """Whether a kit proposal removes its kit rather than adding or changing it.
+
+    Additions and removals share the ``kit-{id}-{digest}`` target, and the
+    candidate does not tell them apart by itself (a removal that only keeps
+    and carries retires nothing). The one transition the submitter records on
+    the proposal is its rationale, written by one format for each: ``Remove kit
+    {id} {version}.`` for a removal, Install/Upgrade/Downgrade/Reinstall for the
+    rest. The check is that exact form.
+    """
+
+    kit_id = _kit_id(source)
+    rationale = source.admission.rationale or ""
+    return (
+        kit_id is not None
+        and rationale.startswith(f"Remove kit {kit_id} ")
+        and rationale.endswith(".")
+    )
+
+
 def author_repair(source: ProposalResult) -> RepairOperation:
     """The author's command that remakes a change set its bytes cannot carry to the head.
 
-    A kit change is the kit's add again (a removal is the kit's remove, which the
-    refusal names in words); a migration, or another closure, is authored again.
+    A kit change is its kit's own commit again: ``kit remove`` with the kit's id
+    for a removal, ``kit add`` for an addition (which release or build to add is
+    the author's, so its reference is left to name); a migration, or another
+    closure, is authored again.
     """
 
-    leaf = _target_leaf(source)
-    if leaf.startswith("kit-"):
-        # Which release or build to add is the author's (a bare id names no
-        # release a registry is known to hold): the line leaves KIT to name.
+    kit_id = _kit_id(source)
+    if kit_id is not None:
+        if _is_kit_removal(source):
+            return RepairOperation(operation="cruxible.kit.remove", arguments={"kit_id": kit_id})
         return RepairOperation(operation="cruxible.kit.add")
-    if leaf.startswith("claim-type-migration-"):
+    if _target_leaf(source).startswith("claim-type-migration-"):
         return RepairOperation(operation="cruxible.claim-type.migrate")
     return RepairOperation(operation="cruxible.authoring.list")
 
