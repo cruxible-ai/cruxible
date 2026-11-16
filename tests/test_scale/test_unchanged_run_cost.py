@@ -132,9 +132,10 @@ def _measure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int) -> Cou
     files, rows = _files(managed), _rows(managed)
     with _appends_counted() as counts:
         state = _run(instance, root, line, minutes=30)
-    # Unchanged: no proposal, no generation, every item restated what is live.
+    # Unchanged: no proposal, no generation, and every item restated what is
+    # live, so the terminal carries no child (ruling 1e).
     (egress,) = state.terminal_egress
-    assert egress.proposal_id is None and len(egress.children) == count, egress
+    assert egress.proposal_id is None and egress.children == (), egress
     assert instance.accepted_coordinate() == head
     after = _files(managed)
     counts["cas_files"] = sum(
