@@ -507,7 +507,7 @@ entries:
         str(workspace),
     )
     assert catalogued.exit_code == 0, catalogued.output
-    assert "file todo.txt: catalogued as doc-todo.txt" in catalogued.output
+    assert "catalogued todo.txt (as doc-todo.txt)" in catalogued.output
     assert "doc-todo.txt" in (workspace / ".cruxible" / "files.yaml").read_text()
     both = _run(
         "set",

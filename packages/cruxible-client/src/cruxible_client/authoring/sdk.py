@@ -623,6 +623,9 @@ class KnowledgeCard:
     value: object
     #: The answer the card was read from, kept for ``str()`` (no read happens there).
     _result: GetResult | None = field(default=None, repr=False, compare=False)
+    #: The workspace catalog's file names to paths, read with an answer that names
+    #: files (evidence, backlinks), so ``str()`` shows a cited file by its path.
+    _file_paths: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
 
     def __str__(self) -> str:
         """The answer as ``cruxible get`` prints it; ``repr()`` stays the model.
@@ -636,7 +639,9 @@ class KnowledgeCard:
 
         if isinstance(self.value, ClaimView):
             return "\n".join(claim_view_lines(self.value))
-        text = None if self._result is None else render_get(self._result)
+        text = (
+            None if self._result is None else render_get(self._result, file_paths=self._file_paths)
+        )
         return repr(self) if text is None else text
 
     @property
@@ -4918,7 +4923,25 @@ class Cruxible:
                 )
                 if item is not None
             )
-        return KnowledgeCard(kind, identity, _get_coordinate(result), value, result)
+        names_files = result.evidence is not None or result.backlinks is not None
+        return KnowledgeCard(
+            kind,
+            identity,
+            _get_coordinate(result),
+            value,
+            result,
+            self._display_file_paths() if names_files else None,
+        )
+
+    def _display_file_paths(self) -> Mapping[str, str]:
+        """The workspace catalog's file names to their paths, as text names cited files.
+
+        Empty without a workspace or a readable catalog: text then shows names.
+        """
+
+        from cruxible_client.authoring.selectors import catalog_file_paths
+
+        return catalog_file_paths(self._workspace)
 
     def read_whole(self, preview: TruncatedText) -> object:
         """The whole value a ``TruncatedText`` previews, read exactly where it was previewed.

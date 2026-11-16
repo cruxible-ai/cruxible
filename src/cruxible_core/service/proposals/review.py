@@ -979,14 +979,20 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     )
 
 
-def render_playbill_approval_summary(review: ProposalReview, summary: ProposalReviewSummary) -> str:
+def render_playbill_approval_summary(
+    review: ProposalReview,
+    summary: ProposalReviewSummary,
+    *,
+    file_paths: Mapping[str, str] | None = None,
+) -> str:
     """What `proposal approve` shows before signing: the reviewer's view, then who must
     approve and what any earlier refusal said.
 
     ``summary`` is the first page of the same candidate's review summary (the text
     `proposal review` prints, its paging hints naming that command); the
     signature covers the exact candidate digest printed here. `--full` renders
-    every member's artifact and semantic delta instead.
+    every member's artifact and semantic delta instead. ``file_paths`` (the
+    caller's workspace catalog) names a cited file by its path.
     """
 
     from cruxible_client.contracts.text_display import render_review_summary
@@ -997,7 +1003,11 @@ def render_playbill_approval_summary(review: ProposalReview, summary: ProposalRe
             "rerun proposal approve"
         )
     lines = [
-        render_review_summary(summary, command=f"cruxible proposal review {review.proposal_id}"),
+        render_review_summary(
+            summary,
+            command=f"cruxible proposal review {review.proposal_id}",
+            file_paths=file_paths,
+        ),
         "Required approvals: " + _required_approvals_text(review),
         *_compiler_upgrade_lines(review),
         *_prior_refusal_lines(review),

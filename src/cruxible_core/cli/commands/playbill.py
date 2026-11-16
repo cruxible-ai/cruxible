@@ -60,7 +60,7 @@ from cruxible_client.authoring.files import (
 from cruxible_client.authoring.folder_identity import write_folder_identity
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
-from cruxible_client.authoring.selectors import WorkspaceFiles
+from cruxible_client.authoring.selectors import WorkspaceFiles, catalog_file_paths
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.vocabulary_file import (
     vocabulary_apply_for,
@@ -120,15 +120,16 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.file_catalog import FileCatalog, FileCompilationBundle
 from cruxible_client.contracts.get_text import attestation_counts_text as _attestation_counts_text
 from cruxible_client.contracts.get_text import backlink_line as _backlink_line
+from cruxible_client.contracts.get_text import (
+    file_ref_shown,
+    history_lines,
+    proposed_reason_lines,
+    render_get,
+)
 
 # Re-exported under the names the CLI's tests read them by.
 from cruxible_client.contracts.get_text import (  # noqa: F401
     get_value_text as _get_value_text,
-)
-from cruxible_client.contracts.get_text import (
-    history_lines,
-    proposed_reason_lines,
-    render_get,
 )
 from cruxible_client.contracts.get_text import (  # noqa: F401
     provider_operation_line as _provider_operation_line,
@@ -174,6 +175,7 @@ from cruxible_client.contracts.text_display import (
     landing_lines,
     next_lines,
     render_orient,
+    render_review_summary,
     short_oid,
     short_provider_build,
     write_outcome_lines,
@@ -568,6 +570,22 @@ def _emit_git_workspace_note(resolution: _LocalWorkspaceResult) -> None:
         f"precedence over inherited Git worktree {str(note.inherited_workspace_root)!r}.",
         err=True,
     )
+
+
+def _display_file_paths(workspace: Path | None = None) -> Mapping[str, str]:
+    """The workspace catalog's file names to paths, read once for one command's text.
+
+    Text names a cited file by its path; JSON keeps the stored name. ``workspace``
+    is the command's own ``--workspace-root``; without one, the workspace around
+    the CWD. No workspace or catalog maps nothing, and text shows names.
+    """
+
+    if workspace is None:
+        try:
+            workspace = _local_workspace_root(fallback_to_start=False).workspace_root
+        except click.UsageError:
+            return {}
+    return catalog_file_paths(workspace)
 
 
 def _existing_workspace_root() -> Path | None:
@@ -3147,7 +3165,7 @@ def review_proposal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     elif isinstance(result, contracts.ProposalReviewSummary):
-        click.echo(str(result))
+        click.echo(render_review_summary(result, file_paths=_display_file_paths(workspace)))
     else:
         review = ProposalReview.model_validate(result.model_dump(mode="json"))
         click.echo(render_playbill_proposal_review_pointer(review), nl=False)
@@ -3264,7 +3282,10 @@ def approve_proposal(
                 click.echo(line)
         else:
             assert summary is not None
-            click.echo(render_playbill_approval_summary(review, summary), nl=False)
+            click.echo(
+                render_playbill_approval_summary(review, summary, file_paths=_display_file_paths()),
+                nl=False,
+            )
     if key.source != "option":
         click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?", err=True):
@@ -6343,12 +6364,14 @@ def backlinks(
     if output_json:
         _emit_json(result.model_dump(mode="json", exclude_none=True))
         return
+    file_paths = _display_file_paths(workspace)
     click.echo(
-        f"backlinks of {result.target} (generation {result.coordinate.generation}, "
+        f"backlinks of {file_ref_shown(result.target, file_paths)} "
+        f"(generation {result.coordinate.generation}, "
         f"{result.coordinate.git_oid}): {len(result.links)}"
     )
     for link in result.links:
-        click.echo("  " + _backlink_line(link))
+        click.echo("  " + _backlink_line(link, file_paths=file_paths))
     if result.next_cursor is not None:
         click.echo(f"next: cruxible backlinks ... --cursor {result.next_cursor}")
 
@@ -6559,7 +6582,12 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     ``evidence_erased`` marks a stale Claim's verdict as read from erased evidence.
     """
 
-    text = render_get(result, evidence_erased=evidence_erased)
+    names_files = result.evidence is not None or result.backlinks is not None
+    text = render_get(
+        result,
+        evidence_erased=evidence_erased,
+        file_paths=_display_file_paths() if names_files else None,
+    )
     if text is None:
         _emit_json(result.proof)
         return
