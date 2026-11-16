@@ -631,11 +631,11 @@ class KnowledgeCard:
     _file_paths: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
 
     def __str__(self) -> str:
-        """The answer as ``cruxible get`` prints it; ``repr()`` stays the model.
+        """The answer as ``cruxible get`` prints it; ``repr()`` is its first line.
 
         A Claim summary is the typed view the SDK reads from the Claim's proof,
-        so it prints that view's own lines; a proof prints as its repr, as the
-        CLI prints it as JSON. Reads nothing.
+        so it prints that view's own lines; a proof prints as its JSON, as the
+        CLI prints it. Reads nothing.
         """
 
         from cruxible_client.contracts.get_text import claim_view_lines, render_get
@@ -645,7 +645,26 @@ class KnowledgeCard:
         text = (
             None if self._result is None else render_get(self._result, file_paths=self._file_paths)
         )
-        return repr(self) if text is None else text
+        if text is not None:
+            return text
+        import json
+
+        return json.dumps(self.value, indent=2, default=str)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); the fields hold the whole answer.
+
+        When that line does not name the thing (a proof, which prints as JSON, or
+        a detail that opens with a section), it is ``kind: identity (detail)``.
+        """
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        first = one_line_repr(self)
+        if self.identity in first:
+            return first
+        detail = "summary" if self._result is None else self._result.detail
+        return f"{self.kind.value}: {self.identity} ({detail})"
 
     @property
     def ref(self) -> TypedRef:
@@ -696,13 +715,20 @@ class NextPage:
         return iter(self.items)
 
     def __str__(self) -> str:
-        """The queue as ``cruxible next`` prints it; ``repr()`` stays the model. Reads nothing."""
+        """The queue as ``cruxible next`` prints it; ``repr()`` is its first line. Reads nothing."""
 
         from cruxible_client.contracts.text_display import next_lines
 
         return "\n".join(
             next_lines(status=self.status, items=self.items, unobserved=self.unobserved)
         )
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); the fields hold the whole page."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 @dataclass(frozen=True)

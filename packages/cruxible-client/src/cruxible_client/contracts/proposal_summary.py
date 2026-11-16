@@ -271,8 +271,15 @@ class ProposalReviewSummary(_SummaryModel):
     withheld: BodyRestricted | None = Field(default=None, exclude_if=lambda value: value is None)
 
     def __str__(self) -> str:
-        """The review as ``cruxible proposal review`` prints it; ``repr()`` stays the model."""
+        """The review as ``cruxible proposal review`` prints it; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import render_review_summary
 
         return render_review_summary(self)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)

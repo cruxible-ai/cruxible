@@ -398,11 +398,18 @@ class VocabularyExportResult(_StrictResultModel):
     fields: int = Field(ge=0)
 
     def __str__(self) -> str:
-        """What ``cruxible vocabulary export`` prints; ``repr()`` stays the model."""
+        """What ``cruxible vocabulary export`` prints; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import render_vocabulary_export
 
         return render_vocabulary_export(self)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 VocabularyAction = Literal["add", "replace", "retire", "not_in_file"]
@@ -465,11 +472,18 @@ class VocabularyPlan(_StrictResultModel):
     preflight: VocabularyPreflight
 
     def __str__(self) -> str:
-        """What ``cruxible vocabulary plan`` prints; ``repr()`` stays the model."""
+        """What ``cruxible vocabulary plan`` prints; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import vocabulary_plan_lines
 
         return "\n".join(vocabulary_plan_lines(self))
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
     @property
     def changes(self) -> tuple[VocabularyPlanEntry, ...]:
@@ -494,11 +508,18 @@ class VocabularyApplyResult(_StrictResultModel):
     next: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     def __str__(self) -> str:
-        """What ``cruxible vocabulary apply`` prints; ``repr()`` stays the model."""
+        """What ``cruxible vocabulary apply`` prints; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import render_vocabulary_apply
 
         return render_vocabulary_apply(self)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 __all__ = [

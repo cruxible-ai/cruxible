@@ -900,11 +900,18 @@ class OrientResult(_StrictOrientModel):
     next: tuple[str, ...] = ()
 
     def __str__(self) -> str:
-        """The map as ``cruxible orient`` prints it; ``repr()`` stays the full model."""
+        """The map as ``cruxible orient`` prints it; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import render_orient
 
         return render_orient(self.model_dump(mode="json"))
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 __all__ = [

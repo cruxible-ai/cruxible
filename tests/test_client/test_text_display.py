@@ -1,4 +1,4 @@
-"""``print()`` on an SDK result reads as the CLI prints it; ``repr()`` stays the model.
+"""``print()`` on an SDK result reads as the CLI prints it; ``repr()`` is its first line.
 
 Before, ``print(cx.orient())`` was one ~2,000-character line, ``print(cx.coordinate)``
 four digests, and ``print(intent)`` hid a refusal's diagnostics (findings F4, F5,
@@ -63,7 +63,8 @@ def test_an_orient_result_prints_the_cli_map() -> None:
         "Next:",
         '  cx.orient(kind="shop.part")',
     ]
-    assert repr(result).startswith("OrientResult(")
+    # S1: a REPL echo is the CLI's first line, never a model dump.
+    assert repr(result) == text.splitlines()[0]
 
 
 def test_an_authoring_landing_prints_status_and_next() -> None:
@@ -74,7 +75,9 @@ def test_an_authoring_landing_prints_status_and_next() -> None:
 
     assert str(landed) == "landed: accepted at 0123456789ab"
     assert str(proposed) == "kept as a proposal (accept=never)\nnext: activate it"
-    assert "accepted_coordinate" in repr(landed)
+    assert repr(landed) == "landed: accepted at 0123456789ab"
+    assert repr(proposed) == "kept as a proposal (accept=never)"
+    assert landed.model_dump()["accepted_coordinate"]["git_oid"] == _OID
 
 
 def test_a_write_outcome_prints_what_the_cli_prints() -> None:
@@ -91,6 +94,8 @@ def test_a_write_outcome_prints_what_the_cli_prints() -> None:
         'next: cx.get("shop.part/bp-1")',
     ]
     assert str(outcome) == "\n".join(text for text, _err in write_outcome_lines(outcome))
+    assert repr(outcome) == f"accepted (generation 4, {_OID[:12]})"
+    assert repr([outcome]) == f"[accepted (generation 4, {_OID[:12]})]"
 
 
 def test_a_refused_intent_prints_its_diagnostics(tmp_path: Path) -> None:
@@ -196,7 +201,7 @@ def test_vocabulary_results_print_what_the_cli_prints() -> None:
         "Wrote .cruxible/vocabulary.yaml (2 kind(s), 5 field(s)) at 0123456789ab"
     )
     for result in (plan, applied, exported):
-        assert repr(result).startswith(type(result).__name__ + "(")
+        assert repr(result) == str(result).splitlines()[0]
 
 
 def test_a_query_page_prints_the_cli_table() -> None:
@@ -300,7 +305,7 @@ def test_a_next_page_prints_what_cruxible_next_prints() -> None:
     assert str(page) == "\n".join(
         next_lines(status=status, items=page.items, unobserved=page.unobserved)
     )
-    assert repr(page).startswith("NextPage(")
+    assert repr(page) == "Status: floor stale  next=cruxible floor export"
 
 
 def test_a_get_card_prints_what_cruxible_get_prints() -> None:
@@ -341,7 +346,7 @@ def test_a_get_card_prints_what_cruxible_get_prints() -> None:
         "live_subjects: 1",
         "next: cruxible get SubjectKind:dev.item --detail history",
     ]
-    assert repr(card).startswith("KnowledgeCard(")
+    assert repr(card) == "subject_kind: SubjectKind:dev.item"
 
 
 def _review_summary(**updates: object) -> object:

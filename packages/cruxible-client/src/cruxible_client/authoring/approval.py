@@ -80,6 +80,13 @@ class ReviewedProposal:
 
         return render_review_summary(self.summary, file_paths=self._owner._display_file_paths())
 
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``details`` is the whole review."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
+
 
 def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:
     candidate = _CANDIDATE.validate_python(review.candidate)

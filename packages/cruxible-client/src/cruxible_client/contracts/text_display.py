@@ -54,6 +54,17 @@ def short_oid(git_oid: str) -> str:
     return git_oid[:SHORT_OID]
 
 
+def one_line_repr(result: object) -> str:
+    """An SDK result's ``repr()``: the first line of the text the CLI prints for it.
+
+    Ruling S1: a REPL echo is one short line, never a model dump; ``print()``
+    shows the whole text and ``model_dump()`` (or the result's fields) the model.
+    """
+
+    first = str(result).split("\n", 1)[0].strip()
+    return first or type(result).__name__
+
+
 def short_provider_build(name: str) -> str:
     """A provider build as text shows it: ``NAME/<64 hex>`` (or ``Provider:NAME/...``)
     as ``NAME/<12 hex>``, as coordinates show a Git OID."""

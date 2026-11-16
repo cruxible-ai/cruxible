@@ -1244,11 +1244,18 @@ class WriteOutcome(_StrictWriteModel):
         return shown
 
     def __str__(self) -> str:
-        """The outcome as ``cruxible write`` prints it; ``repr()`` stays the full model."""
+        """The outcome as ``cruxible write`` prints it; ``repr()`` is its first line."""
 
         from cruxible_client.contracts.text_display import render_write_outcome
 
         return render_write_outcome(self)
+
+    def __repr__(self) -> str:
+        """The first line of what the CLI prints (S1); ``model_dump()`` is the model."""
+
+        from cruxible_client.contracts.text_display import one_line_repr
+
+        return one_line_repr(self)
 
 
 __all__ = [

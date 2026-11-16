@@ -308,7 +308,7 @@ vocabulary.apply(path=None, *, rationale=None, accept="if_allowed") -> Vocabular
 
 The workspace's vocabulary file, `.cruxible/vocabulary.yaml`: every kind and field in one YAML input. `export()` writes the accepted vocabulary (shorthand where it round-trips, the full ClaimType input form otherwise, each entry checked by lowering it back); `plan()` reads at the export the file names and lists what it adds, replaces and retires, the Claims an enum mapping moves, and the daemon's write-free preflight; `apply()` submits the same members as one ordinary change set.
 
-**Conditions and effects:** a kind or field the file leaves out is untouched; only `retired: true` retires. An edited field pins the digest its export read, so one changed since refuses at preflight. Export replaces an existing file only when nothing in it would be lost (it parses and states no change accepted state lacks); otherwise it refuses, naming the pending changes, unless `force=True`. Git is not consulted. The same request gives the same result as `cruxible vocabulary` and `cruxible_vocabulary_*`. `print()` on each result shows what the CLI prints; `repr()` is the full model.
+**Conditions and effects:** a kind or field the file leaves out is untouched; only `retired: true` retires. An edited field pins the digest its export read, so one changed since refuses at preflight. Export replaces an existing file only when nothing in it would be lost (it parses and states no change accepted state lacks); otherwise it refuses, naming the pending changes, unless `force=True`. Git is not consulted. The same request gives the same result as `cruxible vocabulary` and `cruxible_vocabulary_*`. `print()` on each result shows what the CLI prints; `repr()` is its first line and `model_dump()` the full model.
 
 <a id="api-cruxible-enter"></a>
 
@@ -948,7 +948,7 @@ Reads one thing by reference; the daemon resolves the reference directly (never 
 
 A Subject card read at the head lists `pending`: the open proposals that would write its fields (`proposal`, `fields`, `by`), while its values stay the accepted ones. Its `next` names `cx.backlinks(subject)` when a note or a cited section points at it, and `cx.get(proposal)` for each pending proposal. In `GetEvidence`, each Capture's `byte_length` says how many bytes it holds.
 
-`print(card)` shows what `cruxible get REF --detail D` prints for the same read, at every detail (next-step lines in SDK syntax); a Claim summary, which the SDK reads as a `ClaimView`, prints that view's subject, value, verdict and revision; a `proof` prints as its repr (the CLI prints it as JSON). `repr()` is the full model, and `str()` makes no request.
+`print(card)` shows what `cruxible get REF --detail D` prints for the same read, at every detail (next-step lines in SDK syntax); a Claim summary, which the SDK reads as a `ClaimView`, prints that view's subject, value, verdict and revision; a `proof` prints as JSON, as the CLI prints it. `repr()` is the first line (or `kind: identity (detail)` when that line does not name the thing), and `str()` makes no request.
 
 **Conditions and effects:** An unknown or ambiguous reference refuses with `cruxible.get.ref_not_found` or `cruxible.get.ref_ambiguous` and the nearest names; a detail that does not apply to the kind refuses naming the ones that do. A Document body over 64 KiB needs `range`. Inspect `kind` before using `value`.
 
@@ -1002,7 +1002,7 @@ Maps accepted state in one call at the context’s coordinate: each Subject kind
 
 There is no cross-kind name search: grep the exported floor under `.cruxible/floor/`, then `get` the reference you found.
 
-`print(result)` shows the map as `cruxible orient` prints it; `repr()` is the full model.
+`print(result)` shows the map as `cruxible orient` prints it; `repr()` is its first line and `model_dump()` the full model.
 
 **Conditions and effects:** Follow `next_cursor` while `truncated`. A wrong kind is refused with the nearest kinds.
 
@@ -1264,7 +1264,7 @@ next(*, expiring_within: Duration | None = None) -> NextPage
 
 Scans the attached workspace and reads actionable work with explicit access profile, evaluation time, and expiry horizon (`expiring_within` defaults to seven days, as `cruxible next`).
 
-**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. `print(page)` shows what `cruxible next` prints (status, rows, repairs in SDK syntax, and `page.unobserved`, the reasons read from the workspace when `next()` observed it); `repr()` is the full model, and `str()` makes no request. Each row's `repair.command` is the SDK call that performs it (for example `cx.line('hourly').enable()`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
+**Conditions and effects:** Inspect observed_domains/unobserved_domains; an empty page does not imply every possible domain was observed. `print(page)` shows what `cruxible next` prints (status, rows, repairs in SDK syntax, and `page.unobserved`, the reasons read from the workspace when `next()` observed it); `repr()` is its first line, and `str()` makes no request. Each row's `repair.command` is the SDK call that performs it (for example `cx.line('hourly').enable()`), leaving out an operand only the caller holds, such as the signer or the observation; it is `None` when the SDK has no method for that repair.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -2265,7 +2265,10 @@ Import: `cruxible_client.authoring.sdk.Intent`. [Source](src/cruxible_client/aut
 `print(intent)` shows its state, proposal and outcome and, when refused, each
 diagnostic with its repair; `repr()` stays one line. A `WriteOutcome` and an
 `intent.outcome` print as the CLI prints them, through
-`contracts.text_display`.
+`contracts.text_display`. Every SDK result that prints as CLI text (write
+outcomes, landings, orient, next pages, get cards, proposal reviews, vocabulary
+results) has a `repr()` of that text's first line; `model_dump()` (or the
+result's fields) is the model.
 
 <a id="api-intent-from-preflight"></a>
 
