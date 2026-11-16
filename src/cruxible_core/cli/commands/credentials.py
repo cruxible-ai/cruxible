@@ -532,18 +532,19 @@ def revoke_cmd(credential_id: str, dry_run: bool | None, at: str | None, output_
     _echo_credential_metadata(result.credential)
 
 
-def _check_settings_token(key_dir: Path, credential_id: str) -> None:
+def _check_settings_token(key_dir: Path, credential_id: str) -> str | None:
     """Refuse before rotating when --key-dir's settings file holds another token (S5).
 
     The file's token is replaced only when it is the one being rotated; a file
     holding another credential's token (or none) refuses, naming the file.
+    Returns the exact token held, which the write after the rotation compares.
     """
 
     from cruxible_client.authoring.principal_settings import read_principal_settings
 
     path = principal_settings_path(key_dir)
     if not path.is_file():
-        return
+        return None
     held = read_principal_settings(path).token
     if held is None or not token_names_credential(held, credential_id):
         raise click.UsageError(
@@ -552,6 +553,7 @@ def _check_settings_token(key_dir: Path, credential_id: str) -> None:
             "and write the printed token where it belongs, or name the key directory whose "
             "settings file holds this credential"
         )
+    return held
 
 
 @credential_group.command("rotate")
@@ -598,25 +600,29 @@ def rotate_cmd(
             label=target.label,
             key_dir=Path(key_dir),
         )
+    observed: str | None = None
     if key_dir is not None:
-        _check_settings_token(Path(key_dir), credential_id)
+        observed = _check_settings_token(Path(key_dir), credential_id)
     result = client.rotate_runtime_credential(
         instance_id, credential_id, principal_proof=proof, dry_run=dry_run, at=at
     )
     try:
         settings = (
             None
-            if key_dir is None or not result.token
+            if key_dir is None or not result.token or observed is None
             else set_principal_settings_token(
                 Path(key_dir),
                 result.token,
-                replaces=lambda held: token_names_credential(held, credential_id),
+                # The exact token read before this rotation: a newer token another
+                # rotation wrote meanwhile is never overwritten with this one.
+                replaces=observed,
             )
         )
     except SettingsTokenMismatch as mismatch:
-        # Changed between the check and the rotation: print the token once instead.
+        # Changed between the check and the write: print the token once instead.
         click.echo(
-            f"{mismatch.path} holds another credential's token; it was left as it was",
+            f"{mismatch.path} no longer holds the token this rotation replaced; it was "
+            "left as it was",
             err=True,
         )
         settings = None

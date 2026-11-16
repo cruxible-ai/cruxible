@@ -105,3 +105,53 @@ def test_a_file_holding_another_token_refuses_naming_it(
     assert str(path) in result.output and CRED in result.output
     assert rotations == []  # refused before anything was revoked
     assert read_principal_settings(path).token == "crt_rcred_ffffffffffffffff_other"
+
+
+def test_a_newer_token_written_meanwhile_is_never_overwritten(
+    rotations: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r2: rotation A must not overwrite the token rotation B wrote after A began."""
+
+    from cruxible_core.cli.principal_settings import set_principal_settings_token
+
+    path = _settings(tmp_path / "keys", OLD)
+    newer = f"crt_{CRED}_from-rotation-b"
+    from cruxible_core.cli.commands import _common
+
+    rotating = _common._get_client()
+    original = rotating.rotate_runtime_credential
+
+    def interleaved(instance_id: str, credential_id: str, **options: Any) -> Any:
+        result = original(instance_id, credential_id, **options)
+        # Rotation B lands its own token in the file while A is in flight.
+        set_principal_settings_token(tmp_path / "keys", newer, replaces=OLD)
+        return result
+
+    monkeypatch.setattr(rotating, "rotate_runtime_credential", interleaved)
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: rotating)
+
+    result = _rotate(tmp_path / "keys")
+
+    assert result.exit_code == 0, result.output
+    assert read_principal_settings(path).token == newer  # B's token survives
+    assert "no longer holds the token this rotation replaced" in result.output
+
+
+def test_the_write_compares_the_exact_token_not_the_credential(tmp_path: Path) -> None:
+    from cruxible_core.cli.principal_settings import (
+        SettingsTokenMismatch,
+        set_principal_settings_token,
+    )
+
+    path = _settings(tmp_path / "keys", f"crt_{CRED}_held")
+    # Same credential, another token than the one this rotation replaces.
+    with pytest.raises(SettingsTokenMismatch):
+        set_principal_settings_token(tmp_path / "keys", NEW, replaces=OLD)
+    # Another credential's token.
+    with pytest.raises(SettingsTokenMismatch):
+        set_principal_settings_token(
+            tmp_path / "keys", NEW, replaces="crt_rcred_ffffffffffffffff_x"
+        )
+    assert read_principal_settings(path).token == f"crt_{CRED}_held"
+    set_principal_settings_token(tmp_path / "keys", NEW, replaces=f"crt_{CRED}_held")
+    assert read_principal_settings(path).token == NEW
