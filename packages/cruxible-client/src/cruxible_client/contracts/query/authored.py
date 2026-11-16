@@ -10,15 +10,26 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, NoReturn, Protocol, TypeVar, cast
+from typing import Annotated, Any, Literal, NoReturn, Protocol, TypeVar, cast, get_args
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
+    QueryDefinitionSpec,
     QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
@@ -57,6 +68,29 @@ class _AuthoredModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid", frozen=True, validate_by_name=True, serialize_by_alias=True
     )
+
+
+#: The type names a query parameter may declare, in the order a refusal lists them.
+QUERY_PARAM_TYPES: tuple[str, ...] = (*get_args(QueryValueType), "subject")
+
+#: Common type names from other languages, and the query type that holds them.
+_PARAM_TYPE_HINTS: dict[str, str] = {
+    "datetime": "timestamp",
+    "date": "timestamp",
+    "time": "timestamp",
+    "instant": "timestamp",
+    "str": "string",
+    "text": "string",
+    "enum": "string",
+    "int": "integer",
+    "number": "decimal",
+    "float": "decimal",
+    "double": "decimal",
+    "bool": "boolean",
+    "link": "subject_reference",
+    "reference": "subject_reference",
+    "relation": "subject_reference",
+}
 
 
 class QueryMaximumInput(_AuthoredModel):
@@ -100,6 +134,28 @@ class QuerySpecInput(_AuthoredModel):
         serialization_alias="max",
     )
 
+    @field_validator("params", mode="before")
+    @classmethod
+    def _known_param_types(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        for name, declared in value.items():
+            if isinstance(declared, str) and declared in QUERY_PARAM_TYPES:
+                continue
+            hint = _PARAM_TYPE_HINTS.get(declared.lower()) if isinstance(declared, str) else None
+            raise PydanticCustomError(
+                "query_param_type_unknown",
+                "parameter {name} declares type {declared}; a query parameter type is one "
+                "of {allowed}{hint}",
+                {
+                    "name": str(name),
+                    "declared": repr(declared),
+                    "allowed": ", ".join(QUERY_PARAM_TYPES),
+                    "hint": f" (use {hint})" if hint else "",
+                },
+            )
+        return value
+
     @model_validator(mode="after")
     def _single_bindings(self) -> QuerySpecInput:
         if len(self.from_) != 1:
@@ -113,6 +169,23 @@ class QuerySpecInput(_AuthoredModel):
     @property
     def identity(self) -> ArtifactIdentity:
         return ArtifactIdentity(kind="QueryDefinition", name=self.query)
+
+
+def _query_definition_form(value: Any) -> str:
+    if isinstance(value, QuerySpecInput):
+        return "authored"
+    if isinstance(value, Mapping) and "query" in value:
+        return "authored"
+    return "typed"
+
+
+#: A QueryDefinition as authored: the short declaration (it has ``query``) or the
+#: typed definition. Choosing the form first keeps a refusal to the form written.
+AuthoredQueryDefinition = Annotated[
+    Annotated[QuerySpecInput, Tag("authored")]
+    | Annotated[QueryDefinitionSpec | QueryDefinition, Tag("typed")],
+    Discriminator(_query_definition_form),
+]
 
 
 class QuerySpecError(FormatError):
@@ -401,9 +474,13 @@ class _LowerQuery:
                 )
             declared = "subject_reference" if declared == "subject" else declared
             if declared != value_type:
+                link = ""
+                if value_type == "subject_reference":
+                    link = " (a link field holds a Subject)"
                 raise QuerySpecError(
                     "cruxible.query.value_type_mismatch",
-                    f"parameter is {declared}, predicate is {value_type}",
+                    f"parameter is {declared}, predicate is {value_type}{link}: "
+                    f"declare it in params as {operand.value}: {value_type}",
                     path=path,
                 )
             return QueryParameterRef(parameter=str(operand.value))

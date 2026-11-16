@@ -11788,15 +11788,19 @@
                 "type": "string"
               },
               "query_definition": {
-                "anyOf": [
+                "oneOf": [
                   {
                     "$ref": "#/$defs/QuerySpecInput"
                   },
                   {
-                    "$ref": "#/$defs/QueryDefinitionSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryDefinition"
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryDefinitionSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDefinition"
+                      }
+                    ]
                   }
                 ],
                 "title": "Query Definition"
