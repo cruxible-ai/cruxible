@@ -2514,8 +2514,9 @@ class _RunState:
     parameters: CanonicalValue
     provenance: dict[str, AliasProvenanceV1] = dataclass_field(default_factory=dict)
     facts: dict[str, DependencyEvidenceFactsV1] = dataclass_field(default_factory=dict)
-    #: The rows each filter/dedupe alias was given, so a Query row's offers follow it.
-    row_inputs: dict[str, object] = dataclass_field(default_factory=dict)
+    #: Per filter/dedupe alias: the rows it was given and each kept record's
+    #: position in them, so a Query row's offers follow it.
+    row_inputs: dict[str, tuple[object, tuple[int, ...]]] = dataclass_field(default_factory=dict)
     outcomes: dict[str, AcquisitionInputOutcomeV1] = dataclass_field(default_factory=dict)
     control: frozenset[DependencyToken] = frozenset()
     return_tokens: frozenset[DependencyToken] = frozenset()
@@ -5365,6 +5366,7 @@ class ProcedureExecutor:
         outputs: dict[str, CanonicalValue],
         state: _RunState,
         rows_in: list[int | None] | None = None,
+        kept: list[int] | None = None,
     ) -> tuple[CanonicalValue, bool]:
         """One closed transform over ``outputs``: its value, and whether it is complete.
 
@@ -5395,6 +5397,7 @@ class ProcedureExecutor:
                 parameters=state.parameters if isinstance(state.parameters, dict) else None,
                 enums=self.enum_resolver,
                 keys=self.key_rules,
+                kept=kept,
             )
         except TransformInputInvalid as exc:
             raise _RunRefusal(
@@ -5412,6 +5415,7 @@ class ProcedureExecutor:
         """One closed transform over records: typed, three-valued, completeness carried."""
 
         rows_in: list[int | None] = []
+        kept: list[int] = []
         value, complete = self._apply_closed(
             node.node_id,
             node.transform_kind,
@@ -5419,11 +5423,13 @@ class ProcedureExecutor:
             outputs=state.outputs,
             state=state,
             rows_in=rows_in,
+            kept=kept,
         )
         aliases = _referenced_aliases(node.spec)
         state.outputs[node.as_] = value
         if node.transform_kind in ROW_PRESERVING_TRANSFORMS:
-            state.row_inputs[node.as_] = getattr(node.spec, "input", None)
+            # Which input row each kept record is, beside the value (query_rows).
+            state.row_inputs[node.as_] = (getattr(node.spec, "input", None), tuple(kept))
         record_summary(
             state.node_summaries,
             node.node_id,

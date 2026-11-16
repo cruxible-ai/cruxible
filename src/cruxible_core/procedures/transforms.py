@@ -189,8 +189,13 @@ def apply_closed_transform(
     parameters: Mapping[str, object] | None = None,
     enums: EnumResolver | None = None,
     keys: KeyCanonicalizer | None = None,
+    kept: list[int] | None = None,
 ) -> tuple[CanonicalValue, bool]:
     """``(value, complete)`` of one closed transform; ``resolve`` reads a reference.
+
+    ``kept``, when given to a filter or dedupe, receives each output record's
+    position in the input it read, in output order: identity carried beside
+    the value, never read from a record's own (possibly projected) locator.
 
     An intermediate value is held to no item budget: ``max_items`` is enforced at
     the boundaries (Procedure input/output, provider operations, terminal rows).
@@ -230,22 +235,24 @@ def apply_closed_transform(
         return normalize_canonical(records_value(shaped, source.complete)), source.complete
     if isinstance(spec, TransformFilterSpec):
         source = as_records(resolve(spec.input), label="filter input")
-        kept: list[Record] = []
+        selected: list[Record] = []
         unknown = False
-        for record in source.records:
+        for position, record in enumerate(source.records):
             truth = _truth(spec.where, record, parameters)
             if truth == "true":
-                kept.append(record)
+                selected.append(record)
+                if kept is not None:
+                    kept.append(position)
             elif truth == "unknown":
                 unknown = True
         complete = source.complete and not unknown
-        return normalize_canonical(records_value(kept, complete)), complete
+        return normalize_canonical(records_value(selected, complete)), complete
     if isinstance(spec, TransformDedupeSpec):
         source = as_records(resolve(spec.input), label="dedupe input")
         seen: set[bytes] = set()
         out: list[Record] = []
         unknown = False
-        for record in source.records:
+        for position, record in enumerate(source.records):
             values = [_value(record, name) for name in spec.keys]
             if any(state == "unknown" for state, _v in values):
                 unknown = True
@@ -255,6 +262,8 @@ def apply_closed_transform(
                 continue
             seen.add(identity)
             out.append(record)
+            if kept is not None:
+                kept.append(position)
         complete = source.complete and not unknown
         return normalize_canonical(records_value(out, complete)), complete
     if isinstance(spec, TransformUnionSpec):

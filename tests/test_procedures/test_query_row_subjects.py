@@ -738,3 +738,76 @@ def test_a_path_beneath_a_column_its_type_lacks_refuses(reference: str, said: st
 
     assert reference in str(refused.value) and said in str(refused.value)
     assert refused.value.element == "fields.item"
+
+
+# -- a kept row's Subject is its own, whatever its projected columns spell ---------------
+
+
+def _record_shaped(locator: str, key: str, status: str) -> dict[str, Any]:
+    """A Query row whose declared columns ``record`` and ``fields`` look like a transform record."""
+
+    return {
+        "record": locator,
+        "fields": {"k": {"tag": "present", "value": key, "at": "/k"}},
+        "status": status,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "spec", "expected"),
+    [
+        # Both kept in order: a misleading locator must not swap their Subjects.
+        ("dedupe", {"keys": ["k"]}, ["wi-42", "wi-43"]),
+        # The first dropped: the kept row is the second served row, not "/0".
+        (
+            "filter",
+            {
+                "where": {
+                    "op": "eq",
+                    "left": {"$ref": "item", "path": ["fields", "k"]},
+                    "right": {"literal": "b"},
+                }
+            },
+            ["wi-43"],
+        ),
+        # A duplicate key dropped after the first: the kept row is the first.
+        ("dedupe", {"keys": ["status"]}, ["wi-42"]),
+    ],
+)
+def test_a_kept_rows_subject_is_its_own_through_filter_and_dedupe(
+    kind: str, spec: dict[str, Any], expected: list[str]
+) -> None:
+    from cruxible_client.contracts.procedures.nodes import (
+        TransformDedupeSpec,
+        TransformFilterSpec,
+    )
+    from cruxible_core.procedures.execution import _resolve_reference
+    from cruxible_core.procedures.transforms import apply_closed_transform
+
+    rows = [_record_shaped("/1", "a", "same"), _record_shaped("x/0", "b", "same")]
+    if kind == "filter":
+        rows[1]["record"] = "/0"
+    view = _read_view(
+        rows,
+        [
+            _served(f"{SUBJECT_KIND}/wi-42", item=f"{SUBJECT_KIND}/wi-42"),
+            _served(f"{SUBJECT_KIND}/wi-43", item=f"{SUBJECT_KIND}/wi-43"),
+        ],
+    )
+    model = TransformFilterSpec if kind == "filter" else TransformDedupeSpec
+    parsed = model.model_validate({"input": "$steps.work.rows", **spec})
+    kept: list[int] = []
+    value, _complete = apply_closed_transform(
+        kind, parsed, lambda _reference: view["rows"], kept=kept
+    )
+    outputs = {"work": view, "narrowed": value}
+    row_inputs = {"narrowed": ("$steps.work.rows", tuple(kept))}
+
+    items = query_row_items("$steps.narrowed.rows", outputs, value["rows"], row_inputs) or []
+
+    assert [
+        _resolve_reference("$item.subject", input_payload={}, parameters={}, outputs={}, item=item)
+        for item in items
+    ] == [f"{SUBJECT_KIND}/{name}" for name in expected]
+    # The rows themselves are exactly what the transform kept.
+    assert [dict(item) for item in items] == value["rows"]

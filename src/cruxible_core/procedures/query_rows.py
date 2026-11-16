@@ -12,8 +12,9 @@ is exactly that list (an inbox step, a claims step) also reads, per row:
 They come from the read's whole result (``$steps.<read>.result``), row by row,
 and are read only by those references: the row's own value (``$item``, the
 read material, a filter's records) is unchanged. A filter or dedupe over the
-rows keeps them, followed back by record locator. A declared column of the
-same name wins, present or not. Anything else a row does not offer refuses at authoring
+rows keeps them, followed back through the input positions each transform
+recorded as it kept records. A declared column of the same name wins, present
+or not. Anything else a row does not offer refuses at authoring
 (:func:`validate_row_references`), listing what the row offers.
 """
 
@@ -85,21 +86,17 @@ def _offer(whole: Mapping[str, Any]) -> dict[str, object]:
     return offered
 
 
-def _locator_index(record: object) -> int | None:
-    locator = record.get("record") if isinstance(record, Mapping) else None
-    if isinstance(locator, str) and locator.startswith("/") and locator[1:].isdigit():
-        return int(locator[1:])
-    return None
-
-
 def row_offers(
-    for_each: object, outputs: Mapping[str, object], row_inputs: Mapping[str, object]
+    for_each: object,
+    outputs: Mapping[str, object],
+    row_inputs: Mapping[str, tuple[object, Sequence[int]]],
 ) -> list[dict[str, object] | None] | None:
     """Per element of ``for_each``, what its Query row offers; ``None`` when not Query rows.
 
     ``$steps.<read>.rows`` of a Query read: each served row's. Of a filter or
-    dedupe (``row_inputs`` names the rows it was given): each kept record's
-    locator (``/<i>``) is its position in those rows, followed back.
+    dedupe, ``row_inputs`` names the rows it was given and the position in
+    them of each record it kept, recorded by the transform itself -- never
+    read from a record's locator, which a projected column may spell.
     """
 
     alias = rows_alias(for_each)
@@ -112,23 +109,21 @@ def row_offers(
         if not isinstance(served, list):
             return None
         return [_offer(whole) if isinstance(whole, Mapping) else None for whole in served]
-    source = row_inputs.get(alias)
-    records = view.get("records")
-    upstream = None if source is None else row_offers(source, outputs, row_inputs)
-    if upstream is None or not isinstance(records, list):
+    given = row_inputs.get(alias)
+    if given is None:
         return None
-    offers: list[dict[str, object] | None] = []
-    for record in records:
-        index = _locator_index(record)
-        offers.append(upstream[index] if index is not None and index < len(upstream) else None)
-    return offers
+    source, kept = given
+    upstream = row_offers(source, outputs, row_inputs)
+    if upstream is None or any(index >= len(upstream) for index in kept):
+        return None
+    return [upstream[index] for index in kept]
 
 
 def query_row_items(
     for_each: object,
     outputs: Mapping[str, object],
     rows: Sequence[object],
-    row_inputs: Mapping[str, object] | None = None,
+    row_inputs: Mapping[str, tuple[object, Sequence[int]]] | None = None,
 ) -> list[object] | None:
     """``rows`` as :class:`RowItem` values with their offers; ``None`` when not Query rows."""
 
