@@ -87,8 +87,8 @@ class DaemonLifecycleClient:
     def version(self) -> str:
         return self._transport.version()
 
-    def daemon_identity(self) -> tuple[str, str | None]:
-        return self._transport.daemon_identity()
+    def daemon_identity(self, *, timeout: float | None = None) -> tuple[str, str | None]:
+        return self._transport.daemon_identity(timeout=timeout)
 
     def server_info(self) -> contracts.ServerInfoResult:
         return self._transport.server_info()

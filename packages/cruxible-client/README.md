@@ -5162,7 +5162,7 @@ version() -> str
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-daemon_identity() -> tuple[str, str | None]
+daemon_identity(*, timeout: float | None = None) -> tuple[str, str | None]
 ```
 
 The daemon's version and the boot id of its process image, from `/version`. A
