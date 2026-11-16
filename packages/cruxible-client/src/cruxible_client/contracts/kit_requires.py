@@ -99,8 +99,8 @@ def requires_missing_message(
     return (
         f"Kit {kit_id} {version} requires kit {requirement.kit_id} {requirement.min_version} "
         f"or later; this instance holds {held}. {verb} it first, from a release or a local "
-        f"build of {requirement.kit_id} {requirement.min_version} or later: kit add KIT, "
-        "where KIT is that release's reference or the built kit's path."
+        f"build of {requirement.kit_id} {requirement.min_version} or later: kit add '<KIT>', "
+        "where <KIT> is that release's reference or the built kit's path."
     )
 
 

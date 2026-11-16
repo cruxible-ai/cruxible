@@ -608,7 +608,7 @@ def test_cli_next_renders_round3_rows_their_causes_gates_and_placeholders(
                 "target": f"Claim:{claim}",
                 "required_change": "rebind_onto_a_fresh_capture_under_the_same_contract",
                 "arguments": {"claim_id": claim},
-                "command": f"cruxible rebind {claim} --capture CAP --because TEXT",
+                "command": f"cruxible rebind {claim} --capture '<CAP>' --because '<TEXT>'",
                 "operands_to_add": ["capture", "because"],
                 "alternatives": [
                     {
@@ -616,7 +616,7 @@ def test_cli_next_renders_round3_rows_their_causes_gates_and_placeholders(
                         "target": f"Claim:{claim}",
                         "required_change": "retire_the_claim",
                         "arguments": {"claim_id": claim},
-                        "command": f"cruxible retire {claim} --because TEXT",
+                        "command": f"cruxible retire {claim} --because '<TEXT>'",
                         "operands_to_add": ["because"],
                     }
                 ],
@@ -667,9 +667,9 @@ def test_cli_next_renders_round3_rows_their_causes_gates_and_placeholders(
         "setup  line_not_enabled  Line:daily  next=cruxible.line.enable",
         "  repair: cruxible line enable daily",
         f"repair  claim_evidence_erased  Claim:{claim}  next=cruxible.rebind",
-        f"  repair: cruxible rebind {claim} --capture CAP --because TEXT",
-        f"  or: cruxible retire {claim} --because TEXT",
-        "  fill in: CAP (the fresh Capture's handle), TEXT (why, in your words)",
+        f"  repair: cruxible rebind {claim} --capture '<CAP>' --because '<TEXT>'",
+        f"  or: cruxible retire {claim} --because '<TEXT>'",
+        "  fill in: <CAP> (the fresh Capture's handle), <TEXT> (why, in your words)",
         "warning  proposal_stale  PRP-1  repair withheld: "
         "cruxible proposal readmit needs the proposal's author (alice)",
     ]

@@ -19,6 +19,7 @@ from cruxible_client.contracts.operator_mac import (
     OPERATOR_NONCE_HEADER,
     OPERATOR_TIMESTAMP_HEADER,
 )
+from cruxible_client.contracts.placeholders import placeholder
 from cruxible_client.contracts.principals import (
     EFFECTIVE_PERMISSION_MODE_HEADER,
     PRINCIPAL_ID_ENV,
@@ -204,8 +205,9 @@ CREDENTIAL_UNRECOGNIZED_MESSAGE = (
     f"{CREDENTIAL_UNRECOGNIZED_CODE}: the bearer token is not an active credential of this "
     "daemon (revoked, rotated, or minted for another daemon); repair: put an active one in "
     "CRUXIBLE_SERVER_BEARER_TOKEN: its principal mints a fresh one (`cruxible credential "
-    "mint --principal-id ID --key-dir DIR --mode MODE`, or `credential rotate ID --key-dir "
-    "DIR` for one still active), or an operator uses the bootstrap secret"
+    "mint --principal-id '<PRINCIPAL_ID>' --key-dir '<DIR>' --mode '<MODE>'`, or `credential "
+    "rotate '<CREDENTIAL_ID>' --key-dir '<DIR>'` for one still active), or an operator uses "
+    "the bootstrap secret"
 )
 
 
@@ -555,9 +557,9 @@ async def token_auth_middleware(
                     repair=RepairOperation(
                         operation="credential.mint",
                         arguments={
-                            "principal_id": "ID",
-                            "key_dir": "DIR",
-                            "permission_mode": "MODE",
+                            "principal_id": placeholder("PRINCIPAL_ID"),
+                            "key_dir": placeholder("DIR"),
+                            "permission_mode": placeholder("MODE"),
                         },
                     ),
                 )

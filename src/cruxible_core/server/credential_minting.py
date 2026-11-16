@@ -19,6 +19,7 @@ import hashlib
 from datetime import timedelta
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.placeholders import placeholder
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.runtime_credentials import (
     RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS,
@@ -57,13 +58,13 @@ def _signed_repair(
     if rotating is not None:
         return RepairOperation(
             operation="credential.rotate",
-            arguments={"credential_id": rotating, "key_dir": "DIR"},
+            arguments={"credential_id": rotating, "key_dir": placeholder("DIR")},
         )
     return RepairOperation(
         operation="credential.mint",
         arguments={
             "principal_id": principal_id,
-            "key_dir": "DIR",
+            "key_dir": placeholder("DIR"),
             "permission_mode": permission_mode,
         },
     )
@@ -71,9 +72,9 @@ def _signed_repair(
 
 def _signed_command(principal_id: str, permission_mode: str, rotating: str | None) -> str:
     if rotating is not None:
-        return f"cruxible credential rotate {rotating} --key-dir DIR"
+        return f"cruxible credential rotate {rotating} --key-dir '<DIR>'"
     return (
-        f"cruxible credential mint --principal-id {principal_id} --key-dir DIR "
+        f"cruxible credential mint --principal-id {principal_id} --key-dir '<DIR>' "
         f"--mode {permission_mode}"
     )
 
@@ -86,7 +87,7 @@ def _authority_required(
         "runtime_credential.principal_authority_required",
         f"{verb} a credential that acts as {principal_id!r} needs that principal's "
         f"authority, and an admin credential alone is not it; repair: sign the "
-        f"{verb.removesuffix('ing')} with the principal's key (DIR holds it): "
+        f"{verb.removesuffix('ing')} with the principal's key (<DIR> is its directory): "
         f"`{_signed_command(principal_id, permission_mode, rotating)}`",
         repair=_signed_repair(principal_id, permission_mode, rotating),
     )

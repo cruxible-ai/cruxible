@@ -196,8 +196,8 @@ def test_add_refuses_without_the_required_kit_and_accepts_beside_it(
     assert missing.value.error_code == "cruxible.kit.requires_missing"
     assert str(missing.value).endswith(
         "Kit acme 0.1.0 requires kit base 1.0.0 or later; this instance holds none. "
-        "Add it first, from a release or a local build of base 1.0.0 or later: kit add KIT, "
-        "where KIT is that release's reference or the built kit's path."
+        "Add it first, from a release or a local build of base 1.0.0 or later: kit add '<KIT>', "
+        "where <KIT> is that release's reference or the built kit's path."
     )
     # No bare kit id: one names no release a registry is known to hold (gapd-F25).
     assert missing.value.repair.arguments == {}  # type: ignore[attr-defined]

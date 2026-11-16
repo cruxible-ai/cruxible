@@ -7064,9 +7064,9 @@ def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
             parts.append("--clear-claims")
         candidates = values.get("backing_candidates")
         if isinstance(candidates, list) and candidates:
-            parts.append("--backing DIGEST")
+            parts.append("--backing '<DIGEST>'")
             line = " ".join(parts)
-            return f"{line}  (DIGEST: one of {', '.join(map(str, candidates))})"
+            return f"{line}  (<DIGEST>: one of {', '.join(map(str, candidates))})"
         return " ".join(parts)
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return "cruxible block sync --all"
@@ -9174,7 +9174,8 @@ def _echo_curation_action(result: contracts.CurationActionResult, done: str) -> 
         if done.startswith("suppressed"):
             click.echo(
                 "Undo: cruxible curation unsuppress "
-                f"{shlex.quote(item_id)} --expected-latest-event-digest {latest} --reason TEXT"
+                f"{shlex.quote(item_id)} --expected-latest-event-digest {latest} "
+                "--reason '<TEXT>'"
             )
 
 

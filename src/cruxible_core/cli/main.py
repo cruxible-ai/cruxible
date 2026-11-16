@@ -216,11 +216,56 @@ def _rerun_line(ctx: click.Context, repair: RepairOperation) -> str | None:
         return None
     if not set(repair.arguments) <= {"dry_run"}:
         return None
-    parts = ["cruxible", *path]
-    for param in ctx.command.params:
-        if param.name is None or param.name in _RERUN_RESET_PARAMS:
+    # Every level's own parameters, root first: the target and identity
+    # selectors the caller typed (--server-url, --instance-id, --principal-id)
+    # are part of what the command meant.
+    chain: list[click.Context] = []
+    current: click.Context | None = ctx
+    while current is not None:
+        chain.append(current)
+        current = current.parent
+    parts = ["cruxible"]
+    for level in reversed(chain):
+        if level.parent is not None and level.command.name:
+            parts.append(level.command.name)
+        rendered = _typed_parameters(level, leaf=level is ctx)
+        if rendered is None:
+            return None
+        parts.extend(rendered)
+    dry_run = repair.arguments.get("dry_run")
+    switch = spelling.cli_flags.get("dry_run", "")
+    if dry_run is True and switch:
+        parts.append("--dry-run")
+    elif dry_run is False and "/" in switch:
+        parts.append("--commit")
+    return " ".join(parts)
+
+
+def _secret_parameter(name: str) -> bool:
+    """A parameter whose value is a credential itself (never a path to one)."""
+
+    return name in {"token", "secret", "password"} or name.endswith(("_token", "_secret"))
+
+
+def _typed_parameters(level: click.Context, *, leaf: bool) -> list[str] | None:
+    """The parameters the caller typed at one command level, as it typed them.
+
+    Only values given on the command line are repeated: remembered context and
+    the environment supply the rest again on their own. A credential value is
+    never repeated; a path to one the caller typed is. None when a value cannot
+    be spelled back (a stream, say).
+    """
+
+    parts: list[str] = []
+    for param in level.command.params:
+        name = param.name
+        if name is None or (leaf and name in _RERUN_RESET_PARAMS) or _secret_parameter(name):
             continue
-        value = ctx.params.get(param.name)
+        if isinstance(param, click.Option) and param.is_eager:
+            continue
+        if level.get_parameter_source(name) != click.core.ParameterSource.COMMANDLINE:
+            continue
+        value = level.params.get(name)
         values = list(value) if isinstance(value, list | tuple) else [value]
         if any(
             item is not None and not isinstance(item, str | int | float | Path) for item in values
@@ -229,7 +274,7 @@ def _rerun_line(ctx: click.Context, repair: RepairOperation) -> str | None:
         if isinstance(param, click.Argument):
             parts.extend(shlex.quote(str(item)) for item in values if item is not None)
             continue
-        if not isinstance(param, click.Option) or value in (None, (), param.default):
+        if not isinstance(param, click.Option) or value in (None, ()):
             continue
         flag = next((opt for opt in param.opts if opt.startswith("--")), param.opts[0])
         if param.is_flag:
@@ -240,13 +285,7 @@ def _rerun_line(ctx: click.Context, repair: RepairOperation) -> str | None:
             continue
         for item in values:
             parts.extend([flag, shlex.quote(str(item))])
-    dry_run = repair.arguments.get("dry_run")
-    switch = spelling.cli_flags.get("dry_run", "")
-    if dry_run is True and switch:
-        parts.append("--dry-run")
-    elif dry_run is False and "/" in switch:
-        parts.append("--commit")
-    return " ".join(parts)
+    return parts
 
 
 def _command_path(ctx: click.Context) -> tuple[str, ...]:

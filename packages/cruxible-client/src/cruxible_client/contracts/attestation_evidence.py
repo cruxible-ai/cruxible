@@ -14,11 +14,12 @@ own evidence (``examined_existing``).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import CasDigest
+from cruxible_client.contracts.placeholders import NotPlaceholder
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.write import Evidence
 
@@ -35,7 +36,7 @@ class ClaimAttestationEvidenceRequest(_StrictAttestationEvidenceModel):
         "cruxible-claim-attestation-evidence-request-v1"
     )
     claim_id: str = Field(min_length=1, max_length=128)
-    because: str | None = Field(
+    because: Annotated[str, NotPlaceholder] | None = Field(
         default=None, description="Your own words: cited as a self-source Capture."
     )
     evidence: Evidence | None = Field(

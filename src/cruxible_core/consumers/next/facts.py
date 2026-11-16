@@ -98,9 +98,10 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 15  # Subject-end entries per (end, pair) key; live key-object index. A state
-#: built at 14 holds subject-end contributions per retired observation and no END keys,
-#: so it must rebuild once.
+FORMAT = 16  # Rows' repairs name their because operand and quoted placeholders
+#: (<TEXT>, <CLAIM_ID>), and a due dispatch names its Line. A state built at 15 stores
+#: rows with the old commands and ids, so it must rebuild once. (15: subject-end entries
+#: per (end, pair) key; live key-object index.)
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,

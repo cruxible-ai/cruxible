@@ -273,7 +273,7 @@ def test_a_next_page_prints_what_cruxible_next_prints() -> None:
                 "operation": "cruxible.set",
                 "target": "dev.item/a",
                 "required_change": "restate_on_admitted_evidence",
-                "command": 'cx.set("dev.item/a", "dev.item.state", "open", because="TEXT")',
+                "command": 'cx.set("dev.item/a", "dev.item.state", "open", because="<TEXT>")',
                 "operands_to_add": ["because"],
             },
         }
@@ -293,8 +293,8 @@ def test_a_next_page_prints_what_cruxible_next_prints() -> None:
         "Status: floor stale  next=cruxible floor export",
         f"repair  claim_uncovered  Claim:CLM-{'a' * 32}  (dev.item/a dev.item.state)"
         "  next=cruxible.set",
-        '  repair: cx.set("dev.item/a", "dev.item.state", "open", because="TEXT")',
-        "  fill in: TEXT (why, in your words)",
+        '  repair: cx.set("dev.item/a", "dev.item.state", "open", because="<TEXT>")',
+        "  fill in: <TEXT> (why, in your words)",
         "Unobserved: workspace_floor",
     ]
     assert str(page) == "\n".join(

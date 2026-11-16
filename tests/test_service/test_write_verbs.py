@@ -1329,8 +1329,7 @@ def test_a_stale_read_repairs_in_the_callers_spelling_and_verb(
     sdk_retire = _refusal(_write(instance, _RETIRE_BY_SLOT, at=read_at, surface="sdk"))
     assert sdk_retire.code == "cruxible.write.slot_changed"
     assert sdk_retire.repair == (
-        f'Read it again (cx.get("{WI1}")); if it should still end, cx.refresh(), then call '
-        "it again"
+        f'Read it again (cx.get("{WI1}")); if it should still end, cx.refresh(), then call it again'
     )
     assert "set" not in sdk_retire.repair and "contend" not in sdk_retire.repair
 
@@ -2089,8 +2088,8 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
     }
     # Each retirement names the operand it still needs (round-3 4b: full operands).
     assert {item.command for item in options} == {
-        f"cruxible retire {first} --because TEXT",
-        f"cruxible retire {second} --because TEXT",
+        f"cruxible retire {first} --because '<TEXT>'",
+        f"cruxible retire {second} --because '<TEXT>'",
     }
     assert {item.operands_to_add for item in options} == {("because",)}
 
@@ -2351,7 +2350,7 @@ def test_rebind_names_the_citation_when_none_of_that_file_is_held(
     )
     assert refusal.code == "cruxible.write.citation_not_held"
     assert len(refusal.candidates) == 1 and len(refusal.candidates[0]) == 12
-    assert refusal.repair == 'Name one of the listed citations with citation: "ID"'
+    assert refusal.repair == 'Name one of the listed citations with citation: "<ID>"'
 
 
 def test_selection_and_section_refusals_name_their_repair() -> None:

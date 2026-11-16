@@ -28,6 +28,7 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
+from cruxible_client.contracts.placeholders import CallerText
 from cruxible_client.contracts.types import (
     DECOMMISSION_REASON_MAX_LENGTH,
     CompilerCoordinate,
@@ -93,7 +94,7 @@ class LedgerPublishRequest(_StrictPlaybillRequest):
 class InstanceDecommissionRequest(_StrictPlaybillRequest):
     """The operator's stated reason for ending this instance's governed writes."""
 
-    reason: str = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
+    reason: CallerText = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
     #: Decommissioning cannot be undone: previews by default, commits with ``at``.
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -299,14 +300,14 @@ class ProposalReadmitRequest(_StrictPlaybillRequest):
 
 class ProposalWithdrawRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-withdraw-request-v1"] = "playbill-proposal-withdraw-request-v1"
-    reason: str = Field(min_length=1, max_length=1_000)
+    reason: CallerText = Field(min_length=1, max_length=1_000)
     dry_run: DryRun = None
     at: PreviewAt = None
 
 
 class ProposalRejectRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-reject-request-v1"] = "playbill-proposal-reject-request-v1"
-    reason: str = Field(min_length=1, max_length=1_000)
+    reason: CallerText = Field(min_length=1, max_length=1_000)
     dry_run: DryRun = None
     at: PreviewAt = None
 
@@ -373,7 +374,7 @@ class CurationOverruleRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-overrule-request-v1"] = "playbill-curation-overrule-request-v1"
     item_id: str
     expected_latest_event_digest: str
-    reason: str
+    reason: CallerText
     attribution_refs: tuple[str, ...] = ()
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -385,7 +386,7 @@ class CurationAcceptFixedRequest(_StrictPlaybillRequest):
     )
     item_id: str
     expected_latest_event_digest: str
-    reason: str
+    reason: CallerText
     accepted_proposal_id: str | None = None
     accepted_changeset_digest: str | None = None
     accepted_generation: int | None = None
@@ -398,7 +399,7 @@ class CurationSuppressRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-suppress-request-v1"] = "playbill-curation-suppress-request-v1"
     item_id: str
     expected_latest_event_digest: str
-    reason: str
+    reason: CallerText
     scope: Literal["item", "lineage"]
     until_generation: int | None = None
     attribution_refs: tuple[str, ...] = ()
@@ -412,7 +413,7 @@ class CurationUnsuppressRequest(_StrictPlaybillRequest):
     )
     item_id: str
     expected_latest_event_digest: str
-    reason: str
+    reason: CallerText
     suppression_event_id: str | None = None
     attribution_refs: tuple[str, ...] = ()
     dry_run: DryRun = None

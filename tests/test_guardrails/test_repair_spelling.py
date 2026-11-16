@@ -48,7 +48,7 @@ def _sample(spelling: RepairSpelling, *, dry_run: bool) -> dict[str, object]:
     values: dict[str, object] = {key: f"sample-{key}" for key in keys}
     if "dry_run" in values:
         values["dry_run"] = dry_run
-    for key in ("replace", "auth", "all"):
+    for key in ("replace", "auth", "all", "clear_claims"):
         if key in values:
             values[key] = True
     return values
@@ -131,10 +131,10 @@ def test_every_mcp_spelling_names_the_tools_own_arguments(
         spelled = {name.partition(".")[0] for name in spelling.mcp_args.values()}
         missing = set(schema.get("required", ())) - spelled - {"instance_id"}
         assert not missing, f"{operation}: {spelling.mcp} also requires {sorted(missing)}"
-        line = render_repair(
-            RepairOperation(operation=operation, arguments=_sample(spelling, dry_run=True)),
-            surface="mcp",
-        )
+        sample = _sample(spelling, dry_run=True)
+        if "dry_run" not in spelling.mcp_args:
+            sample.pop("dry_run", None)  # a tool with no preview has no form for one
+        line = render_repair(RepairOperation(operation=operation, arguments=sample), surface="mcp")
         assert line.startswith(f"{spelling.mcp}("), line
 
 
@@ -256,3 +256,209 @@ def test_each_client_prints_a_refusal_repair_in_its_own_spelling() -> None:
     assert _tool_failure_message("cruxible_line_run", failure).endswith(
         ' Repair: cruxible_line_enable(line="security.kev-triage")'
     )
+
+
+# -- round 2: placeholders fail closed, controls survive, SDK preflight -----------------
+
+
+def _all_operations() -> list[str]:
+    from cruxible_client.contracts.repairs import REPAIR_COMMAND_PATHS
+
+    return sorted(set(REPAIR_SPELLINGS) | set(REPAIR_COMMAND_PATHS) | _produced_operations())
+
+
+def _emitted_placeholders() -> set[str]:
+    """Every placeholder the renderer emits for an operand a repair does not carry."""
+
+    from cruxible_client.contracts.placeholders import PLACEHOLDER_PATTERN
+
+    found: set[str] = set()
+    for operation in _all_operations():
+        for arguments in ({}, {"dry_run": True}):
+            for surface in ("cli", "mcp", "sdk"):
+                line = render_repair(
+                    RepairOperation(operation=operation, arguments=arguments),
+                    surface=surface,  # type: ignore[arg-type]
+                )
+                found.update(PLACEHOLDER_PATTERN.findall(line))
+    return found
+
+
+def test_every_placeholder_is_one_refused_form_and_the_cli_quotes_it() -> None:
+    """A placeholder never reads as a value: <NAME>, quoted on the CLI so the shell passes it."""
+
+    emitted = _emitted_placeholders()
+    assert {"<TEXT>", "<SIGNER_ID>", "<PROPOSAL_ID>", "<CREDENTIAL_ID>", "<KIT>"} <= emitted
+    for operation in _all_operations():
+        line = render_repair(RepairOperation(operation=operation), surface="cli")
+        for token in line.split():
+            if "<" in token and not token.startswith("'<") and token != "<<<":
+                raise AssertionError(f"{operation}: unquoted placeholder in {line!r}")
+
+
+@pytest.mark.parametrize(
+    "model_path,field",
+    [
+        ("cruxible_client.contracts.write:WriteRequest", "because"),
+        ("cruxible_client.contracts.capture_erasure:CaptureEraseRequest", "because"),
+        ("cruxible_client.contracts.line_inbox:InboxDismissRequest", "reason"),
+        ("cruxible_core.server.playbill_request_models:ProposalRejectRequest", "reason"),
+        ("cruxible_core.server.playbill_request_models:ProposalWithdrawRequest", "reason"),
+        ("cruxible_core.server.playbill_request_models:InstanceDecommissionRequest", "reason"),
+        ("cruxible_core.server.playbill_request_models:CurationSuppressRequest", "reason"),
+        ("cruxible_core.server.playbill_request_models:CurationUnsuppressRequest", "reason"),
+        ("cruxible_core.server.playbill_request_models:CurationOverruleRequest", "reason"),
+        ("cruxible_core.server.playbill_request_models:CurationAcceptFixedRequest", "reason"),
+    ],
+)
+def test_a_placeholder_reason_is_refused_where_the_reason_is_read(
+    model_path: str, field: str
+) -> None:
+    """Review round 2, finding 2: `because="<TEXT>"` once wrote a Claim; now it refuses."""
+
+    import importlib
+
+    from pydantic import ValidationError
+
+    module, name = model_path.split(":")
+    model = getattr(importlib.import_module(module), name)
+    errors: list[str] = []
+    for text in ("<TEXT>", "<REASON>", " <TEXT> "):
+        try:
+            model.model_validate({field: text})
+        except ValidationError as exc:
+            errors.extend(str(item["msg"]) for item in exc.errors() if item["loc"][:1] == (field,))
+        else:  # pragma: no cover - decisive guard
+            raise AssertionError(f"{name}.{field} accepted {text!r}")
+    assert errors and all("placeholder" in message for message in errors), errors
+    # Ordinary text, including text that mentions a placeholder, still passes the field.
+    for text in ("Reviewer confirmed the fix.", "replace <TEXT> later"):
+        try:
+            model.model_validate({field: text})
+        except ValidationError as exc:
+            assert all(item["loc"][:1] != (field,) for item in exc.errors()), exc
+
+
+def test_identifier_placeholders_fail_their_own_formats() -> None:
+    """The rest refuse by format, lookup or file read; none reads as a valid operand."""
+
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.predictions import SettleRequest
+    from cruxible_client.contracts.principals import is_canonical_principal_id
+    from cruxible_client.contracts.write import WriteRequest
+
+    with pytest.raises(ValidationError):
+        SettleRequest(observation="<CLAIM_ID>")
+    with pytest.raises(ValidationError):
+        WriteRequest.model_validate(
+            {"because": "a real reason", "changes": [{"op": "retire", "target": "<CLAIM_ID>"}]}
+        )
+    for principal in ("<SIGNER_ID>", "<PRINCIPAL_ID>"):
+        assert not is_canonical_principal_id(principal)
+    assert not Path("<DIR>").exists() and not Path("<KIT>").exists()
+
+
+def test_a_suggested_write_run_unchanged_refuses_before_it_is_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI line next prints for a retire, run as printed, never reaches the daemon."""
+
+    import shlex as _shlex
+
+    from click.testing import CliRunner
+
+    claim = "CLM-" + "1" * 32
+    line = render_repair(
+        RepairOperation(operation="cruxible.claim.retire", arguments={"claim_id": claim}),
+        surface="cli",
+    )
+    assert line == f"cruxible retire {claim} --because '<TEXT>'"
+
+    class Unreachable:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"the placeholder write reached the client ({name})")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: Unreachable())
+    result = CliRunner().invoke(
+        cli,
+        ["--server-url", "https://x.invalid", "--instance-id", "inst", *_shlex.split(line)[1:]],
+    )
+    assert result.exit_code != 0
+    assert "placeholder" in result.output
+
+
+def test_a_preview_repair_renders_its_preview_on_every_client() -> None:
+    """Review round 2, finding 3: a typed preview never renders as the change itself."""
+
+    markers = {
+        "cli": ("--dry-run",),
+        "mcp": ("dry_run=true", '"dry_run": true'),
+        "sdk": ("dry_run=True",),
+    }
+    for operation in _all_operations():
+        spelling = REPAIR_SPELLINGS.get(operation)
+        if spelling is None or not ({"dry_run"} & {*spelling.cli_flags, *spelling.mcp_args}):
+            continue  # the operation takes no preview anywhere
+        sample = _sample(spelling, dry_run=True)
+        for arguments in ({"dry_run": True}, sample):
+            for surface in ("cli", "mcp", "sdk"):
+                line = render_repair(
+                    RepairOperation(operation=operation, arguments=arguments),
+                    surface=surface,  # type: ignore[arg-type]
+                )
+                if line.startswith(operation):
+                    raise AssertionError(f"{operation} {surface}: no form at all: {line}")
+                assert any(marker in line for marks in markers.values() for marker in marks), (
+                    operation,
+                    surface,
+                    line,
+                )
+
+
+def test_a_composed_repair_keeps_every_control_it_carries() -> None:
+    repin = RepairOperation(
+        operation="cruxible.block.repin",
+        arguments={
+            "source_id": "status",
+            "block_id": "tiers",
+            "dry_run": True,
+            "clear_claims": True,
+        },
+    )
+    assert render_repair(repin, surface="cli") == (
+        "cruxible block repin status tiers --clear-claims --dry-run"
+    )
+    assert render_repair(repin, surface="mcp") == (
+        'cruxible_block_repin(file="status", block="tiers", dry_run=true, claims=[])'
+    )
+    assert render_repair(repin, surface="sdk") == (
+        'cx.block.repin("status", "tiers", claims=[], dry_run=True)'
+    )
+    # Without controls, the composer's line is unchanged.
+    plain = RepairOperation(
+        operation="cruxible.block.repin", arguments={"source_id": "status", "block_id": "tiers"}
+    )
+    assert render_repair(plain, surface="cli") == "cruxible block repin status tiers"
+
+
+def test_the_sdk_preflight_repair_runs_preflight() -> None:
+    """Review round 2, finding 5: prepare() re-runs preflight; status() only reads it."""
+
+    preflight = RepairOperation(
+        operation="cruxible.authoring.preflight", arguments={"intent_id": "AIT-1"}
+    )
+    assert render_repair(preflight, surface="sdk") == 'cx.resume_intent("AIT-1").prepare()'
+
+
+def test_next_rows_built_by_the_previous_derivation_are_rebuilt() -> None:
+    """Review round 2, finding 4: the rows' commands changed, so the stored state rebuilds.
+
+    The format is part of the schema text; a state built at 15 holds rows whose
+    repairs lack their because operand and quoted placeholders.
+    """
+
+    from cruxible_core.consumers.next import facts
+
+    assert facts.FORMAT == 16
+    assert "CHECK(v=16)" in "".join(facts._SCHEMA)

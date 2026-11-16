@@ -284,6 +284,6 @@ def test_a_refused_one_shot_submit_lands_as_refused_naming_a_revised_payload(
     assert isinstance(record.outcome, contracts.AuthoringRefused)
     assert record.outcome.status == "refused"
     assert record.outcome.next == (
-        f"cruxible authoring submit PAYLOAD --intent-id {submitted.intent.intent_id}"
+        f"cruxible authoring submit '<PAYLOAD>' --intent-id {submitted.intent.intent_id}"
     )
     assert record.status.proposal_id is None

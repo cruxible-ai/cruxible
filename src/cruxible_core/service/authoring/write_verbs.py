@@ -116,6 +116,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.get_reads import ReadSurface
 from cruxible_client.contracts.notes import note_id, note_path, parse_note
+from cruxible_client.contracts.placeholders import placeholder
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.read_values import (
@@ -363,27 +364,34 @@ def _option(surface: ReadSurface, name: str, value: object = True) -> str:
     return f"{name}: {json.dumps(value)}"
 
 
-def _render_rebind_citation(surface: ReadSurface, claim_id: str, capture: str | None) -> str:
-    """One Claim's re-bind naming its citation (ID) onto ``capture``; ``because`` is TEXT."""
+#: Operands a suggested write leaves for the caller; each is refused if sent
+#: unchanged (``cruxible_client.contracts.placeholders``).
+_TEXT = placeholder("TEXT")
+_ID = placeholder("ID")
+_CAP = placeholder("CAP")
 
-    fresh = "CAP" if capture is None else capture
+
+def _render_rebind_citation(surface: ReadSurface, claim_id: str, capture: str | None) -> str:
+    """One Claim's re-bind naming its citation onto ``capture``; the caller fills the rest."""
+
+    fresh = _CAP if capture is None else capture
     if surface == "cli":
         return (
-            f"cruxible rebind {claim_id} --capture {shlex.quote(fresh)} --citation ID "
-            "--because TEXT"
+            f"cruxible rebind {claim_id} --capture {shlex.quote(fresh)} "
+            f"--citation {shlex.quote(_ID)} --because {shlex.quote(_TEXT)}"
         )
     if surface == "sdk":
         return (
-            f'cx.rebind({json.dumps(claim_id)}, capture={json.dumps(fresh)}, citation="ID", '
-            'because="TEXT")'
+            f"cx.rebind({json.dumps(claim_id)}, capture={json.dumps(fresh)}, "
+            f"citation={json.dumps(_ID)}, because={json.dumps(_TEXT)})"
         )
     change = {
         "op": "rebind",
         "target": claim_id,
-        "citation": "ID",
+        "citation": _ID,
         "evidence": {"kind": "capture", "capture": fresh},
     }
-    return f'cruxible_write(changes=[{json.dumps(change)}], because="TEXT")'
+    return f"cruxible_write(changes=[{json.dumps(change)}], because={json.dumps(_TEXT)})"
 
 
 def _render_orient_kind(surface: ReadSurface, kind: str) -> str:
@@ -896,7 +904,10 @@ class _Planner:
                     "cruxible.write.value_type_mismatch",
                     f"{field_name} takes {taken}, so expect {item!r} can never match it",
                     change=index,
-                    repair=f"Pass {_option(self.request.surface, 'expect', 'VALUE')} as {taken}",
+                    repair=(
+                        f"Pass {_option(self.request.surface, 'expect', placeholder('VALUE'))} "
+                        f"as {taken}"
+                    ),
                     field_path=path,
                 )
             found[_value_key(shown)] = shown
@@ -3091,7 +3102,7 @@ class _Planner:
             + _render_rebind_citation(self.request.surface, claim_id, fresh)
             if replacing is not None
             else "Name one of the listed citations with "
-            + _option(self.request.surface, "citation", "ID")
+            + _option(self.request.surface, "citation", _ID)
         )
         if not named:
             raise _refuse(
@@ -3141,7 +3152,7 @@ class _Planner:
                     change=index,
                     repair=(
                         "Name the Claim's evidence citation with "
-                        + _option(self.request.surface, "citation", "ID")
+                        + _option(self.request.surface, "citation", _ID)
                     ),
                     field_path=f"{prefix}.citation",
                 )
@@ -4464,39 +4475,46 @@ def _names_subject(change: RetireChange) -> bool:
 
 
 def _render_write_call(surface: ReadSurface, verb: Literal["set", "retire"], *operands: str) -> str:
-    """One set or retire on the caller's surface; ``because`` is TEXT, the caller's to say."""
+    """One set or retire on the caller's surface; ``because`` is the caller's to say."""
 
     if surface == "cli":
         return " ".join(
-            ("cruxible", verb, *(shlex.quote(item) for item in operands), "--because", "TEXT")
+            (
+                "cruxible",
+                verb,
+                *(shlex.quote(item) for item in operands),
+                "--because",
+                shlex.quote(_TEXT),
+            )
         )
     if surface == "sdk":
-        return f'cx.{verb}({", ".join(json.dumps(item) for item in operands)}, because="TEXT")'
+        shown = ", ".join(json.dumps(item) for item in operands)
+        return f"cx.{verb}({shown}, because={json.dumps(_TEXT)})"
     if verb == "retire":
-        return f'cruxible_retire(target={json.dumps(operands[0])}, because="TEXT")'
+        return f"cruxible_retire(target={json.dumps(operands[0])}, because={json.dumps(_TEXT)})"
     subject, field_name, value = operands
     return (
         f"cruxible_set(subject={json.dumps(subject)}, field={json.dumps(field_name)}, "
-        f'value={json.dumps(value)}, because="TEXT")'
+        f"value={json.dumps(value)}, because={json.dumps(_TEXT)})"
     )
 
 
 def _render_subject_retire(surface: ReadSurface, subject: str) -> str:
-    """The Subject's retirement with its Claims; ``because`` is TEXT, the caller's to say."""
+    """The Subject's retirement with its Claims; ``because`` is the caller's to say."""
 
     if surface == "cli":
         return (
             f"cruxible retire {shlex.quote(subject)} --with-claims --reason superseded "
-            "--because TEXT"
+            f"--because {shlex.quote(_TEXT)}"
         )
     if surface == "sdk":
         return (
             f'cx.retire({json.dumps(subject)}, with_claims=True, reason="superseded", '
-            'because="TEXT")'
+            f"because={json.dumps(_TEXT)})"
         )
     return (
         f'cruxible_retire(target={json.dumps(subject)}, with_claims=true, reason="superseded", '
-        'because="TEXT")'
+        f"because={json.dumps(_TEXT)})"
     )
 
 

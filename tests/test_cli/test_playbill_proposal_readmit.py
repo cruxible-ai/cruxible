@@ -517,7 +517,17 @@ def test_the_other_refusal_fields_are_omitted_when_empty() -> None:
     assert refused.model_dump(mode="json")["reobservation_refused"] == "head_moved"
 
 
-def _readmit(monkeypatch: pytest.MonkeyPatch, refusal: Exception, *args: str) -> object:
+def _readmit(
+    monkeypatch: pytest.MonkeyPatch,
+    refusal: Exception,
+    *args: str,
+    prefix: tuple[str, ...] = (
+        "--server-url",
+        "https://playbill.invalid",
+        "--instance-id",
+        "inst_test",
+    ),
+) -> object:
     class StubClient:
         def resolve_proposal_selector(self, _instance_id: str, selector: str) -> object:
             return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
@@ -526,7 +536,6 @@ def _readmit(monkeypatch: pytest.MonkeyPatch, refusal: Exception, *args: str) ->
             raise refusal
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    prefix = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_test"]
     return CliRunner().invoke(cli, [*prefix, "proposal", "readmit", *args])
 
 
@@ -554,9 +563,50 @@ def test_a_moved_preview_repairs_with_the_callers_own_command(
     )
 
     assert result.exit_code == 1  # type: ignore[attr-defined]
+    # The target the caller typed is part of the command (review round 2, finding 1).
     assert result.stderr.splitlines()[-1] == (  # type: ignore[attr-defined]
-        "Repair: cruxible proposal readmit sha256:11111111 --dry-run"
+        "Repair: cruxible --server-url https://playbill.invalid --instance-id inst_test "
+        "proposal readmit sha256:11111111 --dry-run"
     )
+
+
+def test_a_rerun_keeps_the_typed_selectors_and_never_the_environments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.errors import response_to_error
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.server.errors import error_to_response
+
+    moved = response_to_error(
+        *error_to_response(
+            ChangeRefusedError(
+                "cruxible.preview.state_moved",
+                "preview it again",
+                operation="cruxible.proposal.readmit",
+            )
+        )
+    )
+    typed = _readmit(
+        monkeypatch,
+        moved,
+        "sha256:11111111",
+        prefix=(
+            "--server-url",
+            "https://other.invalid",
+            "--instance-id",
+            "inst_other",
+            "--principal-id",
+            "reviewer",
+        ),
+    )
+    assert typed.stderr.splitlines()[-1] == (  # type: ignore[attr-defined]
+        "Repair: cruxible --server-url https://other.invalid --instance-id inst_other "
+        "--principal-id reviewer proposal readmit sha256:11111111 --dry-run"
+    )
+    # A selector from the environment is supplied again by the environment.
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "reviewer")
+    remembered = _readmit(monkeypatch, moved, "sha256:11111111")
+    assert "--principal-id" not in remembered.stderr.splitlines()[-1]  # type: ignore[attr-defined]
 
 
 def test_a_repair_names_a_command_never_an_operation_id(
@@ -572,7 +622,7 @@ def test_a_repair_names_a_command_never_an_operation_id(
     result = _readmit(monkeypatch, refusal, "sha256:11111111")
 
     assert result.stderr.splitlines()[-1] == (  # type: ignore[attr-defined]
-        f"Repair: cruxible proposal withdraw {SOURCE_ID} --reason REASON"
+        f"Repair: cruxible proposal withdraw {SOURCE_ID} --reason '<REASON>'"
     )
 
 

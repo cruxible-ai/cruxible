@@ -274,8 +274,8 @@ def test_block_sync_repair_lines_are_cli_commands_in_the_files_vocabulary() -> N
         },
     )
     assert _block_repair_line(ambiguous) == (
-        "cruxible block repin corpus.runbook summary --backing DIGEST"
-        "  (DIGEST: one of sha256:aa, sha256:bb)"
+        "cruxible block repin corpus.runbook summary --backing '<DIGEST>'"
+        "  (<DIGEST>: one of sha256:aa, sha256:bb)"
     )
     assert "source_id" not in _block_repair_line(repin)
     # A sync row knows the page: the line names its path, which repin takes.

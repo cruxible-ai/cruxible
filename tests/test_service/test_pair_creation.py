@@ -531,7 +531,7 @@ def test_retiring_an_end_with_live_pairs_refuses_and_lists_them(
     assert refusal.repair == (
         "Retire the pair(s) with their Claims in this write: "
         f'cruxible_retire(target="{occurrence}", with_claims=true, reason="superseded", '
-        'because="TEXT")'
+        'because="<TEXT>")'
     )
     # The occurrence is itself the end of the app-level pair.
     deeper = _refusal(

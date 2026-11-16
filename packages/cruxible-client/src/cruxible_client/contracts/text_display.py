@@ -993,9 +993,9 @@ def render_vocabulary_apply(result: VocabularyApplyResult) -> str:
 
 #: What each placeholder a repair command leaves (`operands_to_add`) stands for.
 NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
-    "because": "TEXT (why, in your words)",
-    "file": "FILE#ANCHOR (the file and anchor holding the new text)",
-    "capture": "CAP (the fresh Capture's handle)",
+    "because": "<TEXT> (why, in your words)",
+    "file": "<FILE#ANCHOR> (the file and anchor holding the new text)",
+    "capture": "<CAP> (the fresh Capture's handle)",
 }
 
 

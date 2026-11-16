@@ -54,6 +54,7 @@ from cruxible_client.contracts.captures import FOREIGN_SOURCE_MAX_BYTES
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.doc_sections import HeadingText, SectionPath, section_digest
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
+from cruxible_client.contracts.placeholders import NotPlaceholder
 from cruxible_client.contracts.proposal_models import CHANGE_SET_RATIONALE_MAX_LENGTH
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.shapes import CLAIM_RATIONALE_MAX, claim_rationale_problems
@@ -650,7 +651,7 @@ class RetireChange(_StrictWriteModel):
 
     op: Literal["retire"] = "retire"
     target: ClaimId | SubjectRef | SlotRef
-    because: str | None = Field(
+    because: Annotated[str, NotPlaceholder] | None = Field(
         default=None,
         min_length=1,
         description="Overrides the write's because here.",
@@ -854,7 +855,9 @@ def claim_because(value: str) -> str:
 
 
 class _WriteRequestBase(_StrictWriteModel):
-    because: str = Field(min_length=1, description="Why: the change set's rationale.")
+    because: Annotated[str, NotPlaceholder] = Field(
+        min_length=1, description="Why: the change set's rationale."
+    )
     dry_run: bool = Field(
         default=False,
         description="Run every check up to the commit and write nothing.",
