@@ -1328,8 +1328,10 @@ curation_list(*, limit: int | None = None, cursor: str | None = None) -> api.Cur
 ```
 
 Reads one page of the curation queue detection recorded (default 25 items); a pure
-read. Detection runs on its own on accepted generations: `detection` says when it
-last ran and whether its Trigger is live, `inactive_detectors` which detectors
+read. Detection runs only once a Trigger aimed at the `curation.detect` action
+(for example `curation-detect` on accepted generations) is authored; none is
+seeded. `detection` says when it last ran (`never_run` without that Trigger)
+and whether its Trigger is live, `inactive_detectors` which detectors
 cannot run here and why. A truncated page carries `next_cursor`; pass it back as
 `cursor`.
 
