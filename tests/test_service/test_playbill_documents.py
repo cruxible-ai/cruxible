@@ -15,11 +15,11 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
+    ApprovalRequirementUnmet,
     CasError,
     DocumentNotFoundError,
     FormatError,
     ProposalStale,
-    SettlementIntegrityError,
 )
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -240,12 +240,15 @@ def test_service_owner_rotation_and_recovery_require_lifecycle_actor_key_binding
         timestamp="2026-08-13T12:01:00.000000Z",
     ).proposal
     assert rotated.candidate is not None
-    with pytest.raises(SettlementIntegrityError, match="cryptographically approve"):
+    # Activation counts approvals first: the lifecycle actor's own signature is
+    # outstanding, so it refuses before anything lands.
+    with pytest.raises(ApprovalRequirementUnmet, match="owner must sign") as unsigned:
         service_activate_playbill_proposal(
             instance,
             proposal_id=rotated.admission.proposal_id,
             activated_by="owner",
         )
+    assert unsigned.value.required_signers == ("owner",)
     rotation_challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=rotated.admission.proposal_id,
@@ -292,12 +295,13 @@ def test_service_owner_rotation_and_recovery_require_lifecycle_actor_key_binding
         timestamp="2026-08-13T12:02:00.000000Z",
     ).proposal
     assert recovered.candidate is not None
-    with pytest.raises(SettlementIntegrityError, match="cryptographically approve"):
+    with pytest.raises(ApprovalRequirementUnmet, match="recovery must sign") as unsigned:
         service_activate_playbill_proposal(
             instance,
             proposal_id=recovered.admission.proposal_id,
             activated_by="recovery",
         )
+    assert unsigned.value.required_signers == ("recovery",)
     recovery_challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=recovered.admission.proposal_id,
