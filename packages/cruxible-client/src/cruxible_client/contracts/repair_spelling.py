@@ -176,6 +176,9 @@ _OPERAND_PLACEHOLDERS: Mapping[str, str] = {
     "because": placeholder("TEXT"),
     "file": placeholder("FILE#ANCHOR"),
     "capture": placeholder("CAP"),
+    # The Runbook or internal action a missed-instants repair runs.
+    "runbook": placeholder("NAME"),
+    "action": placeholder("NAME"),
 }
 
 
@@ -236,6 +239,8 @@ def _mcp_repair_call(
         return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
     if operation == "cruxible.inbox.list" and text("line"):
         return _mcp_call("cruxible_inbox_list", line=text("line"), status="unread")
+    if operation == "cruxible.runbook.run" and text("runbook"):
+        return _mcp_call("cruxible_runbook_run", runbook=text("runbook"))
     if operation == "cruxible.kit.add" and text("reference"):
         return _mcp_call("cruxible_kit_add", reference=text("reference"))
     if operation == "cruxible.prediction.settle" and text("prediction_id"):
@@ -552,6 +557,11 @@ def next_repair_command(
         parts.append(shlex.quote(line))
         if operation == "cruxible.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
+    elif operation in {"cruxible.runbook.run", "cruxible.action.run"}:
+        name = values.get("runbook" if operation == "cruxible.runbook.run" else "action")
+        if not isinstance(name, str) or not name:
+            return None
+        parts.append(shlex.quote(name))
     elif operation == "cruxible.inbox.list":
         line = values.get("line")
         if not isinstance(line, str) or not line:
@@ -1278,6 +1288,22 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         },
         sdk=_sdk_line("dispatch", "occurrence_id", "limit"),
         required=("line",),
+    ),
+    # A Runbook runs on the CLI and MCP; the SDK's Cruxible has no Runbook verb
+    # (CruxibleClient.run_runbook does). An action runs on the CLI alone.
+    "cruxible.runbook.run": RepairSpelling(
+        cli="runbook run",
+        cli_args=("runbook",),
+        # Its --dry-run is the static preview: definitions only, nothing runs.
+        cli_flags={"dry_run": "--dry-run"},
+        mcp="cruxible_runbook_run",
+        mcp_args={"runbook": "runbook"},
+        required=("runbook",),
+    ),
+    "cruxible.action.run": RepairSpelling(
+        cli="action run",
+        cli_args=("action",),
+        required=("action",),
     ),
     "cruxible.procedure.run": RepairSpelling(
         cli="procedure run",

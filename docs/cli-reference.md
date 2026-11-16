@@ -2893,7 +2893,10 @@ a tick on its schedule, a generation accepted, a Capture landed or a window
 closed. A downtime range with nothing due is recorded as evaluated at the
 restart and never listed. Each row names the exact
 `cruxible line evaluate LINE --since S --until U --dispatch` that covers it and
-runs what it finds (the row leaves once an evaluation covers the range). `next` also shows one
+runs what it finds (the row leaves once an evaluation covers the range). When a
+cadence or cron Trigger aimed at the Line had instants in the range, the range
+is shown instead as one `trigger_instants_missed` row per such Trigger (see
+[runbook](#runbook)), with the same evaluation as its repair. `next` also shows one
 `line_work_pending` row while work it matched before the restart, or that was
 evaluated explicitly, waits for `line dispatch`. Nothing evaluated or matched
 before a restart is dispatched automatically. Rebuilding the disposable event
@@ -3230,9 +3233,18 @@ Trigger may aim at it with `runbook_name` on a cadence, cron or
 generation_accepted schedule, and each Line step then runs under that Line's
 own enablement: a step whose Line is not enabled stops the scheduled run there.
 A scheduled Trigger fires only while the daemon is running. An instant missed
-while it was down is not run afterwards, and for a Runbook nothing reports it
-(a Trigger aimed at a Line leaves a `line_coverage_gap` row in `next`): run the
-Runbook yourself after downtime. A Runbook's scheduled runs never overlap:
+while it was down is not run afterwards. Only time schedules (cadence and cron)
+can miss instants; other Triggers fire on daemon events. The first evaluation
+after a restart records, for each authored timer Trigger, the instants that fell
+due while no daemon ran, and `next` shows one `trigger_instants_missed` row per
+Trigger (`detail`: `since` and `until`, the first and last missed instant,
+`count`, and `target`), whatever it targets. Its repair runs the target:
+`cruxible runbook run NAME` for a Runbook, `cruxible action run NAME` for an
+internal action, and for a Line the `line evaluate` of the range its restart
+left uncovered. A Runbook or action row stands until the target runs after the
+restart (by hand or on its next instant); a Line row until an evaluation covers
+the range. The Triggers creation seeds (the daemon's own housekeeping) are not
+reported, and nothing is ever caught up automatically. A Runbook's scheduled runs never overlap:
 instants that come due while its run is still going are folded into one run
 right after it, and nothing reports the folded instants.
 
@@ -3797,7 +3809,8 @@ Line accepted but not yet enabled, `line_not_enabled`), so it sorts after
 every problem. A row also carries `since`, when the condition it reports
 began, where state already records it: `line_not_enabled` (the Line's
 acceptance), `line_disabled_by_upgrade` (the upgrade's acceptance),
-`line_run_failed`, `line_coverage_gap`, `line_work_pending`, the new-evidence
+`line_run_failed`, `line_coverage_gap`, `trigger_instants_missed` (the first
+missed instant), `line_work_pending`, the new-evidence
 rows (the attestation), `proposal_awaiting_approval` (its admission),
 `prediction_settleable` (the window's close) and `claim_conflicted` (when the
 newest contender or their ClaimType took its current form, so the contest

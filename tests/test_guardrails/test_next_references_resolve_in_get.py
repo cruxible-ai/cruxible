@@ -64,6 +64,8 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace", "kit_status"]] = {
     "prediction_settleable": "get",
     "prediction_window_unbindable": "get",
     "line_coverage_gap": "get",
+    # The Trigger, and its Runbook or Line target, are each read with get.
+    "trigger_instants_missed": "get",
     "line_work_pending": "get",
     "line_disabled_by_upgrade": "get",
     "line_not_enabled": "get",

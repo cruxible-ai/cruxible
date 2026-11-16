@@ -38,6 +38,29 @@ def timer_due(schedule: TriggerSchedule, *, accepted_at: datetime, last: datetim
     return found
 
 
+def timer_gap(
+    schedule: TriggerSchedule, *, accepted_at: datetime, after: datetime, through: datetime
+) -> tuple[datetime, datetime, int] | None:
+    """A timer's first and last instant in ``(after, through]`` and how many there are.
+
+    A cadence is counted on its grid without walking it; a cron schedule is
+    walked once, instant by instant.
+    """
+
+    if isinstance(schedule, CadenceSchedule):
+        interval = timedelta(seconds=schedule.interval_seconds)
+        steps = max(1, (after - accepted_at) // interval + 1)
+        first = accepted_at + steps * interval
+        if first > through:
+            return None
+        count = (through - first) // interval + 1
+        return first, first + (count - 1) * interval, count
+    found: tuple[datetime, datetime, int] | None = None
+    for instant in timer_instants(schedule, accepted_at=accepted_at, after=after, through=through):
+        found = (instant, instant, 1) if found is None else (found[0], instant, found[2] + 1)
+    return found
+
+
 def timer_instants(
     schedule: TriggerSchedule, *, accepted_at: datetime, after: datetime, through: datetime
 ) -> Iterator[datetime]:

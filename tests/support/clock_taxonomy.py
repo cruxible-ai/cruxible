@@ -113,6 +113,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # enabled Line: ranges of the dispatch store's validity windows.
     ("LineCoverageGap", "since"): "VALIDITY WINDOW",
     ("LineCoverageGap", "until"): "VALIDITY WINDOW",
+    # Each timer's first and last instant inside that range.
+    ("LineCoverageGap", "missed"): "VALIDITY WINDOW",
     ("LinePendingWork", "oldest_eligible_at"): "VALIDITY WINDOW",
     ("FixedWindow", "starts_at"): "VALIDITY WINDOW",
     ("FixedWindow", "duration_seconds"): "VALIDITY WINDOW",

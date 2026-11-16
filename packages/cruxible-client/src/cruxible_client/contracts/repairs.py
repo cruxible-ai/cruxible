@@ -172,6 +172,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "consumer_stalled": "restart_the_consumer_through_its_named_repair",
     "line_coverage_gap": "evaluate_the_uncovered_range_then_dispatch_what_it_finds",
     "line_work_pending": "dispatch_the_lines_pending_work",
+    # A cadence or cron Trigger's instants fell due while no daemon ran: run its
+    # target (a Line evaluates the range) or let its next instant run it.
+    "trigger_instants_missed": "run_the_target_now_or_let_its_next_instant_run_it",
     "line_disabled_by_upgrade": "enable_the_upgraded_line_to_resume",
     # A Line accepted and never enabled: it runs on its Triggers only once enabled.
     "line_not_enabled": "enable_the_line_to_run_it_on_its_triggers",
@@ -315,6 +318,8 @@ REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.line.enable": "line enable",
     "cruxible.line.evaluate": "line evaluate",
     "cruxible.line.dispatch": "line dispatch",
+    "cruxible.runbook.run": "runbook run",
+    "cruxible.action.run": "action run",
     "cruxible.inbox.list": "inbox list",
     "cruxible.prediction.settle": "prediction settle",
     "cruxible.kit.add": "kit add",
