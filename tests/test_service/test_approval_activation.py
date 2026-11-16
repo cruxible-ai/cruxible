@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.documents import render_document
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.service.authoring.documents import (
@@ -182,6 +184,9 @@ def test_lifecycle_candidate_counts_its_actors_own_signature(tmp_path: Path) -> 
     )
     assert voluntary.not_activated == "approvals_remaining"
     assert voluntary.approvals_remaining == 1
+    # The outstanding signature is the proposer's own, and the receipt says so.
+    assert voluntary.required_signers == ("owner",)
+    assert voluntary.eligible_signers == ()
     assert instance.accepted_coordinate() == head
 
     completing = _approve(
@@ -189,3 +194,179 @@ def test_lifecycle_candidate_counts_its_actors_own_signature(tmp_path: Path) -> 
     )
     assert completing.activation is not None
     assert completing.activation.status == "accepted"
+
+
+def test_activating_an_unsigned_lifecycle_change_names_its_proposer(tmp_path: Path) -> None:
+    """Round 2: the approvals-missing refusal named other principals for a principal
+    change, whose missing signature is its proposer's own."""
+
+    from cruxible_client.contracts.errors import ApprovalRequirementUnmet
+
+    instance, _owner = initialize_local(tmp_path)
+    newcomer = generate_client_principal_key(
+        tmp_path / "newcomer-keys",
+        principal_id="newcomer",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=newcomer.principal,
+        actor_id="owner",
+        proposal_name="register-newcomer",
+        timestamp="2026-08-16T17:02:00.000000Z",
+    ).proposal
+
+    with pytest.raises(ApprovalRequirementUnmet) as refused:
+        service_activate_playbill_proposal(
+            instance, proposal_id=registration.admission.proposal_id, activated_by="owner"
+        )
+
+    assert refused.value.required_signers == ("owner",)
+    assert refused.value.remaining == 1
+    assert "owner must sign (a principal change needs its proposer's own signature)" in str(
+        refused.value
+    )
+    assert "--signer-id owner" in str(refused.value)
+
+
+def test_a_compiler_upgrades_one_signature_may_be_its_authors() -> None:
+    """With no independent requirement, a compiler upgrade needs one signature of any
+    active ordinary principal, its author's included."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.authoring.documents import outstanding_approvals
+
+    registry = SimpleNamespace(
+        principals=[
+            SimpleNamespace(principal_id=name, status="active", kind=kind)
+            for name, kind in (("owner", "ordinary"), ("reviewer", "ordinary"), ("d", "daemon"))
+        ]
+    )
+    upgrade = SimpleNamespace(
+        approval_requirements=(),
+        members=(SimpleNamespace(artifact_kind="compiler-upgrade"),),
+    )
+
+    outstanding = outstanding_approvals(
+        (),
+        upgrade,  # type: ignore[arg-type]
+        creator="owner",
+        principals=registry,  # type: ignore[arg-type]
+        principal_lifecycle=False,
+    )
+
+    assert (outstanding.remaining, outstanding.independent) == (1, False)
+    assert outstanding.eligible_signers == ("owner", "reviewer")
+
+
+@pytest.mark.parametrize("may_activate", [False, True])
+def test_a_provider_move_below_graph_write_proposes_and_does_not_activate(
+    tmp_path: Path, may_activate: bool
+) -> None:
+    """Round 3: provider move (governed_write) activated whatever the policy let
+    through; a request whose tier may not activate leaves it proposed."""
+
+    from cruxible_core.service.change_preview import change_scope
+    from cruxible_core.service.procedures.provider_builds import _submit
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"# Moved\n")
+    head = instance.accepted_coordinate()
+    with change_scope(
+        instance,
+        dry_run=False,
+        at=head.git_oid,
+        kind="derived",
+        operation="cruxible.provider.move",
+        describe="moving a provider",
+    ) as mode:
+        status, proposal_id, approval, detail = _submit(
+            instance,
+            mode,
+            {DOCUMENT_PATH: render_document(_shell(body.digest))},
+            actor_id="owner",
+            timestamp="2026-08-16T17:00:00.000000Z",
+            may_activate=may_activate,
+        )
+
+    if may_activate:
+        assert status == "accepted"
+        assert instance.accepted_coordinate() != head
+    else:
+        assert (status, approval) == ("proposed", False)
+        assert detail is not None
+        assert f"someone who can runs cruxible proposal activate {proposal_id}" in detail
+        assert instance.accepted_coordinate() == head
+
+
+class _CountingRegistry:
+    """A principal registry that counts how many principal records were visited."""
+
+    def __init__(self, size: int) -> None:
+        from types import SimpleNamespace
+
+        self.visited = 0
+        self._records = [
+            SimpleNamespace(principal_id=f"p{index:04d}", status="active", kind="ordinary")
+            for index in range(size)
+        ]
+
+    @property
+    def principals(self):  # type: ignore[no-untyped-def]
+        for record in self._records:
+            self.visited += 1
+            yield record
+
+
+@pytest.mark.parametrize("size", [10, 1000])
+def test_nothing_outstanding_visits_no_principal(size: int) -> None:
+    """Round 3 (cost): an ordinary candidate with nothing outstanding used to build and
+    sort every ordinary principal; signers are listed only when a refusal or receipt
+    names them."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.authoring.documents import outstanding_approvals
+
+    registry = _CountingRegistry(size)
+    ordinary = SimpleNamespace(
+        approval_requirements=(), members=(SimpleNamespace(artifact_kind="document"),)
+    )
+
+    outstanding = outstanding_approvals(
+        (),
+        ordinary,  # type: ignore[arg-type]
+        creator="owner",
+        principals=registry,  # type: ignore[arg-type]
+        principal_lifecycle=False,
+    )
+
+    assert outstanding.remaining == 0
+    assert registry.visited == 0
+
+
+def test_a_self_approved_write_lands_without_enumerating_principals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.authoring import documents
+    from tests.core_support._write_support import KIND, seed_write_surface
+    from tests.test_service.test_write_verbs import _set, _write
+
+    instance, _owner = seed_write_surface(tmp_path)
+    real = documents.outstanding_approvals
+    visits: list[int] = []
+
+    def counted(submissions, candidate, *, principals, **options):  # type: ignore[no-untyped-def]
+        registry = _CountingRegistry(0)
+        registry._records = list(principals.principals)
+        result = real(submissions, candidate, principals=registry, **options)  # type: ignore[arg-type]
+        visits.append(registry.visited)
+        return result
+
+    monkeypatch.setattr(documents, "outstanding_approvals", counted)
+    outcome = _write(instance, _set(f"{KIND}/wi-1", "title", "self-approved"))
+
+    assert outcome.status == "accepted", outcome
+    assert visits and visits == [0] * len(visits)

@@ -3258,6 +3258,12 @@ class Cruxible:
         Subsequent live reads select current head; use at(receipt.accepted_coordinate)
         for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
 
+        Returns an ``ActivationReceipt``, or a ``ProposalRecompiled`` when the
+        approved candidate's base moved and it landed at the head as a new
+        proposal (``proposal_id``) to review. A proposal whose approvals are not
+        in is refused (``cruxible.approval.requirement_unsatisfied``) and left as
+        it is.
+
         Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
         """
 
@@ -5525,7 +5531,9 @@ class Cruxible:
     ) -> api.CurationActionResult:
         """Record, permanently, that a detector pattern does not apply here.
 
-        ``dry_run`` checks the ruling and appends nothing; ``at`` pins the commit.
+        It cannot be undone, so it previews by default (``dry_run`` unset or
+        true appends nothing); commit with ``dry_run=False`` and ``at`` set to
+        the preview's ``coordinate.git_oid``.
 
         Next: ``cx.curation_list()``; the pattern is never raised again.
         """
@@ -5674,7 +5682,8 @@ class ProjectionBlocks:
 
         Compact markers are the default: digest references with local manifests. Subsequent
         repins preserve that format. ``render`` writes the body as a table or list from
-        the block's one query backing instead of ``body``. ``dry_run`` returns the stamp
+        the block's one query backing instead of ``body``; a body that is still its
+        query's rendering is rendered again without it. ``dry_run`` returns the stamp
         it would write and writes nothing.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().

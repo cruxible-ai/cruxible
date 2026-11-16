@@ -225,13 +225,14 @@ with a reason (`was-rescinded`, `was-wrong` or `superseded`). For example, the C
 2019 Civic, and what it rests on, a line of the supplier's catalog:
 
 ~~~text
-$ cruxible get CLM-abbe35eeffed479c1b18674c93880802
+$ cruxible get CLM-af7c0e5f9b324647c0fd64c6e0d22361
 catalog.part/bp-2210  fits = catalog.vehicle/honda-civic-2019
-CLM-abbe35eeffed479c1b18674c93880802  verdict=supported status=accepted revision=1
+CLM-af7c0e5f9b324647c0fd64c6e0d22361  verdict=supported status=accepted revision=1 accepted=2026-11-16T05:18:33.937786Z
+...
 
-$ cruxible get CLM-abbe35eeffed479c1b18674c93880802 --detail evidence
+$ cruxible get CLM-af7c0e5f9b324647c0fd64c6e0d22361 --detail evidence
 value: catalog.vehicle/honda-civic-2019
-capture CAP-a0a989ec8fe7  CaptureContract:cruxible.foreign-source.catalog v1  source=catalog  ...  evidence: admitted
+capture CAP-e3c05a8a2b6a  CaptureContract:cruxible.foreign-source.catalog v1  source=supplier/acme-2026.txt  ...  evidence: admitted
 rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 ~~~
 
@@ -578,7 +579,9 @@ only what, and every caller's power is bounded. Two different things answer
   hosts, principal changes, compiler upgrades and provider installs). An agent
   with `governed_write` can propose and author but never approve or accept, so
   its work always waits for a person. Credentials are minted, rotated and
-  revoked with `cruxible credential`.
+  revoked with `cruxible credential`. A client can lower its own tier for a
+  request, never raise it: an MCP server capped by `CRUXIBLE_MODE` sends its
+  cap, and the daemon enforces it.
 
 A Unix-socket daemon runs with auth off by default: every process of your OS
 user is equally trusted, there are no bearer tokens, and the principal ID a
@@ -684,7 +687,8 @@ Three queues tell you what to do, each a read:
   Detection runs only when a `curation-detect` Trigger aimed at the
   `curation.detect` action is authored (none is seeded), never on `next`'s
   path; `curation list` only reads. Each item takes one ruling: `overrule`
-  closes it as not applying, permanently; `suppress` hides the item, or with
+  closes it as not applying, permanently (it previews first and commits only
+  with the preview's coordinate); `suppress` hides the item, or with
   `--scope lineage` also every successor its pattern opens; `unsuppress` lifts
   a suppression; and `accept-fixed` links it to the accepted proposal or
   generation that fixed it.

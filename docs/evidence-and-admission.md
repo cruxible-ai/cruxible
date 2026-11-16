@@ -24,7 +24,10 @@ A Claim rests on one or more of these:
 - **A citation**: a passage quoted from a workspace file, such as a
   supplier's catalog saved in the repository (`--evidence-file PATH#ANCHOR`).
   A file the catalog does not name yet is catalogued when the write is
-  admitted.
+  admitted, so there is no need to catalogue it first. The anchor is text on
+  one line, found exactly once in the file: for a multi-line passage, anchor
+  the line that decides it; a line repeated in the file cannot be anchored
+  ([write](cli-reference.md#set-add-retire-rebind-and-write)).
 - **A Capture**: retained bytes recorded under a CaptureContract, typically a
   response that a Procedure fetched from the outside world, or a file it read
   from the workspace or from an upload (a hosted instance's way in for scans and
@@ -35,15 +38,15 @@ counts. Here, a fitment the shop checked and wrote up, and a fitment cited from
 the supplier's catalog:
 
 ~~~text
-$ cruxible get CLM-bd067d59… --detail evidence
+$ cruxible get CLM-25f7a8f4… --detail evidence
 value: catalog.vehicle/honda-civic-2019
-capture CAP-61bb48f9b6a5  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=doc-docs-fitment.md  ...  own words in doc-docs-fitment.md (104 bytes): admitted
+capture CAP-14a1f5f34e57  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=docs/fitment.md  ...  own words in docs/fitment.md (91 bytes): admitted
 rationale: Fitment check at the shop.
 
-$ cruxible get CLM-9482bb3b… --detail evidence
-value: catalog.vehicle/honda-civic-2019
-capture CAP-18a94f6104cb  CaptureContract:cruxible.foreign-source.catalog v1  source=catalog  ...  evidence: admitted
-rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
+$ cruxible get CLM-bbf833c5… --detail evidence
+value: catalog.vehicle/honda-civic-2020
+capture CAP-9226692cedaa  CaptureContract:cruxible.foreign-source.catalog v1  source=supplier/acme-2026.txt  ...  evidence: admitted
+rationale: Acme's 2026 catalog lists bp-2210 for the 2020 Civic.
 ~~~
 
 Each line ends with how the verdict reads it. A copy is labeled by where it
@@ -53,6 +56,26 @@ as `evidence`. A note a write produces and cites is one Capture: your own
 words, located at the section they were written in. Each is then `admitted` (the field's rules accept it), `not
 admitted` (offered as evidence, refused by the field's rules) or `not
 evidence` (a copy the rules don't count).
+
+### Reading a Capture's bytes
+
+`cruxible capture read CAP-…` verifies a Capture and returns the bytes it
+retained, without fetching the source again. Today it prints JSON only: the
+envelope, the contract, the grade, and under `material.body_access` the body
+itself, base64-encoded (`body_base64`, with `byte_length` and
+`content_digest`). Decode it to read it:
+
+~~~bash
+cruxible capture read CAP-1794680ef26b | jq -r .material.body_access.body_base64 | base64 -d
+~~~
+
+`--max-bytes` bounds the bytes returned (4 MiB by default). In the SDK,
+`cx.capture("CAP-…").text()` or `.json()` decodes them for you. Over MCP,
+`cruxible_capture_read` (the `full` profile) returns the same JSON and takes
+its arguments under `request` (`{"request": {"capture_digest": "CAP-…"}}`). A
+document a provider derived (a list of OSV matches, an SBOM's components) is
+JSON in its CaptureKind's layout, and holds only the fields that layout
+declares.
 
 ## How a field admits evidence
 

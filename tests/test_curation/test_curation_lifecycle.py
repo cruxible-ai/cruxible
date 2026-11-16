@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -30,6 +31,7 @@ from cruxible_core.curation.curation import (
 )
 from cruxible_core.curation.curation_detectors import CurationDetectorResult
 from cruxible_core.curation.review_operational import ReviewOperationalConcurrentChangeError
+from cruxible_core.errors import ChangeRefusedError
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.discovery.curation import (
     CurationError,
@@ -59,6 +61,12 @@ def _actor() -> GovernedActorContext:
         operation_id="op-curation",
         timestamp=NOW,
     )
+
+
+def _commit(*, instance: Any) -> dict[str, Any]:
+    """An overrule cannot be undone: it commits only pinned to the head it was checked at."""
+
+    return {"dry_run": False, "at": instance.accepted_coordinate().git_oid}
 
 
 def _detection(subject: str = "project.work_item.status"):  # type: ignore[no-untyped-def]
@@ -284,6 +292,7 @@ def test_changed_detector_laws_quarantine_old_items_without_bricking_curation(
             item_id=quarantined[1].item_id,
             expected_latest_event_digest=quarantined[1].latest_event_digest,
             reason="old detector law is no longer applicable",
+            **_commit(instance=instance),
         ),
         actor_context=_actor(),
     )
@@ -432,6 +441,7 @@ def test_current_law_detection_chains_past_quarantine_but_absence_mints_nothing(
             item_id=str(raw["item_id"]),
             expected_latest_event_digest=gone_event.event_digest,
             reason="the historical condition is gone",
+            **_commit(instance=gone),
         ),
         actor_context=_actor(),
     )
@@ -536,6 +546,7 @@ def test_suppression_is_non_resolving_and_compare_and_append_is_mandatory(
                 item_id=item.item_id,
                 expected_latest_event_digest=item.latest_event_digest,
                 reason="stale concurrent lifecycle write",
+                **_commit(instance=instance),
             ),
             actor_context=_actor(),
         )
@@ -590,9 +601,26 @@ def test_curation_rulings_preview_on_their_own_path_and_append_nothing(
                 actor_context=_actor(),
             ),
         )
+    # An overrule cannot be undone: with no mode it previews, and a commit needs `at`.
+    default = assert_writes_nothing(
+        [tmp_path],
+        lambda: service_overrule_playbill_curation(
+            instance,
+            request=overrule.model_copy(update={"dry_run": None}),
+            actor_context=_actor(),
+        ),
+    )
+    assert (default.status, default.item.status) == ("would_record", "open")
+    with pytest.raises(ChangeRefusedError) as unpinned:
+        service_overrule_playbill_curation(
+            instance,
+            request=overrule.model_copy(update={"dry_run": False}),
+            actor_context=_actor(),
+        )
+    assert unpinned.value.error_code == "cruxible.preview.confirmation_required"
     done = service_overrule_playbill_curation(
         instance,
-        request=overrule.model_copy(update={"dry_run": None}),
+        request=overrule.model_copy(update={"dry_run": False, "at": default.coordinate.git_oid}),
         actor_context=_actor(),
     )
     assert (done.status, done.item.status) == ("recorded", "overruled")
@@ -607,6 +635,7 @@ def test_overrule_is_terminal_for_the_detector_version(tmp_path: Path) -> None:
             item_id=item.item_id,
             expected_latest_event_digest=item.latest_event_digest,
             reason="the mechanical pattern is inapplicable",
+            **_commit(instance=instance),
         ),
         actor_context=_actor(),
     )
@@ -871,6 +900,7 @@ def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned
             item_id=item.item_id,
             expected_latest_event_digest=item.latest_event_digest,
             reason="version one is inapplicable",
+            **_commit(instance=instance),
         ),
         actor_context=_actor(),
     )
@@ -1072,6 +1102,7 @@ def test_every_accepted_public_curation_action_preserves_replay(
                     item_id=target.item_id,
                     expected_latest_event_digest=target.latest_event_digest,
                     reason=f"matrix {status} overrule",
+                    **_commit(instance=instance),
                 ),
                 actor_context=_actor(),
             )

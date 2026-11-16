@@ -657,7 +657,9 @@ def bind_private_unix_socket(socket_file: Path) -> socket.socket:
             raise
         # The entry was just verified to be our socket, not a link.
         os.chmod(name, 0o600, dir_fd=dir_fd)
-        sock.set_inheritable(True)
+        # Left non-inheritable (close-on-exec): `server restart` re-execs this
+        # process, and a listener carried across the exec keeps accepting
+        # connections nobody serves while the new image binds its own.
         return sock
     finally:
         os.close(dir_fd)

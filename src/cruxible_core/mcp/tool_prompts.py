@@ -69,8 +69,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "like approve, it activates a candidate it completes unless hold is set."
     ),
     "cruxible_proposal_approve": (
-        "Use after review to approve a proposal with a local key (CRUXIBLE_MCP_KEY_DIR, "
-        "else the folder owner's); it challenges, signs and submits in one call. The approval "
+        "Use after review to approve a proposal with a local key (CRUXIBLE_MCP_KEY_DIR, with "
+        "CRUXIBLE_PRINCIPAL_ID naming who acts; else the folder owner's); it challenges, "
+        "signs and submits in one call. The approval "
         "that completes the candidate also activates it when your tier may; hold=true "
         "signs only. Pass the reviewed candidate_digest to bind it to what you read."
     ),
@@ -192,10 +193,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
     "cruxible_block_repin": (
-        "Use to stamp a new projection block or refresh one: name the catalogued file "
-        "and the block; this adapter reads the backings, rewrites the opening marker and "
-        "registers the block. The marker grammar is in docs/cli-reference.md, Projection "
-        "block markers."
+        "Use to stamp a new projection block or refresh one: name the page (its path or "
+        "catalog name) and the block; this adapter reads the backings, rewrites the "
+        "opening marker and registers the block. The marker grammar is in "
+        "docs/cli-reference.md, Projection block markers."
     ),
     "cruxible_block_sync": (
         "Use to check whether page blocks still match their backings; each stale block names "
@@ -362,7 +363,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_curation_overrule": (
         "Beta curation (detection only with an authored curation-detect Trigger). "
         "Use when a detected pattern does not apply here: closes the item permanently, and the "
-        "pattern is never raised again."
+        "pattern is never raised again. It cannot be undone: preview, then commit with "
+        "dry_run=false and at=<the preview's coordinate git_oid>."
     ),
     "cruxible_curation_accept_fixed": (
         "Beta curation (detection only with an authored curation-detect Trigger). "

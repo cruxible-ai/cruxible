@@ -145,7 +145,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:bcb860fc9ce249ba5ecd0c3887333a69c07104be4b3285b5901f49c8fc4a2f88"
+    "sha256:3702b8f46ac18d7c2f06ba8694d1a2d807be59dda0245836d75071e96b7b4441"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -2699,13 +2699,15 @@ class BlockSyncResult(_StrictAuthoringModel):
 class BlockDetachResult(_StrictAuthoringModel):
     """Retired blocks' markers removed from pages, bodies kept; or (preview) which would be.
 
+    ``unchanged`` is a call that detached nothing and would detach nothing:
+    every block it read was refused or left as it was (the rows say why).
     ``coordinate`` digests the named pages' bytes as this call read them; a
     commit carrying ``at`` refuses ``cruxible.preview.state_moved`` if any page
     changed since its preview.
     """
 
     tag: Literal["playbill-block-detach-result-v1"] = "playbill-block-detach-result-v1"
-    status: Literal["detached", "would_detach"]
+    status: Literal["detached", "would_detach", "unchanged"]
     sync: BlockSyncResult
     coordinate: StateCoordinate
 

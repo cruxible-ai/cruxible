@@ -85,3 +85,60 @@ def test_floor_delivery_control_refuses_remote_transport(tmp_path, monkeypatch):
     )
     assert result.exit_code != 0
     assert "local --server-socket" in result.output
+
+
+def test_attach_to_an_uninitialized_host_completes_and_keeps_the_opt_out(tmp_path, monkeypatch):
+    """gapc-37: attach failed `not initialized` after registering the folder.
+
+    The help says "initialized or not". The world stub is the one step that
+    needs an accepted world; it waits for `cruxible init`, and everything else
+    (registration, config, the floor-delivery choice) completes.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    calls = []
+
+    class Client:
+        def host_workspace_registration(self, instance_id, workspace_root=None):
+            return contracts.HostWorkspaceRegistration(
+                instance_id=instance_id, status="not_registered"
+            )
+
+        def host_workspace_attach(self, instance_id, *, workspace_root, dry_run=None, at=None):
+            return contracts.HostWorkspaceAttachResult(
+                instance_id=instance_id,
+                status="attached",
+                workspace_root=workspace_root,
+                initialized=False,
+            )
+
+        def set_floor_delivery(self, instance_id, *, enabled):
+            calls.append((instance_id, enabled))
+            return contracts.HostWorkspaceRegistration(
+                instance_id=instance_id,
+                status="registered",
+                workspace_path=str(workspace.resolve()),
+                floor_delivery=enabled,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: Client())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-socket",
+            str(tmp_path / "socket"),
+            "workspace",
+            "attach",
+            "--instance-id",
+            "inst_new",
+            "--no-floor-delivery",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("inst_new", False)]
+    assert (workspace / ".cruxible" / "coverage.json").exists()
+    assert not (workspace / ".cruxible" / "world.pyi").exists()
+    assert "Host inst_new is not initialized yet; next: cruxible init" in result.output

@@ -26,6 +26,7 @@ from cruxible_client.contracts.capabilities import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
@@ -89,6 +90,7 @@ from cruxible_client.contracts.kits import (
     kit_version_key,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
+from cruxible_client.contracts.proposal_models import AuthenticatedActor
 from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
     ProviderInstallRequest,
@@ -128,10 +130,10 @@ from cruxible_core.claims.claim_type_migrations import (
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
 from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
-from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.ledger.bootstrap import genesis_seed_files
-from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+from cruxible_core.proposals.proposals import ProposalAdmissionRequest, ProposalHeadMovedError
 from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
 from cruxible_core.providers.build_moves import (
     Mover,
@@ -148,8 +150,16 @@ from cruxible_core.providers.package_inspection import (
     inspect_provider_package,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
+from cruxible_core.service.authoring.documents import (
+    activation_not_permitted_detail,
+    service_activate_playbill_proposal,
+)
+from cruxible_core.service.change_preview import (
+    ChangeMode,
+    admit_change_set,
+    change_scope,
+    preview_guards,
+)
 from cruxible_core.service.procedures.provider_installation import ExpectedProviderBuild
 from cruxible_core.service.proposals.proposals import open_proposal_at_target
 
@@ -1642,6 +1652,105 @@ def _ownership_conflicts(
     return conflicts
 
 
+_INCOMPLETE_CLOSURE = "cruxible.change_set.incomplete_closure"
+#: How many names a refusal prints per group before it counts the rest.
+_NAMED = 3
+
+
+def _named(names: list[str]) -> str:
+    shown = ", ".join(names[:_NAMED])
+    return shown if len(names) <= _NAMED else f"{shown} and {len(names) - _NAMED:,} more"
+
+
+def _closure_summary(message: str, tree: Mapping[str, bytes], *, removal: bool) -> str:
+    """An incomplete closure said as counts by kind, a few names and the repair.
+
+    The closure's own record lists every dependent with its digests (one line per
+    Claim on an instance that used the kit); a person needs how many of what, and
+    what to do. Reads only the dependents' paths, plus one parse per non-Claim
+    dependent: the work is the size of the refusal.
+    """
+
+    from cruxible_core.claims.closure import IncompleteClosureItemV1
+
+    # The record has one row per dependency edge: an artifact pinning several
+    # retired definitions is one dependent, counted under the first.
+    missing: dict[str, IncompleteClosureItemV1] = {}
+    for raw in json.loads(message)["missing"]:
+        row = IncompleteClosureItemV1.model_validate(raw)
+        missing.setdefault(row.path, row)
+    claims: dict[str, list[str]] = {}
+    others: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+
+    def name_of(path: str, *, qualified: bool) -> tuple[str, str]:
+        content = tree.get(path)
+        state = None if content is None else parse_dependency_artifact(path, content)
+        if state is None:
+            return "artifact", path
+        return state.identity.kind, state.identity.qualified if qualified else state.identity.name
+
+    for item in missing.values():
+        if item.path.startswith("claims/"):
+            trigger = item.triggering_dependency_path
+            if trigger not in names:
+                names[trigger] = name_of(trigger, qualified=False)[1]
+            claim = "Claim:" + item.path.rsplit("/", 1)[-1].removesuffix(".json")
+            claims.setdefault(names[trigger], []).append(claim)
+            continue
+        kind, name = name_of(item.path, qualified=True)
+        others.setdefault(kind, []).append(name)
+    groups = []
+    if claims:
+        count = sum(len(held) for held in claims.values())
+        by_type = sorted(claims.items(), key=lambda pair: (-len(pair[1]), pair[0]))
+        groups.append(
+            f"{count:,} Claim(s) of {len(claims)} ClaimType(s) ("
+            + _named([f"{predicate} {len(held):,}" for predicate, held in by_type])
+            + "; e.g. "
+            + ", ".join(by_type[0][1][:_NAMED])
+            + ")"
+        )
+    for kind, held in sorted(others.items()):
+        groups.append(f"{len(held):,} {kind}(s) ({_named(sorted(held))})")
+    summary = (
+        f"{_INCOMPLETE_CLOSURE}: {len(missing):,} live artifact(s) outside this change depend "
+        "on definitions it retires or replaces: " + "; ".join(groups) + "."
+    )
+    if not removal:
+        return summary
+    steps = []
+    if others:
+        steps.append(
+            "retire the definitions you authored over the kit in one authored change "
+            '("retire": true on each Line, Mandate, Trigger and Runbook; cruxible authoring '
+            "submit)"
+        )
+    if claims:
+        steps.append(
+            "retire the Claims, one Subject at a time with all its Claims (cruxible retire "
+            "KIND/ID --with-claims --because TEXT; a pair before its ends)"
+        )
+    return (
+        f"{summary} kit remove retires the kit's own definitions, never Claims or definitions "
+        f"you authored. Repair: {'; then '.join(steps)}; then preview the removal again. Or "
+        "keep the kit installed."
+    )
+
+
+def _kit_refusal_detail(
+    diagnostics: Iterable[CompilerDiagnostic], tree: Mapping[str, bytes], *, removal: bool
+) -> str:
+    """Each refusal by code and its message; an incomplete closure as a summary."""
+
+    return "Refused: " + "; ".join(
+        _closure_summary(item.message, tree, removal=removal)
+        if item.code == _INCOMPLETE_CLOSURE
+        else f"{item.code}: {item.message}"
+        for item in diagnostics
+    )
+
+
 def _submit(
     instance: PlaybillInstance,
     mode: ChangeMode,
@@ -1662,6 +1771,8 @@ def _submit(
     repins: tuple[ProviderRepinV1, ...] = (),
     stops: tuple[StoppedAutomationV1, ...] = (),
     automation_carries: tuple[AutomationCarryV1, ...] = (),
+    removal: bool = False,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
@@ -1728,19 +1839,84 @@ def _submit(
         rationale = f"{transition.capitalize()} kit {kit_id} {version}."
     else:
         rationale = f"{transition.capitalize()} kit {kit_id} from {installed_version} to {version}."
+    request = ProposalAdmissionRequest(
+        target_ref=target, proposed_base_oid=base.git_oid, rationale=rationale
+    )
+    binding: dict[str, Any] = {}
+    if removal and not mode.previewing:
+        # A blocked kit change records nothing (like an edited path or an unmet
+        # requirement), so a removal evaluates on submit's own path first, at the
+        # head its candidate was built on, and submits only what passed there.
+        # The submission is bound to that head and that candidate: a head that
+        # moved in between refuses state_moved before anything is evaluated or
+        # published, and the same head reproduces the same candidate, so a
+        # refused removal is never published. The second evaluation is the
+        # removal's own size.
+        with preview_guards(True):
+            checked = instance.proposal_service().preview(
+                actor=AuthenticatedActor(actor_id=actor_id, capabilities=("propose",)),
+                request=request,
+                candidate_tree=candidate,
+                timestamp=timestamp,
+            )
+        evaluated_at = checked.evaluation.evaluated_base_oid
+        if evaluated_at != base.git_oid:
+            # Accepted state moved after the candidate was built: refuse as a
+            # moved head (a pinned commit as at entry), whatever the verdict.
+            mode.refuse_moved_head(evaluated_at)
+            raise ProposalHeadMovedError(
+                "accepted main moved after the removal was planned; preview it again"
+            )
+        if checked.candidate is None:
+            return KitChangeResult(
+                kit_id=kit_id,
+                version=version,
+                status="blocked",
+                plan=plan,
+                detail=_kit_refusal_detail(
+                    checked.evaluation.diagnostics, candidate, removal=removal
+                ),
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
+
+        def at_planned_head(
+            current: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
+        ) -> None:
+            if current.git_oid != base.git_oid:
+                raise ProposalHeadMovedError(
+                    "accepted main moved after the removal was checked; preview it again"
+                )
+
+        binding = {
+            "authorize": at_planned_head,
+            "expected_candidate": (base.git_oid, checked.candidate.candidate_digest),
+        }
     admitted = admit_change_set(
         instance,
         mode,
         actor_id=actor_id,
-        request=ProposalAdmissionRequest(
-            target_ref=target, proposed_base_oid=base.git_oid, rationale=rationale
-        ),
+        request=request,
         candidate_tree=candidate,
         timestamp=timestamp,
+        **binding,
     )
     status: Literal[
         "unchanged", "proposed", "accepted", "blocked", "would_propose", "would_block"
     ] = admitted.status
+    if status == "proposed" and not admitted.approval_required and not may_activate:
+        # The policy lets it through, but this request's tier may not activate.
+        assert admitted.proposal_id is not None
+        return KitChangeResult(
+            kit_id=kit_id,
+            version=version,
+            status=status,
+            proposal_id=admitted.proposal_id,
+            plan=plan,
+            detail=activation_not_permitted_detail(admitted.proposal_id),
+            coordinate=mode.coordinate,
+            **described,  # type: ignore[arg-type]
+        )
     if status == "proposed" and not admitted.approval_required:
         # Like provider install and value writes, a kit change the approval
         # policy lets through lands at once; otherwise it stops at proposed.
@@ -1776,7 +1952,9 @@ def _submit(
         proposal_id=admitted.proposal_id,
         approval_required=admitted.approval_required,
         plan=plan,
-        detail=None if admitted.admitted else admitted.refusal_detail(),
+        detail=None
+        if admitted.admitted
+        else _kit_refusal_detail(admitted.diagnostics, candidate, removal=removal),
         coordinate=mode.coordinate,
         **described,  # type: ignore[arg-type]
     )
@@ -2295,6 +2473,7 @@ def service_add_kit(
     actor_id: str,
     timestamp: str,
     install_provider: ProviderInstaller | None = None,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     """Propose the diff that brings this instance to one kit release.
 
@@ -2326,6 +2505,7 @@ def service_add_kit(
             actor_id=actor_id,
             timestamp=timestamp,
             install_provider=install_provider,
+            may_activate=may_activate,
         )
         previewing = mode.previewing
     template = request.bundle.manifest.automation_template
@@ -2367,6 +2547,7 @@ def _add_kit(
     actor_id: str,
     timestamp: str,
     install_provider: ProviderInstaller | None = None,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     assert mode.head is not None
     bundle = request.bundle
@@ -2777,6 +2958,7 @@ def _add_kit(
         plan=plan,
         actor_id=actor_id,
         timestamp=timestamp,
+        may_activate=may_activate,
         **described,  # type: ignore[arg-type]
     )
 
@@ -2787,6 +2969,7 @@ def service_remove_kit(
     *,
     actor_id: str,
     timestamp: str,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     """Propose retiring mutable definitions a kit owns; Contracts and carried ones stay.
 
@@ -2801,7 +2984,14 @@ def service_remove_kit(
         operation="cruxible.kit.remove",
         describe=f"removing kit {request.kit_id}",
     ) as mode:
-        return _remove_kit(instance, mode, request, actor_id=actor_id, timestamp=timestamp)
+        return _remove_kit(
+            instance,
+            mode,
+            request,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            may_activate=may_activate,
+        )
 
 
 def _remove_kit(
@@ -2811,6 +3001,7 @@ def _remove_kit(
     *,
     actor_id: str,
     timestamp: str,
+    may_activate: bool = True,
 ) -> KitChangeResult:
     assert mode.head is not None
     tree = instance.immutable_tree_at(mode.head.git_oid)
@@ -2880,6 +3071,16 @@ def _remove_kit(
                 )
             )
             continue
+        if state.artifact_kind == "claim-type" and _pair_endpoint(tree, entry.path, current):
+            diff.plan.append(
+                KitPathPlan(
+                    path=entry.path,
+                    action="keep",
+                    identity=state.identity.qualified,
+                    detail=_PAIR_ENDPOINT_KEPT,
+                )
+            )
+            continue
         if not kit_content_matches(
             entry.path, json.loads(current), _installed_content(entry, tree), back
         ):
@@ -2913,7 +3114,38 @@ def _remove_kit(
         plan=plan,
         actor_id=actor_id,
         timestamp=timestamp,
+        removal=True,
+        may_activate=may_activate,
     )
+
+
+#: Why a kit removal keeps a pair kind's endpoint ClaimType (R13): a Subject-valued
+#: key part of a pair kind is never retired while the kind exists, retired or not.
+_PAIR_ENDPOINT_KEPT = "a pair kind's endpoints are frozen for life and remain accepted"
+
+
+def _pair_endpoint(tree: Mapping[str, bytes], path: str, content: bytes) -> bool:
+    """Whether this ClaimType is a Subject-valued key part of a kind it may be about.
+
+    A key ClaimType is about its kind only, so its allowed kinds are the only
+    kinds it can key: one read each.
+    """
+
+    from cruxible_client.contracts.shapes import claim_value_kind
+    from cruxible_client.contracts.subject_kinds import parse_subject_kind, subject_kind_path
+
+    claim_type = parse_claim_type(content, path=path)
+    if claim_value_kind(claim_type.value) != "subject":
+        return False
+    for kind in claim_type.allowed_subject_kinds:
+        declared = tree.get(subject_kind_path(kind))
+        if (
+            declared is not None
+            and claim_type.predicate
+            in parse_subject_kind(declared, path=subject_kind_path(kind)).keys
+        ):
+            return True
+    return False
 
 
 _RECEIPT_PATH_PREFIX = "documents/kit-"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, cast
 
@@ -30,9 +31,11 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
+    ApprovalRequirementUnmet,
     DocumentNotFoundError,
     ProjectionIntegrityError,
     ProposalActivationRequestInvalid,
+    ProposalAlreadyAccepted,
     ProposalIntegrityError,
     ProposalStale,
     SettlementIntegrityError,
@@ -142,6 +145,9 @@ class ActivationReceipt(_StrictServiceModel):
     status: Literal["accepted", "lost_cas"]
     accepted_coordinate: AcceptedCoordinate | None
     workspace_advertisement: WorkspaceAdvertisement
+    #: The proposal this one re-admitted at the head, when it is a readmission
+    #: (a moved proposal an approval or activation landed): the one reviewed.
+    readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 #: Why an approval did not activate its candidate: the signer held activation
@@ -165,6 +171,13 @@ class ApprovalReceipt(_StrictServiceModel):
     not_activated: ApprovalNotActivated | None = None
     #: Signatures still required before the candidate can activate.
     approvals_remaining: int = Field(default=0, ge=0)
+    #: The proposal this one re-admitted at the head, when it is a readmission
+    #: (a moved proposal an approval landed): the one the signer reviewed.
+    readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: While approvals remain: who must each still sign (a principal change's
+    #: proposer), and who may give the rest.
+    required_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    eligible_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def _one_outcome(self) -> "ApprovalReceipt":
@@ -394,6 +407,10 @@ def service_submit_playbill_approval(
             stale_paths_at_head,
         )
 
+        # Approving an accepted proposal again would store a signature that
+        # settles nothing; its acceptance is what moved the head past its base.
+        refuse_accepted(instance, proposal_id, candidate.candidate_digest)
+
         # Stale only when history changed what it touches since its base: then
         # it awaits its author's readmit, and no approval settles it. Otherwise
         # the approval lands the same change set at the head.
@@ -447,6 +464,8 @@ def service_submit_playbill_approval(
         principals=signing_generation.principals,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
+    link = proposal.admission.readmits
+    readmits = None if link is None else link.source_proposal_id
     evidence = instance.proposal_evidence()
     # One lock, held from the store write through the note's own read-back. The
     # note restates the WHOLE canonical list rather than appending one signer,
@@ -464,13 +483,14 @@ def service_submit_playbill_approval(
             previous_notes = grouped.validate_and_snapshot(instance._ledger, affected)
             evidence.write_approval(candidate.candidate_digest, submission)
             grouped.publish(instance._ledger, affected, previous=previous_notes)
-    remaining = _approvals_remaining(
+    outstanding = outstanding_approvals(
         evidence.read_approvals(candidate.candidate_digest),
         candidate,
         creator=proposal.admission.actor_id,
         principals=signing_generation.principals,
         principal_lifecycle=principal_lifecycle,
     )
+    remaining = outstanding.remaining
     # A compiler-upgrade candidate needs cruxible_compiler_upgrade at ADMIN to
     # activate, on top of the generic cruxible_proposal_activate this caller's
     # tier may already admit; decided up front so an eligible-but-insufficient
@@ -507,7 +527,9 @@ def service_submit_playbill_approval(
         else:
             if isinstance(activation, ProposalRecompiled):
                 return activation
-            return _approval_receipt(proposal_id, candidate, verified, activation=activation)
+            return _approval_receipt(
+                proposal_id, candidate, verified, activation=activation, readmits=readmits
+            )
     # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
     # branch and its notes from the store and now takes the same candidate lock
     # around projected approval rendering, so nesting would deadlock. Both lanes
@@ -515,23 +537,51 @@ def service_submit_playbill_approval(
     instance.advertise_workspace()
     instance.request_ledger_mirror()
     return _approval_receipt(
-        proposal_id, candidate, verified, not_activated=reason, approvals_remaining=remaining
+        proposal_id,
+        candidate,
+        verified,
+        not_activated=reason,
+        approvals_remaining=remaining,
+        readmits=readmits,
+        outstanding=outstanding if remaining else None,
     )
 
 
-def _approvals_remaining(
+@dataclass(frozen=True)
+class OutstandingApprovals:
+    """The signatures a candidate still needs before it settles, and whose.
+
+    ``required_signers`` must each sign (a principal change needs its
+    proposer's own signature). ``eligible_needed`` more signatures come from
+    ``eligible_signers``: active ordinary principals other than the author when
+    an independent approval is required, or any active ordinary principal for a
+    compiler upgrade's one signature.
+    """
+
+    required_signers: tuple[str, ...] = ()
+    eligible_needed: int = 0
+    eligible_signers: tuple[str, ...] = ()
+    independent: bool = False
+
+    @property
+    def remaining(self) -> int:
+        return len(self.required_signers) + self.eligible_needed
+
+
+def outstanding_approvals(
     submissions: tuple[ApprovalSubmission, ...],
     candidate: CandidateRecord,
     *,
     creator: str,
     principals: PrincipalRegistrySnapshot,
     principal_lifecycle: bool,
-) -> int:
+) -> OutstandingApprovals:
     """Signatures settlement still needs, counted as settlement counts them.
 
     Distinct active ordinary signers other than the creator toward the approval
     requirement; a principal-lifecycle candidate also needs its actor's own
-    signature, and a compiler upgrade at least one signature of any kind.
+    signature, and a compiler upgrade at least one signature of any kind. Reads
+    only this candidate's approvals and its parent's principal registry.
     """
 
     verified: list[VerifiedApproval] = []
@@ -548,22 +598,138 @@ def _approvals_remaining(
         except ApprovalIntegrityError:
             continue
     signers = {approval.signer_id for approval in verified}
-    remaining = 0
+
+    def ordinary(*excluded: str) -> tuple[str, ...]:
+        # Only a refusal or receipt that names signers walks the registry.
+        return tuple(
+            sorted(
+                principal.principal_id
+                for principal in principals.principals
+                if principal.status == "active"
+                and principal.kind == "ordinary"
+                and principal.principal_id not in excluded
+            )
+        )
+
+    required = (creator,) if principal_lifecycle and creator not in signers else ()
     if candidate.approval_requirements:
-        eligible = {
+        independent = {
             signer
             for signer in signers
             if signer != creator and principals.require_active(signer).kind == "ordinary"
         }
         minimum = candidate.approval_requirements[0].minimum_distinct_signers
-        remaining = max(0, minimum - len(eligible))
-    if principal_lifecycle and creator not in signers:
-        remaining += 1
-    if not verified and any(
-        member.artifact_kind == "compiler-upgrade" for member in candidate.members
+        needed = max(0, minimum - len(independent))
+        if needed:
+            return OutstandingApprovals(
+                required_signers=required,
+                eligible_needed=needed,
+                eligible_signers=ordinary(creator, *signers),
+                independent=True,
+            )
+    if (
+        not verified
+        and not required
+        and any(member.artifact_kind == "compiler-upgrade" for member in candidate.members)
     ):
-        remaining = max(remaining, 1)
-    return remaining
+        return OutstandingApprovals(eligible_needed=1, eligible_signers=ordinary())
+    return OutstandingApprovals(required_signers=required)
+
+
+def refuse_accepted(
+    instance: PlaybillInstance, proposal_id: str, candidate_digest: str | None
+) -> None:
+    """Refuse a settlement door asked to settle a proposal accepted state already holds.
+
+    One keyed read of the history index (the generation that published this
+    candidate); only a proposal whose base is behind the head can be accepted.
+    """
+
+    if candidate_digest is None:
+        return
+    with instance.accepted_history_reader() as history:
+        accepted = history.generation_for_candidate(candidate_digest)
+    if accepted is not None:
+        raise ProposalAlreadyAccepted(
+            proposal_id, git_oid=accepted.git_oid, generation=accepted.sequence
+        )
+
+
+def activation_not_permitted_detail(proposal_id: str) -> str:
+    """Why a change the approval policy lets through stopped at proposed, and who lands it.
+
+    A compound operation (kit add or remove, provider move) at a tier below
+    graph_write proposes but does not activate, exactly as a value write does.
+    """
+
+    return (
+        "Not activated: this request's tier cannot activate (needs graph_write). "
+        f"Next: someone who can runs cruxible proposal activate {proposal_id}"
+    )
+
+
+def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
+    """Land a moved proposal at the head for a signer its base predates; the landed id.
+
+    The approval door's own landing (``service_submit_playbill_approval``):
+    stale when what it touches changed since its base (only its author's
+    readmit answers that), otherwise the same change set readmitted at the head
+    under its author, the source closed as superseded by it.
+    """
+
+    from cruxible_client.contracts.errors import ProposalReadmitAlreadyAccepted
+    from cruxible_core.service.proposals.staleness import render_stale_paths, stale_paths_at_head
+
+    proposal, _candidate = _candidate_for_proposal(instance, proposal_id)
+    stale_paths = stale_paths_at_head(instance, proposal)
+    if stale_paths:
+        raise ProposalStale(
+            proposal_id,
+            reason="changed_since_base",
+            detail="changed at the head since its base: " + render_stale_paths(stale_paths),
+        )
+    recompiled = _recompile_for_review(instance, proposal, approver=True)
+    if recompiled is None:
+        raise ProposalStale(proposal_id)
+    if recompiled.proposal_id is None:
+        raise ProposalReadmitAlreadyAccepted(proposal_id)
+    return recompiled.proposal_id
+
+
+def _delegated(proposal: ProposalResult) -> bool:
+    """Whether a mandate, not candidate approvals, settles this proposal."""
+
+    settle = proposal.admission.settle_submission
+    return settle is not None and settle.mode == "delegated"
+
+
+def _refuse_unmet_approval(
+    instance: PlaybillInstance, proposal: ProposalResult, candidate: CandidateRecord
+) -> None:
+    """Refuse to activate a candidate whose approval requirement is not met, naming
+    whose signatures are outstanding; reads only this candidate's approvals and
+    principal registry."""
+
+    outstanding = outstanding_approvals(
+        instance.proposal_evidence().read_approvals(candidate.candidate_digest),
+        candidate,
+        creator=proposal.admission.actor_id,
+        principals=instance.generation_for_semantic_root(
+            candidate.candidate.parent_semantic_root
+        ).principals,
+        principal_lifecycle=all(
+            member.artifact_kind == "principal-lifecycle" for member in candidate.members
+        ),
+    )
+    if not outstanding.remaining:
+        return
+    raise ApprovalRequirementUnmet(
+        proposal.admission.proposal_id,
+        remaining=outstanding.remaining,
+        required_signers=outstanding.required_signers,
+        eligible_signers=outstanding.eligible_signers,
+        independent=outstanding.independent,
+    )
 
 
 def _approval_receipt(
@@ -574,6 +740,8 @@ def _approval_receipt(
     activation: ActivationReceipt | None = None,
     not_activated: ApprovalNotActivated | None = None,
     approvals_remaining: int = 0,
+    readmits: str | None = None,
+    outstanding: OutstandingApprovals | None = None,
 ) -> ApprovalReceipt:
     return ApprovalReceipt(
         proposal_id=proposal_id,
@@ -586,6 +754,9 @@ def _approval_receipt(
         activation=activation,
         not_activated=not_activated,
         approvals_remaining=approvals_remaining,
+        readmits=readmits,
+        required_signers=() if outstanding is None else outstanding.required_signers,
+        eligible_signers=() if outstanding is None else outstanding.eligible_signers,
     )
 
 
@@ -735,7 +906,13 @@ def _activate_candidate(
     if evaluation_at_entry.evaluated_base_oid != instance.accepted_coordinate().git_oid:
         if _recompiled:
             raise ProposalStale(proposal_id, reason="head_moved")
-        proposal, _candidate = _candidate_for_proposal(instance, proposal_id)
+        # Its own acceptance moved the head past its base: already settled, not stale.
+        refuse_accepted(instance, proposal_id, evaluation_at_entry.candidate_digest)
+        proposal, candidate = _candidate_for_proposal(instance, proposal_id)
+        if mandate_digest is None and not _delegated(proposal):
+            # Landing it at the head would withdraw it and readmit it: activation
+            # changes nothing about a proposal that may not settle yet.
+            _refuse_unmet_approval(instance, proposal, candidate)
         recompiled = _recompile_for_review(instance, proposal)
         if recompiled is None:
             from cruxible_core.service.proposals.staleness import (
@@ -814,6 +991,9 @@ def _activate_candidate(
                 "delegated settle mandate expired, was suspended, or was superseded "
                 "before publication"
             )
+    if mandate_digest is None:
+        # Settlement refuses this too; refusing first names who may approve.
+        _refuse_unmet_approval(instance, proposal, candidate)
     approvals = (
         ()
         if mandate_digest is not None
@@ -866,6 +1046,11 @@ def _activate_candidate(
             else None
         ),
         workspace_advertisement=advertisement,
+        readmits=(
+            None
+            if proposal.admission.readmits is None
+            else proposal.admission.readmits.source_proposal_id
+        ),
     )
 
 

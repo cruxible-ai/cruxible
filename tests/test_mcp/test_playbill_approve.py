@@ -44,6 +44,7 @@ def _world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *signers: str) -> di
             payload_digest=CANDIDATE,
         )
         return SimpleNamespace(
+            proposal_id=proposal_id,
             statement=statement.model_dump(mode="json"),
             signer_principal=principals[signer_id].model_dump(mode="json"),
         )
@@ -179,3 +180,30 @@ def test_approve_signs_the_landed_candidate_next(tmp_path, monkeypatch) -> None:
         ("inst_1", "PROP-2", "reviewer"),
     ]
     assert [proposal_id for proposal_id, _ in world["calls"]["submitted"]] == ["PROP-1", "PROP-2"]
+
+
+def test_approve_submits_to_the_proposal_the_challenge_landed(tmp_path, monkeypatch) -> None:
+    """F3 / coldmcp-01: for a signer registered after the proposal's base, the
+    challenge lands the proposal at the head and names the landed one; the
+    signature is submitted for that proposal, not the stale id."""
+
+    _world(tmp_path, monkeypatch, "late")
+    original = handlers.handle_playbill_prepare_approval
+    submitted_to: list[str] = []
+
+    def landed_prepare(instance_id: str, proposal_id: str, **options: Any) -> Any:
+        challenge = original(instance_id, proposal_id, **options)
+        return SimpleNamespace(**{**vars(challenge), "proposal_id": "PROP-LANDED"})
+
+    def submit(instance_id: str, proposal_id: str, attestation: Any, *, hold: bool = False) -> Any:
+        submitted_to.append(proposal_id)
+        return "receipt"
+
+    monkeypatch.setattr(handlers, "handle_playbill_prepare_approval", landed_prepare)
+    monkeypatch.setattr(handlers, "handle_playbill_submit_approval", submit)
+
+    receipt = handlers.handle_playbill_approve(
+        "inst_1", "PROP-1", signer_id="late", candidate_digest=None
+    )
+    assert receipt == "receipt"
+    assert submitted_to == ["PROP-LANDED"]

@@ -32,7 +32,10 @@ from cruxible_core.providers.builds import (
     resolve_provider_build,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+from cruxible_core.service.authoring.documents import (
+    activation_not_permitted_detail,
+    service_activate_playbill_proposal,
+)
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 
 
@@ -43,6 +46,7 @@ def _submit(
     *,
     actor_id: str,
     timestamp: str,
+    may_activate: bool = True,
 ) -> tuple[str, str | None, bool, str | None]:
     assert mode.head is not None
     candidate = instance.immutable_tree_at(mode.head.git_oid).fork()
@@ -64,6 +68,15 @@ def _submit(
         timestamp=timestamp,
     )
     status: str = admitted.status
+    if status == "proposed" and not admitted.approval_required and not may_activate:
+        # The policy lets it through, but this request's tier may not activate.
+        assert admitted.proposal_id is not None
+        return (
+            status,
+            admitted.proposal_id,
+            False,
+            activation_not_permitted_detail(admitted.proposal_id),
+        )
     if status == "proposed" and not admitted.approval_required:
         assert admitted.proposal_id is not None
         activation = service_activate_playbill_proposal(
@@ -175,6 +188,7 @@ def service_move_provider(
     *,
     actor_id: str,
     timestamp: str,
+    may_activate: bool = True,
 ) -> ProviderMoveResult:
     with change_scope(
         instance,
@@ -248,7 +262,12 @@ def service_move_provider(
             status, proposal_id, approval, detail = "unchanged", None, False, None
         else:
             status, proposal_id, approval, detail = _submit(
-                instance, mode, settled.writes, actor_id=actor_id, timestamp=timestamp
+                instance,
+                mode,
+                settled.writes,
+                actor_id=actor_id,
+                timestamp=timestamp,
+                may_activate=may_activate,
             )
         return ProviderMoveResult(
             provider=name,

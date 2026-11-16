@@ -167,3 +167,123 @@ def test_submit_response_loss_recovers_the_same_proposal(tmp_path: Path) -> None
         (exhaust / "authoring-intents" / intent.intent_id / "events").glob("*.json")
     )
     assert len(event_paths) == 3
+
+
+def test_revising_a_submitted_intent_is_a_typed_refusal_naming_a_new_intent(
+    tmp_path: Path,
+) -> None:
+    """gapc-21: compile --intent-id / reprepare on a submitted intent answered a bare 500."""
+
+    import pytest
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.authoring.store import AuthoringIntentRefused
+    from cruxible_core.server.errors import error_to_response
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(
+        instance,
+        owner,
+        contract=foreign_source_capture_contract("repo.work-items"),
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_working_payload(occurrence_count=1),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.state == "ready_to_activate"
+
+    with pytest.raises(AuthoringIntentRefused) as refused:
+        coordinator.replace_payload(
+            intent.intent_id, actor=actor, payload=_working_payload(occurrence_count=1)
+        )
+
+    assert refused.value.error_code == "cruxible.authoring.intent_submitted"
+    assert str(submitted.status.proposal_id) in str(refused.value)
+    status, body = error_to_response(refused.value)
+    assert status == 409
+    assert body.error_code == "cruxible.authoring.intent_submitted"
+    assert body.repair == RepairOperation(operation="cruxible.authoring.compile")
+    # Nothing was appended: the intent is still the submitted one.
+    assert coordinator.status(intent.intent_id, actor=actor).state == "ready_to_activate"
+
+
+def test_an_unknown_or_foreign_intent_is_a_typed_refusal(tmp_path: Path) -> None:
+    """gapc-22: status/get of an unknown intent id answered a bare 500."""
+
+    import pytest
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.authoring.store import AuthoringIntentRefused, AuthoringIntentStoreError
+    from cruxible_core.server.errors import error_to_response
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(
+        instance,
+        owner,
+        contract=foreign_source_capture_contract("repo.work-items"),
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    for unknown in ("AIT-" + "0" * 32, "nope", ".."):
+        for call in (coordinator.status, coordinator.get, coordinator.preflight):
+            with pytest.raises(AuthoringIntentRefused) as refused:
+                call(unknown, actor=actor)
+            assert refused.value.error_code == "cruxible.authoring.intent_not_found"
+            status, body = error_to_response(refused.value)
+            assert status == 404
+            assert body.repair == RepairOperation(operation="cruxible.authoring.list")
+    with pytest.raises(AuthoringIntentRefused, match="intent_not_found"):
+        coordinator.replace_payload(
+            "AIT-" + "0" * 32, actor=actor, payload=_working_payload(occurrence_count=1)
+        )
+
+    intent = coordinator.create(
+        actor=actor,
+        payload=_working_payload(occurrence_count=1),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    with pytest.raises(AuthoringIntentRefused) as foreign:
+        coordinator.status(intent.intent_id, actor=AuthenticatedActor(actor_id="other"))
+    assert foreign.value.error_code == "cruxible.authoring.intent_other_actor"
+    assert error_to_response(foreign.value)[0] == 403
+    # Callers that read a missing intent as nothing to do still catch it.
+    assert issubclass(AuthoringIntentRefused, AuthoringIntentStoreError)
+
+
+def test_a_refused_one_shot_submit_lands_as_refused_naming_a_revised_payload(
+    tmp_path: Path,
+) -> None:
+    """gapc-19: a refused submit read `proposed` with a preflight rerun as its next step."""
+
+    from cruxible_client import contracts
+    from cruxible_core.service.authoring.landing import service_land_authoring_submit
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(
+        instance,
+        owner,
+        contract=foreign_source_capture_contract("repo.work-items"),
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    submitted = coordinator.compile_and_submit(
+        actor=actor,
+        payload=_working_payload(occurrence_count=2),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert submitted.status.state == "preflight_refused"
+
+    record = service_land_authoring_submit(
+        coordinator, actor=actor, submitted=submitted, accept="if_allowed", may_activate=True
+    )
+
+    assert isinstance(record.outcome, contracts.AuthoringRefused)
+    assert record.outcome.status == "refused"
+    assert record.outcome.next == (
+        f"cruxible authoring submit REVISED_PAYLOAD --intent-id {submitted.intent.intent_id}"
+    )
+    assert record.status.proposal_id is None

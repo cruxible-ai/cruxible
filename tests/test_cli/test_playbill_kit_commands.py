@@ -982,3 +982,28 @@ def test_kit_help_says_what_a_default_provider_stands_for_now() -> None:
         assert "serve every slot's capability" in text
     assert "with interfaces" not in inspect.getsource(tools)
     assert "operation Contracts first" not in (service_add_kit.__doc__ or "")
+
+
+@pytest.mark.parametrize(("status", "exit_code"), [("would_block", 0), ("blocked", 1)])
+def test_kit_remove_exits_1_only_when_a_commit_was_blocked(
+    monkeypatch: pytest.MonkeyPatch, status: str, exit_code: int
+) -> None:
+    from cruxible_client.contracts.kits import KitRemoveRequest
+
+    class StubClient:
+        def remove_kit(self, instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status=status,  # type: ignore[arg-type]
+                detail="Refused: cruxible.change_set.incomplete_closure: 1 live artifact(s)",
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    commit = ["--commit", "--at", "abcdef123456"] if status == "blocked" else []
+    result = CliRunner().invoke(cli, [*BASE, "remove", "acme", *commit])
+
+    assert result.exit_code == exit_code, result.output
+    assert f"acme 1.0.0: {status}" in result.output
+    assert "Refused: cruxible.change_set.incomplete_closure" in result.output

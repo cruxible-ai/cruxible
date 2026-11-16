@@ -20,7 +20,12 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.errors import ProposalStale
+from cruxible_client.contracts.errors import (
+    ApprovalRequirementUnmet,
+    ProposalAlreadyAccepted,
+    ProposalStale,
+    ProposalWithdrawnError,
+)
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.subjects import (
     parse_subject,
@@ -31,13 +36,18 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import service_submit_playbill_approval
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
 from cruxible_core.service.proposals.proposals import (
     _proposal_result,
     service_list_playbill_proposals,
     service_playbill_proposal_status,
     stale_unreadmitted_proposals,
 )
+from cruxible_core.service.proposals.review import service_prepare_playbill_approval
+from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import client_material
 from tests.core_support._write_support import KIND, OWNER, _claim_type, seed_write_surface
 from tests.test_ledger.test_activation import _sign
@@ -277,3 +287,285 @@ def test_the_overlap_check_does_keyed_lookups_that_do_not_grow_with_the_instance
         assert _entry(instance, source_id).status == "open"
         measured.append(sum(looked_up))
     assert measured[0] == measured[1] > 0
+
+
+def test_activating_an_unapproved_moved_proposal_refuses_and_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """gapa-04: activation used to land an unapproved proposal whose base moved at the
+    head, withdrawing it; it refuses with the unmet requirement and who may approve."""
+
+    instance, reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "unapproved"))
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-2", "title", "moves the head"))
+    head = instance.accepted_coordinate()
+
+    for _ in range(2):  # refused again, exactly the same way
+        with pytest.raises(ApprovalRequirementUnmet) as refused:
+            service_activate_playbill_proposal(
+                instance, proposal_id=source_id, activated_by="owner"
+            )
+        assert refused.value.error_code == "cruxible.approval.requirement_unsatisfied"
+        assert (refused.value.remaining, refused.value.eligible_signers) == (1, ("reviewer",))
+        assert refused.value.repair.operation == "cruxible.proposal.approve"
+        assert refused.value.repair.arguments == {"proposal_id": source_id}
+        assert "Nothing was changed" in str(refused.value)
+
+    assert instance.accepted_coordinate() == head
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None
+    assert _entry(instance, source_id).status == "open"
+    # Approval still lands it at the head as before.
+    landed = _approve(instance, reviewer, source_id)
+    assert isinstance(landed, ProposalRecompiled) and landed.status == "pending_review"
+
+
+def test_activating_an_unapproved_proposal_on_the_head_names_the_approve_repair(
+    tmp_path: Path,
+) -> None:
+    instance, _reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "on the head"))
+
+    with pytest.raises(ApprovalRequirementUnmet) as refused:
+        service_activate_playbill_proposal(instance, proposal_id=source_id, activated_by="owner")
+
+    assert refused.value.repair.operation == "cruxible.proposal.approve"
+    assert _entry(instance, source_id).status == "open"
+
+
+def test_acting_again_on_an_accepted_proposal_says_accepted_not_stale(
+    tmp_path: Path,
+) -> None:
+    """gapa-01/02: its own acceptance moved the head past its base, so approval and
+    activation called it stale and sent the caller to readmit and withdraw, which
+    both refuse. They answer that it is accepted, and where."""
+
+    instance, reviewer = _world(tmp_path)
+    proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "accepted once"))
+    receipt = _approve(instance, reviewer, proposal_id)
+    assert receipt.activation is not None and receipt.activation.accepted_coordinate is not None
+    accepted_at = receipt.activation.accepted_coordinate.git_oid
+    approvals_before = instance.proposal_evidence().read_approvals(
+        _proposal_result(instance, proposal_id).candidate.candidate_digest  # type: ignore[union-attr]
+    )
+
+    refusals = []
+    for act in (
+        lambda: service_activate_playbill_proposal(
+            instance, proposal_id=proposal_id, activated_by="reviewer"
+        ),
+        lambda: _approve(instance, reviewer, proposal_id),
+        lambda: service_prepare_playbill_approval(
+            instance,
+            proposal_id=proposal_id,
+            signer_id="reviewer",
+            access=BodyAccessContext(principal_id="reviewer", can_read_body=True),
+        ),
+    ):
+        with pytest.raises(ProposalAlreadyAccepted) as refused:
+            act()
+        refusals.append(refused.value)
+
+    for refusal in refusals:
+        assert refusal.error_code == "cruxible.proposal.already_accepted"
+        assert refusal.git_oid == accepted_at
+        assert f"already accepted at {accepted_at}" in str(refusal)
+        assert refusal.repair.operation == "cruxible.get"
+    # The repeated approval stored nothing.
+    assert (
+        instance.proposal_evidence().read_approvals(
+            _proposal_result(instance, proposal_id).candidate.candidate_digest  # type: ignore[union-attr]
+        )
+        == approvals_before
+    )
+
+
+def test_an_approval_that_lands_a_moved_proposal_names_its_source(tmp_path: Path) -> None:
+    """gapa-03: approval lands a moved proposal at the head under a new id. The
+    receipt for the landed proposal names the one reviewed, and the old id refuses
+    with the replacement to activate, not "author the change again"."""
+
+    instance, reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-2", "title", "moves the head"))
+    landed = _approve(instance, reviewer, source_id)
+    assert isinstance(landed, ProposalRecompiled) and landed.proposal_id is not None
+    successor = _proposal_result(instance, landed.proposal_id)
+    assert successor.candidate is not None
+
+    held = service_submit_playbill_approval(
+        instance,
+        proposal_id=landed.proposal_id,
+        attestation=_sign(
+            reviewer,
+            successor.candidate.candidate_digest,
+            successor.candidate.candidate.parent_semantic_root,
+        ).attestation,
+        authenticated_submitter="reviewer",
+        activate_when_complete=False,
+        may_activate=True,
+    )
+    assert held.not_activated == "held"  # type: ignore[union-attr]
+    assert held.readmits == source_id  # type: ignore[union-attr]
+
+    with pytest.raises(ProposalWithdrawnError) as refused:
+        service_activate_playbill_proposal(instance, proposal_id=source_id, activated_by="owner")
+    assert refused.value.superseded_by == landed.proposal_id
+    assert f"cruxible proposal activate {landed.proposal_id}" in str(refused.value)
+    assert "author the change again" not in str(refused.value)
+    assert refused.value.repair.operation == "cruxible.proposal.activate"
+    assert refused.value.repair.arguments == {"proposal_id": landed.proposal_id}
+
+    activation = service_activate_playbill_proposal(
+        instance, proposal_id=landed.proposal_id, activated_by="reviewer"
+    )
+    assert activation.status == "accepted"  # type: ignore[union-attr]
+    assert activation.readmits == source_id  # type: ignore[union-attr]
+
+
+def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
+    tmp_path: Path,
+) -> None:
+    """F3 / coldmcp-01: a principal registered after a proposal was admitted is absent
+    at its base, where its signature is checked, so `approve` refused "principal is
+    absent". A caller who may submit approvals now lands the proposal at the head
+    first (as approving a moved proposal does) and signs the landed candidate, whose
+    parent registry holds the signer; one who may not is told why and who readmits."""
+
+    from cruxible_client.contracts.errors import ApprovalSignerAfterBase
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_propose_playbill_principal_change,
+    )
+
+    instance, owner = seed_write_surface(tmp_path, self_approval=False)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "before late joined"))
+    late = generate_client_principal_key(
+        tmp_path / "late-keys",
+        principal_id="late",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=late.principal,
+        actor_id="owner",
+        proposal_name="register-late",
+        timestamp="2026-09-29T12:40:00.000000Z",
+    ).proposal
+    assert registration.candidate is not None
+    for material in (owner, reviewer := client_material(tmp_path, instance)):
+        signed = _sign(
+            material,
+            registration.candidate.candidate_digest,
+            registration.candidate.candidate.parent_semantic_root,
+        )
+        last = service_submit_playbill_approval(
+            instance,
+            proposal_id=registration.admission.proposal_id,
+            attestation=signed.attestation,
+            authenticated_submitter=material.principal.principal_id,
+            activate_when_complete=True,
+            may_activate=True,
+        )
+    assert last.activation is not None and last.activation.status == "accepted"  # type: ignore[union-attr]
+    access = BodyAccessContext(principal_id="late", can_read_body=True)
+
+    with pytest.raises(ApprovalSignerAfterBase) as refused:
+        service_prepare_playbill_approval(
+            instance, proposal_id=source_id, signer_id="late", access=access
+        )
+    assert refused.value.error_code == "cruxible.approval.signer_after_base"
+    assert f"cruxible proposal readmit {source_id}" in str(refused.value)
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None
+
+    landed_by: list[str] = []
+    challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=source_id,
+        signer_id="late",
+        access=access,
+        land=lambda: landed_by.append("checked"),
+    )
+    assert landed_by == ["checked"]
+    assert challenge.proposal_id != source_id
+    assert challenge.signer_principal.principal_id == "late"
+    head = instance.accepted_coordinate()
+    assert challenge.statement.signing_semantic_root == head.semantic_root
+    withdrawal = instance.proposal_evidence().read_withdrawal(source_id)
+    assert withdrawal is not None and withdrawal.superseded_by == challenge.proposal_id
+
+    receipt = service_submit_playbill_approval(
+        instance,
+        proposal_id=challenge.proposal_id,
+        attestation=_sign(
+            late, challenge.statement.payload_digest, challenge.statement.signing_semantic_root
+        ).attestation,
+        authenticated_submitter="late",
+        activate_when_complete=True,
+        may_activate=True,
+    )
+    assert receipt.activation is not None and receipt.activation.status == "accepted"  # type: ignore[union-attr]
+    assert receipt.readmits == source_id  # type: ignore[union-attr]
+    assert reviewer.principal.principal_id == "reviewer"
+
+
+def test_an_ineligible_late_signer_is_refused_before_anything_lands(tmp_path: Path) -> None:
+    """Round 3: a recovery principal registered after an ordinary proposal's base
+    cannot approve it; the challenge landed the proposal (closing the source and
+    losing its signatures) before refusing. It now refuses first and changes nothing."""
+
+    from cruxible_client.contracts.errors import ApprovalIntegrityError
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_propose_playbill_principal_change,
+    )
+
+    instance, owner = seed_write_surface(tmp_path, self_approval=False)
+    reviewer = client_material(tmp_path, instance)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "before recovery joined"))
+    rescue = generate_client_principal_key(
+        tmp_path / "rescue-keys",
+        principal_id="rescue",
+        kind="recovery",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=rescue.principal,
+        actor_id="owner",
+        proposal_name="register-rescue",
+        timestamp="2026-09-29T12:50:00.000000Z",
+    ).proposal
+    assert registration.candidate is not None
+    for material in (owner, reviewer):
+        last = service_submit_playbill_approval(
+            instance,
+            proposal_id=registration.admission.proposal_id,
+            attestation=_sign(
+                material,
+                registration.candidate.candidate_digest,
+                registration.candidate.candidate.parent_semantic_root,
+            ).attestation,
+            authenticated_submitter=material.principal.principal_id,
+            activate_when_complete=True,
+            may_activate=True,
+        )
+    assert last.activation is not None and last.activation.status == "accepted"  # type: ignore[union-attr]
+    admissions = instance.proposal_evidence().list_admissions()
+    head = instance.accepted_coordinate()
+    landed: list[str] = []
+
+    with pytest.raises(ApprovalIntegrityError, match="recovery principal cannot approve"):
+        service_prepare_playbill_approval(
+            instance,
+            proposal_id=source_id,
+            signer_id="rescue",
+            access=BodyAccessContext(principal_id="rescue", can_read_body=True),
+            land=lambda: landed.append("landed"),
+        )
+
+    assert landed == []
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None
+    assert instance.proposal_evidence().list_admissions() == admissions
+    assert instance.accepted_coordinate() == head
+    assert _entry(instance, source_id).status == "open"

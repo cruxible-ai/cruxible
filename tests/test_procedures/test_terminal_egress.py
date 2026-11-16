@@ -36,6 +36,7 @@ from tests.test_procedures.test_procedure_execution import (
     _prepare,
     _StateReader,
 )
+from tests.test_procedures.test_terminal_dependencies import _model_builds
 
 #: The item each row of the read posts: its id.
 ITEM = Contract.model_validate(
@@ -372,3 +373,186 @@ def test_terminal_fan_out_obeys_run_budget_with_scalar_return(tmp_path, kind):
     assert budget["high_water"] == 2
     assert budget["boundary"] == "terminal:inbox"
     assert budget["field_path"] == "items"
+
+
+def _record_items_over_a_capture_list(tmp_path, *, captures: int, items: int, builds=None):  # type: ignore[no-untyped-def]
+    """Journal one terminal's ``items``, each derived from the same ``captures`` and one own.
+
+    The shape of a list-fed terminal (an OSV-style fetch of one response per
+    advisory, every item derived from the whole list): returns each item
+    record's payload bytes, what the inline v1 shape would have stored, the
+    child receipts, the in-memory manifests and the bytes of every body stored.
+    """
+
+    from cruxible_client.contracts.procedures.models import iter_references
+    from cruxible_core.exhaust.records import journal_payload_bytes
+    from cruxible_core.procedures import execution as execution_module
+    from cruxible_core.procedures.terminal_dependencies import (
+        AcquisitionInputOutcomeV1,
+        DependencyEvidenceFactsV1,
+        produced_capture_token,
+        receipt_token,
+        resolve_item_dependencies,
+    )
+
+    tmp_path.mkdir()
+    fixture = _fixture(tmp_path)
+    accepted = _terminal_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader({"items": [{"id": "one"}]}))
+    node = next(item for item in accepted.procedure.definition.nodes if item.node_id == "inbox")
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        contract_resolver=lambda _ref: ITEM,
+    )
+    executor.references = {
+        reference.target.qualified: _digest(reference.target.qualified)
+        for reference in iter_references(node)
+    }
+    listed = [_digest(f"capture-{index}") for index in range(captures)]
+    own = [_digest(f"own-{index}") for index in range(items)]
+    fact = DependencyEvidenceFactsV1(
+        epistemic_grade="observed",
+        provenance_grade="daemon-fetched",
+        acquisition_input_name="osv.advisories",
+    )
+    shared = frozenset(
+        {
+            *(produced_capture_token(digest) for digest in listed),
+            *(receipt_token(_digest(f"receipt-{digest}")) for digest in listed),
+        }
+    )
+    state = execution_module._RunState(  # noqa: SLF001
+        outputs={},
+        input_payload={},
+        parameters={},
+        facts={digest: fact for digest in (*listed, *own)},
+        outcomes={
+            "osv.advisories": AcquisitionInputOutcomeV1(
+                input_name="osv.advisories",
+                disposition="acquired",
+                capture_digests=tuple(sorted((*listed, *own))),
+            )
+        },
+        claims_items={
+            "inbox": (
+                [{"id": f"item-{index}"} for index in range(items)],
+                tuple(shared | {produced_capture_token(own[index])} for index in range(items)),
+            )
+        },
+    )
+    records: list[object] = []
+    # The run is open, as execute() opens it, before its terminal journals items.
+    admission = prepared.admission
+    executor._append_event(  # noqa: SLF001
+        admission,
+        records,
+        "attempt_started",
+        {"attempt": admission.attempt, "admitted_at": admission.admitted_at.isoformat()},
+    )
+    executor._append_event(  # noqa: SLF001
+        admission, records, "admission_bound", prepared.bound_payload().model_dump(mode="json")
+    )
+    before = {path.name for path in (tmp_path / "cas").rglob("*") if path.is_file()}
+    with _model_builds() as counted:
+        children, _values, manifests, _selected = executor._record_terminal_items(  # noqa: SLF001
+            node, admission=prepared.admission, state=state, records=records
+        )
+    if builds is not None:
+        builds.update(counted)
+    stored = sum(
+        path.stat().st_size
+        for path in (tmp_path / "cas").rglob("*")
+        if path.is_file() and path.name not in before
+    )
+    access = BodyAccessContext(principal_id="terminal-egress-test", can_read_body=True)
+    read = lambda digest: fixture.bodies.read(digest, access=access)  # noqa: E731
+    journaled = [
+        item
+        for item in fixture.journal.all_records(fixture.stream, "runs")
+        if item.record.event_kind == "item_dependencies"
+    ]
+    sizes, inline = [], []
+    for record, child in zip(journaled, children, strict=True):
+        payload = _payload(fixture, record.record.payload_digest)
+        assert isinstance(payload, dict)
+        assert payload["tag"] == "playbill-procedure-item-dependencies-v2"
+        manifest, derived = resolve_item_dependencies(payload, read)
+        # Every reader resolves the same closure the run held, under the same digest.
+        assert manifest == manifests[child.item_key]
+        assert derived.manifest_digest == child.manifest_digest
+        sizes.append(len(read(record.record.payload_digest)))
+        inline.append(
+            len(
+                journal_payload_bytes(
+                    {
+                        "tag": "playbill-procedure-item-dependencies-v1",
+                        "manifest": manifest.model_dump(mode="json"),
+                        "derived": derived.model_dump(mode="json"),
+                        "audit": payload["audit"],
+                    }
+                )
+            )
+        )
+    return sizes, inline, stored
+
+
+def test_an_item_record_does_not_grow_with_the_runs_capture_count(tmp_path) -> None:
+    """Notes fix 1a: a list-fed terminal's item records cite the shared list by digest.
+
+    Before, every item record restated every Capture digest of the list three
+    times (produced, receipt, coverage): records grew as items x captures.
+    """
+
+    small, small_inline, small_stored = _record_items_over_a_capture_list(
+        tmp_path / "small", captures=10, items=3
+    )
+    large, large_inline, large_stored = _record_items_over_a_capture_list(
+        tmp_path / "large", captures=300, items=3
+    )
+    # A record's size is independent of the Capture count (only digest values differ).
+    assert small == large
+    # The inline shape grew by ~ 3 digests per Capture per item.
+    assert min(large_inline) - max(small_inline) > 290 * 3 * 64
+    # What the run stores grows once per terminal (the shared set), never per item.
+    assert large_stored - small_stored < (300 - 10) * 3 * 80
+    print(
+        f"item record bytes: v2 {small[0]} at 10 and {large[0]} at 300 captures; "
+        f"v1 {small_inline[0]} -> {large_inline[0]}; "
+        f"terminal stored {small_stored} -> {large_stored}"
+    )
+
+
+def test_journaling_item_records_builds_no_record_model_per_item(tmp_path) -> None:
+    """The shared-set split adds no model build per item (the settle scale guard's count).
+
+    Each item's ``item_dependencies`` payload is built as JSON from its already
+    validated manifest and facts; the record, its digests, its audit and copies
+    of its facts are never constructed per item.
+    """
+
+    record_models = (
+        "TerminalItemDependencyRecordV2.",
+        "TerminalDependencyDigestsV1.",
+        "TerminalItemDependencyAuditV1.",
+        "TerminalSharedDependenciesV1.",
+        "TerminalSharedCoverageV1.",
+        "TerminalItemDerivedFactsV1.model_copy",
+        "TerminalItemSourceCoverageV1.model_copy",
+    )
+    counts = {}
+    for items in (3, 12):
+        builds: dict[str, int] = {}
+        _record_items_over_a_capture_list(
+            tmp_path / str(items), captures=10, items=items, builds=builds
+        )
+        counts[items] = {
+            name: count for name, count in builds.items() if name.startswith(record_models)
+        }
+    # Once per terminal (the shared set), never per item.
+    assert counts[3] == counts[12]
+    assert counts[3]["TerminalSharedDependenciesV1.__init__"] == 1

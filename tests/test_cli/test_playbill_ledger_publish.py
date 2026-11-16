@@ -82,3 +82,46 @@ def test_cli_clone_url_is_cut(mirror_cli):
     args, _ = mirror_cli
     result = CliRunner().invoke(cli, [*args, "clone-url"])
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize("output_json", [False, True])
+def test_cli_publish_that_ends_behind_exits_non_zero_with_gits_lines(
+    monkeypatch, tmp_path, output_json
+):
+    """A failed publication is a failure: exit 1, and git's error keeps its line breaks."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    receipt = contracts.LedgerMirror(
+        instance_id="inst_test",
+        mirror_url="file:///srv/nope.git",
+        status="behind",
+        requested_sequence=3,
+        attempted_sequence=3,
+        published_sequence=2,
+        wait_sequence=3,
+        detail=(
+            "fatal: '/srv/nope.git' does not appear to be a git repository\n"
+            "fatal: Could not read from remote repository.\n\n"
+            "Error: forged\x1b[0m"
+        ),
+    )
+    client = SimpleNamespace(publish_ledger=lambda instance_id, **kwargs: receipt)
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    args = ["--server-url", "http://unused.invalid", "--instance-id", "inst_test", "ledger"]
+    result = CliRunner().invoke(
+        cli, [*args, "publish", "--timeout", "5", *(["--json"] if output_json else [])]
+    )
+
+    assert result.exit_code == 1, result.output
+    if output_json:
+        assert json.loads(result.stdout)["status"] == "behind"
+        return
+    lines = result.stdout.splitlines()
+    assert "Publication: behind" in lines
+    assert "Request 3: awaiting acknowledgment" in lines
+    assert "Detail:" in lines
+    assert "  fatal: '/srv/nope.git' does not appear to be a git repository" in lines
+    assert "  fatal: Could not read from remote repository." in lines
+    # Each line stays indented and escaped: a remote cannot forge a line of ours.
+    assert "  Error: forged\\x1b[0m" in lines
+    assert "\\n" not in result.stdout

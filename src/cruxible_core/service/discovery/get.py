@@ -557,11 +557,19 @@ def _resolve_get_ref_as_written(
             )
     with instance.bind_accepted_projection(coordinate) as projection:
         if value.endswith(".json") and "/" in value:
+            # ``kind/id`` whose id ends in ``.json`` (an SBOM file name) is how every
+            # card prints that Subject, so a declared kind reads it as a Subject;
+            # a path names an artifact family (``subjects/``, ``claims/``), never a
+            # kind's dotted name. One indexed row decides.
+            subject = _declared_subject_kind(projection, value.split("/", 1)[0])
             rows = projection.typed.envelopes(paths=(value,))
-            if len(rows) == 1 and rows[0].kind in _REF_KIND:
-                kind = _REF_KIND[rows[0].kind]
-                return ResolvedRef(kind, rows[0].identity, _display(kind, rows[0].identity), value)
-            raise _not_found("artifact at path", value, (), surface=surface)
+            if not subject or (len(rows) == 1 and rows[0].kind in _REF_KIND):
+                if len(rows) == 1 and rows[0].kind in _REF_KIND:
+                    kind = _REF_KIND[rows[0].kind]
+                    return ResolvedRef(
+                        kind, rows[0].identity, _display(kind, rows[0].identity), value
+                    )
+                raise _not_found("artifact at path", value, (), surface=surface)
         if value.startswith("CLM-"):
             return _resolve_typed(projection, "claim", value, ref=value, surface=surface)
         if "/" in value:
@@ -575,6 +583,17 @@ def _resolve_get_ref_as_written(
                 subject_suggestions=subject_suggestions,
             )
         return _resolve_bare(projection, value, surface=surface)
+
+
+def _declared_subject_kind(projection: Any, kind: str) -> bool:
+    """Whether a SubjectKind declares ``kind``, live or retired: one indexed row."""
+
+    return (
+        projection.typed.connection.execute(
+            "SELECT 1 FROM subject_kinds WHERE identity=? LIMIT 1", (f"SubjectKind:{kind}",)
+        ).fetchone()
+        is not None
+    )
 
 
 def _tree_key_reader(
@@ -1582,8 +1601,13 @@ def _subject_card(
             answer_flags("many" if many else "one", len({_value_key(item) for item in shown}))
         )
         values = [_claim_value(item) for item in shown]
+        listed = many or len(values) > 1
+        # A field listing several Claims names its whole list once on a CLI card
+        # (below), never one evidence read per Claim.
         for item, value in zip(shown, values, strict=True):
-            if _value_was_cut(summary_value(value), surface=surface):
+            if not (listed and surface == "cli") and _value_was_cut(
+                summary_value(value), surface=surface
+            ):
                 evidence_steps.append(_render_get(surface, item.claim_id, "evidence"))
         for item in shown:
             marks.update(
@@ -1591,7 +1615,6 @@ def _subject_card(
             )
         for none in nones:
             marks.update(none.flags)
-        listed = many or len(values) > 1
         claims_shown = tuple(item.claim_id for item in shown)
         reads = [whole_value_read(item, coordinate.git_oid) for item in claims_shown]
         displayed_value = (
@@ -1603,7 +1626,8 @@ def _subject_card(
             else summary_value(values[0], read_whole=reads[0])
         )
         if listed and surface == "cli" and _value_was_cut(displayed_value, surface=surface):
-            evidence_steps.extend(_render_get(surface, item, "evidence") for item in claims_shown)
+            # The whole list, with each value's Claim ID, is in the card's --json.
+            evidence_steps.append(f"{_render_get(surface, subject)} --json")
         entries.append(
             GetSubjectClaim(
                 predicate=short_field_name(predicate, kind, accepted_predicates),

@@ -1286,7 +1286,7 @@ Scans the attached workspace and reads actionable work with explicit access prof
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `expiring_within` | Required | Duration defining the next-work expiry horizon. |
+| `expiring_within` | `None` (seven days) | A `cruxible_client.Duration`: how far ahead expiring evidence counts. |
 
 <a id="api-cruxible-audit"></a>
 
@@ -1328,8 +1328,10 @@ curation_list(*, limit: int | None = None, cursor: str | None = None) -> api.Cur
 ```
 
 Reads one page of the curation queue detection recorded (default 25 items); a pure
-read. Detection runs on its own on accepted generations: `detection` says when it
-last ran and whether its Trigger is live, `inactive_detectors` which detectors
+read. Detection runs only once a Trigger aimed at the `curation.detect` action
+(for example `curation-detect` on accepted generations) is authored; none is
+seeded. `detection` says when it last ran (`never_run` without that Trigger)
+and whether its Trigger is live, `inactive_detectors` which detectors
 cannot run here and why. A truncated page carries `next_cursor`; pass it back as
 `cursor`.
 
@@ -1355,7 +1357,7 @@ curation_overrule(
 
 Records, permanently, that a detected pattern does not apply here; it is never raised again.
 
-**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge. `dry_run` checks and appends nothing; `at` pins the commit.
+**Conditions and effects:** Requires matching latest-event digest and attribution; does not revise accepted knowledge. It cannot be undone, so it previews by default (`dry_run` unset or true appends nothing) and commits only with `dry_run=False` and `at`, the preview's `coordinate.git_oid`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1554,6 +1556,18 @@ write.
 | `.dismiss(item_id, *, reason) -> InboxDispositionResult` | Dismiss it with a recorded reason. |
 | `.link(item_id, *, proposal=None, subject=None) -> InboxDispositionResult` | Link it to the proposal you wrote, or to an accepted Subject (`kind/id`, such as a note). Name exactly one. |
 
+An `InboxList` holds `entries`, `truncated` and `next_cursor`. Each entry is an
+`InboxListEntry` with `item` (the envelope: `item_id`, `status`, `line`,
+`occurrences`, sightings, `disposition`) and `payload_preview`; pass
+`entry.item.item_id`, a string, to `.get`, `.ack`, `.dismiss` or `.link`:
+
+```text
+page = cx.inbox().list(status="unread")
+for entry in page.entries:
+    print(entry.item.item_id, entry.item.line, entry.payload_preview)
+cx.inbox().ack(page.entries[0].item.item_id)
+```
+
 <a id="api-writebatch"></a>
 
 ## `WriteBatch`
@@ -1575,6 +1589,13 @@ add(*operands, subject=None, evidence=None, supported_by=None, role=None, expect
 retire(target: str | ClaimRef | SlotRef, *, because=None, reason='was-rescinded', expect=None) -> WriteBatch
 write(*, dry_run=False, accept='if_allowed', at=<this context's coordinate>) -> WriteOutcome
 ```
+
+`append_section` with `under=()` appends at the end of the file and is the
+only document method that creates a missing file. With `under=("Heading",
+...)` the file and that heading must already exist, and `replace_section`
+needs the file: otherwise the write refuses `cruxible.doc.section_not_found` and writes
+nothing. To start a new file under a heading, append the heading at the root
+first.
 
 `set` and `add` are spelled `set(field, value)` (about the batch's `subject`)
 or `set(subject, field, value)`. `set` replaces a single-value field, `add` puts
@@ -2178,8 +2199,11 @@ Compile and preflight the whole changeset as one intent.
 `program_stamp`, and `source_map` for inspection. `prepare()` performs server
 compilation/preflight; `submit()` compiles and lands in one request when no
 approval is required and the caller may activate. `intent.outcome` reports
-`landed` with the accepted coordinate or `proposed` with the proposal ID,
-typed stop reason and next step. `submit(accept="never")` keeps the proposal.
+`landed` with the accepted coordinate, `proposed` with the proposal ID,
+typed stop reason and next step, or `refused` (`AuthoringRefused`, reason
+`preflight_refused`, no proposal) when the payload failed preflight: running
+preflight again changes nothing, so its next step is a revised payload
+resubmitted to the same intent. `submit(accept="never")` keeps the proposal.
 The daemon preflights once, and a refused intent carries the same `refused` and
 `diagnostics` that `prepare()` reports; the program stamp is structured authoring provenance,
 not retained executable Python source. `ClaimTypeDraft.propose(...)` is a direct
@@ -2200,7 +2224,20 @@ binding, obtains current governance/challenge data, signs locally, and submits
 public approval; the approval that completes the candidate also activates it
 unless `hold=True`. A stale candidate recompiles: approval returns an
 `ActivationReceipt` directly when no approval is needed and the caller may
-activate, or `ProposalRecompiled` for the replacement proposal. The review token's
+activate, or `ProposalRecompiled` for the replacement proposal. Activation
+refuses `cruxible.approval.requirement_unsatisfied` until the approvals are
+in, also when the base moved, and changes nothing; acting again on an accepted
+proposal refuses `cruxible.proposal.already_accepted`. Approval and activation
+receipts name the proposal a landed one replaces in `readmits`, and while
+approvals remain the approval receipt names `required_signers` and
+`eligible_signers`. A signer registered after the proposal's base cannot sign
+the reviewed candidate: the daemon lands the proposal at the head, and
+`approve` raises `ApprovalReviewMismatch` naming the landed proposal to review
+and approve instead (a caller without approval rights gets
+`ApprovalSignerAfterBase`, `cruxible.approval.signer_after_base`, whose repair
+is the author's readmit). Approve, activate, readmit, and the transport's
+reject and withdraw need a named principal: a connection that names none
+refuses `cruxible.identity.principal_unconfigured`. The review token's
 `.details` returns a fresh copy. The token is not proof a
 human read it. A new process must review again. Wait methods return the last
 observed status at timeout; they do not throw a synthetic failure or retry writes.
@@ -2484,11 +2521,34 @@ status() -> api.CandidateStatusRecord
 wait_for_acceptance(*, timeout: Duration, poll_interval: Duration) -> api.CandidateStatusRecord
 ```
 
+Polls `status()` until the intent is accepted, terminal or superseded, or
+`timeout` passes, and returns the last status. `timeout` and `poll_interval`
+(like `Cruxible.next`'s `expiring_within`) are `cruxible_client.Duration`
+values, a whole number of microseconds: build one with `Duration.days(count=1)`,
+`Duration.hours(count=1)` or `Duration.microseconds(count=5_000_000)` (five
+seconds). A `datetime.timedelta` or an ISO 8601 string is not accepted.
+
 <a id="api-proposal"></a>
 
 ## `Proposal`
 
 Import: `cruxible_client.authoring.sdk.Proposal`. [Source](src/cruxible_client/authoring/sdk.py)
+
+`Proposal` reviews, approves, activates and readmits. It has no reject or
+withdraw: a reviewer rejects another actor's proposal with
+`CruxibleClient.reject_proposal(instance_id, proposal_id, reason=...)`, and
+the proposal's own actor withdraws it with
+`CruxibleClient.withdraw_proposal(...)` (the CLI's `proposal reject` and
+`proposal withdraw`). Open that transport with
+`CruxibleClient(socket_path=SOCKET, principal_id=YOUR_ID)`; `cruxible context
+show` prints the socket and the instance ID.
+
+To approve with a key on disk, open a `LocalEd25519ApprovalSigner` with the
+principal's registered public key as `expected_public_key`: 64 hex characters,
+as `cx.get("Principal:NAME").value.public_key` (or `cruxible get
+Principal:NAME`) shows it. The `.pub` file next to a key, in OpenSSH form
+(`ssh-ed25519 ...`), is not that form and is refused as a key that does not
+match the principal.
 
 <a id="api-proposal-review"></a>
 
@@ -2545,7 +2605,10 @@ approve(
 Sign this exact review with caller-configured custody. The approval that
 completes the candidate activates it in the same call (`receipt.activation`)
 when the caller may activate; `hold=True` signs only. `receipt.not_activated`
-says why nothing activated.
+says why nothing activated, and while approvals remain `receipt.required_signers`
+and `receipt.eligible_signers` say whose. A signer registered after the
+proposal's base raises `ApprovalReviewMismatch` naming the proposal the daemon
+landed at the head; review and approve that one.
 
 <a id="api-prediction"></a>
 
@@ -5162,7 +5225,7 @@ version() -> str
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-daemon_identity() -> tuple[str, str | None]
+daemon_identity(*, timeout: float | None = None) -> tuple[str, str | None]
 ```
 
 The daemon's version and the boot id of its process image, from `/version`. A
@@ -5781,6 +5844,27 @@ withdraw_proposal(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/withdraw'`.
+
+<a id="api-cruxibleclient-reject-proposal"></a>
+
+### `CruxibleClient.reject_proposal`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+reject_proposal(
+    instance_id: str,
+    proposal_id: str,
+    *,
+    reason: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.ProposalRejectResult
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/reject'`. A
+reviewer (`graph_write`) rejects another actor's open or stale proposal, as
+`cruxible proposal reject`; `Proposal` has no reject method.
 
 <a id="api-cruxibleclient-review-proposal"></a>
 
@@ -6442,6 +6526,38 @@ run_line(
 
 HTTP: `POST f'/api/v1/{instance_id}/lines/{line}/runs'`. One manual occurrence; see `Cruxible.line`.
 
+<a id="api-cruxibleclient-preview-runbook"></a>
+
+### `CruxibleClient.preview_runbook`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+preview_runbook(instance_id: str, runbook: str) -> RunbookPreview
+```
+
+What each step of an accepted Runbook can read, write, call, settle and
+propose, from accepted definitions only, as `cruxible runbook preview NAME`;
+nothing runs. HTTP: `GET f'/api/v1/{instance_id}/runbooks/{runbook}/preview'`.
+The `Cruxible` SDK has no Runbook method: call this on a `CruxibleClient`
+(`CruxibleClient(socket_path=SOCKET, principal_id=YOUR_ID)`, with the instance
+ID `cruxible context show` prints). The result is a typed model: walk
+`preview.steps`.
+
+<a id="api-cruxibleclient-run-runbook"></a>
+
+### `CruxibleClient.run_runbook`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+run_runbook(instance_id: str, runbook: str) -> RunbookRunResult
+```
+
+Runs an accepted Runbook now, step by step, each Line as your manual run, as
+`cruxible runbook run NAME`; it stops at the first step that fails or sends
+writes to review. HTTP: `POST f'/api/v1/{instance_id}/runbooks/{runbook}/runs'`.
+
 <a id="api-cruxibleclient-next"></a>
 
 ### `CruxibleClient.next`
@@ -6674,6 +6790,15 @@ add_kit(instance_id: str, request: KitAddRequest) -> KitChangeResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/kits'`.
+
+Installing a kit is a CLI step: the `Cruxible` SDK has no kit method. Run
+`cruxible kit add KIT_DIR` to preview and `cruxible kit add KIT_DIR --commit
+--at OID` to install; the CLI reads the kit directory, stages the bundled
+provider files and Document bodies in the daemon's body store, and installs
+the providers before the definitions. This method is that last call: its
+`KitAddRequest.bundle` comes from `read_kit_directory(path)` and must first
+pass through `stage_kit_providers(client, instance_id, bundle)` (both in
+`cruxible_client.kits`).
 
 <a id="api-cruxibleclient-build-kit"></a>
 
@@ -8003,7 +8128,7 @@ definitions singular.
 
 **`contracts.attestation_evidence`** — [ClaimAttestationEvidenceRequest](src/cruxible_client/contracts/attestation_evidence.py), [ClaimAttestationEvidenceResult](src/cruxible_client/contracts/attestation_evidence.py).
 
-**`contracts.authoring_landing`** — [AuthoringLanded](src/cruxible_client/contracts/authoring_landing.py), [AuthoringProposed](src/cruxible_client/contracts/authoring_landing.py).
+**`contracts.authoring_landing`** — [AuthoringLanded](src/cruxible_client/contracts/authoring_landing.py), [AuthoringProposed](src/cruxible_client/contracts/authoring_landing.py), [AuthoringRefused](src/cruxible_client/contracts/authoring_landing.py).
 
 **`contracts.backlinks`** — [BacklinksRequest](src/cruxible_client/contracts/backlinks.py), [BacklinksResult](src/cruxible_client/contracts/backlinks.py).
 

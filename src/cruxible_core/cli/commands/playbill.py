@@ -743,7 +743,9 @@ def attach_workspace(
     this one (an initialized host included, as long as a Git worktree is in its
     ledger's Git object format); a host registered to this folder gets the
     client config, and its ledger mirror is rebound: after `git init` in a plain
-    folder, attaching again turns the mirror on.
+    folder, attaching again turns the mirror on. An uninitialized host attaches
+    the same way; `cruxible init` in the folder then creates its ledger and the
+    world stub.
     """
 
     resolution = _local_workspace_root(required="cruxible workspace attach")
@@ -765,6 +767,7 @@ def attach_workspace(
     )
     assert isinstance(registration, contracts.HostWorkspaceRegistration)
     registered = registration.workspace_path
+    attached: contracts.HostWorkspaceAttachResult | None = None
     if registration.status != "registered" or (
         registered is not None and Path(registered).resolve(strict=False) == workspace
     ):
@@ -796,6 +799,9 @@ def attach_workspace(
             requested_workspace=str(workspace),
             registered_workspace=registered,
         )
+    # Every road that reaches here attached the folder (a host registered to
+    # another folder refused above).
+    assert attached is not None
     if dry_run:
         click.echo(f"{workspace} is already attached to Cruxible host {selected}; nothing changes")
         return
@@ -818,7 +824,10 @@ def attach_workspace(
         allow_local=False,
         command_name="cruxible workspace attach",
     )
-    _write_world_stub(workspace, selected)
+    # An uninitialized host has no accepted world to stub yet; `cruxible init`
+    # in this folder creates its ledger and writes the stub.
+    if attached.initialized:
+        _write_world_stub(workspace, selected)
     acting = _acting_principal_key_dir()
     identity_path = (
         None
@@ -853,6 +862,8 @@ def attach_workspace(
         click.echo(f"Folder identity: {identity_path} (agents started here act as {acting[0]})")
     if mirror is not None:
         click.echo(mirror)
+    if not attached.initialized:
+        click.echo(f"Host {selected} is not initialized yet; next: cruxible init")
 
 
 @workspace_group.command("detach")
@@ -1922,9 +1933,26 @@ def set_ledger_mirror(
         return
     click.echo(f"Ledger mirror: {result.mirror_url}")
     click.echo(f"Publication: {result.status}")
-    if result.detail is not None:
-        click.echo(f"Detail: {printable(result.detail)}")
+    _echo_publication_detail(result.detail)
     echo_preview_next(result.status, result.coordinate)
+
+
+def _echo_publication_detail(detail: str | None) -> None:
+    """Print a publication detail (git's own error text) with its real line breaks.
+
+    Each line is indented under ``Detail:`` and escaped, so a remote's message
+    keeps its shape but cannot pass for a line of this command's own output.
+    """
+
+    if detail is None:
+        return
+    lines = [line for line in detail.splitlines() if line.strip()]
+    if len(lines) <= 1:
+        click.echo(f"Detail: {printable(lines[0] if lines else detail)}")
+        return
+    click.echo("Detail:")
+    for line in lines:
+        click.echo(f"  {printable(line)}")
 
 
 @ledger_group.command("publish")
@@ -1933,7 +1961,11 @@ def set_ledger_mirror(
 @json_option
 @handle_errors
 def ledger_publish(timeout: float, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Wait for publication to the configured mirror; timeout 0 only requests it."""
+    """Wait for publication to the configured mirror; timeout 0 only requests it.
+
+    Exits 1 when publication ends behind (the attempt failed): the mirror does
+    not hold the accepted ledger.
+    """
 
     result = _server_call(
         lambda client, instance_id: client.publish_ledger(
@@ -1943,17 +1975,18 @@ def ledger_publish(timeout: float, dry_run: bool | None, at: str | None, output_
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"Publication: {result.status}")
-    if result.wait_sequence is not None:
-        acknowledged = result.published_sequence >= result.wait_sequence
-        click.echo(
-            f"Request {result.wait_sequence}: "
-            f"{'acknowledged' if acknowledged else 'awaiting acknowledgment'}"
-        )
-    if result.detail is not None:
-        click.echo(f"Detail: {printable(result.detail)}")
-    echo_preview_next(result.status, result.coordinate)
+    else:
+        click.echo(f"Publication: {result.status}")
+        if result.wait_sequence is not None:
+            acknowledged = result.published_sequence >= result.wait_sequence
+            click.echo(
+                f"Request {result.wait_sequence}: "
+                f"{'acknowledged' if acknowledged else 'awaiting acknowledgment'}"
+            )
+        _echo_publication_detail(result.detail)
+        echo_preview_next(result.status, result.coordinate)
+    if result.status == "behind":
+        raise SystemExit(1)
 
 
 @playbill_group.group("provider")
@@ -2277,6 +2310,13 @@ def _kit_plan_heading(kind: str) -> str:
     return kind[:1].upper() + kind[1:]
 
 
+def _exit_if_kit_blocked(result: KitChangeResult) -> None:
+    """A commit that was blocked changed nothing: exit 1 (a blocked preview is an answer)."""
+
+    if result.status == "blocked":
+        raise SystemExit(1)
+
+
 def _echo_kit_change(
     result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
 ) -> None:
@@ -2351,7 +2391,8 @@ def _echo_kit_change(
                     f"Next: cruxible proposal approve {result.proposal_id} "
                     "--signer-id ID --key FILE (the approval that completes it activates it)"
                 )
-            else:
+            elif result.detail is None:
+                # Otherwise the detail already names who activates it.
                 click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
     echo_preview_next(result.status, result.coordinate)
 
@@ -2581,6 +2622,7 @@ def add_kit(
             template_on_disk=_kit_directory_file(kit, result.automation_template),
             source=_pull_reference(kit, origin),
         )
+    _exit_if_kit_blocked(result)
 
 
 @kit_group.command("pull")
@@ -2731,6 +2773,7 @@ def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: b
         _emit_json(result.model_dump(mode="json"))
     else:
         _echo_kit_change(result)
+    _exit_if_kit_blocked(result)
 
 
 @playbill_group.group("document")
@@ -3255,24 +3298,30 @@ def approve_proposal(
         if key is None:
             raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        # A signer registered after the proposal's base cannot sign its candidate;
+        # the challenge then lands it at the head and names the landed proposal.
+        challenge = client.prepare_approval(
+            instance_id, resolved_id, signer_id=resolved_signer, include_body=True
+        )
         summary = None
         if shows_summary:
-            page = client.review_proposal(instance_id, resolved_id, groups=False)
+            page = client.review_proposal(instance_id, challenge.proposal_id, groups=False)
             assert isinstance(page, contracts.ProposalReviewSummary)
             summary = page
-        return (
-            resolved_id,
-            client.prepare_approval(
-                instance_id, resolved_id, signer_id=resolved_signer, include_body=True
-            ),
-            key,
-            summary,
-        )
+        return resolved_id, challenge, key, summary
 
     resolved_id, challenge, key, summary = _server_call(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
+    if challenge.proposal_id != resolved_id:
+        if not output_json:
+            click.echo(
+                f"Landed at the head as {challenge.proposal_id}: the same change set "
+                f"(proposed as {resolved_id}, before {resolved_signer} was registered); "
+                "signing it"
+            )
+        resolved_id = challenge.proposal_id
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
     if not output_json:
         if full:
@@ -3344,8 +3393,16 @@ def approve_proposal(
         _echo_activation(result)
         return
     click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
+    if result.readmits is not None:
+        click.echo(_replaces_line(result.proposal_id, result.readmits))
     for line in _approval_outcome_lines(result):
         click.echo(line)
+
+
+def _replaces_line(proposal_id: str, source_id: str) -> str:
+    """A readmission's receipt names the proposal it replaces, which is the one reviewed."""
+
+    return f"{proposal_id} replaces {source_id} (readmitted at the head); act on {proposal_id}"
 
 
 def _landed_same_change_set(result: contracts.ProposalApprovalResult) -> str | None:
@@ -3431,8 +3488,9 @@ def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
     if receipt.not_activated == "approvals_remaining":
         count = receipt.approvals_remaining
         return [
-            f"Awaiting {count} more approval{'s' if count != 1 else ''}; the approval "
-            "that completes it activates it"
+            f"Awaiting {count} more approval{'s' if count != 1 else ''}"
+            f"{_awaiting_whom(receipt)}; the approval that completes it activates it",
+            *(f"Next: {step}" for step in _awaiting_approve_steps(receipt)),
         ]
     if receipt.not_activated == "held":
         return [f"Held: not activated. Next: cruxible proposal activate {proposal}"]
@@ -3447,6 +3505,30 @@ def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
             f"Next: cruxible proposal readmit {proposal}"
         ]
     return []
+
+
+def _awaiting_whom(receipt: contracts.ApprovalReceipt) -> str:
+    """Whose signatures are outstanding, as the receipt names them."""
+
+    parts = [f"{signer} must sign" for signer in receipt.required_signers]
+    others = receipt.approvals_remaining - len(receipt.required_signers)
+    if others and receipt.eligible_signers:
+        parts.append(f"{others} from: {', '.join(receipt.eligible_signers)}")
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
+def _awaiting_approve_steps(receipt: contracts.ApprovalReceipt) -> list[str]:
+    """The approve command for each outstanding signer the receipt names."""
+
+    proposal = receipt.proposal_id
+    steps = [
+        f"cruxible proposal approve {proposal} --signer-id {signer} --key FILE"
+        for signer in receipt.required_signers
+    ]
+    if receipt.approvals_remaining > len(receipt.required_signers):
+        signer = receipt.eligible_signers[0] if len(receipt.eligible_signers) == 1 else "ID"
+        steps.append(f"cruxible proposal approve {proposal} --signer-id {signer} --key FILE")
+    return steps
 
 
 @proposal_group.command("activate")
@@ -3498,6 +3580,8 @@ def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -
 
 
 def _echo_activation(result: contracts.ActivationReceipt) -> None:
+    if result.readmits is not None:
+        click.echo(_replaces_line(result.proposal_id, result.readmits))
     if result.status == "accepted" and result.accepted_coordinate is not None:
         click.echo(f"accepted ({result.accepted_coordinate.git_oid[:12]}) by {result.activated_by}")
         click.echo("next: cruxible next")
@@ -4029,6 +4113,7 @@ def add_principal(
         )
         # The actor's own signature completes a lifecycle candidate, so the
         # approval activates it unless more approvals are required.
+        outcome.approval = approval if isinstance(approval, contracts.ApprovalReceipt) else None
         outcome.activated = (
             isinstance(approval, contracts.ApprovalReceipt)
             and approval.activation is not None
@@ -4109,6 +4194,7 @@ class _PrincipalAddOutcome:
     signer_id: str | None = None
     activated: bool = False
     credential: contracts.RuntimeCredentialResult | None = None
+    approval: contracts.ApprovalReceipt | None = None
 
 
 def _admitted_proposal_id(proposed: contracts.ProposalInspection) -> str | None:
@@ -4151,12 +4237,18 @@ def _principal_add_next_steps(
         ]
     signer = outcome.signer_id or "YOUR_PRINCIPAL_ID"
     steps = []
-    if outcome.signer_id is None:
+    approval = outcome.approval
+    if approval is not None and approval.not_activated == "approvals_remaining":
+        # Signed, but more signatures are required: activating now would refuse.
+        steps.extend(_awaiting_approve_steps(approval))
+    elif outcome.signer_id is None:
         steps.append(
             f"cruxible proposal approve {outcome.proposal_id} --signer-id {signer} "
             "--key YOUR_PRIVATE_KEY"
         )
-    steps.append(f"cruxible proposal activate {outcome.proposal_id}")
+        steps.append(f"cruxible proposal activate {outcome.proposal_id}")
+    else:
+        steps.append(f"cruxible proposal activate {outcome.proposal_id}")
     steps.append(
         f"with daemon auth on: cruxible credential mint --principal-id {principal_id} "
         f"--key-dir {custody} --mode {permission_mode} (writes the token into "
@@ -4259,7 +4351,7 @@ def _principal_successor(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_proposal(result, result.lint)
+        _echo_proposal(result, result.lint, principal_change=True)
 
 
 @principal_group.command("rotate")
@@ -4356,7 +4448,7 @@ def revoke_principal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_proposal(result, result.lint)
+        _echo_proposal(result, result.lint, principal_change=True)
 
 
 @playbill_group.group("claim-type")
@@ -4557,9 +4649,16 @@ def _claim_type_lint_meaning(code: str) -> str:
 
 
 def _echo_proposal(
-    inspection: contracts.ProposalInspection, lint: contracts.ClaimTypeProposalLint | None
+    inspection: contracts.ProposalInspection,
+    lint: contracts.ClaimTypeProposalLint | None,
+    *,
+    principal_change: bool = False,
 ) -> None:
-    """A proposal in a few lines; ``--json`` carries the whole record."""
+    """A proposal in a few lines; ``--json`` carries the whole record.
+
+    A principal change never lands on submit: it needs its proposer's own
+    signature, so its next line is that approval.
+    """
 
     admission = inspection.proposal.get("admission") or {}
     evaluation = inspection.proposal.get("evaluation") or {}
@@ -4580,8 +4679,20 @@ def _echo_proposal(
             f"lint: {warning.code} at {warning.field_path}{contract}"
             + _claim_type_lint_meaning(warning.code)
         )
+    actor = admission.get("actor_id") if isinstance(admission, Mapping) else None
     if inspection.outcome is not None:
         _echo_landing(inspection.outcome)
+    elif (
+        proposal_id
+        and principal_change
+        and verdict == "candidate"
+        and isinstance(actor, str)
+        and not inspection.status.startswith("would")
+    ):
+        click.echo(
+            f"next: cruxible proposal approve {proposal_id} --signer-id {actor} --key FILE "
+            "(a principal change needs its proposer's own signature)"
+        )
     elif proposal_id:
         click.echo(f"next: cruxible get {proposal_id}")
     echo_preview_next(inspection.status, inspection.accepted_coordinate)
@@ -5479,32 +5590,37 @@ def submit_authoring_intent(
 
     submitted = _server_call(call, command_name="cruxible authoring submit")
     outcome = submitted.outcome
-    refused = (
-        not isinstance(outcome, contracts.AuthoringLanded) and outcome.reason == "preflight_refused"
-    )
+    refused = isinstance(outcome, contracts.AuthoringRefused)
     if output_brief or (refused and not output_json):
         if isinstance(outcome, contracts.AuthoringLanded):
-            landed = True
-            coordinate = outcome.accepted_coordinate.git_oid
+            headline = "accepted"
+            coordinate: str | None = outcome.accepted_coordinate.git_oid
             reason = None
             next_command = _landed_line_next(submitted.members)
         else:
-            landed = False
+            headline = (
+                f"refused ({outcome.reason})"
+                if isinstance(outcome, contracts.AuthoringRefused)
+                else f"submitted ({submitted.status.state})"
+            )
             coordinate = None
             reason = outcome.message
             next_command = outcome.next
         _emit_brief(
-            outcome="accepted" if landed else f"submitted ({submitted.status.state})",
+            outcome=headline,
             ids={
                 "intent": str(submitted.intent.get("intent_id")),
-                "proposal": outcome.proposal_id,
+                "proposal": getattr(outcome, "proposal_id", None),
                 "coordinate": coordinate,
             },
             reason=_submit_refusal_reason(submitted) or reason,
             next_command=next_command,
         )
-        return
-    _emit_json(submitted.model_dump(mode="json"))
+    else:
+        _emit_json(submitted.model_dump(mode="json"))
+    if refused:
+        # Nothing was proposed: a script reading the exit code must not see success.
+        raise click.exceptions.Exit(1)
 
 
 def _landed_line_next(members: Sequence[Mapping[str, Any]]) -> str | None:
@@ -6722,11 +6838,13 @@ def repin_projection(
 ) -> None:
     """Stamp one block's marker from its backings and declare it to the instance.
 
-    The client reads the backings and computes the stamp, rewrites the opening
-    marker and then declares the block, creating its registration the first
-    time. The authored body is kept as written, unless ``--render`` writes it
-    from the block's one query backing (a table, or a list when the query
-    projects no fields).
+    FILE is the page: its workspace path or its file catalog name. The client
+    reads the backings and computes the stamp, rewrites the opening marker and
+    then declares the block, creating its registration the first time. The
+    authored body is kept as written, unless ``--render`` writes it from the
+    block's one query backing (a table, or a list when the query projects no
+    fields). A body that is still its query's rendering is rendered again, so
+    a repin never stamps an old table current.
     """
 
     if (clear_claims and claims) or (clear_queries and queries) or (clear_artifacts and artifacts):
@@ -6914,14 +7032,15 @@ def _echo_block_sync(result: BlockSyncResult, *, output_json: bool) -> None:
         suffix = "" if item.reason is None else f":{item.reason}"
         click.echo(f"{target}: {item.outcome}{suffix}")
         if item.repair is not None:
-            click.echo(f"  repair: {_block_repair_line(item.repair)}")
+            click.echo(f"  repair: {_block_repair_line(item.repair, path=item.path)}")
 
 
-def _block_repair_line(repair: Any) -> str:
+def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
     """A block repair as the command that performs it, in the files vocabulary.
 
     The served arguments keep their wire names (``source_id`` is the catalog
-    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``.
+    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``, naming
+    the page by ``path`` (the workspace path people read and type) when known.
     """
 
     if not isinstance(repair, RepairOperation):
@@ -6929,7 +7048,7 @@ def _block_repair_line(repair: Any) -> str:
     values = repair.arguments
     operation = normalize_code(repair.operation)
     if operation == "cruxible.block.repin":
-        file, block = values.get("source_id"), values.get("block_id")
+        file, block = path or values.get("source_id"), values.get("block_id")
         if not isinstance(file, str) or not isinstance(block, str):
             return render_served_repair(repair)
         parts = ["cruxible block repin", shlex.quote(file), shlex.quote(block)]
@@ -9206,7 +9325,10 @@ def curation_overrule(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Close an item as not applying here, permanently: its pattern is never raised again."""
+    """Close an item as not applying here, permanently: its pattern is never raised again.
+
+    It cannot be undone, so it previews by default; commit with ``--commit --at OID``.
+    """
 
     result = _server_call(
         lambda client, instance_id: client.overrule_curation(

@@ -342,16 +342,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:f537406e1e88e7a0d5ebd1950156c03723dff0569fe29a1a7fa41585c8823680"
+    expected = "sha256:5b1e93a005c680b1709f9c58c6fba03ef8ff87f9ec4b38b1b7fab6fb04891be8"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 72,
+            "semantic_revision": 73,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "one-capture-per-citation",
+            "revision_name": "retiring-query-traversal",
         },
     )
     assert computed == expected
@@ -396,8 +396,8 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "one-capture-per-citation"
-    assert compiler_revision_label(CURRENT_COMPILER) == "one-capture-per-citation"
+    assert CURRENT_COMPILER_REVISION == "retiring-query-traversal"
+    assert compiler_revision_label(CURRENT_COMPILER) == "retiring-query-traversal"
     for earlier_digest in (
         # Revision 71: before located own words were one Capture (a coordinator
         # self-source plus a second working-selection Capture locating it).

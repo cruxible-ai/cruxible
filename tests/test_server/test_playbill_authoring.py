@@ -786,3 +786,24 @@ def test_http_submit_forwards_accept(playbill_http, monkeypatch, entrypoint, acc
     assert response.status_code == 200, response.text
     assert seen == [accept]
     assert response.json()["outcome"]["status"] == "proposed"
+
+
+@pytest.mark.parametrize("intent_id", ["AIT-" + "0" * 32, "nope"])
+def test_http_intent_routes_refuse_an_unknown_intent_typed(playbill_http, intent_id):
+    """gapc-22: every intent route answers an unknown id 404 with a code and repair."""
+
+    client, instance_id, _ = playbill_http
+    base = f"/api/v1/{instance_id}/authoring/intents/{intent_id}"
+    responses = (
+        client.get(base),
+        client.get(f"{base}/status"),
+        client.post(
+            f"{base}/preflight", json={"tag": "playbill-authoring-intent-preflight-request-v1"}
+        ),
+        client.post(f"{base}/submit", json={"tag": "playbill-authoring-intent-submit-request-v1"}),
+    )
+    for response in responses:
+        assert response.status_code == 404, response.text
+        body = response.json()
+        assert body["error_code"] == "cruxible.authoring.intent_not_found"
+        assert body["repair"] == {"operation": "cruxible.authoring.list", "arguments": {}}

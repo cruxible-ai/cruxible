@@ -129,8 +129,9 @@ def test_protocol_permission_tier_hides_and_refuses_write(
     names, is_error, message = _run(exercise())
     assert "cruxible_body_store" not in names
     assert is_error
-    assert "GOVERNED_WRITE" in message
-    assert "READ_ONLY" in message
+    assert message.startswith("cruxible.mcp.mode_insufficient:")
+    assert "needs the governed_write tier" in message
+    assert "this MCP server runs at read_only (CRUXIBLE_MODE)" in message
 
 
 def test_unknown_allowlist_name_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -42,6 +42,9 @@ from cruxible_core.mcp.wire_tags import (
 )
 from cruxible_core.server.config import resolve_server_settings
 
+#: A tool this server's own tier cap (``CRUXIBLE_MODE``) leaves unserved.
+MODE_INSUFFICIENT_CODE = "cruxible.mcp.mode_insufficient"
+
 BASE_INSTRUCTIONS = """\
 Cruxible holds typed shared state and evidence. Start with cruxible_orient's small
 index; expand only relevant kinds or sections. ClaimType descriptions and linked
@@ -92,9 +95,12 @@ def _uncurated_tool_message(
 ) -> str:
     required = TOOL_PERMISSIONS.get(name)
     if required is not None and mode < required:
+        needed = required.name.lower()
         return (
-            f"Tool '{name}' requires transport tier {required.name}; "
-            f"this server runs at {mode.name}."
+            f"{MODE_INSUFFICIENT_CODE}: tool '{name}' needs the {needed} tier; this MCP "
+            f"server runs at {mode.name.lower()} (CRUXIBLE_MODE), so it does not serve it. "
+            f"Repair: set CRUXIBLE_MODE={needed} (or higher) in this MCP server's "
+            "environment and restart it, or ask someone whose server serves it to run it."
         )
     return (
         f"Tool '{name}' is excluded by MCP profile '{curation.profile}'. "

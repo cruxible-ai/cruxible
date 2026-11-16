@@ -522,13 +522,39 @@ cruxible kit remove car-parts                 # preview
 cruxible kit remove car-parts --commit --at <oid>
 ~~~
 
-Removing retires the definitions the kit owns. It does not retire what the kit
-carried in from elsewhere, nor its provider packages. A definition you edited
-since install must be reverted or retired on its own first, and removal is
-refused while live Claims or other definitions still depend on what it would
-retire, or while an installed kit requires the kit
-(`cruxible.kit.remove_required`). Like `kit add`, it lands at once when the
-approval policy requires no approval and otherwise stops at a proposal.
+Removing retires the definitions the kit owns: its ClaimTypes, SubjectKinds,
+CaptureContracts, QueryDefinitions and Procedures. It does not retire what the
+kit carried in from elsewhere, nor its provider packages. Some owned
+definitions stay accepted, each with its reason on the preview's `keep` line:
+Contracts and capabilities (their versions are immutable), Documents (they have
+no retired state), and the endpoint ClaimTypes of a pair kind (a pair kind's
+endpoints are fixed for life; the security kit keeps six). A definition you
+edited since install must be reverted or retired on its own first, and removal
+is refused while an installed kit requires the kit
+(`cruxible.kit.remove_required`).
+
+Removal is also refused while live Claims or definitions you authored (Lines,
+Mandates, Triggers, Runbooks over the kit's Procedures) still depend on what it
+would retire. The refusal counts the dependents by kind (Claims grouped by
+ClaimType), names a few, and gives the repair: retire the automation you
+authored in one authored change, retire the Claims one Subject at a time
+(`cruxible retire KIND/ID --with-claims --because TEXT`), then preview the
+removal again; or keep the kit. `kit remove` has no option that retires Claims,
+so an instance that has recorded many Claims under a kit in practice keeps it.
+
+A blocked removal records nothing: the commit checks the removal at the head
+its preview was pinned to and submits only what passes, and the command exits
+1; if the head moved since the preview, it refuses `cruxible.preview.state_moved`
+before checking. A blocked preview is still an answer and exits 0. Like `kit add`, a removal
+that passes lands at once when the approval policy requires no approval and
+the request's tier may activate (`graph_write`), and otherwise stops at a
+proposal. Below `graph_write` (an MCP server capped by `CRUXIBLE_MODE`, say),
+`kit add` and `kit remove` stay proposed and the result says who can activate
+them.
+
+A removed kit cannot be added back: its retired definitions cannot be revived,
+so a later `kit add` of it refuses with a `revival_refused` code (for example
+`cruxible.capture_contract.revival_refused`).
 
 The base kit cannot be removed:
 

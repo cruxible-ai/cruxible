@@ -57,7 +57,7 @@ from cruxible_client.authoring.workspace import (
 from cruxible_client.compatibility import check_daemon_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
-from cruxible_client.contracts.authoring.models import BlockDetachResult
+from cruxible_client.contracts.authoring.models import BlockDetachResult, BlockSyncResult
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.backlinks import BacklinksResult
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
@@ -93,6 +93,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
+from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -103,6 +104,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.repairs import RepairOperation, hand_edit_repair
 from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
@@ -162,7 +164,11 @@ from cruxible_core.mcp.identity import (
     verified_folder_identity,
 )
 from cruxible_core.mcp.init import run_mcp_init
-from cruxible_core.mcp.permissions import check_permission
+from cruxible_core.mcp.permissions import (
+    PermissionMode,
+    check_permission,
+    get_capability_ceiling,
+)
 from cruxible_core.mcp.results import (
     McpConsoleResult,
     McpInitResult,
@@ -189,7 +195,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 _client_cache: CruxibleClient | None = None
-_client_cache_key: tuple[str | None, str | None, str | None, str | None] | None = None
+_client_cache_key: tuple[str | None, ...] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 _AUTHORING_INPUT: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
@@ -221,7 +227,8 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
     target = resolve_daemon_target()
     token = get_runtime_bearer_token()
     source, principal_id, candidate = local_identity(target=target, token=token)
-    cache_key = (target.server_url, target.server_socket, token, principal_id)
+    ceiling = _permission_ceiling()
+    cache_key = (target.server_url, target.server_socket, token, principal_id, ceiling)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
             if _client_cache is not None:
@@ -231,6 +238,7 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
                 socket_path=target.server_socket,
                 token=token,
                 principal_id=principal_id,
+                permission_ceiling=ceiling,
             )
             try:
                 # One /version request per client: a daemon on another contract
@@ -248,6 +256,19 @@ def _identity_and_client() -> tuple[McpIdentity, CruxibleClient]:
         return McpIdentity(source=source, principal_id=principal_id), client
     verified = verified_folder_identity(candidate, target=target, client=client)
     return McpIdentity(source="folder", principal_id=principal_id, folder=verified), client
+
+
+def _permission_ceiling() -> Literal["read_only", "governed_write", "graph_write"] | None:
+    """This server's ``CRUXIBLE_MODE`` cap, sent with every daemon request when below admin.
+
+    The daemon then serves each request at the lower of the cap and the
+    request's own authority, so a tool this server serves can have no effect a
+    hidden tool would (a write's activation, a run's effects): the cap is
+    authority, not only which tools are listed.
+    """
+
+    cap = get_capability_ceiling()
+    return None if cap >= PermissionMode.ADMIN else cast(Any, cap.name.lower())
 
 
 def _get_client() -> CruxibleClient:
@@ -607,8 +628,10 @@ def handle_playbill_approve(
         forbidden_roots=mcp_custody_forbidden_roots(),
     )
     attestation = key_signer.sign(statement)
+    # A signer registered after the proposal's base: the challenge landed it at
+    # the head, and the landed proposal is the one this signature is for.
     result = handle_playbill_submit_approval(
-        instance_id, proposal_id, attestation.model_dump(mode="json"), hold=hold
+        instance_id, challenge.proposal_id, attestation.model_dump(mode="json"), hold=hold
     )
     if (
         isinstance(result, contracts.ProposalRecompiled)
@@ -692,12 +715,48 @@ def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
     else:
         # A folder record that cannot be used refuses here, before whoami answers.
         source = "folder" if _folder_identity() is not None else "none"
+    identity = _playbill_whoami(instance_id)
+    cap = get_capability_ceiling()
+    # The daemon answers at this server's cap already (`_permission_ceiling`).
+    effective = min(PermissionMode[identity.credential_permission_mode.upper()], cap)
+    refusal = identity.authoring_refusal
+    if cap < PermissionMode.GOVERNED_WRITE and (
+        identity.can_author
+        or (refusal is not None and refusal.code == "cruxible.identity.permission_insufficient")
+    ):
+        # It is this server's cap that stops authoring, so the repair is the
+        # cap's, not a new credential.
+        identity = identity.model_copy(
+            update={"can_author": False, "authoring_refusal": _mode_cap_refusal(cap)}
+        )
     return McpWhoAmIResult(
         instance_id=instance_id,
         adapter_version=__version__,
         daemon_version=_daemon_version(),
-        identity=_playbill_whoami(instance_id),
+        identity=identity,
         identity_source=source,
+        mode_cap=cast(Any, cap.name.lower()),
+        effective_permission_mode=cast(Any, effective.name.lower()),
+    )
+
+
+def _mode_cap_refusal(cap: PermissionMode) -> AuthoringRefusal:
+    """Why a server capped below governed_write cannot author, and how to lift the cap."""
+
+    code: Literal["cruxible.identity.permission_insufficient"] = (
+        "cruxible.identity.permission_insufficient"
+    )
+    change = (
+        "set CRUXIBLE_MODE=governed_write (or higher) in this MCP server's environment "
+        "(the env block of the MCP client config) and restart it"
+    )
+    return AuthoringRefusal(
+        code=code,
+        detail=(
+            f"this MCP server runs at {cap.name.lower()} (CRUXIBLE_MODE), and authoring "
+            f"needs governed_write; repair: {change}"
+        ),
+        repair=hand_edit_repair(code, required_change=change),
     )
 
 
@@ -1314,13 +1373,13 @@ def handle_playbill_block_repin(
 ) -> BlockRepinResult:
     """Repin one projection block adapter-side: this process computes the stamp (Q17).
 
-    The block is named by its file catalog entry. The SDK reads the page and
-    its backings, rewrites the marker and declares the block.
+    The page is named by its workspace path or its file catalog entry. The SDK
+    reads the page and its backings, rewrites the marker and declares the block.
     """
 
     root = mcp_workspace_root()
     sources = WorkspaceFiles(root)
-    source_id = file
+    source_id = sources.file_name(file)
     path = sources.path_for_file(source_id)
     stamp = _daemon_call(
         lambda client: repin_projection_block(
@@ -1352,6 +1411,45 @@ def handle_playbill_block_repin(
     )
 
 
+#: Each block repair's wire arguments renamed to the MCP tool's own parameters,
+#: so a repair is a call an agent makes as written. A wire argument the tool has
+#: no parameter for is left out (a successor ambiguity's candidates stay in the
+#: row's detail, where the caller picks the one ``backing_digest`` names).
+_MCP_BLOCK_REPAIR_ARGUMENTS: Mapping[str, Mapping[str, str]] = {
+    "cruxible.block.repin": {"source_id": "file", "block_id": "block", "claim": "claims"},
+    "cruxible.block.depublish": {"source_id": "file_id", "block_id": "block_id"},
+    "cruxible.block.sync": {"all": "all_files", "paths": "files"},
+    "cruxible.block.detach": {"paths": "files"},
+}
+
+
+def _mcp_block_repair(repair: object) -> object:
+    if not isinstance(repair, RepairOperation):
+        return repair
+    names = _MCP_BLOCK_REPAIR_ARGUMENTS.get(repair.operation)
+    if names is None:
+        return repair
+    arguments = {names[key]: value for key, value in repair.arguments.items() if key in names}
+    if repair.operation == "cruxible.block.repin" and repair.arguments.get("clear_claims"):
+        arguments["claims"] = []
+    return repair.model_copy(update={"arguments": arguments})
+
+
+def _mcp_block_sync_result(result: BlockSyncResult) -> BlockSyncResult:
+    """The sync rows with each repair spelled in this surface's tool arguments."""
+
+    return result.model_copy(
+        update={
+            "items": tuple(
+                item
+                if item.repair is None
+                else item.model_copy(update={"repair": _mcp_block_repair(item.repair)})
+                for item in result.items
+            )
+        }
+    )
+
+
 def handle_playbill_block_sync(
     instance_id: str,
     *,
@@ -1366,11 +1464,13 @@ def handle_playbill_block_sync(
 
     root = mcp_workspace_root()
     paths = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
-    return _daemon_call(
-        lambda client: sync_projection_blocks(
-            client, instance_id, workspace=root, paths=paths, all_files=all_files
-        ),
-        operation_name="cruxible_block_sync",
+    return _mcp_block_sync_result(
+        _daemon_call(
+            lambda client: sync_projection_blocks(
+                client, instance_id, workspace=root, paths=paths, all_files=all_files
+            ),
+            operation_name="cruxible_block_sync",
+        )
     )
 
 
@@ -1394,12 +1494,13 @@ def handle_playbill_block_detach(
         raise DataValidationError("name at least one page to detach retired blocks from")
     root = mcp_workspace_root()
     pages = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
-    return _daemon_call(
+    detached = _daemon_call(
         lambda client: detach_projection_pages(
             client, instance_id, root=root, pages=pages, dry_run=dry_run, at=at
         ),
         operation_name="cruxible_block_detach",
     )
+    return detached.model_copy(update={"sync": _mcp_block_sync_result(detached.sync)})
 
 
 def handle_playbill_block_depublish(

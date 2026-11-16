@@ -61,17 +61,21 @@ def _short_claim(claim: str) -> str:
     return claim[:CLAIM_LINE_ID_CHARS] if claim.startswith("CLM-") else claim
 
 
-def _cut_hint(length: int, claim: str | None) -> str:
+def _cut_hint(length: int, claim: str | None, *, whole_in_json: bool = False) -> str:
     """Where the whole value is: the Claim's evidence read when the Claim is known.
 
     A Subject card takes no ``--detail evidence``, so a hint that names only the
     flag is runnable only on the Claim's own card; naming the Claim keeps it
-    runnable wherever the value is shown.
+    runnable wherever the value is shown. A value cut only for width (a long
+    list of short values, say several Claims' values in one field) is whole in
+    the read's ``--json``, which every read takes.
     """
 
-    if claim is None:
-        return f" ({length} chars; --detail evidence for all)"
-    return f" ({length} chars; cruxible get {_short_claim(claim)} --detail evidence)"
+    if claim is not None:
+        return f" ({length} chars; cruxible get {_short_claim(claim)} --detail evidence)"
+    if whole_in_json:
+        return f" ({length} chars; --json for all)"
+    return f" ({length} chars; --detail evidence for all)"
 
 
 def get_value_display(
@@ -87,7 +91,8 @@ def get_value_display(
     it. Exact-content markers name unavailable text and are never shortened; a
     ``TruncatedText`` preview always reads as cut. A cut names the read of the
     whole value: the preview's own ``read_whole`` Claim, else ``claim`` (the
-    Claim behind the shown value), else the bare ``--detail evidence`` flag.
+    Claim behind the shown value), else ``--json`` for a value cut only for width
+    and the bare ``--detail evidence`` flag for a preview.
     """
     value = _shown(value)
     if isinstance(value, TruncatedText):
@@ -108,7 +113,7 @@ def get_value_display(
     shown = printable(text)
     if len(shown) <= width:
         return GetValueDisplay(shown)
-    hint = _cut_hint(len(text), claim) if evidence_hint else ""
+    hint = _cut_hint(len(text), claim, whole_in_json=True) if evidence_hint else ""
     return GetValueDisplay(f"{shown[: width - 1]}…{hint}", True)
 
 

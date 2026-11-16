@@ -173,6 +173,39 @@ def test_whoami_without_instance_id_reports_the_configured_instance(
     assert client.whoami_calls == ["inst_env"]
 
 
+@pytest.mark.parametrize(
+    ("cap", "effective", "can_author"),
+    [("read_only", "read_only", False), ("graph_write", "governed_write", True)],
+)
+def test_whoami_shows_this_servers_cap_and_the_effective_tier(
+    monkeypatch: pytest.MonkeyPatch, cap: str, effective: str, can_author: bool
+) -> None:
+    """gapa-06: under CRUXIBLE_MODE the daemon still answers for the credential
+    (governed_write here); whoami shows this server's cap, the lower of the two, and
+    that a server capped below governed_write cannot author, with the repair."""
+
+    from cruxible_core.runtime.permissions import reset_permissions
+
+    monkeypatch.setenv("CRUXIBLE_INSTANCE_ID", "inst_env")
+    monkeypatch.setenv("CRUXIBLE_MODE", cap)
+    reset_permissions()
+    monkeypatch.setattr(handlers, "_get_client", lambda: _ScopedClient())
+    try:
+        result = handlers.handle_playbill_whoami("inst_env")
+    finally:
+        reset_permissions()
+
+    assert (result.mode_cap, result.effective_permission_mode) == (cap, effective)
+    assert result.identity.credential_permission_mode == "governed_write"
+    assert result.identity.can_author is can_author
+    if not can_author:
+        refusal = result.identity.authoring_refusal
+        assert refusal is not None
+        assert refusal.code == "cruxible.identity.permission_insufficient"
+        assert "this MCP server runs at read_only (CRUXIBLE_MODE)" in refusal.detail
+        assert "CRUXIBLE_MODE=governed_write" in refusal.repair.hand_edit.required_change  # type: ignore[union-attr]
+
+
 def test_instance_tool_without_any_instance_fails_with_the_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

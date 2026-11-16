@@ -87,7 +87,7 @@ def _line(event: str, step: str, *, boot_id: str, **fields: object) -> str:
 class _Starting:
     """A lifecycle client whose new image never answers: it is still migrating."""
 
-    def daemon_identity(self) -> tuple[str, str | None]:
+    def daemon_identity(self, *, timeout: float | None = None) -> tuple[str, str | None]:
         raise ConnectionRefusedError("socket missing")
 
 

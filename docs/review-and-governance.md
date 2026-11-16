@@ -91,7 +91,7 @@ and leaves out values, verdicts, cited text, reasons and definition fields.
 An **approval** is a signature over that exact candidate, made with the
 approver's private key on their own machine; only the signature reaches the
 daemon. `proposal approve` prints the same review, then the approvals still
-required, and asks before signing (`--yes` signs without asking and prints one
+required (by name: who must sign, and who else may), and asks before signing (`--yes` signs without asking and prints one
 counts line). When an approval is the one the proposal still needed, and the
 approver may activate, the same command accepts it:
 
@@ -120,9 +120,14 @@ Held: not activated. Next: cruxible proposal activate sha256:93339c6f…
 
 If other changes were accepted after a proposal was checked, approving or
 activating recompiles it against the current state, as a fresh proposal that
-replaces the old one; approvals given to the old one don't carry over. If what
-it changes has itself moved in the meantime, it's refused, and `proposal
-readmit` rebases it as a new proposal to review. A stale field proposal from
+replaces the old one; approvals given to the old one don't carry over. The
+receipts name the old one (`readmits`), and the CLI says `NEW replaces OLD
+(readmitted at the head); act on NEW`. Activating a proposal whose approvals
+aren't in refuses first (`cruxible.approval.requirement_unsatisfied`, naming
+who may sign) and changes nothing. If what it changes has itself moved in the
+meantime, it's refused, and `proposal readmit` (by its author only) rebases it
+as a new proposal to review. Acting again on a proposal that was already
+accepted refuses `cruxible.proposal.already_accepted`. A stale field proposal from
 `claim-type propose` is readmitted rather than recompiled, and a stale
 `claim-type migrate` is run again from its preflight.
 
@@ -155,7 +160,12 @@ reviewer from `init --reviewer-key-dir`, or one `principal add` registers). It
 runs `proposal review ID`, then either `proposal approve ID`, which signs the
 exact candidate and, since nothing else is required, activates it, or
 `proposal activate ID`, which activates without a signature. It turns the
-change down with `proposal reject`:
+change down with `proposal reject`. A reviewer registered after the author
+wrote is absent at the proposal's base; its `proposal approve` lands the
+proposal at the head first (`Landed at the head as NEW ... before reviewer was
+registered`) and signs that, so nobody needs to readmit it. Every one of these
+acts needs a named principal: a session that names none refuses
+`cruxible.identity.principal_unconfigured`.
 
 ~~~text
 $ cruxible context use --principal reviewer

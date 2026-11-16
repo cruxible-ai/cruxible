@@ -36,9 +36,27 @@ split approval pair
 a signer outside the MCP process. `CRUXIBLE_MCP_TOOLS` (a comma-separated
 list) narrows the advertised set further to exactly those tools. Profiles and
 the list change discoverability only: the server's tier (`CRUXIBLE_MODE`, below)
-hides tools above it, and permission tiers still gate every call. There is no
+hides tools above it, and permission tiers still gate every call. Every tool
+not in the `default` list above is in `full` only, including `cruxible_init`,
+`cruxible_kit_add`, `cruxible_authoring_submit_file`, the Line, Runbook and
+inbox tools, `cruxible_capture_read`, `cruxible_proposal_readmit`,
+`cruxible_proposal_withdraw` and the vocabulary tools. An agent that will
+install a kit, submit an automation template or run automation needs
+`CRUXIBLE_MCP_PROFILE=full` in its MCP server's environment. There is no
 separate version tool: `cruxible_whoami` and `cruxible_server_info`
 both report the MCP adapter's package version and the daemon's (`GET /version`).
+
+**Argument names.** Each tool's schema (from `tools/list`) names its
+arguments, and some differ from the CLI flags. A preview-first tool commits
+only with `dry_run: false` (with `at`, the preview's git oid, where it takes
+one); there is no `commit` argument, so `cruxible_kit_add` previews (status
+`would_propose`) until `dry_run` is `false`. `cruxible_kit_remove` and
+`cruxible_capture_read` take their arguments nested under `request`.
+`cruxible_runbook_preview` and `cruxible_runbook_run` take the Runbook's name as
+`runbook`. Today a tool ignores an argument its schema does not declare instead
+of refusing it: a misspelled argument (`commit: true`, `name: ...`) does
+nothing, and the call runs with its defaults or reports the real argument
+missing. Check the result's status.
 
 ## The daemon
 
@@ -155,6 +173,11 @@ server's environment; no tool argument can name a key path. The tool signs as
 `signer_id`, or as the directory's only key when `signer_id` is omitted, and
 passing the reviewed `candidate_digest` makes it refuse a candidate that
 changed since review. Unset, the tool refuses and says how to configure it.
+Set `CRUXIBLE_PRINCIPAL_ID` beside it: the key directory makes the
+environment the identity source, so with no principal ID the server's
+requests name no principal, and submitting the approval refuses
+`cruxible.identity.principal_unconfigured` (as do activate, reject, withdraw
+and readmit).
 Only the public attestation leaves the process; key bytes never appear in a
 result or a log line.
 
@@ -189,7 +212,7 @@ that starts reaching one more operation moves the pin.
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
 | `cruxible_init` | Make the workspace folder an instance over the local daemon socket, as `cruxible init`: create the host attached to the folder, the binding, the owner principal (`principal_id`, default your OS username) and its key in the default key directory outside the folder, and the folder identity record; this session then authors as the owner. An initialized folder reports its instance and changes nothing. Returns the instance, principal, key directory and approval policy, never key material | `ADMIN` |
 | `cruxible_console` | Open the read-only console for the instance in the user's browser: the same loopback listener `cruxible console` serves, run on a background thread of this MCP server (one per instance; it ends with the server, or `stop=true` stops it). The tool opens the one-time sign-in link itself and returns only the address `http://127.0.0.1:<port>/i/<instance>`; the link is never returned. When no browser can be opened (`browser_opened: false`), a listener the call started is stopped (`status: no_browser`) and `message` tells the user to run `cruxible console` in their own terminal, which prints the link to them only. A second call reuses the running listener and opens a fresh link | `READ_ONLY` |
-| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), and the adapter and daemon versions | `READ_ONLY` |
+| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), the server's `mode_cap` and `effective_permission_mode`, and the adapter and daemon versions | `READ_ONLY` |
 
 ## Host and providers
 
@@ -233,7 +256,7 @@ template is an authoring preview performed as the caller's principal.
 | `cruxible_kit_build` | Export the definitions under owned identity prefixes as one kit release; `providers` names provider packages staged with `cruxible_body_store`, bundled or (`delivery: index`) as a default installed by name (every Provider a carried Procedure pins must be named; pins to another installed kit's definitions are left out and recorded in `requires`) | `GOVERNED_WRITE` |
 | `cruxible_kit_status` | List installed kits, paths edited since install, kept divergences, provenance, provider packages with their delivery and install state, and (for registry kits) the latest available version (`offline` skips the check) | `READ_ONLY` |
 | `cruxible_kit_add` | Install or upgrade a kit by `reference` (a kit directory or layout the adapter reads, or a registry reference it pulls) or `bundle`; always proposes, `keep`/`keep_local_edits`/`retire_dependents`/`allow_downgrade` decide divergences; lands at once when policy requires no approval; a commit stages and installs bundled providers, and a default provider nothing here implements, first (`ADMIN` for the install); the result carries the kit's automation template text (`automation_template_content`) when the adapter holds the kit's files (any `reference`), never installed | `GOVERNED_WRITE` |
-| `cruxible_kit_remove` | Retire the definitions a kit owns (never what it only carried, nor its provider packages); a definition edited since install, or live Claims or definitions that depend on what it would retire, block it; lands at once when policy requires no approval | `GOVERNED_WRITE` |
+| `cruxible_kit_remove` | Retire the definitions a kit owns (never what it only carried, nor its provider packages); keeps Contracts, capabilities, Documents and pair-endpoint ClaimTypes; a definition edited since install, or live Claims or definitions that depend on what it would retire, block it, and the refusal counts them by kind with the repair; a blocked commit records nothing; arguments nested under `request` (`kit_id`, `dry_run`, `at`); lands at once when policy requires no approval | `GOVERNED_WRITE` |
 
 ## Documents and proposals
 
@@ -326,9 +349,9 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit_file` | Submit the authoring input file at a workspace-relative `path` (YAML or JSON, as `cruxible authoring submit FILE`), read beneath the workspace root without following a link, at most 1 MiB; `accept="never"` keeps the proposal | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_block_repin` | Stamp or refresh one projection block by its catalog `file` and `block`; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
-| `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page | `READ_ONLY` |
-| `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
+| `cruxible_block_repin` | Stamp or refresh one projection block by its page (`file`: the workspace path or the catalog name) and `block`; a block whose body is still its one query's rendering is rendered again; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
+| `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page; each row's repair names this server's tools and their arguments | `READ_ONLY` |
+| `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes; status `unchanged` when no block can be detached (the rows say why) | `GOVERNED_WRITE` |
 | `cruxible_block_depublish` | Release one block registration by `file_id`, the stored projection file identity; the file and catalog entry need not still exist | `GOVERNED_WRITE` |
 
 The daemon mints every identity, digest, base, timestamp, and proposal reference.
@@ -380,7 +403,7 @@ rules (`<call>.<field>` to `max_age`, `on_unavailable`, `on_stale`, ...).
 | `cruxible_line_disable` | Stop a Line admitting work on its own; admitted runs keep going. A stopped enablement returns `outcome: already_disabled`. | `GOVERNED_WRITE` |
 | `cruxible_line_run` | Run a Line once now as a manual occurrence under its own inputs, budgets, authority and mandate; it never consumes a Trigger. `event` is the event input for a Line whose Procedure takes one; an event its Triggers already admitted needs `repeat`. A Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
 | `cruxible_runbook_run` | Run an accepted Runbook now: its steps in order, each Line as your manual run and each action fired. It stops at the first step that fails or sends writes to review (a proposal); later steps report `not_run`. Each step is gated as its own Line run or action fire. | `READ_ONLY` |
-| `cruxible_runbook_preview` | What each Runbook step can read, write, call, settle, propose and set off, and its order problems, from accepted definitions only: nothing runs and no outcome is predicted. | `READ_ONLY` |
+| `cruxible_runbook_preview` | (`runbook`: the Runbook's name) What each Runbook step can read, write, call, settle, propose and set off, and its order problems, from accepted definitions only: nothing runs and no outcome is predicted. | `READ_ONLY` |
 | `cruxible_line_evaluate` | Evaluate a historical range (`since`, `until`) into pending work; never executes. `dry_run` only reports what the range makes eligible (a read, no range needed); enqueueing needs governed write. | `READ_ONLY` |
 | `cruxible_line_dispatch` | Admit retained pending occurrences under the current caller's authority, up to `limit` (default 100) per call; follow `cursor` for more. | `READ_ONLY` |
 | `cruxible_inbox_list` | List one page of the Line inbox, newest postings first, with a bounded payload preview; filter by `line` and `status`, follow `next_cursor`. | `READ_ONLY` |
@@ -447,7 +470,10 @@ them that require a Capture), `ProcedureMandate` (`name`, `procedure`,
 Triggers, Lines, SubjectKinds, mandates and QueryDefinitions. Their columns filter by type (integers
 and `expires_at` also compare with `lt` .. `gte`) and order typed, nulls last. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
-`contains` (case-insensitive text); filters combine as all-of. A field is a
+`contains` (case-insensitive text); filters combine as all-of. `exists: true`
+matches a field holding any live Claim, an explicit none included; `exists:
+false` only a field with no Claim. Filter on a value (`eq`) to match real
+values. A field is a
 predicate's full name, its name after the `KIND.` prefix (`adoption_state`),
 `subject_id`, or `alias.field` after `follow: [{field, as}]`; columns show that
 short name unless it is itself another predicate's full name or a reserved name
@@ -482,7 +508,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_curation_list` | List one page of the curation queue detection recorded (`limit`, `cursor`), with when detection last ran and which detectors are inactive; a pure read | `READ_ONLY` |
 | `cruxible_curation_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |
-| `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution | `GOVERNED_WRITE` |
+| `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution. Irreversible, so it previews by default: commit with `dry_run: false` and `at` (the preview's git oid), else `cruxible.preview.confirmation_required` | `GOVERNED_WRITE` |
 | `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide an item (`scope: item`) or its lineage (`scope: lineage`) without resolving it | `GOVERNED_WRITE` |
 | `cruxible_curation_unsuppress` | Lift a suppression on an item | `GOVERNED_WRITE` |
@@ -540,7 +566,20 @@ Principal changes, compiler upgrades and provider installs require admin.
 
 `CRUXIBLE_MODE` (`read_only`, `governed_write`, `graph_write`, or `admin`, the
 default) fixes the MCP server's own tier: tools above it are not advertised,
-and every call is capped at it.
+and every call is capped at it. The cap is enforced by the daemon: below
+`admin` the server sends it with every request as a ceiling, and the daemon
+serves the request at the lower of that ceiling and the request's own
+authority, so under a cap below `graph_write` a `cruxible_set` or `cruxible_write` stays a
+proposal it cannot activate, and `cruxible_kit_add`, `cruxible_kit_remove`
+and `cruxible_provider_move` stay proposed below `graph_write`. A Line enabled
+through a capped server keeps the cap for its later automatic runs. A call to
+a tool above the cap refuses `cruxible.mcp.mode_insufficient`, naming the tier
+it needs and the repair (raise `CRUXIBLE_MODE` and restart the server, or ask
+someone whose server serves it). `cruxible_whoami` reports `mode_cap` and
+`effective_permission_mode` (the lower of the credential's tier and the cap);
+below `governed_write` it says the session cannot author
+(`cruxible.identity.permission_insufficient`, repair: raise
+`CRUXIBLE_MODE`).
 
 The daemon capability ceiling and bearer credential tier both apply. A
 Cruxible principal signature is an additional governance condition, not a
@@ -556,7 +595,7 @@ and input contracts declared in accepted state, which the daemon validates. A `p
 value may be `null`, which binds an optional parameter explicitly; omitting it takes the
 parameter's default.
 
-Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. `changed_members` lists up to 50 sorted paths marked added, replaced, or removed; `changed_members_truncated` marks a longer list. Review it normally; no approval carries. Providers are not run again.
+Approve and activate on a proposal whose base moved behave as `cruxible proposal approve` and `activate` do ([proposal](cli-reference.md#proposal)): activation refuses `cruxible.approval.requirement_unsatisfied` until the approvals are in; a moved or late-signer proposal lands at the head first and receipts name its source in `readmits`; an already-accepted proposal refuses `cruxible.proposal.already_accepted`; while approvals remain, the approval receipt names `required_signers` and `eligible_signers`. Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. `changed_members` lists up to 50 sorted paths marked added, replaced, or removed; `changed_members_truncated` marks a longer list. Review it normally; no approval carries. Providers are not run again.
 
 CaptureContract input uses the closed shapes `http_response`, `procedure_output`,
 `foreign_span`, `database_snapshot`. Defaults: `grade: observed`, `replay: attested`

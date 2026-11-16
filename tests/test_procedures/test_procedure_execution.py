@@ -2121,6 +2121,127 @@ def test_missing_retained_state_is_a_typed_operational_failure(tmp_path) -> None
     assert _final_payload(fixture)["failure_code"] == "cas_unavailable_at_replay"
 
 
+class _TimedStateReader(_StateReader):
+    """The same answer, evaluated at ``when``: what a scheduled run re-reads each time."""
+
+    def __init__(self, value: object, when: datetime) -> None:
+        super().__init__(value)
+        self.when = when
+
+    def read_accepted_state(self, *, query, parameters, coordinate, **_kwargs):
+        self.calls.append((query, parameters, coordinate))
+        return StateTapReadResultV1(
+            value=_query_result(self.value)
+            .model_copy(update={"evaluated_at": self.when})
+            .model_dump(mode="json"),
+            effective_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
+        )
+
+
+def _cas_files(fixture: _Fixture) -> dict[str, int]:
+    return {
+        path.name: path.stat().st_size
+        for path in Path(fixture.bodies.root).rglob("*")
+        if path.is_file() and len(path.name) == 64
+    }
+
+
+def _reread_stores(tmp_path: Path, rows: int) -> tuple[int, int, int]:
+    """Read one answer at two instants; the bytes each read stored, and the result body's."""
+
+    tmp_path.mkdir()
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure(max_items=rows)
+    value = {"items": [{"id": f"vuln-{index:05d}"} for index in range(rows)]}
+    before = _cas_files(fixture)
+    first = _prepare(accepted, fixture, _TimedStateReader(value, NOW))
+    after_first = _cas_files(fixture)
+    later = NOW + timedelta(hours=1)
+    second = _prepare(accepted, fixture, _TimedStateReader(value, later))
+    after_second = _cas_files(fixture)
+    one, two = first.accepted_state_materials[0], second.accepted_state_materials[0]
+    # The run input and the value the run computes over keep their instant.
+    assert one.input.result_digest != two.input.result_digest
+    assert cast(dict, two.value)["result"]["evaluated_at"] == "2026-08-17T14:00:00Z"
+    material = execution_module.StateTapMaterialV2.model_validate_json(
+        fixture.bodies.read(
+            two.input.material_body_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert material.result_body_digest.split(":")[1] in after_first  # stored by the first read
+    # Replay restores the exact value from the shared body and the run's instant.
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(second, accepted)
+    assert result.status == "succeeded", result.refusal
+    first_bytes = sum(size for name, size in after_first.items() if name not in before)
+    second_bytes = sum(size for name, size in after_second.items() if name not in after_first)
+    return first_bytes, second_bytes, after_first[material.result_body_digest.split(":")[1]]
+
+
+def test_the_same_query_answer_read_again_stores_no_new_result_body(tmp_path) -> None:
+    """Notes fix 6: a re-read at a later instant stores only its small material record.
+
+    Before, the whole result was stored again under every evaluation instant
+    (the security kit's 0.77 MB watched-vulnerabilities result: twice a run).
+    """
+
+    small_first, small_second, small_body = _reread_stores(tmp_path / "small", rows=5)
+    large_first, large_second, large_body = _reread_stores(tmp_path / "large", rows=500)
+    assert large_body > 30 * small_body
+    assert large_first > large_body  # the first read stores the body and its record
+    # The second identical read stores the same few bytes at either size.
+    assert small_second == large_second < 400
+    print(
+        f"re-read stores {small_second} B at 5 rows and {large_second} B at 500 rows "
+        f"(result body {small_body} B and {large_body} B; before, each re-read stored it again)"
+    )
+
+
+def test_a_timeless_state_body_that_still_carries_its_instant_is_refused(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    material = prepared.accepted_state_materials[0]
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    record = execution_module.StateTapMaterialV2.model_validate_json(
+        fixture.bodies.read(material.input.material_body_digest, access=access)
+    )
+    timed = fixture.bodies.store(canonical_bytes(material.value))
+    forged = fixture.bodies.store(
+        canonical_bytes(
+            record.model_copy(update={"result_body_digest": timed.digest}).model_dump(mode="json")
+        )
+    )
+    mismatched_input = material.input.model_copy(update={"material_body_digest": forged.digest})
+    mismatched = prepared.model_copy(
+        update={
+            "admission": prepared.admission.model_copy(
+                update={"accepted_state_inputs": (mismatched_input,)}
+            ),
+            "accepted_state_materials": (material.model_copy(update={"input": mismatched_input}),),
+        }
+    )
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(mismatched, accepted)
+
+    assert result.status == "failed"
+    assert _final_payload(fixture)["failure_code"] == "replay_material_mismatch"
+
+
 def test_retained_state_result_mismatch_is_typed(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()

@@ -296,3 +296,47 @@ def test_a_cold_write_preview_opens_its_instance_behind_the_guards(
         assert not serving.exists()
         client.get(f"{base}/head")  # an ordinary read repairs it
         assert serving.exists()
+
+
+def test_a_client_ceiling_is_authority_not_wording(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """Round 2 of gapa-06: an MCP server under CRUXIBLE_MODE sends its cap. A write
+    it serves then cannot activate (the daemon's own request tier decided that), and
+    a request above the cap is refused, on an auth-off daemon whose ceiling is admin."""
+
+    from cruxible_client.contracts.principals import EFFECTIVE_PERMISSION_MODE_HEADER
+
+    client, instance_id, _key = playbill_http
+    _seed(client, instance_id)
+    base = f"/api/v1/{instance_id}"
+    governed = {EFFECTIVE_PERMISSION_MODE_HEADER: "governed_write"}
+
+    capped = client.post(
+        f"{base}/set",
+        json={"subject": WI1, "field": "status", "value": "ready", "because": "Checked."},
+        headers=governed,
+    )
+    who = client.get(f"{base}/whoami", headers=governed).json()
+    read_only = client.post(
+        f"{base}/set",
+        json={"subject": WI1, "field": "status", "value": "done", "because": "Checked."},
+        headers={EFFECTIVE_PERMISSION_MODE_HEADER: "read_only"},
+    )
+    malformed = client.get(f"{base}/whoami", headers={EFFECTIVE_PERMISSION_MODE_HEADER: "root"})
+
+    assert capped.status_code == 200, capped.text
+    outcome = capped.json()
+    assert outcome["status"] == "awaiting_approval"
+    assert outcome["approval"]["reason"] == "activation_not_permitted"
+    assert outcome["approval"]["activate"].startswith("someone who can runs ")
+    activate = client.post(
+        f"{base}/proposals/{outcome['proposal']['proposal_id']}/activate", headers=governed
+    )
+    assert activate.status_code == 403, activate.text
+    assert activate.json()["error_type"] == "PermissionDeniedError"
+    assert who["credential_permission_mode"] == "governed_write"
+    assert read_only.status_code == 403, read_only.text
+    assert malformed.status_code == 401
+    # Without the header the same daemon runs the same caller at its ceiling.
+    assert client.get(f"{base}/whoami").json()["credential_permission_mode"] == "admin"

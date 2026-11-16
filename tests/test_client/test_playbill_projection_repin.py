@@ -918,3 +918,321 @@ def test_shared_editing_reference_teaches_file_repin_operand() -> None:
     text = (root / "skills/_shared/references/concurrent-edits.md").read_text()
     assert "cruxible block repin FILE ID" in text
     assert "cruxible block repin SOURCE ID" not in text
+
+
+class _MovingRowsClient(_StaleClient):
+    """The query answers one table before ``LATER`` and another from it on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._evaluated_at: datetime | None = None
+
+    def query(self, instance_id: str, *, request: Any) -> Any:
+        self._evaluated_at = request.evaluation_time
+        return super().query(instance_id, request=request)
+
+    def _run(self, name: str, **values: Any) -> SimpleNamespace:
+        run = super()._run(name, **values)
+        tier = "web" if self._evaluated_at is None or self._evaluated_at < LATER else "worker"
+        run.result = run.result.model_copy(
+            update={"rows": (_row("Subject:svc/celery", tier=tier),)}
+        )
+        return run
+
+
+LATER = NOW.replace(hour=13)
+WEB_TABLE = b"| subject | tier |\n|---|---|\n| svc/celery | web |\n"
+WORKER_TABLE = b"| subject | tier |\n|---|---|\n| svc/celery | worker |\n"
+
+
+def _body(source: Path, root: Path) -> bytes:
+    content = source.read_bytes()
+    (block,) = parse_projection_blocks(
+        content, source_id="corpus.runbook", manifests=load_projection_manifests(root, content)
+    )
+    return content[block.body_start : block.body_end]
+
+
+def test_a_plain_repin_of_a_rendered_block_renders_it_again(tmp_path: Path) -> None:
+    """gapc-26: `block repin FILE BLOCK` kept the old table and stamped it current."""
+
+    source = _workspace(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    assert _body(source, tmp_path) == WEB_TABLE
+
+    # The repair every surface names: a repin with no backing or body change.
+    stamp = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=LATER,
+    )
+
+    assert _body(source, tmp_path) == WORKER_TABLE
+    assert stamp.body_digest == "sha256:" + hashlib.sha256(WORKER_TABLE).hexdigest()
+
+
+def test_a_repin_that_cannot_render_a_rendered_block_refuses_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    source = _workspace(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    before = source.read_bytes()
+    declared = len(client.declared)
+
+    # Dropping the query leaves nothing to render the table from.
+    with pytest.raises(ProjectionRepinError, match="is its query's rendering"):
+        repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="corpus.runbook",
+            block_id="summary",
+            queries=(),
+            claims=("CLM-1",),
+            evaluation_time=LATER,
+        )
+
+    assert source.read_bytes() == before
+    assert len(client.declared) == declared
+
+
+def test_a_repin_keeps_a_rendered_block_its_author_edited_as_prose(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    prose = b"Celery runs as a web worker, as the author reads it.\n"
+    source.write_bytes(source.read_bytes().replace(WEB_TABLE, prose))
+
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=LATER,
+    )
+
+    assert _body(source, tmp_path) == prose
+
+
+def test_repin_takes_the_page_path_as_well_as_its_catalog_name(tmp_path: Path) -> None:
+    """gapc-27: the `write` refusal's repair names the path; repin took only the name."""
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+
+    by_path = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="runbook.md",
+        block_id="summary",
+        claims=("CLM-first",),
+        evaluation_time=NOW,
+    )
+    by_absolute_path = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file=str(source),
+        block_id="summary",
+        evaluation_time=NOW,
+    )
+
+    # The stamp records the catalog name whichever way the page was named.
+    assert by_path.source_id == by_absolute_path.source_id == "corpus.runbook"
+    with pytest.raises(Exception, match="neither a catalogued file name nor the path"):
+        repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="missing.md",
+            block_id="summary",
+            evaluation_time=NOW,
+        )
+
+
+def test_a_rendered_block_with_claim_backings_is_rendered_again(tmp_path: Path) -> None:
+    """Review round 2, P1: one query plus a Claim backing kept the old table."""
+
+    source = _workspace(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        claims=("CLM-first",),
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    assert _body(source, tmp_path) == WEB_TABLE
+
+    stamp = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=LATER,
+    )
+
+    assert _body(source, tmp_path) == WORKER_TABLE
+    assert stamp.body_digest == "sha256:" + hashlib.sha256(WORKER_TABLE).hexdigest()
+    assert {backing.identity.kind for backing in stamp.backing} == {"Claim", "QueryDefinition"}
+
+
+def test_a_converging_sync_rerenders_a_rendered_block_with_claim_backings(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        claims=("CLM-first",),
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_files=True,
+        converge_at=LATER,
+    )
+
+    assert [item.outcome for item in converged.items] == ["rendered"]
+    assert _body(source, tmp_path) == WORKER_TABLE
+
+
+class _UnprovableClient(_MovingRowsClient):
+    """The query refuses at the stamp's own evaluation time: the proof cannot be taken."""
+
+    def query(self, instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.errors import CoreError
+
+        if request.evaluation_time == NOW:
+            raise CoreError("historical query result unavailable")
+        return super().query(instance_id, request=request)
+
+
+def test_a_repin_whose_rendering_proof_cannot_be_taken_refuses_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Review round 2, P1: a failed proof read as prose, so the old table was stamped."""
+
+    source = _workspace(tmp_path)
+    repin_projection_block(
+        _MovingRowsClient(),  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    before = source.read_bytes()
+    client = _UnprovableClient()
+
+    for dry_run in (True, False):
+        with pytest.raises(ProjectionRepinError, match="could not be re-checked"):
+            repin_projection_block(
+                client,  # type: ignore[arg-type]
+                "inst_projection",
+                workspace=tmp_path,
+                file="corpus.runbook",
+                block_id="summary",
+                evaluation_time=LATER,
+                dry_run=dry_run,
+            )
+    assert source.read_bytes() == before
+    assert client.declared == []
+
+    # The named repair: render it from its query now, which needs no proof.
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=LATER,
+        render=True,
+    )
+    assert _body(source, tmp_path) == WORKER_TABLE
+
+
+def test_a_converging_sync_leaves_an_unprovable_rendering_stale_and_unwritten(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    repin_projection_block(
+        _MovingRowsClient(),  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    before = source.read_bytes()
+
+    converged = sync_projection_blocks(
+        _UnprovableClient(),  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_files=True,
+        converge_at=LATER,
+    )
+
+    assert [(item.outcome, item.reason) for item in converged.items] == [
+        ("stale", "block_backing_changed")
+    ]
+    assert source.read_bytes() == before
