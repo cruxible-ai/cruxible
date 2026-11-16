@@ -49,6 +49,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_core.procedures.terminal_payloads import join_terminal_egress_payload
 from cruxible_core.procedures.terminal_services import proposal_terminal_ref
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
@@ -2220,8 +2221,11 @@ def _journaled_receipt(instance: PlaybillInstance, run_id: str | None) -> dict[s
     assert run_id is not None
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     for stored in _records_for_run(instance, run_id):
-        payload = parse_journal_payload(
-            instance.body_store().read(stored.record.payload_digest, access=access)
+        payload = join_terminal_egress_payload(
+            parse_journal_payload(
+                instance.body_store().read(stored.record.payload_digest, access=access)
+            ),
+            lambda digest: instance.body_store().read(digest, access=access),
         )
         if (
             stored.record.event_kind == "terminal_egress"
@@ -2422,8 +2426,11 @@ def test_an_unchanged_terminal_is_accounted_as_delivered_and_finalized(tmp_path:
         record = stored.record
         kinds.append(record.event_kind)
         if record.event_kind == "terminal_egress":
-            payload = parse_journal_payload(
-                instance.body_store().read(record.payload_digest, access=access)
+            payload = join_terminal_egress_payload(
+                parse_journal_payload(
+                    instance.body_store().read(record.payload_digest, access=access)
+                ),
+                lambda digest: instance.body_store().read(digest, access=access),
             )
             if payload.get("verdict") == "prepared":
                 continue  # the intent; the track record reads the outcome
@@ -2524,8 +2531,11 @@ def test_an_interrupted_unchanged_terminal_is_recovered_without_a_proposal(
         for stored in _records_for_run(instance, saved["run_id"])
         if stored.record.event_kind == "terminal_egress"
         for payload in (
-            parse_journal_payload(
-                instance.body_store().read(stored.record.payload_digest, access=access)
+            join_terminal_egress_payload(
+                parse_journal_payload(
+                    instance.body_store().read(stored.record.payload_digest, access=access)
+                ),
+                lambda digest: instance.body_store().read(digest, access=access),
             ),
         )
         if payload.get("verdict") == "prepared"
@@ -2608,6 +2618,7 @@ def _track(instance: PlaybillInstance, run_id: str, line: Any, procedure: Any) -
             procedure=procedure,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
         ),
+        read_body=lambda digest: instance.body_store().read(digest, access=access),
     )
 
 

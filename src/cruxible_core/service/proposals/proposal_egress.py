@@ -73,6 +73,10 @@ from cruxible_core.procedures.execution import (
     procedure_run_declared_budget,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+from cruxible_core.procedures.terminal_payloads import (
+    join_terminal_egress_read,
+    split_terminal_egress_payload,
+)
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.procedure_runs import (
@@ -142,6 +146,8 @@ def _fold_partition(
             continue
         fold = runs.setdefault(run_id, _RunFold())
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        if stored.record.event_kind == "terminal_egress":
+            payload = join_terminal_egress_read(payload, bodies, access=access)
         if isinstance(payload, UnavailablePayload):
             fold.unavailable = True
             continue
@@ -320,7 +326,15 @@ def _append_recovery_records(
             )
 
         if resolving is not None:
-            _append("terminal_egress", resolving)
+            # Journaled as the run itself journals a claims terminal's record:
+            # its per-item parts in the run-free bodies the prepared one cites.
+            _append(
+                "terminal_egress",
+                split_terminal_egress_payload(
+                    resolving,
+                    store=lambda content: bodies.store(content, journal_payload=True).digest,
+                ),
+            )
         _append(
             "attempt_finalized",
             {

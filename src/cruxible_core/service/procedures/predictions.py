@@ -76,6 +76,7 @@ from cruxible_core.procedures.resolution import (
     resolution_book_at_head,
     resolution_contract_partition_id,
 )
+from cruxible_core.procedures.terminal_payloads import join_terminal_egress_payload
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.resolution_contracts import (
@@ -288,14 +289,12 @@ def _terminal_record(
             continue
         if record.procedure_artifact_digest != state.procedure_artifact_digest:
             break
-        payload = parse_journal_payload(
-            instance.body_store().read(
-                record.payload_digest,
-                access=BodyAccessContext(
-                    principal_id="playbill-prediction-settlement",
-                    can_read_body=True,
-                ),
-            )
+        access = BodyAccessContext(
+            principal_id="playbill-prediction-settlement", can_read_body=True
+        )
+        payload = join_terminal_egress_payload(
+            parse_journal_payload(instance.body_store().read(record.payload_digest, access=access)),
+            lambda digest: bytes(instance.body_store().read(digest, access=access)),
         )
         if isinstance(payload, dict) and payload.get("verdict") == "delivered":
             receipt_payload = payload.get("receipt")

@@ -630,10 +630,15 @@ def _egress_records(instance, state):  # type: ignore[no-untyped-def]
 
     journal, _root = service._journal(instance)  # noqa: SLF001
     stream = service._stream(instance)  # noqa: SLF001
+    from cruxible_core.procedures.terminal_payloads import join_terminal_egress_payload
+
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     return [
-        parse_journal_payload(
-            instance.body_store().read(stored.record.payload_digest, access=access)
+        join_terminal_egress_payload(
+            parse_journal_payload(
+                instance.body_store().read(stored.record.payload_digest, access=access)
+            ),
+            lambda digest: instance.body_store().read(digest, access=access),
         )
         for partition_id in journal.partition_ids(stream)
         for stored in journal.all_records(stream, partition_id)

@@ -352,6 +352,10 @@ from cruxible_core.procedures.terminal_dependencies import (
     terminal_item_key,
     witnessed_list_capture,
 )
+from cruxible_core.procedures.terminal_payloads import (
+    split_terminal_egress_payload,
+    splits_terminal_egress,
+)
 from cruxible_core.procedures.transforms import (
     TransformInputInvalid,
     apply_closed_transform,
@@ -7644,6 +7648,13 @@ class ProcedureExecutor:
         event_kind: JournalEventKindV1,
         payload: object,
     ) -> StoredProcedureJournalRecordV1:
+        if event_kind == "terminal_egress" and splits_terminal_egress(payload):
+            # A claims terminal's per-item parts are run-free bodies the record
+            # cites: an unchanged list is one object, shared across records.
+            payload = split_terminal_egress_payload(
+                cast(Mapping[str, Any], payload),
+                store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+            )
         payload_bytes = journal_payload_bytes(payload)
         body_digest = self.bodies.digest_bytes(payload_bytes).tagged
         reservation = make_run_reservation(
