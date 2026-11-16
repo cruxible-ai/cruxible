@@ -63,7 +63,6 @@ def run(
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
@@ -79,7 +78,8 @@ def run(
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=(SOURCE,),
+        # The runbook's citation needs no rule: the field's default rule admits
+        # own words and catalogued workspace files.
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
