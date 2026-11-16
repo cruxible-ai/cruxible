@@ -1467,6 +1467,11 @@ class World:
             and self._write_basis[: len(base.git_oid)] == base.git_oid
         ):
             self._write_basis = outcome.coordinate.git_oid
+        if dry_run and outcome.status in {"would_accept", "would_await_approval"}:
+            # A World pins its own write basis, so its write methods take no ``at``:
+            # the commit is the same call without the dry run.
+            kept = ', accept="never"' if accept == "never" else ""
+            outcome = outcome.model_copy(update={"next": f"Call it again with dry_run=False{kept}"})
         return outcome
 
     def _materialize(self, node: _Node) -> KindNamespace | WorldClaimType:

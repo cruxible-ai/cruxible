@@ -1312,6 +1312,43 @@ def test_a_set_refuses_when_its_slot_moved_since_the_read_coordinate(
     assert len(contested.candidates) == 2
 
 
+def test_a_stale_read_repairs_in_the_callers_spelling_and_verb(
+    instance: PlaybillInstance,
+) -> None:
+    """gapb-04/05: a retire is repaired by a retire, each in the caller's own spelling."""
+
+    first = _write(instance, _set(WI1, "status", "ready"))
+    read_at = first.coordinate.git_oid
+    _write(instance, _set(WI1, "status", "blocked"), because="Someone else saw it.")
+
+    cli_set = _refusal(_write(instance, _set(WI1, "status", "done"), at=read_at, surface="cli"))
+    assert cli_set.repair == (
+        f"Read it again (cruxible get {WI1}); to replace what it holds now, run it again "
+        "without --at, or set it with --contend to contest it"
+    )
+    sdk_retire = _refusal(_write(instance, _RETIRE_BY_SLOT, at=read_at, surface="sdk"))
+    assert sdk_retire.code == "cruxible.write.slot_changed"
+    assert sdk_retire.repair == (
+        f'Read it again (cx.get("{WI1}")); if it should still end, cx.refresh(), then call '
+        "it again"
+    )
+    assert "set" not in sdk_retire.repair and "contend" not in sdk_retire.repair
+
+
+def test_a_preview_hint_keeps_the_callers_accept_never(instance: PlaybillInstance) -> None:
+    """coldcli-09: committing the preview of a proposal-only write still only proposes."""
+
+    preview = _write(
+        instance, _set(WI1, "status", "ready"), dry_run=True, accept="never", surface="cli"
+    )
+    assert preview.next == (
+        "Run the same command without --dry-run and keeping --no-accept, adding --at "
+        f"{preview.coordinate.git_oid}"
+    )
+    plain = _write(instance, _set(WI1, "status", "ready"), dry_run=True, surface="sdk")
+    assert plain.next == f'Call it again with dry_run=False, at="{plain.coordinate.git_oid}"'
+
+
 def _no_proposal_to_activate(instance: PlaybillInstance) -> None:
     assert service_list_playbill_proposals(instance, status="open").entries == ()
 
