@@ -237,6 +237,10 @@ def validate_row_references(definition: Any, lookup: Callable[[Any], Any]) -> No
     for node in definition.nodes:
         if not isinstance(node, InboxEgressNode | ClaimsNode):
             continue
+        if isinstance(node, ClaimsNode) and node.expect is not None:
+            # Absence judges only an extract's records: claims typing refuses
+            # expect over Query rows with its own code (claims_enumeration_invalid).
+            continue
         read, lost = _row_source(node.for_each, producers)
         if read is None:
             continue
