@@ -16,9 +16,10 @@ Counted over the measured run, by snapshotting the managed root around it:
 - ``journal_appends``: journal records appended, every journal included;
 - ``index_rows``: growth of the row count of every SQLite table under the root.
 
-The rule, for every counter: ``LARGE <= SMALL * RATIO + SLACK``. A counter that
-still grows with items is a strict xfail naming why, so the fix that removes
-the growth turns it into an XPASS failure that forces the mark off.
+The rule, for every counter: ``LARGE <= SMALL * RATIO + SLACK``. An unchanged
+run reuses the held Capture (ruling 1c), records its fetch as one content
+observation (1a), and its claims terminal, whose every item restates exactly
+what is live, journals one short record (1e): nothing it stores is per item.
 """
 
 from __future__ import annotations
@@ -51,21 +52,6 @@ SMALL, LARGE = 12, 120
 RATIO = 1.5
 SLACK = {"cas_files": 4, "stored_bytes": 64 * 1024, "journal_appends": 4, "index_rows": 16}
 COUNTED = tuple(SLACK)
-
-#: Step 2 of the unchanged-run plan (Capture reuse with the content-keyed
-#: observation index) is what removes these; each names what still grows.
-STEP_2 = {
-    "cas_files": (
-        "every unchanged Claim still journals a re-observation payload, and the "
-        "terminal's chunks, children and request bodies name the run's new Capture"
-    ),
-    "stored_bytes": (
-        "per-Claim re-observation records and terminal bodies that name the run's new "
-        "Capture envelope (a re-fetch mints a new Capture until reuse)"
-    ),
-    "journal_appends": "one claim_reobservation journal record per unchanged Claim",
-    "index_rows": "re-observation journal index and projection rows per unchanged Claim",
-}
 
 
 def _files(root: Path) -> dict[str, int]:
@@ -174,15 +160,7 @@ def measured(tmp_path_factory: pytest.TempPathFactory) -> dict[int, Counter[str]
         monkeypatch.undo()
 
 
-@pytest.mark.parametrize(
-    "counter",
-    [
-        pytest.param(name, marks=pytest.mark.xfail(strict=True, reason=STEP_2[name]))
-        if name in STEP_2
-        else name
-        for name in COUNTED
-    ],
-)
+@pytest.mark.parametrize("counter", COUNTED)
 def test_an_unchanged_line_run_stores_the_same_at_ten_times_the_items(
     measured: dict[int, Counter[str]], counter: str
 ) -> None:

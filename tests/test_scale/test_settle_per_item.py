@@ -815,32 +815,46 @@ def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(
 def test_reobservation_same_value_new_bytes_visits_each_item_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D-R8: one admission per changed row, one cited-envelope read per batch."""
+    """D-R8, ruling 1d: new bytes, the same values: one transition, the cited envelope read once.
+
+    Every item restates its Claim on the new Capture; delivery records ONE
+    transition from the content they cite (its size the contents that moved,
+    never the Claims citing them) and reads the cited envelope once per batch.
+    """
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
     from cruxible_core.storage.cas import ContentAddressedBodyStore
 
     _roomy_selection_budget(monkeypatch)
     observations = []
-    original_admit = ClaimReobservationStore._admissible
+    original_record = ProposalTerminalEgressSink._record_reobservations
+    original_transition = ClaimReobservationStore.transition
     original_read = ContentAddressedBodyStore.read
     active = [False]
     counters: Counter[str] = Counter()
     cited: set[str] = set()
 
-    def admit(self: Any, **kwargs: Any) -> Any:
-        counters["items"] += 1
+    def record(self: Any, request: Any, unchanged: Any) -> Any:
+        counters["items"] += len(unchanged)
         active[0] = True
         try:
-            return original_admit(self, **kwargs)
+            return original_record(self, request, unchanged)
         finally:
             active[0] = False
+
+    def transition(self: Any, transitions: Any, **kwargs: Any) -> Any:
+        counters["transitions"] += 1
+        counters["moved"] += len({(t.contract_digest, t.from_content_digest) for t in transitions})
+        assert kwargs["excepted"] == []
+        return original_transition(self, transitions, **kwargs)
 
     def read(self: Any, digest: str, **kwargs: Any) -> Any:
         if active[0] and digest in cited:
             counters["cited_reads"] += 1
         return original_read(self, digest, **kwargs)
 
-    monkeypatch.setattr(ClaimReobservationStore, "_admissible", admit)
+    monkeypatch.setattr(ProposalTerminalEgressSink, "_record_reobservations", record)
+    monkeypatch.setattr(ClaimReobservationStore, "transition", transition)
     monkeypatch.setattr(ContentAddressedBodyStore, "read", read)
     for count in (N, 2 * N):
         directory = tmp_path / str(count)
@@ -871,9 +885,15 @@ def test_reobservation_same_value_new_bytes_visits_each_item_once(
         (egress,) = state.terminal_egress
         assert egress.proposal_id is None and len(egress.children) == count
         assert instance.accepted_coordinate() == head
-        assert counters == {"items": count, "cited_reads": 1}
+        assert counters == {
+            "items": count,
+            "transitions": 1,
+            "moved": 1,
+            "cited_reads": 1,
+        }, counters
         observations.append(dict(counters))
     assert observations[1]["items"] == 2 * observations[0]["items"]
+    assert observations[1]["transitions"] == observations[0]["transitions"] == 1
     assert observations[1]["cited_reads"] == observations[0]["cited_reads"] == 1
 
 
