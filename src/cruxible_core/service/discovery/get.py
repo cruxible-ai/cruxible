@@ -131,6 +131,7 @@ from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.public_names import public_name, stored_name
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
@@ -461,10 +462,51 @@ def resolve_get_ref(
     """Resolve every reference form an agent sees to exactly one thing, or refuse.
 
     ``access`` is the reader's: a Capture prefix candidate withheld from it is
-    named without being verified (C14).
+    named without being verified (C14). A ref resolves as written first; only
+    when nothing has that name is a built-in name's printed (``cruxible.``)
+    spelling read as its stored one, so an artifact literally named that way
+    is never shadowed and the extra lookup happens on a miss only.
     """
 
     value = ref.strip()
+    try:
+        return _resolve_get_ref_as_written(
+            instance,
+            coordinate,
+            value,
+            ref=ref,
+            surface=surface,
+            subject_suggestions=subject_suggestions,
+            access=access,
+        )
+    except ReadRefusalError as exc:
+        stored = stored_name(value)
+        if exc.error_code != "cruxible.get.ref_not_found" or stored == value:
+            raise
+        try:
+            return _resolve_get_ref_as_written(
+                instance,
+                coordinate,
+                stored,
+                ref=ref,
+                surface=surface,
+                subject_suggestions=subject_suggestions,
+                access=access,
+            )
+        except ReadRefusalError:
+            raise exc from None
+
+
+def _resolve_get_ref_as_written(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    value: str,
+    *,
+    ref: str,
+    surface: ReadSurface,
+    subject_suggestions: bool,
+    access: BodyAccessContext | None,
+) -> ResolvedRef:
     if not value:
         raise _not_found("artifact", ref, (), surface=surface)
     if value.startswith("sha256:"):
@@ -1073,8 +1115,9 @@ def _render_get(
     window: str | None = None,
     at: ClientCoordinate | None = None,
 ) -> str:
-    """One ``get`` call spelled for the caller's surface (R07)."""
+    """One ``get`` call spelled for the caller's surface (R07), built-in names as printed."""
 
+    ref = public_name(ref)
     if surface == "cli":
         rendered = f"cruxible get {shlex.quote(ref)}"
         if detail:

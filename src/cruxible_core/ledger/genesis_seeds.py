@@ -110,7 +110,7 @@ GENESIS_SEED_HISTORY: tuple[GenesisSeedSet, ...] = (
             ),
             GenesisSeed(
                 "providers/cruxible-builtin.json",
-                "8923dca4680ed083b6f6f3062f3c2ed2910ca3ed91d42cfc0d5358d0ddae760c",
+                "d98d67536ae5c7a3a548b7d3ed6afff999e436aac19ee36ede10fd7134db2cfc",
             ),
             GenesisSeed(
                 "triggers/evidence-sweep.json",

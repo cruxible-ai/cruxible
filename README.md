@@ -30,9 +30,10 @@ Cruxible validates and settles deterministically.
   `write` (several changes as one atomic change set), accepted at once when
   the approval policy allows. Definitions (Subjects, named queries,
   Procedures, Lines, Triggers, policies) go through `authoring`, which reports
-  every refusal before anything is proposed. ClaimTypes keep their own
-  `claim-type` group, because changing vocabulary decides what happens to
-  every Claim that uses it.
+  every refusal before anything is proposed. Kinds and fields live in one
+  file, `.cruxible/vocabulary.yaml` (`vocabulary export`, edit, `plan`,
+  `apply`), because changing vocabulary decides what happens to every Claim
+  that uses it.
 - **Evidence you can check.** A Claim can cite a passage of a catalogued
   workspace file; when the file changes, `next` reports the citation as
   drifted. A whole file can also be governed as a Document.
@@ -40,11 +41,14 @@ Cruxible validates and settles deterministically.
   signatures made with client-held keys over the exact candidate. Activation
   advances accepted state by compare-and-set.
 - **Procedures and Lines.** A Procedure is a governed, deterministic graph
-  that reads state and calls pinned providers. Run as a Line, it can also
+  that reads state and calls providers through slots, each naming a
+  capability; a Line binds each slot to one exact provider build. Run as a
+  Line, it can also
   retain evidence and propose or settle changes; a Line runs on its Triggers
   once a principal enables it, and on demand with `line run`.
 - **Kits.** Definitions travel between instances as kit releases, installed
-  and upgraded as one reviewed change set.
+  and upgraded as one reviewed change set. Every instance starts with the base
+  kit, which holds the shared file-reading and web capabilities.
 
 ## Install
 

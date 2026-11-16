@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-15:vocabulary-file-050",
-    "surface_digest": "sha256:666968d89e0d63427128118b2f5c3e9066efb5066b2237126cefd45e20fa0ae9"
+    "surface_digest": "sha256:3c07e84ca506e46a6f7d6463aaa9b301528825bef84aadbc3e7b832f910d1047"
   },
   "surface": {
     "cli_leaves": [
@@ -630,6 +630,7 @@
           "get",
           "prepare_approval",
           "resolve_proposal_selector",
+          "review_proposal",
           "submit_approval"
         ],
         "command": "proposal approve",
@@ -774,7 +775,8 @@
       },
       {
         "client_operations": [
-          "set"
+          "set",
+          "write"
         ],
         "command": "set",
         "delegate": "cruxible_core.cli.commands.playbill.set_value"
@@ -977,7 +979,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/authoring/compile",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequest,cruxible_core.server.playbill_request_models.AuthoringInputCompileRequest]",
-        "request_schema_digest": "sha256:125d0de342d5f0b207cae0b1c9956ac95667f8834c2d98c1d64629adfa5cebea",
+        "request_schema_digest": "sha256:1c3408c19ed75fb37148e2ecdff2ebd5e9b8baf2f623c85e12b492ca54c6d1f1",
         "response_model": "cruxible_client.contracts.AuthoringPreflightResult",
         "response_schema_digest": "sha256:137c50fb5c0e7ca449f34d26be8e1b3dee3bbb590676a40c8968fd16e3afec3d"
       },
@@ -1051,7 +1053,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/authoring/submit",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringCompileSubmitRequest,cruxible_core.server.playbill_request_models.AuthoringInputSubmitRequest]",
-        "request_schema_digest": "sha256:482d48cfe5f7d55285ba7396463ade82d572d6f2eafd6d14e4eeff61a9367ccd",
+        "request_schema_digest": "sha256:1b6f4cc0d28c103e7c88d7e0dd431be2613a3fa5eb98918d1e02e8b4dc8d1a14",
         "response_model": "types.UnionType[cruxible_client.contracts.AuthoringSubmitResultRecord,cruxible_client.contracts.AuthoringPreflightResult]",
         "response_schema_digest": "sha256:39a1b72d5eb7f8ebbc88ee2b0478daa38b4118e5e8ea0fcb107fd272182c7b88"
       },
@@ -1171,7 +1173,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/claim-attestations/evidence",
         "request_model": "cruxible_client.contracts.attestation_evidence.ClaimAttestationEvidenceRequest",
-        "request_schema_digest": "sha256:242d2f1f43935eda09d0084e985257f3d49f7399f70b7b8218be7a3c2b775872",
+        "request_schema_digest": "sha256:b33b618f929882d18004512af2d7667827dac0d593eb2ccaf836e78ab97c9047",
         "response_model": "cruxible_client.contracts.attestation_evidence.ClaimAttestationEvidenceResult",
         "response_schema_digest": "sha256:5943fc34fc382941bef2295eb0c18f3f063940858acc6696f820db6922bc5e69"
       },
@@ -1183,7 +1185,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/claim-types/migrations",
         "request_model": "cruxible_core.playbill.claim_type_migrations.ClaimTypeMigrationRequest",
-        "request_schema_digest": "sha256:bda8d4f8939faa0303cea601be371a607916d3fc4317e78fd057aeed56284833",
+        "request_schema_digest": "sha256:61fc6737de65eda649190b5f6adbc8f78591e8fab8252d2635c00b1c133f9cb4",
         "response_model": "types.UnionType[cruxible_client.contracts.ClaimTypeMigrationPreflight,cruxible_client.contracts.ClaimTypeMigrationResult]",
         "response_schema_digest": "sha256:10032aa331c1831be117fd4de9ab89e31b5d7b5f69aa796541f5fc4bf6fc9bac"
       },
@@ -1196,7 +1198,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/claim-types/proposals",
         "request_model": "types.UnionType[cruxible_core.server.playbill_request_models.ProposeBuiltinClaimTypeRequest,cruxible_core.server.playbill_request_models.ProposeClaimTypeInputRequest]",
-        "request_schema_digest": "sha256:47568e978f11a44016ddd77a44553345bb4c06564db2e6a03d3449022b398684",
+        "request_schema_digest": "sha256:d6cfb74479a082f2cd4f7e6e1835e6e9acfda07a18c75fa71475f00695a0aac8",
         "response_model": "cruxible_client.contracts.ClaimTypeInputProposalResult",
         "response_schema_digest": "sha256:82d22c8afd81459a3791188e4e4b51007335ec13e7bebe5603ce73b396b3e5c3"
       },
@@ -1402,7 +1404,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
         "request_schema_digest": "sha256:225e6febd38c1cf6ba12bcfa91d6783eedb37004f415c445b11064471d1101b3",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
-        "response_schema_digest": "sha256:56098d8fe4ee28e869d100520fe5947c6ea6796514e1065b3d140d96eacd1844"
+        "response_schema_digest": "sha256:993a066434924f25d7ca890a2cab3b136ec37b6e2fc49e2a4e33197a0bf9f60e"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.get_batch",
@@ -1414,7 +1416,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
         "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
-        "response_schema_digest": "sha256:015c37b8da40a2c9f5b381aca23475ea6c109a038db11b8226afc0804183b90d"
+        "response_schema_digest": "sha256:bc4e2a001d2b62dae548766864c34848a2521a640f6aa2950655c04a262438df"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.head",
@@ -1534,7 +1536,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.kits.KitStatus",
-        "response_schema_digest": "sha256:0a364a3cb616c82aabe0c30e3fdf385be5c9898c5adb6ba2f8744a8b4f549490"
+        "response_schema_digest": "sha256:2193758d1c239a9899912a34e43d203eba152191a82efe1f70f16a0267666812"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.kit_add",
@@ -1546,7 +1548,7 @@
         "request_model": "cruxible_client.contracts.kits.KitAddRequest",
         "request_schema_digest": "sha256:ae0d59d8494f211236c070482a488799a59377cce08c3cc31acbc0d618095982",
         "response_model": "cruxible_client.contracts.kits.KitChangeResult",
-        "response_schema_digest": "sha256:e48f3fba6ebaec4965623c02e7774687ad1558e6d01291722e1c5cefd5c6f807"
+        "response_schema_digest": "sha256:f1722fd82e5fb348b808bd13c94ca6c8a2ff8ac765685797333be4d8a2ff7a4b"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.kit_build",
@@ -1570,7 +1572,7 @@
         "request_model": "cruxible_client.contracts.kits.KitRemoveRequest",
         "request_schema_digest": "sha256:c6095f470d74262c9a4899ae3d320f133131036d3ad4570b30db6c916c023c2c",
         "response_model": "cruxible_client.contracts.kits.KitChangeResult",
-        "response_schema_digest": "sha256:e48f3fba6ebaec4965623c02e7774687ad1558e6d01291722e1c5cefd5c6f807"
+        "response_schema_digest": "sha256:f1722fd82e5fb348b808bd13c94ca6c8a2ff8ac765685797333be4d8a2ff7a4b"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.set_ledger_mirror",
@@ -1774,7 +1776,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.ProcedureReadiness",
-        "response_schema_digest": "sha256:4095fa69fffe637c1ecfe806842958d2bc6244703d43916736736697a0b3aadd"
+        "response_schema_digest": "sha256:d24bfff5b2ac05f6a4f74dbc972a5492dbeb9636f829efb510310116ee1a1dde"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.procedure_readings",
@@ -1928,9 +1930,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/proposals/{proposal_id}/review",
         "request_model": "cruxible_core.server.playbill_request_models.ReviewRequest",
-        "request_schema_digest": "sha256:c9b0188659fd3625397a672badd02645bcf0814bc8990217518b22ccec062392",
+        "request_schema_digest": "sha256:fc7bb69796ad23ef97cb250b4cee49803a7d72e51e5713fb97eecc86ce0ea590",
         "response_model": "typing.Annotated[types.UnionType[cruxible_client.contracts.ProposalReview,cruxible_client.contracts.proposal_summary.ProposalReviewSummary],annotation=NoneType required=True discriminator='tag']",
-        "response_schema_digest": "sha256:639497254272dc7c00e02538a11c3f25251457324e11b16dd2a95b2704173634"
+        "response_schema_digest": "sha256:df07cf7cb9cae96059f51e055f92435f09dbbc4a3e7808c465af9cbd00aeeec7"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.withdraw_proposal",
@@ -2014,7 +2016,7 @@
         "request_model": "cruxible_client.contracts.write.RetireRequest",
         "request_schema_digest": "sha256:245a39416a2cada525a9426a397e23f978cf386f79d90899a0faf943677f834a",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
-        "response_schema_digest": "sha256:347b8f8fe7f0c3a96de1f4a800a1b597c32bbae5f9612ae66ac54de8521f8fff"
+        "response_schema_digest": "sha256:e5b8bad76f2e86595535689d567bcfc3957f377ed972af5cb50d31a09fc852a0"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.preview_runbook",
@@ -2048,9 +2050,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/set",
         "request_model": "cruxible_client.contracts.write.SetRequest",
-        "request_schema_digest": "sha256:b985c629cc152dc9ba8e3098f40faa8f2e1758455083e7359a4b714465412cc3",
+        "request_schema_digest": "sha256:c5f1f8d54822ccd46d4010915a43d799e803e9701680e11193b280db546ee61b",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
-        "response_schema_digest": "sha256:347b8f8fe7f0c3a96de1f4a800a1b597c32bbae5f9612ae66ac54de8521f8fff"
+        "response_schema_digest": "sha256:e5b8bad76f2e86595535689d567bcfc3957f377ed972af5cb50d31a09fc852a0"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.since",
@@ -2132,9 +2134,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/write",
         "request_model": "cruxible_client.contracts.write.WriteRequest",
-        "request_schema_digest": "sha256:9291ea83411c9315f202a855038edfcdf2358e08a9dacd8e2d041a8fa2f4604c",
+        "request_schema_digest": "sha256:22021621ded41b9784e3e27a4f819ba019328cb114b1ffdbe0dd09543992ce9f",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
-        "response_schema_digest": "sha256:347b8f8fe7f0c3a96de1f4a800a1b597c32bbae5f9612ae66ac54de8521f8fff"
+        "response_schema_digest": "sha256:e5b8bad76f2e86595535689d567bcfc3957f377ed972af5cb50d31a09fc852a0"
       }
     ],
     "mcp_tools": [
@@ -2163,7 +2165,7 @@
           "compile_authoring_input"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_compile",
-        "input_schema_digest": "sha256:c4a0c80fb35af492af8491f2fd303290bc8e5b285613859c9313c9868331d566",
+        "input_schema_digest": "sha256:07e4009dd1ebef72f5c350721d463992d14df7b5ca4ac463d2ae5da0b3caa2d1",
         "name": "cruxible_authoring_compile",
         "output_schema_digest": "sha256:8c59611ad39045f0db86cdbeaaf6d603d64992ca531adc7ed6a48e0df8c1fbf9",
         "permission": "GOVERNED_WRITE"
@@ -2173,7 +2175,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_example",
         "input_schema_digest": "sha256:f32d0be3764b2253fd33cd605ab29c1642f919182ecb8298443147028da61871",
         "name": "cruxible_authoring_example",
-        "output_schema_digest": "sha256:a68a3dc0b27297f9e410f900abf04149c17c9d471660865611121f6d716d545c",
+        "output_schema_digest": "sha256:b0fa1fa580e50273ac0eed954154c93bae7268f8ed87166f79c43e54f6600fbf",
         "permission": "READ_ONLY"
       },
       {
@@ -2222,7 +2224,7 @@
           "submit_authoring_intent"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_submit",
-        "input_schema_digest": "sha256:5d4a70d723560fd97dd3280fbc6a1c386bc09e2b44e519ddddbabf7872d0bc03",
+        "input_schema_digest": "sha256:d091b5135a42b6399dd483b352e8456bef770f561d5db9cc586c14e343aa3ffb",
         "name": "cruxible_authoring_submit",
         "output_schema_digest": "sha256:c851865d0b871229a1ff38f930eed3144f5328cb2f0a7f6379149d79445a23ea",
         "permission": "GOVERNED_WRITE"
@@ -2352,7 +2354,7 @@
           "whoami"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_claim_attest",
-        "input_schema_digest": "sha256:70dbf43ecfdf5060029a756e9a3b7e199b2dad558d75cfcb0b2cde142d34b528",
+        "input_schema_digest": "sha256:40a06073dc53f7cc596b198f674d0b0ac8b65e37763fbc4603643649f2cbd556",
         "name": "cruxible_claim_attest",
         "output_schema_digest": "sha256:ccc87e67574b1793bfc91a3c5b4b2fe3b4fc42bdaa0fd819f20ce5dec74ef3b8",
         "permission": "GOVERNED_WRITE"
@@ -2362,7 +2364,7 @@
           "migrate_claim_type"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_migrate_claim_type",
-        "input_schema_digest": "sha256:dbe25e81fb9b9397e2376f392f7d52450063fd90d2d7686f3d27a7020fe2d912",
+        "input_schema_digest": "sha256:a5016764e548d6b3a3721977b8957cb26279e6937baa06229e210ca208c45cb1",
         "name": "cruxible_claim_type_migrate",
         "output_schema_digest": "sha256:33b5f8dbaa18e5cf2fbc85d3dbdb62cee8776679ef5b533f0d67d3747a8e0a20",
         "permission": "GOVERNED_WRITE"
@@ -2373,7 +2375,7 @@
           "propose_claim_type_input"
         ],
         "delegate": "cruxible_core.mcp.tools.cruxible_claim_type_propose",
-        "input_schema_digest": "sha256:7da428c77eaaad2f96acee3cf867e9b9e19e6c83a0501443f115e77863ee66a5",
+        "input_schema_digest": "sha256:d2d75ce71cc62cf22642ea34d0a12239feaf0f7efa3064fd10e603c8e3899c64",
         "name": "cruxible_claim_type_propose",
         "output_schema_digest": "sha256:8f95f4daf3c8401e400848849cc892533b5e6ccd9fce7812a09eda0a3d47b3a0",
         "permission": "GOVERNED_WRITE"
@@ -2529,7 +2531,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
         "input_schema_digest": "sha256:181b54480af5b96e180a267b9efd3f7426df530154df37c60b1382ce9326f5d8",
         "name": "cruxible_get",
-        "output_schema_digest": "sha256:e64370a9b24c7c5652ca0a102ecfa7574d25c75b8a71e33c03b85c02362baf49",
+        "output_schema_digest": "sha256:297fd561db1c9079878fb132b0574ab5784e3984ea8af3e66e149123e8eeee81",
         "permission": "READ_ONLY"
       },
       {
@@ -2604,7 +2606,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_add",
         "input_schema_digest": "sha256:896e3102cda48fa967c599a7e4b047929d25654af3000ea434d0f4fb2b8d418b",
         "name": "cruxible_kit_add",
-        "output_schema_digest": "sha256:9efab76f81601132daceb571b66c1e09f1e1d3df383735a0261a1c128fe3b68a",
+        "output_schema_digest": "sha256:9ad557daf19bdd4a7560d88f7dc2f889324da18fc523f57ccbec2f8194294089",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -2624,7 +2626,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_remove",
         "input_schema_digest": "sha256:a65e83c3a6b77ca397c737244489b8f81b3dfe7d2760185d6a529a531fcecd37",
         "name": "cruxible_kit_remove",
-        "output_schema_digest": "sha256:9efab76f81601132daceb571b66c1e09f1e1d3df383735a0261a1c128fe3b68a",
+        "output_schema_digest": "sha256:9ad557daf19bdd4a7560d88f7dc2f889324da18fc523f57ccbec2f8194294089",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -2635,7 +2637,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_status",
         "input_schema_digest": "sha256:7ac7b304b74762eec1aa955ef4dd274936e6b74f1e8b1d1b39f84cf9698b2ed7",
         "name": "cruxible_kit_status",
-        "output_schema_digest": "sha256:91f34af030dc1115c1f8b25a54db0350f40335be57040a0b7c7d19e5816e7b35",
+        "output_schema_digest": "sha256:ce4bab971e9d04a363e43f907606febb07a47178639a0b333bedf855f3d0a579",
         "permission": "READ_ONLY"
       },
       {
@@ -2866,9 +2868,9 @@
           "review_proposal"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_review",
-        "input_schema_digest": "sha256:52c62ed49d7c31fd68b75b13d9d0d745d8c0fb371a8d2eacbb938cf58d5f177a",
+        "input_schema_digest": "sha256:af7f80fec1efeb5eed6876839fb5f6973a0d2248898709ee81ae574c658e1a99",
         "name": "cruxible_proposal_review",
-        "output_schema_digest": "sha256:b640435105c205047baba9bca82248817dab032ef96f5a9a9676979c6836b7de",
+        "output_schema_digest": "sha256:4248362babd286408d546244a45e48b7e38158b2282b91fc5035aa2787e6f8a9",
         "permission": "READ_ONLY"
       },
       {
@@ -2928,7 +2930,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_query",
         "input_schema_digest": "sha256:aa99ac540ad1e6eb6aa1685d869ee00d5b4d85cd716831adfccd1368da47fd91",
         "name": "cruxible_query",
-        "output_schema_digest": "sha256:d35ceebedd881dbea139076d680a6c063552bb5371ff150e8054afc93c8ca9a5",
+        "output_schema_digest": "sha256:bcda65d1d77459b55c93b9b0191017ae48e4e776ac1eddb52f9136bb0d5e132b",
         "permission": "READ_ONLY"
       },
       {
@@ -2938,7 +2940,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_query_spec",
         "input_schema_digest": "sha256:2a9240293d697f2e638ada4a34f4878a933afa1cf71a0b68bfa7f7127a78d1cc",
         "name": "cruxible_query_spec",
-        "output_schema_digest": "sha256:d35ceebedd881dbea139076d680a6c063552bb5371ff150e8054afc93c8ca9a5",
+        "output_schema_digest": "sha256:bcda65d1d77459b55c93b9b0191017ae48e4e776ac1eddb52f9136bb0d5e132b",
         "permission": "READ_ONLY"
       },
       {
@@ -2948,7 +2950,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_retire",
         "input_schema_digest": "sha256:7e85fa06b5e63e507813ab8683f426532e1f69a3cc510a705041ae6af8941543",
         "name": "cruxible_retire",
-        "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
+        "output_schema_digest": "sha256:8a1a10e226c092e60569ace1e0fb19786a9f718e8f189d52f94f52dd046a78f6",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -2986,12 +2988,13 @@
       },
       {
         "client_operations": [
-          "set"
+          "set",
+          "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_set",
-        "input_schema_digest": "sha256:c4657a8b908962fec6021ec75ef0348b31e034ee66d116362fe0b2609cd3b37f",
+        "input_schema_digest": "sha256:eee7d6edeb347fa88695351eb68b53c424018742679f17cbac5083490f0667d6",
         "name": "cruxible_set",
-        "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
+        "output_schema_digest": "sha256:8a1a10e226c092e60569ace1e0fb19786a9f718e8f189d52f94f52dd046a78f6",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -3012,7 +3015,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_vocabulary_apply",
         "input_schema_digest": "sha256:923365bb0eeb3d4aaa411f9faa7a60e7809fc4a77be910b14a6c59d2263fc873",
         "name": "cruxible_vocabulary_apply",
-        "output_schema_digest": "sha256:3b6c094ddf503d97d29513b8a14c38f1987be227e8bbd1823645279cf68fc078",
+        "output_schema_digest": "sha256:217c1884f1a60a8416c2cba452c840e35b62063a6dd4034797b8cfbd9c43e2b0",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -3053,9 +3056,9 @@
           "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_write",
-        "input_schema_digest": "sha256:1f3cf06f41eb62be942454ae53b1fc2ec506db341ebaa0ae25668dcdd3ab42e8",
+        "input_schema_digest": "sha256:fb2b345e43e5e0844b39cd120bd458e15263274bd0dd137d6c4795d329adcbbc",
         "name": "cruxible_write",
-        "output_schema_digest": "sha256:ce750a669d0876799221f865359300de7a3a3e3bd54303967de4b32f79370c79",
+        "output_schema_digest": "sha256:8a1a10e226c092e60569ace1e0fb19786a9f718e8f189d52f94f52dd046a78f6",
         "permission": "GOVERNED_WRITE"
       }
     ]

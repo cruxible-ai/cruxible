@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
+from types import MappingProxyType
 
 import yaml
 from pydantic import ValidationError
 
+from cruxible_client._error_base import CoreError
 from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.contracts.authoring.models import (
@@ -335,6 +338,29 @@ class WorkspaceFiles:
             bindings[path.relative_to(self.workspace).as_posix()] = f"external:{entry.name}"
         return bindings
 
+    @cached_property
+    def display_paths(self) -> Mapping[str, str]:
+        """Each catalogued file's name to its path, as text shows a file citation.
+
+        A workspace file reads relative to the workspace, one outside it
+        absolute. An entry with a root alias or an invalid locator maps to
+        nothing, so its name is shown. Built once per catalog revision (this
+        object is cached on the catalog files' stats), never per citation.
+        """
+
+        paths: dict[str, str] = {}
+        for entry in self.file_entries:
+            try:
+                path = self._resolved_path(entry)
+            except SourceSelectionError:
+                continue
+            paths[entry.name] = (
+                path.relative_to(self.workspace).as_posix()
+                if path.is_relative_to(self.workspace)
+                else str(path)
+            )
+        return MappingProxyType(paths)
+
     def path_for_procedure(self, procedure_identity: str) -> Path:
         matches = tuple(
             entry
@@ -348,8 +374,26 @@ class WorkspaceFiles:
         return self._resolved_path(matches[0])
 
 
+def catalog_file_paths(workspace: Path | None) -> Mapping[str, str]:
+    """The workspace catalog's file names to their current paths, for text.
+
+    A file citation is stored under the catalog name (its identity survives a
+    move); a person reads the path the catalog maps that name to now. Empty
+    when there is no workspace, no catalog, or a catalog that cannot be read:
+    text then shows each name as stored. Never raises.
+    """
+
+    if workspace is None:
+        return MappingProxyType({})
+    try:
+        return workspace_files(workspace).display_paths
+    except (OSError, ValueError, CoreError):
+        return MappingProxyType({})
+
+
 __all__ = [
     "EvidenceSelection",
     "FileSelector",
     "WorkspaceFiles",
+    "catalog_file_paths",
 ]

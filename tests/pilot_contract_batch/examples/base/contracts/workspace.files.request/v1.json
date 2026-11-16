@@ -1,6 +1,6 @@
 {
   "artifact_format": "cruxible-contract-v1",
-  "description": "Which files to read from an authorized workspace: glob is a relative pattern (*, ? and [...] within one directory per component; no **), and max_files is the most matches the read accepts (default 100, at most 1000). workspace names the authorized root (omitted: the attached workspace, else the only one); revision is the working tree.",
+  "description": "Which files to read: logical_source is the source name each Capture records (evidence rules may require one); glob is a relative pattern (*, ? and [...] within one directory per component; no **); max_files is the most matches the read accepts (default 100, at most 1000); workspace is the authorized root to read under (left out: the attached workspace, else the only one). revision is the working tree.",
   "fields": {
     "glob": {
       "type": {

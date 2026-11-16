@@ -169,6 +169,40 @@ class ClaimTypeMemberDescriptionInput(_StrictClaimTypeInputModel):
     description: str
 
 
+#: What each modelling and policy lint means and how to fix it, one line each:
+#: every surface prints a lint's code with this text.
+CLAIM_TYPE_LINT_TEXT: dict[str, str] = {
+    "cruxible.claim_type.description_missing": "state what one value of this field means",
+    "cruxible.claim_type.field_restates_ledger": (
+        "the ledger already records who wrote and approved each value, when, why and what "
+        "was proposed: drop the field and read those from the Claim"
+    ),
+    "cruxible.claim_type.string_holds_prose": (
+        "a long free string holds prose: keep strings to identifiers and one short label, "
+        "and put prose in a Document section the Claim cites"
+    ),
+    "cruxible.claim_type.enum_members_name_things": (
+        "members that look like versions, dates or identifiers name things with their own "
+        "facts: make the thing a kind and the field subject<K>"
+    ),
+    "cruxible.claim_type.evidence_policy_admits_no_accepted_contract": (
+        "no evidence rule admits a contract this instance holds, so every value written "
+        "lands uncovered: add the own-words rule (the replacement names it) or a source rule"
+    ),
+    "cruxible.claim_type.subject_kind_undeclared": (
+        "the inferred Subject kind has no live SubjectKind: declare it in this change set "
+        "or state allowed_subject_kinds"
+    ),
+    "cruxible.claim_type.inverse_on_enum_or_boolean": (
+        "an inverse on a one-valued enum or boolean field: a member states the negative"
+    ),
+    "cruxible.claim_type.stale_eligible_never_current": (
+        "eligible_verdicts lists stale while require_current is true: stale contenders "
+        "never resolve"
+    ),
+}
+
+
 class ClaimInverseInput(_StrictClaimTypeInputModel):
     """How the type states that a unit holds nothing.
 
@@ -177,9 +211,11 @@ class ClaimInverseInput(_StrictClaimTypeInputModel):
     every object SubjectKind) for a many-valued one. ``evidence_rules`` are ids
     of the type's own evidence rules, in any order; only a Capture one of them
     admits establishes a none. ``stale_after`` takes ``P7D`` (absent: the type's
-    evidence freshness applies).
+    evidence freshness applies). ``tag`` may be left out; it is accepted so a
+    stored ClaimType's own inverse is also its input form.
     """
 
+    tag: Literal["cruxible-claim-inverse-v1"] = "cruxible-claim-inverse-v1"
     key: ClaimInverseKey
     evidence_rules: tuple[str, ...] = Field(min_length=1)
     stale_after: ClaimDurationInput | None = None
@@ -772,6 +808,7 @@ def lower_claim_type_input(
 
 
 __all__ = [
+    "CLAIM_TYPE_LINT_TEXT",
     "ClaimDurationInput",
     "ClaimEvidenceFreshnessInput",
     "ClaimInverseInput",

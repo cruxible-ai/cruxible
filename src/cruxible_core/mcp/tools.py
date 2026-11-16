@@ -86,6 +86,7 @@ from cruxible_client.contracts.write import (
     ContractEvidence,
     CreateChange,
     CreatedSubject,
+    CreateKey,
     Evidence,
     ExpectedValue,
     FileEvidence,
@@ -244,6 +245,16 @@ class McpAddChange(AddChange):
 class McpCreateChange(CreateChange):
     __doc__ = CreateChange.__doc__
 
+    # Advertised as the value or the {field: value} mapping; parts still validate.
+    key: Annotated[
+        CreateKey,
+        WithJsonSchema(
+            {"anyOf": [{"type": ["string", "integer", "boolean", "object"]}, {"type": "null"}]}
+        ),
+    ] = Field(
+        default=None,
+        description='One value or {field: value}; a pair end may be {"created": label}.',
+    )
     role: McpRole = None
     evidence: McpEvidence = None
 
@@ -407,7 +418,7 @@ def register_tools(
     def cruxible_provider_list(
         instance_id: InstanceId = None,
     ) -> ProviderCatalog:
-        """List installed Providers, then the configured repository's packages, with interfaces."""
+        """List installed Providers, then the configured repository's packages, with operations."""
         return handlers.handle_playbill_provider_catalog(require_instance_id(instance_id))
 
     @_tool
@@ -564,13 +575,23 @@ def register_tools(
         rows_limit: int = 5,
         groups_limit: int = 5,
         findings_after: str | None = None,
+        changes_from: int = 0,
+        definitions_from: int = 0,
+        groups: bool = False,
     ) -> contracts.ProposalReviewResponse:
-        """Factored proposal summary; page groups/rows, or set detail for the full review."""
+        """A proposal as a reviewer reads it: value changes with cited text, definitions.
+
+        Page with changes_from / definitions_from (the *_next a page returns);
+        groups=true adds stored fields grouped by kind; detail=true the full review.
+        """
         return handlers.handle_playbill_review(
             require_instance_id(instance_id),
             proposal_id,
             include_body=include_body,
             detail=detail,
+            changes_from=changes_from,
+            definitions_from=definitions_from,
+            groups=groups,
             summary_after=summary_after,
             summary_group=summary_group,
             rows_after=rows_after,

@@ -31,9 +31,11 @@ from cruxible_client.contracts.procedures.line_specs import (
     SlotBindingVerdict,
     SlotFitter,
     SlotNeed,
+    binding_problem_repair,
     builtin_binding_problem,
     judge_slot_binding,
     operation_spelling,
+    with_repair,
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
@@ -359,18 +361,20 @@ def bind_procedure_references(
             from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
             from cruxible_core.errors import RequestRefusedError
 
+            code, message = verdict.problem
+            required_change = binding_problem_repair(
+                code, name, slot.capability.spelling, builtin=builtin
+            ) or (
+                f"Bind {name} to core's builtin."
+                if builtin
+                else f"Bind {name} to an operation serving {slot.capability.spelling} that fits it."
+            )
             raise RequestRefusedError(
-                verdict.problem[0],
-                verdict.problem[1],
+                code,
+                with_repair(message, required_change),
                 repair=HandEditRepair(
                     hand_edit=HandEditInstruction(
-                        target="bindings",
-                        required_change=(
-                            f"Bind {name} to core's builtin"
-                            if builtin
-                            else f"Bind {name} to an operation serving {slot.capability.spelling} "
-                            "that fits it"
-                        ),
+                        target="bindings", required_change=required_change
                     )
                 ),
             )

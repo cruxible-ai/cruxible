@@ -37,9 +37,10 @@ Without a socket or URL the server reuses the local daemon on
 `.cruxible/coverage.json` binds. `CRUXIBLE_PRINCIPAL_ID` names the principal
 the agent acts as; on a daemon with auth, `CRUXIBLE_SERVER_BEARER_TOKEN`
 carries its credential. `cruxible principal add NAME --key-dir DIR` writes
-exactly these settings to `DIR/cruxible.env`. Setup itself (starting a
-daemon, `cruxible init`, adding principals) is operator work on the CLI; MCP
-has no setup tools. See [MCP tools](mcp-tools.md) for every variable.
+exactly these settings to `DIR/cruxible.env`. Setup (starting a daemon,
+`cruxible init`, adding principals) is operator work on the CLI; on MCP,
+`cruxible_init` initializes the workspace folder as `cruxible init` does, and
+nothing else sets up. See [MCP tools](mcp-tools.md) for every variable.
 
 First setup on one machine, in order:
 
@@ -216,9 +217,11 @@ in the SDK).
   admission](evidence-and-admission.md)).
 - **Notes**: write the reasoning into a document section in the same `write`
   as the Claims that cite it ([Documents and notes](documents-and-notes.md)).
-- **Definitions**: fields, kinds, saved queries and automation go through
-  authoring ([Evolving your vocabulary](evolving-your-vocabulary.md), [Lines
-  and automation](lines-and-automation.md)).
+- **Definitions**: kinds and fields go through the vocabulary file
+  (`.cruxible/vocabulary.yaml`: `vocabulary export`, edit, `plan`, `apply`);
+  saved queries, CaptureKinds and automation go through authoring ([Evolving
+  your vocabulary](evolving-your-vocabulary.md), [Lines and
+  automation](lines-and-automation.md)).
 - **Proposals**: review the exact candidate before anyone signs it ([Review
   and governance](review-and-governance.md)).
 
@@ -277,6 +280,12 @@ For MCP-only clients, the same write is one `cruxible_write` call:
 }
 ~~~
 
+A Subject the write creates is part of the same batch: `batch.create(kind,
+key=...)` returns a handle that names it as `subject=` or as a value, and a
+`cx.new_subject(...)` draft works in the same places (`create` changes over
+MCP and in a CLI write file). A key is the value of a kind's one key, or
+`{field: value}` for each key field.
+
 `replace_section(..., expect=digest)` replaces a section only if nobody
 changed it since you read it. Each write accepts in the same call when the
 approval policy and your tier allow it; otherwise the outcome says `awaiting
@@ -305,9 +314,31 @@ w.catalog.part.where(category="brakes").select("title").run().rows
 ~~~
 
 Where a name isn't a Python identifier, use `w.kind("catalog.part")` and
-`w.claim_type("catalog.part.fits")`. A World is pinned to the coordinate it
-was read at: after you write, read it again (`cx.world()`) before using its
-references in a new change, or the SDK refuses them as out of date.
+`w.claim_type("catalog.part.fits")`. A World's writes are checked from the
+coordinate it was read at, advanced past its own accepted writes, so its
+references stay valid after them; only a field someone else moved since
+refuses.
+
+A World writes in two ways. On an accepted Subject, `set`, `add` and `retire`
+write at once, and need `because=`:
+
+~~~python
+part.set(title="Front brake pads, semi-metallic", because="Acme's corrected box label.")
+# accepted (generation 16, 46713fb47b64)
+#   set catalog.part/bp-1142 title: ... -> Front brake pads, semi-metallic  [CLM-9b63920c…; verdict supported]
+~~~
+
+To send several Subjects' changes as one change set, build them instead:
+`w.<kind>.define(...)` drafts a new Subject, and `subject.edit().set(...)`
+collects changes to an accepted one; nothing is sent until `w.write(...)`:
+
+~~~python
+rotor = w.catalog.part.define("rt-500", title="Front brake rotor", category="brakes")
+w.write(rotor, part.edit().add(replaces=rotor), because="New rotor line from Acme's 2026 list.")
+~~~
+
+Passing `part.set(...)` itself to `w.write` fails (it has already tried to
+write, and lacks `because`); pass `part.edit().set(...)`.
 `.cruxible/world.pyi` holds the vocabulary as Python types, so an editor or a
 model completes real names; floor delivery keeps it current, and `cruxible
 stub` writes one.
@@ -331,6 +362,17 @@ without submitting. On the CLI, `cruxible authoring submit FILE|-`;
 
 ### Evolving vocabulary
 
+The ordinary way to change kinds and fields is the vocabulary file:
+`cruxible vocabulary export` writes `.cruxible/vocabulary.yaml` from accepted
+state, you edit it, `plan` shows what would change (and the Claims an enum
+mapping moves), and `apply` submits it as one change set. The SDK spelling is
+`cx.vocabulary.export()`, `.plan()` and `.apply()`; MCP has
+`cruxible_vocabulary_export`, `_plan` and `_apply` in the `full` profile.
+`orient` and `next` say when the file is behind accepted state
+(`vocabulary_file_behind`); `vocabulary export` repairs it. [Evolving your
+vocabulary](evolving-your-vocabulary.md#the-vocabulary-file) has the format.
+
+For a change that needs a judgment per Claim, the SDK states it directly.
 `ChangeSetDraft.succeed_claim_type(successor, dependents=[...])` changes a
 field together with what happens to every Claim written under it, so "I need
 this distinction, and here is everything it changes" lands as one generation.
@@ -358,11 +400,21 @@ A signer outside the MCP process uses the full-profile pair
 `cruxible_proposal_approve_prepare` (the exact statement to sign) and
 `cruxible_proposal_approve_submit` (the public signature).
 
-Review the candidate first: `proposal review` shows what it changes and why,
-with the `git diff` command for the ledger. An agent with no attached
-workspace reads the same branches from the ledger mirror (`mirror_url` in
-`orient --json`). [Review and governance](review-and-governance.md) covers
-both.
+Review the candidate first: `proposal review` (MCP `cruxible_proposal_review`,
+SDK `str()` of the summary) prints each value change with what it cites and
+the cited text, then one block per definition; page long proposals with
+`changes_from` and `definitions_from`. `--detail` gives the `git diff` command
+for the ledger. An agent with no attached workspace reads the same branches
+from the ledger mirror (`mirror_url` in `orient --json`).
+
+The reviewer is a different agent from the author, in its own session and as
+its own principal, even with auth off and a policy that allows self-approval.
+An author who wants that review writes with `--no-accept` (`accept="never"`):
+the proposal waits as `ready_to_activate`, and `next` lists it. The reviewer
+runs `proposal review`, then `proposal approve` (signs, and activates when
+nothing else is required) or `proposal activate`. [Review and
+governance](review-and-governance.md#a-second-agent-reviews) shows both
+sides.
 
 ## Automation
 
@@ -376,7 +428,10 @@ automation](lines-and-automation.md) guide walks through one. From the SDK:
   dedupe), `claims` and `inbox` steps, typed references (`handle["field"]`)
   and typed predicates (`eq`, `gt`, `present`, `all_of`, ...), with
   `.preview()` before submitting. Every other step kind refuses
-  `procedure_step_closed`: computation lives in a provider derive.
+  `procedure_step_closed`: computation lives in a provider derive. Each slot
+  names a capability (`slots={"read": {"capability": "workspace.file@1"}}`),
+  never a provider; `orient --section capabilities` lists them. An extract
+  names a record set of its CaptureKind's layout (`records="parts"`).
 - `cx.line(name).run()` runs a Line once; `.enable()` lets its Triggers fire.
 - `cx.accepted_procedure(name)` reads one: `.run(input=...)` for a direct run,
   `.measure(run=...)` and `.readings(...)` for its measurements.

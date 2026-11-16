@@ -166,6 +166,12 @@ def _moved(table: dict[str, str]) -> dict[str, str]:
     return {**table, "triggers/floor-refresh.json": hashlib.sha256(b"moved").hexdigest()}
 
 
+def _earlier() -> tuple[GenesisSeedSet, ...]:
+    """Every history entry before the newest."""
+
+    return genesis_seeds.GENESIS_SEED_HISTORY[:-1]
+
+
 def _edited(entry: GenesisSeedSet, table: dict[str, str]) -> GenesisSeedSet:
     return GenesisSeedSet(
         ordinal=entry.ordinal,
@@ -189,9 +195,9 @@ def test_moved_seeds_without_a_new_entry_fail_after_the_release(
     assert "triggers/floor-refresh.json" in problems[0]
 
     # The bytes moved and entry N was edited to match: still refused.
-    monkeypatch.setattr(genesis_seeds, "GENESIS_SEED_HISTORY", (_edited(entry, moved),))
+    monkeypatch.setattr(genesis_seeds, "GENESIS_SEED_HISTORY", (*_earlier(), _edited(entry, moved)))
     (problem,) = seed_history_problems(_pins(), moved)
-    assert f"History entry {entry.ordinal} (0.5.0) was edited" in problem
+    assert f"History entry {entry.ordinal} ({entry.name}) was edited" in problem
     assert f"Do not edit entry {entry.ordinal}" in problem
 
     # ... and a second pin for the same ordinal does not hide the edit.
@@ -214,7 +220,7 @@ def test_a_new_entry_with_its_pin_passes(monkeypatch: pytest.MonkeyPatch) -> Non
     added = GenesisSeedSet(
         ordinal=entry.ordinal + 1, name="next", seeds=_edited(entry, moved).seeds
     )
-    monkeypatch.setattr(genesis_seeds, "GENESIS_SEED_HISTORY", (entry, added))
+    monkeypatch.setattr(genesis_seeds, "GENESIS_SEED_HISTORY", (*_earlier(), entry, added))
 
     # Without its pin the guard names the line to add.
     (problem,) = seed_history_problems(_pins(), moved)
@@ -237,7 +243,7 @@ def test_an_unpublished_entry_may_be_replaced_with_its_pin(
     monkeypatch.setattr(genesis_seeds, "SEED_HISTORY_FROZEN_THROUGH", entry.ordinal - 1)
     moved = _moved(_checked_in_table())
     replaced = _edited(entry, moved)
-    monkeypatch.setattr(genesis_seeds, "GENESIS_SEED_HISTORY", (replaced,))
+    monkeypatch.setattr(genesis_seeds, "GENESIS_SEED_HISTORY", (*_earlier(), replaced))
 
     (problem,) = seed_history_problems(_pins(), moved)
     assert "it may be replaced: set its pin to" in problem
@@ -245,6 +251,7 @@ def test_an_unpublished_entry_may_be_replaced_with_its_pin(
 
     pins = SeedSetPins(
         entries=(
+            *(pin for pin in _pins().entries if pin.ordinal != replaced.ordinal),
             SeedSetPin(
                 ordinal=replaced.ordinal, name=replaced.name, set_digest=replaced.set_digest()
             ),

@@ -295,6 +295,8 @@ def test_the_law_holds_succession_never_revives_and_reserves_the_pseudo_kinds() 
         revived, path=path, predecessor=_accepted(retired), key_claim_types={}
     )
     assert refused.diagnostics[0].code == "cruxible.subject_kind.revival_refused"
+    # The refusal names its repair.
+    assert "propose a new SubjectKind name" in refused.diagnostics[0].message
     pseudo = SubjectKind(
         identity=ArtifactIdentity(kind="SubjectKind", name="semantic.subject"),
         identity_rule=SubjectKindMinted(),

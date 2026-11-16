@@ -1097,6 +1097,17 @@ KitAddRefusal = Annotated[
 ]
 
 
+class KitRequirementStatus(_Strict):
+    """One kit an installed kit requires, and whether this instance meets it."""
+
+    kit_id: str
+    min_version: str
+    #: The required kit's installed version; absent when it is not installed.
+    installed_version: str | None = None
+    #: Installed at ``min_version`` or later.
+    met: bool
+
+
 class KitChangeResult(_Strict):
     """What a kit add or remove changed, or why it changed nothing."""
 
@@ -1129,6 +1140,11 @@ class KitChangeResult(_Strict):
     provenance: KitProvenance | None = None
     #: The bundled provider packages, installed before the definitions.
     providers: tuple[KitProviderStep, ...] = ()
+    #: Each kit this release requires, as this instance holds it (an add whose
+    #: requirement is not met refuses cruxible.kit.requires_missing instead).
+    requires: tuple[KitRequirementStatus, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     plan: tuple[KitPathPlan, ...] = ()
     #: Each live Procedure bound to another build of a provider the kit ships,
     #: moved to the kit's build in this change set (or kept, with keep_build).
@@ -1181,17 +1197,6 @@ class KitProviderStatus(_Strict):
     installed_version: str | None = None
 
 
-class KitRequirementStatus(_Strict):
-    """One kit an installed kit requires, and whether this instance meets it."""
-
-    kit_id: str
-    min_version: str
-    #: The required kit's installed version; absent when it is not installed.
-    installed_version: str | None = None
-    #: Installed at ``min_version`` or later.
-    met: bool
-
-
 class InstalledKit(_Strict):
     kit_id: str
     version: str
@@ -1207,6 +1212,9 @@ class InstalledKit(_Strict):
     providers: tuple[KitProviderStatus, ...] = ()
     #: Filled by the CLI and MCP adapters from the registry's tags.
     latest_available: str | None = None
+    #: The content digest of ``latest_available``, when known (the bundled base kit's):
+    #: at the installed version, a different digest means the installed content differs.
+    latest_content_digest: str | None = None
     update_check: KitUpdateCheck = "not_checked"
 
 
@@ -1217,7 +1225,8 @@ KitResumeState = Literal["waiting", "proposed", "blocked"]
 
 
 class KitResumeStatus(_Strict):
-    """A ``kit add`` that stopped at awaiting_providers and resumes on activation."""
+    """A ``kit add`` that stopped at awaiting_providers and resumes on activation, or
+    one that stopped at its proposal (creation's base kit under independent approval)."""
 
     kit_id: str
     version: str
@@ -1229,6 +1238,8 @@ class KitResumeStatus(_Strict):
     waiting_on: tuple[str, ...] = ()
     #: The definitions' proposal, once proposed.
     proposal_id: str | None = None
+    #: That proposal is still open (awaiting approval or activation).
+    proposal_open: bool = Field(default=False, exclude_if=lambda value: not value)
     detail: str | None = None
     #: Where the bundle came from, as the kit add recorded it.
     source: str | None = None

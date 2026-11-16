@@ -224,6 +224,10 @@ def test_absence_authoring_rails_fail_with_typed_codes(tmp_path: Path, invalid):
             instance, procedure_spec(base=raw, reference_text=True), line_name="refused-absence"
         )
     assert expected in caught.value.code
+    if invalid == "provider_records":
+        # The refusal says what to do now: a layout record set, and its extract.
+        assert "roadmap" not in str(caught.value)
+        assert "record set of the Capture's CaptureKind layout" in str(caught.value)
 
 
 @pytest.mark.parametrize("policy", ("mirror", "inverse"))

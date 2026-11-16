@@ -31,7 +31,7 @@ def test_procedure_get_text_keeps_every_authored_step(capsys):
         ],
     )
     card = GetProcedureCard(procedure="readable", inputs={}, runnable="direct", authored=spec)
-    _emit_get_text(SimpleNamespace(card=card, kind="procedure"))
+    _emit_get_text(SimpleNamespace(card=card, kind="procedure", evidence=None, backlinks=None))
     shown = capsys.readouterr().out
     assert literal in shown
     assert '"project": "first"' in shown

@@ -93,8 +93,31 @@ class Client:
         self.prepared = 0
         self.receipt_change = False
 
-    def review_proposal(self, *_args: object, include_body: bool, detail: bool):
-        assert detail
+    def review_proposal(
+        self,
+        *_args: object,
+        include_body: bool | None = None,
+        detail: bool = False,
+        groups: bool = True,
+    ):
+        if not detail:
+            # The reviewer's view of the same candidate, which str(review) prints.
+            assert include_body is None and groups is False
+            return api.ProposalReviewSummary(
+                proposal_id=self.review.proposal_id,
+                candidate_digest=self.review.candidate_digest,
+                settlement_base=self.review.settlement_base,
+                counts={"created": 1},
+                subject_kinds={},
+                subject_kind_count=0,
+                required_tier="governed_write",
+                activation_policy="snapshot",
+                approval_requirements=(),
+                findings=(),
+                finding_count=0,
+                groups=(),
+                group_count=0,
+            )
         assert include_body
         return self.review
 
@@ -155,6 +178,9 @@ def test_exact_approval_detaches_nested_review(setup) -> None:
     pb, client, signer = setup
     proposal = pb.proposal("proposal-one")
     reviewed = proposal.review()
+    # print(review) shows the reviewer's view, as `cruxible proposal review` prints it.
+    assert str(reviewed) == str(reviewed.summary)
+    assert "Changes: 1 created / 0 revised / 0 retired" in str(reviewed)
     details = reviewed.details
     details.candidate["candidate"]["parent_semantic_root"] = "sha256:" + "f" * 64
     details.complete_members.clear()

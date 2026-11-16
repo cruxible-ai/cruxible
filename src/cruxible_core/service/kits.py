@@ -77,6 +77,7 @@ from cruxible_client.contracts.kits import (
     KitReceipt,
     KitRemoveRequest,
     KitRequirementStatus,
+    KitResumeStatus,
     KitStatus,
     KitTransition,
     kit_artifact_path_allowed,
@@ -1657,6 +1658,7 @@ def _submit(
     installed_version: str | None = None,
     provenance: KitProvenance | None = None,
     providers: tuple[KitProviderStep, ...] = (),
+    requires: tuple[KitRequirementStatus, ...] = (),
     repins: tuple[ProviderRepinV1, ...] = (),
     stops: tuple[StoppedAutomationV1, ...] = (),
     automation_carries: tuple[AutomationCarryV1, ...] = (),
@@ -1668,6 +1670,7 @@ def _submit(
         "installed_version": installed_version,
         "provenance": provenance,
         "providers": providers,
+        "requires": requires,
         "repins": repins,
         "stops": stops,
         "automation_carries": automation_carries,
@@ -1996,6 +1999,39 @@ def _provider_steps(
     return steps, missing
 
 
+#: What a commit of a kit whose bundled providers are missing does: each provider
+#: carries its own shapes, so nothing is accepted before the installs.
+KIT_PREVIEW_AWAITING_INSTALL = (
+    "a commit installs the bundled providers first, then proposes these definitions, "
+    "which are checked against the installed providers"
+)
+
+
+#: The bundled base kit's id: never removed while it holds the bundled definitions,
+#: see ``_remove_kit``.
+BASE_KIT_ID = "base"
+KIT_BASE_REQUIRED = "cruxible.kit.base_required"
+KIT_BASE_REQUIRED_REPAIR = (
+    "Leave the base kit installed; to stop using one of its definitions, retire that "
+    "definition in an authored change (cruxible authoring submit)."
+)
+
+
+def _holds_bundled_base(receipt: KitReceipt) -> bool:
+    """Whether a kit's receipt holds a definition exactly as the bundled base kit ships it.
+
+    What makes it the base kit for removal: the reserved ``web.`` and
+    ``workspace.`` definitions the bundled kit owns, at the bundled digest. That
+    survives an update that rewrites the receipt's source or version, and an
+    unrelated kit merely named base holds none of them.
+    """
+
+    from cruxible_core.kits.base_kit import bundled_base_kit
+
+    bundled = bundled_base_kit().manifest.digests()
+    return any(bundled.get(entry.path) == entry.release_digest for entry in receipt.artifacts)
+
+
 def _required_receipts(
     manifest: KitManifest, receipts: tuple[KitReceipt, ...]
 ) -> dict[str, KitReceipt]:
@@ -2263,10 +2299,11 @@ def service_add_kit(
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
-    A kit first proposes missing operation Contracts for its bundled providers,
-    then installs the missing packages through ``install_provider``; the rest
-    of the definitions follow once they land. An index
-    default another live Provider stands in for is not installed. A commit that
+    A kit first installs its missing bundled provider packages through
+    ``install_provider`` (each carries its own shapes, so nothing is accepted
+    before them); the definitions follow once they land. An index default is
+    not installed when live operations of providers here already serve every
+    slot's capability. A commit that
     stops at ``awaiting_providers`` is recorded, and the activation that lands
     the last awaited install proposes the definitions as this caller
     (``kit_resume``); any other commit of the kit replaces that record.
@@ -2438,6 +2475,16 @@ def _add_kit(
         "installed_version": installed_version,
         "provenance": manifest.provenance,
         "providers": tuple(steps),
+        # Each required kit is met here, or the add refused above.
+        "requires": tuple(
+            KitRequirementStatus(
+                kit_id=item.kit_id,
+                min_version=item.min_version,
+                installed_version=required[item.kit_id].version,
+                met=True,
+            )
+            for item in manifest.requires
+        ),
     }
     # The definitions pin what the bundled providers register, so they are
     # proposed only once those are live. A preview cannot install, so it plans
@@ -2706,9 +2753,7 @@ def _add_kit(
             version=manifest.version,
             status="would_propose",
             plan=plan,
-            detail="a commit accepts missing bundled operation Contracts first, installs "
-            "the providers, then proposes the remaining definitions, which are evaluated "
-            "once those are installed",
+            detail=KIT_PREVIEW_AWAITING_INSTALL,
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )
@@ -2795,6 +2840,20 @@ def _remove_kit(
             remove_required_message(request.kit_id, dependents),
             repair=RepairOperation(
                 operation="cruxible.kit.remove", arguments={"kit_id": dependents[0]}
+            ),
+        )
+    if request.kit_id == BASE_KIT_ID and _holds_bundled_base(receipt):
+        # Its retired definitions could never come back: a retired kind is never
+        # revived, so a later `kit add base` would refuse.
+        raise RequestRefusedError(
+            KIT_BASE_REQUIRED,
+            "the base kit stays installed: it holds the capabilities and Contracts that "
+            "workspace reads and web fetches name, and a definition it retired could not "
+            f"be added back. {KIT_BASE_REQUIRED_REPAIR}",
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target="kit:base", required_change=KIT_BASE_REQUIRED_REPAIR
+                )
             ),
         )
     diff = _Diff()
@@ -2993,7 +3052,29 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
             kits.append(_bundled_comparison(_installed_kit(connection, tree, receipt, versions)))
     from cruxible_core.service.kit_resume import kit_resume_statuses
 
-    return KitStatus(kits=tuple(kits), resumes=kit_resume_statuses(instance))
+    return KitStatus(
+        kits=tuple(kits), resumes=_pending_resumes(instance, kit_resume_statuses(instance))
+    )
+
+
+def _pending_resumes(
+    instance: PlaybillInstance, resumes: tuple[KitResumeStatus, ...]
+) -> tuple[KitResumeStatus, ...]:
+    """Each resume row, a proposed one marked when its proposal is still open.
+
+    One indexed proposal lookup per proposed row (at most one row per kit).
+    """
+
+    from cruxible_core.service.proposals.proposals import proposal_is_open
+
+    return tuple(
+        resume.model_copy(update={"proposal_open": True})
+        if resume.state == "proposed"
+        and resume.proposal_id is not None
+        and proposal_is_open(instance, resume.proposal_id)
+        else resume
+        for resume in resumes
+    )
 
 
 def _bundled_comparison(kit: InstalledKit) -> InstalledKit:
@@ -3004,7 +3085,11 @@ def _bundled_comparison(kit: InstalledKit) -> InstalledKit:
     if kit.kit_id != BASE_KIT_PIN.kit_id:
         return kit
     return kit.model_copy(
-        update={"latest_available": BASE_KIT_PIN.version, "update_check": "checked"}
+        update={
+            "latest_available": BASE_KIT_PIN.version,
+            "latest_content_digest": BASE_KIT_PIN.content_digest,
+            "update_check": "checked",
+        }
     )
 
 

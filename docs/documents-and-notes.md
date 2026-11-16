@@ -22,10 +22,13 @@ $ cruxible files add fitment docs/fitment.md
 Added file fitment -> docs/fitment.md (no Document: cite it, or project blocks into it) in .cruxible/files.yaml
 ~~~
 
-The name is what citations and blocks use, so pick one that will last. A file
-must exist before it can be named. A write that creates a new file catalogs it
-for you under a generated name, so for a page you'll refer to often, create
-it and name it first.
+The name is a stable handle: the catalog maps it to the file's current path,
+so citations and blocks keep working when the file moves. A file must exist
+before it can be named, and `files add PATH` without a name derives one from
+the path. You don't have to catalogue a file before citing it: a write that
+creates a file, or cites one by its path, catalogues it for you under a name
+derived from the path, and you go on referring to it by path. For a page
+you'll refer to often, or to choose the name, create it and name it first.
 
 ## Writing notes with the Claims they back
 
@@ -134,6 +137,68 @@ A section written this way counts as its author's own words, with a location
 people can read, and a later edit to it brings every Claim citing it back for
 review ([Keeping knowledge current](keeping-knowledge-current.md#drift-a-source-changed-under-a-claim)).
 
+### Recording a decision with its evidence
+
+Evidence belongs to each Claim, not to the Subject. A ruling recorded as a
+decision Subject is several Claims (its summary, status, date, what it
+governs), and each one cites the section that gives the reasoning. Write them
+in one `write` with the section, so every Claim cites it, the date included:
+
+~~~python
+batch = cx.changes(because="Brake pad choice for the 2019 Civic.",
+                   subject="catalog.decision/civic-brake-pads")
+batch.append_section("docs/decisions.md", under=("Decisions",), id="why", text=(
+    "## Ceramic pads for the 2019 Civic\n\n"
+    "Decided 2026-11-12. We stock ceramic pads (bp-2210) rather than organic ones\n"
+    "for the 2019 Civic: they last about twice as long in city driving.\n"
+))
+why = batch.section("why")
+batch.set("summary", "Stock ceramic pads (bp-2210) for the 2019 Civic", evidence=why)
+batch.set("status", "accepted", evidence=why)
+batch.set("decided_on", "2026-11-12", evidence=why)
+batch.add("governs", "catalog.vehicle/honda-civic-2019", evidence=why)
+batch.write()
+~~~
+
+A value written later, in a write that does not produce the section, cannot
+cite it as its own words; it would rest on that later write's `because`, or
+cite the section as file evidence its field's rules must admit. So write a
+value and its date together with the reasoning they rest on.
+
+To see what backs a decision, read its Claims: `cruxible query
+catalog.decision --select status,decided_on --claims` lists each cell's Claim
+ID, and `get CLAIM_ID --detail evidence` shows what that Claim rests on.
+`get` on the Subject itself takes no `evidence` detail (it refuses
+`cruxible.get.detail_unsupported` and lists the details it takes):
+
+~~~text
+$ cruxible get CLM-65fd183b… --detail evidence
+value: 2026-11-12
+capture CAP-9ec7c0ed0601  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=doc-docs-decisions.md  ...  own words in doc-docs-decisions.md (181 bytes): admitted
+rationale: Brake pad choice for the 2019 Civic.
+~~~
+
+### Adding to a section without disturbing what cites it
+
+A Claim that cites a section commits to that section's bytes: its heading and
+its own body, up to its first subsection. Replacing the whole section with
+`replace_section`, even to reword one sentence, changes those bytes, so every
+Claim citing it comes back as `citation_drifted` for someone to re-bind or
+retire; and the replacement drops the section's subsections too. To add to a
+decision or a note, append a subsection under it instead:
+
+~~~python
+later = cx.changes(because="Follow-up on the Civic pad ruling.")
+later.append_section("docs/decisions.md",
+                     under=("Decisions", "Ceramic pads for the 2019 Civic"), text=(
+    "### Follow-up, 2026-11-20\n\nFleet customers report no squeal after a week.\n"
+))
+later.write()
+~~~
+
+The four Claims citing the ruling stay current. Replace a section only when
+what it says has changed, and then re-check each Claim `next` brings back.
+
 Because it counts as your own words, a field that requires captured evidence
 refuses a section the same write produces (`cruxible.write.evidence_required`).
 Use two writes for those fields:
@@ -180,6 +245,8 @@ from `cruxible_client.contracts.write`, or
 in a write file.
 Either is evidence from a file, not your own words, so the field's rules must
 admit that file's source ([Evidence and admission](evidence-and-admission.md)).
+A file the catalog does not name yet is catalogued when the write is admitted,
+and the outcome lists it under `catalogued` (a dry run says it would be).
 
 ## Governed Documents
 

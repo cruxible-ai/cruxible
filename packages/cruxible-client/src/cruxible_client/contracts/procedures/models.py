@@ -2,8 +2,8 @@
 
 This packaged contract module owns the one Cruxible Procedure graph. Its
 dependencies are field-typed names resolved at an accepted coordinate (an
-execution plan records the exact pins) and typed slot signatures a Line
-binds; nothing here performs a mutable config or registry lookup.
+execution plan records the exact pins) and slots, each naming the capability
+a Line binds to one operation; nothing here performs a mutable config or registry lookup.
 """
 
 from __future__ import annotations
@@ -168,9 +168,11 @@ class ProcedureDefinition(_StrictProcedureModel):
 
     Every dependency field names a governed identity; an execution plan
     resolves each to its exact pin at the run's accepted coordinate.
-    ``slots`` declares each provider-calling node's signature ``{in, out,
-    effect}`` by name. The Procedure never names a provider; a Line binds every
-    slot to one exact build and operation when it is accepted.
+    ``slots`` names, for each provider-calling node, the capability it needs
+    (``{capability, may_truncate}``; its request and result Contracts and
+    effect come from that capability). The Procedure never names a provider;
+    a Line binds every slot to one exact build and operation serving that
+    capability when it is accepted.
     """
 
     graph_format: Literal[8] = 8

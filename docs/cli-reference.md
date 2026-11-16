@@ -680,7 +680,10 @@ so launchers that run a package by its own name, such as `uvx cruxible mcp`,
 reach the server. The root options and remembered CLI context do not configure
 it. Every tool runs on a daemon: with no transport configured, the server reuses
 the local daemon on `~/.cruxible/run/daemon.sock` or starts one (see
-[MCP tools](mcp-tools.md#the-daemon)).
+[MCP tools](mcp-tools.md#the-daemon)). It logs warnings and errors on stderr;
+`FASTMCP_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`) picks
+another level, and `CRUXIBLE_DEBUG` set to anything turns on `INFO`, which
+logs each daemon request and tool call.
 
 ## console
 
@@ -1089,8 +1092,9 @@ cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
 ~~~
 
 `provider list` names every live Provider build installed here (the built-in
-`cruxible-builtin` included) with its package, version and the interfaces it
-implements, then the packages a configured provider repository offers.
+`cruxible-builtin` included) with its package, version and operations
+(`get Provider:NAME` shows what each serves), then the packages a configured
+provider repository offers.
 
 Installation requires **ADMIN**. A package name resolves through the daemon's
 configured repository when it has one. Otherwise it installs from the provider
@@ -1108,16 +1112,26 @@ a remote daemon.
 The shared installer prepares an exact Python environment, verifies it once,
 and proposes the package's Provider build through ordinary acceptance. A
 package speaks provider runtime protocol 2.0: its `registration.json` (schema
-2) declares typed operations, each naming its input and output Contracts
-(`name@N`), its effect, the refusals it may return (each with a detail
-Contract) and the manifest entrypoint that serves it; one entrypoint may serve
-several operations. The install pins every Contract an operation names to the
-version accepted here, and refuses a Contract version that is not accepted, an
-operation declaring a refusal code the provider runtime reserves, and a
-schema-1 package (interfaces, bucket vocabularies, classifiers). Cruxible
-classifies no input: an occurrence admits every input that passes its
-operation's input Contract, and what a provider cannot serve, it refuses itself
-under a code its operation declares.
+3) declares typed operations, each with its `description`, its `source`
+(`path`, optional `repository` and `revision`), the capability names it
+`serves` (at most 16, no versions), its own request and result Contracts
+(`name@N`), its effect, `may_truncate` when it may return a truncated listing,
+the refusals it may return (each with a detail Contract) and the manifest
+entrypoint that serves it; one entrypoint may serve several operations. Its
+`declares` block carries a copy of every Contract and CaptureKind those
+operations reach, with `built_against` recording which capability and kind
+versions the copies came from. The copies are never installed as instance
+definitions, so a package installs with no kit present. The install refuses
+an operation that serves a `workspace.` capability
+(`cruxible.provider.capability_reserved`: core serves those), a result
+Contract that is itself a Capture rather than naming it as a field
+(`cruxible.provider.result_is_capture`), a reference that does not resolve
+inside `declares`, a copy the operations do not reach, an operation declaring a
+refusal code the provider runtime reserves, and any registration not in schema
+3. Fit to a Procedure slot is not checked at install: it is checked when a
+Line binds the slot. Cruxible classifies no input: an occurrence admits every
+input that passes its operation's request Contract, and what a provider cannot
+serve, it refuses itself under a code its operation declares.
 The registration lands at once when the approval policy requires no approval;
 otherwise it stops at proposed (`awaiting_approval`) for the ordinary review and
 activation. It returns `ready`, `awaiting_approval`, or `blocked` (a landed
@@ -1128,8 +1142,7 @@ domain the Provider definition records (default `operator`); `--at OID` commits
 only if accepted state is still the coordinate a preview answered at.
 Installation requires the current compiler; an instance on an older one runs
 `cruxible compiler upgrade` first. Installing grants nothing: credentials,
-grants, and invocation remain separate. A package that exports the built-in
-`workspace.file` is refused: it is built in on every new instance.
+grants, and invocation remain separate.
 
 Retries reuse the prepared installation and an open registration proposal.
 Package updates create a new environment and preserve earlier deployments.
@@ -1186,18 +1199,35 @@ its manifest digest, a layout with its digest, or a directory's name (`--source`
 records another origin, such as the registry reference a directory was pulled
 from, so `kit status` can check it for updates).
 
-A kit is one release of definitions: ClaimTypes, CaptureContracts,
-QueryDefinitions, SourceAcquisitionPolicies, Procedures, Blueprints and the
-ProviderInterfaces they need, plus the provider packages its Procedures run on.
-It never carries authority (governance, principals, mandates), local binding
-(Provider artifacts, Lines) or state (Subjects, Claims). A kit directory holds
+A kit is one release of definitions: ClaimTypes, SubjectKinds,
+CaptureContracts, Contracts, capabilities, QueryDefinitions, Procedures and
+Documents, plus the provider packages its Procedures run on. It never carries
+authority (governance, principals, mandates), local binding (Provider
+artifacts, Lines) or state (Subjects, Claims). A kit directory holds
 `cruxible-kit.json`, the artifact bytes under `artifacts/` and the bundled
-provider files under `providers/`.
+provider files under `providers/`. A Procedure moves its pins through its
+graph (its definition digest is recomputed).
 
-A Procedure or Blueprint moves its pins through its graph (its definition digest
-is recomputed) and a SourceAcquisitionPolicy moves only its pins. A
-ProviderInterface is carried, never owned: it belongs to the provider package
-that registers it, so `remove` never retires one.
+Required kits. A kit's manifest may list `requires: [{kit_id, min_version}]`.
+`build` leaves out of the bundle every pin to a definition another installed
+kit owns (the base kit's capabilities, say) and records that kit at the
+version installed here. `add` refuses `cruxible.kit.requires_missing` unless
+each required kit is installed at `min_version` or later (also when a change
+would take a required kit below it), and `cruxible.kit.requires_unresolved`
+unless each left-out pin resolves here (a Contract or capability at its exact
+digest, a CaptureKind by name, live); `remove` refuses
+`cruxible.kit.remove_required` while an installed kit requires the kit.
+`status` and the `add` preview print each requirement and whether it is met
+(`requires base >= 1.0.0: met (installed 1.0.0)`, or `not met (not
+installed)`). `base`, the kit Cruxible bundles, resolves to the bundled
+directory before any registry: `kit add base` installs or upgrades it offline.
+`kit remove base` refuses `cruxible.kit.base_required`: the base kit holds the
+capabilities and Contracts that workspace reads and web fetches name, and a
+definition it retired could not be added back. The repair is to leave it
+installed and retire any one of its definitions you stop using in an authored
+change. The check asks whether the kit holds a definition exactly as the
+bundled base kit ships it, so it holds across an update from another source;
+a kit merely named `base` with its own definitions is removed as usual.
 
 Provider packages. A kit ships the provider its own Procedures run on (for
 example a domain parser) as the package's built wheel, the uv lock it was built
@@ -1209,24 +1239,19 @@ kit never carries source. `--provider PACKAGE_DIR` (repeatable) names a package
 directory in the kit's source tree: its `pyproject.toml`, its `uv.lock`, and in
 `dist/` its built wheel plus the dependency wheels (`uv build --wheel --out-dir
 dist` for each). The CLI stages the files through the body store and the
-manifest records each package (provider id, package, version, interfaces) with
-the sha256 of every file. `build` refuses `cruxible.kit.provider_not_bundled` when
-a carried Procedure pins a Provider the kit does not bundle,
+manifest records each package (provider id, package, version, operations)
+with the sha256 of every file. `build` refuses `cruxible.kit.provider_not_bundled`
+when a carried Procedure pins a Provider the kit does not bundle, and
 `cruxible.kit.provider_build_differs` when the bundled wheel, lock or path
 dependency wheels are not the build this instance installed (the dependency
 closure is compared through the materialization digest, resolved for this host
-from the bundled files), and `cruxible.kit.interface_not_bundled` or
-`cruxible.kit.interface_differs` when a carried ProviderInterface is not exactly
-what a bundled wheel registers (installing that wheel would otherwise propose a
-successor over the kit's interface). Blueprints stay for slots the consumer
-fills: their slot interfaces come from a bundled package, and the consumer
-instantiates them with any installed Provider of that interface. The
-compiler-seeded built-ins (`Provider:cruxible-builtin`, `ProviderInterface:
-workspace.file`) are never bundled or carried: a kit pins them as they are, and
-`add` requires this instance to hold the same seeded ones.
+from the bundled files). Cruxible's built-in provider, `cruxible-builtin`, is never
+bundled or carried: a kit pins it as it is, and `add` requires this instance
+to hold the same one.
 
-Default providers. A kit whose Blueprints leave a slot for a contract (such as
-`web.fetch`) can name a default implementation instead of bundling one:
+Default providers. A kit whose Procedures have a slot for a general-purpose
+capability (such as `web.fetch`) can name a default implementation instead of
+bundling one:
 `--default-provider PACKAGE_DIR` (repeatable) names a published package laid out
 as for `--provider`, with the published wheel in `dist/`. The manifest records
 the package, its exact version, the wheel and lock digests (`delivery: index`)
@@ -1241,9 +1266,9 @@ exact-version install: install the repository's build with `provider install`
 first (the default is then `satisfied`), or add the kit on a daemon without one.
 The `add` preview says which: an index default it would install reads `would
 install (by name from the provider index at exactly VERSION ...)`. `add` skips the install (`satisfied`) when no Procedure the kit
-carries pins the default, each of its interfaces the kit carries is live here as
-the kit carries it, and some live Provider implements each one; the Blueprint's slot
-then takes that Provider. Otherwise it installs the default pinned to the recorded
+carries pins the default and, for every slot the kit's Procedures declare,
+some other live operation serves its capability and fits; those slots then
+bind to it. Otherwise it installs the default pinned to the recorded
 wheel and lock: the index's listing must name the recorded wheel hash before the
 wheel is fetched, and the lock it embeds must match before any dependency is
 fetched or any environment prepared, so another build at the same name and
@@ -1257,8 +1282,8 @@ Authoring a kit that ships its provider:
    its lock names by path into its `dist/`.
 2. Install that wheel on the authoring instance (`cruxible provider install
    dist/WHEEL --lock uv.lock --dependency dist/RUNTIME_WHEEL`) and author the
-   kit's Procedures against it; leave a Blueprint slot where the consumer picks
-   the provider.
+   kit's Procedures against it: each slot names a capability its operations
+   serve.
 3. `cruxible kit build --id ID --version X.Y.Z --owns PREFIX. --provider
    PACKAGE_DIR --out KIT_DIR`.
 4. Change the wheel only with a new package version: consumers holding another
@@ -1290,8 +1315,8 @@ instance's version instead (the preview reads `keep: X (keeps your edit)`, and
 `kit status` lists `kept: X (your edit)`); the receipt records each kept divergence, so a later
 release that leaves that definition as it was does not ask again. Every live
 artifact pinning a replaced definition takes one successor in the same change set,
-carried to the kit's final definitions (a Procedure or Blueprint moves its pins
-through its graph; a Procedure's Blueprint origin stays as recorded); the preview
+carried to the kit's final definitions (a Procedure moves its pins through its
+graph); the preview
 counts each definition's dependents rather than listing them.
 
 A definition the kit installed that the release dropped retires when nothing
@@ -1317,7 +1342,10 @@ commit stages each file in the daemon's body store (the CLI and MCP adapters do
 it; a preview stages and installs nothing and reports `would install`), then
 installs each package not yet installed through the ordinary transfer install,
 which needs the install permission (`ADMIN`) and lands when the approval policy
-requires no approval. The definitions are proposed once every bundled provider
+requires no approval. Providers carry their own shapes, so nothing is accepted
+before the installs: the preview says a commit installs the bundled providers
+first, then proposes these definitions, which are checked against the
+installed providers. The definitions are proposed once every bundled provider
 is installed; while an install awaits approval the result is
 `awaiting_providers` with that install's proposal. The daemon records that
 kit add, and the activation that lands the last awaited install proposes the
@@ -1330,8 +1358,8 @@ replaces the record. A commit first reads the staged files
 (metadata only), refuses `cruxible.kit.provider_manifest_mismatch` unless they
 reproduce the manifest, and refuses what the current state already decides
 (ownership overlap, a definition another installed kit owns or holds, a pinned
-built-in held differently, a disallowed downgrade, a carried interface held
-differently) before installing anything; after installing it refuses
+built-in held differently, a disallowed downgrade, a missing required kit)
+before installing anything; after installing it refuses
 `cruxible.kit.provider_not_installed` unless every bundled Provider is live. A
 package already installed from the same wheel, lock and dependency closure is
 unchanged (a preview, which has no files, compares wheel and lock). Provider installs add builds at `providers/NAME/BUILD.json`, with exact identities
@@ -1364,14 +1392,21 @@ previews by default, refuses while live definitions pin it, and keeps its runtim
 environment. Retired builds are hidden from new authoring. No command here collects
 old environments.
 
-`status` lists installed kits, the kit paths edited locally, the divergences kept
-on purpose, where each release was built, and each provider package with its
-delivery and install state here (`installed`, `differs` with the installed
+`status` lists installed kits, each with the content digest `kit add` pins
+(`base 1.0.0 content sha256:...; up to date`), the kit paths edited locally,
+the divergences kept on purpose, where each release was built, and each
+provider package with its delivery and install state here (`installed`, `differs` with the installed
 version, `satisfied` for a default another live Provider stands in for, or
 `missing`). For a kit installed from a registry
 the client lists the repository's tags (MAJOR.MINOR.PATCH, short timeout) and
-shows the latest available version; `--offline` skips the check, and a kit from a
-directory or layout shows its local source. Installing an update stays explicit:
+shows the latest available version; an installed version equal to the
+available one but with other content reads `differs from the available
+VERSION, content sha256:...`, not `up to date`. `--offline` skips the check,
+and a kit from a directory or layout shows its local source. A kit add stopped
+at its proposal (the base kit add of `init --require-independent-approval`,
+or a resumed add) is listed with its state and proposal, and while that
+proposal is open, `next: cruxible proposal approve ID --signer-id ID --key
+FILE`; `No kits installed.` prints only when there is neither. Installing an update stays explicit:
 `kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
 carries, and never a bundled provider, which stays installed); a path edited
 since install blocks it, and so does any live Claim or definition that still
@@ -1809,7 +1844,10 @@ the head (same payload and identity, the next revision), and a payload fault
 still refuses. `get` and `list`
 find staged work again after the context that started it is gone.
 `authoring example` prints a model-generated template for NAME, or lists the
-names without one.
+names without one. Every example compiles as printed once the definitions it
+names exist: the `procedure` example calls a `workspace.file@1` slot, extracts
+over its CaptureKind's layout and ends in `claims`, and the `line`, `trigger`
+and `procedure-mandate` examples build on it.
 
 `authoring bind` reads `--file` through the workspace's file catalog (the
 current worktree's, or `--workspace-root`'s): the stub's `source_id` must be the
@@ -2448,77 +2486,63 @@ judgments alongside revisions, with the total and truncation explicitly reported
 
 Read a Procedure with `cruxible get Procedure:NAME`: its card says how it runs
 (`runnable`): `direct` (`procedure run`), `line` (only as a Line), or
-`unsupported` (no run path admits it, e.g. an `exhaust_tap` node), with the
-nodes behind that answer. Procedures are graph format 6 and pin every Provider
-exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`,
-`state_claim`, `transform`, `project`, `guard`, `repeat`, `select`, `constant`,
-`return`, `invoke`, `halt`, `source` and `call` nodes. The terminals --
-`emit_capture`, `post_inbox`, `claims` -- run
-only as a Line: a direct invocation carries no requested authority, no
-occurrence, and no mandate coordinate, and none is fabricated for it.
+`unsupported` (no run path admits it), with the nodes behind that answer. The
+terminals (`claims`, `inbox`) run only as a Line: a direct invocation carries
+no requested authority, no occurrence, and no mandate coordinate, and none is
+fabricated for it.
 
-A Procedure may leave Provider slots open, each naming its required interface.
-A direct run selects the single installed build that fits each slot. No fit refuses
-`cruxible.procedure.slot_binding_missing`; several fits refuse
-`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
-with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
-`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
-carry the same `bindings` mapping alongside its Procedure and parameters.
-Existing Blueprint artifacts remain readable, and their exact Procedure instances
-keep running. New definitions are Procedures with slots.
+A Procedure names no provider. Each `call` names a slot, and each slot names a
+capability (`{"capability": "workspace.file@1"}`, plus an optional
+`may_truncate`); acceptance pins the capability by digest. A Line binds every
+slot when it is accepted, to the one live operation that serves the slot's
+capability and fits it (request, result, effect, and layout coverage of every
+Capture field), or to the one its `bindings` name, and rechecks that binding
+at each run admission. A direct run fits each slot it is not told about the
+same way. No fit refuses `cruxible.line.slot_unfilled` (naming each operation
+that declares the capability but does not fit, with its first failing field);
+several refuse `cruxible.line.slot_ambiguous` and list the candidates; a named
+operation that does not fit refuses `cruxible.line.binding_unfit`, one that
+does not serve the capability `cruxible.line.binding_undeclared`, and core's
+built-in named for any capability but `workspace.file` and `workspace.files`
+`cruxible.line.binding_builtin_mismatch`. Select explicitly with `cruxible
+procedure run NAME INPUT --bind slot=provider` (`provider[/build][#operation]`),
+or pass `bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line`
+member carries the same `bindings` mapping alongside its Procedure and
+parameters.
 
-A Source run needs a live SourceAcquisitionPolicy, the CaptureContract each
-Source node pins, and its Provider closure. Lines and Procedures use the
-instance's governed `SourceAcquisitionPolicy:default` unless they name another
-policy. New Procedure envelopes carry that name without pinning policy bytes;
-the admission records the resolved policy digest. Missing or retired defaults
-refuse `source_acquisition_policy_required` before a read or run journal.
+An `extract` names the Capture a call returned and a record set of its
+CaptureKind's layout (`records`), optionally `header` fields, `duplicates`,
+`only_keys` and a key-type override; the layout supplies paths, keys, the row
+Contract and field rules. Acceptance pins the record set's row Contract, so a
+layout that grows later does not change what an accepted Procedure extracts.
 
-A v2 policy states `max_age` once (an ISO-8601 duration such as `P1D`, or no
-age bound), and `overrides` maps Source aliases to differing age bounds. Every
-Source is required: unavailable, stale and oversized inputs refuse. Stale
-refusals name the alias, observed age and repair. Replayability comes from the
-CaptureContract. Existing v1 policies and exact Procedure policy pins remain
-readable with their historical meaning; edits author v2. A read outside an
-authorized workspace root, over the CaptureContract's selection budget, or with
-no daemon-local reader refuses `workspace_file_read_refused` and names its path
-class.
+Reading workspace files is core's own capability. A `workspace.file@1` request
+is `{logical_source, relative_path}` with an optional `workspace`, the logical
+name (last path component) of the authorized root to read under, and an
+optional `revision` (`working`); `workspace.files@1` takes `glob` and
+`max_files` (default 100, at most 1000) in place of `relative_path` and
+returns a sorted list of Captures. Omitted, `workspace` is the instance's
+attached workspace, else its only authorized root; several authorized roots
+and none attached refuse with path class `workspace_unnamed`, and a name no
+root (or more than one) carries refuses `workspace_unknown`, both listing the
+names in `workspace_names`. A read outside an authorized workspace root, over
+the CaptureContract's selection budget, or with no daemon-local reader refuses
+`workspace_file_read_refused` and names its path class. More glob matches than
+`max_files` refuse `glob_over_cap` before any file is read. The daemon
+resolves the root and records its binding digest on the executed request it
+journals (`playbill-workspace-file-executed-source-request-v2`), so a moved
+instance still shows a different binding.
 
-A `workspace.file` Source request (`playbill-workspace-file-source-request-v2`)
-says what to read, never how: `logical_source`, `relative_path`, the
-coordinate and selector it records, `replayability`, and optionally
-`workspace`, the logical name (last path component) of the authorized root to
-read under. Omitted, it is the instance's attached workspace, else its only
-authorized root; several authorized roots and none attached refuse with path
-class `workspace_unnamed`, and a name no root (or more than one) carries
-refuses `workspace_unknown` -- both list the names in `workspace_names`. The
-daemon resolves the root and records its binding digest on the executed
-request it journals (`playbill-workspace-file-executed-source-request-v2`),
-the `SourceReadReceipt` and so the Capture, so a moved instance still shows a
-different binding. An authored request carrying `workspace_binding_digest` (the
-v1 shape) refuses with path class `binding`: remove it. Run history written
-with v1 requests still reads and verifies.
+A call's request values may reference the run's input, params or an earlier
+step's output, but only as a whole value: `{"url": "$params.url"}` resolves,
+while a reference inside a longer string (`"https://example.org/$input.id"`)
+is passed through literally.
 
-A Source request's values may reference the run's input or an earlier step's
-output, but only as a whole value: `{"url": "$input.url"}` resolves, while a
-reference inside a longer string (`"https://example.org/$input.id"`) is passed
-through literally, so pass the full value in the run input.
-
-Source acquisition currently serves independent coherence. Bounded-window and
-declared-snapshot-group policies refuse before provider invocation. Actual
-captures are checked against the pinned replayability and maximum-age rules
-before selection, including the rule’s omission/default/refusal behavior.
-
-A completed Source run reports, per occurrence, the `SourceReadReceipt` the
-daemon minted for the exact bytes it read and the digest of the Capture those
-bytes became; `--json` carries both in `source_observations`. A direct Source
-run is identified by its evaluation instant, so re-running at the same instant
-replays the retained observation rather than reading the source again. Without
+A direct run is identified by its evaluation instant. Without
 `--evaluation-time` a direct run evaluates at the instant the daemon admits it
-(the invocation is its trigger) and records that instant as the run's
-`evaluation_time`, so its Capture is observed when it was read and a
-capture-landing Trigger accepted before the run fires on it; pass the first
-run's `evaluation_time` to replay it.
+and records that instant as the run's `evaluation_time`; with the same current
+Procedure and matching input, an explicit time may reuse a retained
+observation under its replayability and age policy.
 
 `get Procedure:NAME` names the unsupported nodes behind its `runnable` answer
 before anything runs. Runs append replay-verifiable journal records, and
@@ -2619,11 +2643,11 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 ## line
 
 ~~~text
-cruxible line enable LINE [--dry-run|--commit] [--at OID] [--json]
-cruxible line disable LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible line enable LINE [--dry-run|--commit] [--at OID] [--yes] [--json]
+cruxible line disable LINE [--dry-run|--commit] [--at OID] [--yes] [--json]
 cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-]
   [--occurrence-id ID] [--evaluation-time TS] [--parameters FILE|-] [--json]
-cruxible line evaluate LINE [--since TS --until TS] [--dry-run | --dispatch] [--limit 100]
+cruxible line evaluate LINE [--since TS --until TS] [--dry-run | --dispatch] [--limit N]
   [--cursor CURSOR] [--json]
 cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--json]
 ~~~
@@ -2654,11 +2678,15 @@ the Procedure's params Contract, refusing
 `cruxible.authoring.line_parameters_refused` with the expected fields. A Line
 run's input is empty, so a Procedure a Line runs declares what a Line supplies
 as `params` and reads it as `$params.<name>`; `procedure run --parameters`
-supplies the same values to a direct run. It may name an `acquisition_policy` to override the instance default. A Procedure with an `exhaust_tap` node
-cannot be a Line's (`cruxible.authoring.line_exhaust_tap_unsupported`): no run
-path admits one. `authoring example line` prints a Line over the `authoring
-example procedure` Procedure, and `authoring example acquisition-policy` a
-policy for a Source Procedure's Line.
+supplies the same values to a direct run. Its `acquisition` rules, keyed by a
+call's Capture field (`listing.capture`), say how old a Capture may be
+(`max_age`), which origins a fetch may use, and what a stale, unavailable or
+oversized read does. It also names its `bindings` (a slot bound by name to
+`provider[/build]#operation`; slots left out are fitted by capability),
+`budgets`, `max_authority`, `findings` routed to its inbox
+and an optional `trigger_input`. `authoring example line` prints a Line over
+the `authoring example procedure` Procedure, with its parameters, an
+acquisition rule and `max_authority: propose`.
 
 When a Line runs on its own is not the Line's own: a `trigger` input authors a
 Trigger (`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`,
@@ -2901,40 +2929,37 @@ budget (`budgets`) within them -- a Line budget that exceeds a cap is refused
 (`cruxible.authoring.line_budget_exceeds_caps`) naming each widened cap with
 both values, and a Line that states none runs at the caps. A direct run's
 ephemeral Line spec carries the caps as its budget. The `authoring example
-procedure` template's `hard_caps.max_wall_clock` is 30 minutes: a wall-clock
-cap catches an obviously bad run, not compute management, so the example
-leaves a large safety factor rather than a tight one.
+procedure` template's `hard_caps.wall_clock` is `PT10M`: a wall-clock cap
+catches an obviously bad run, not compute management, so the example leaves a
+large safety factor rather than a tight one.
 
-A Line whose Procedure ends in a `claims` terminal capped at propose produces a
-proposal. Its `candidate_templates` are a fixed list of templates, or
-`{"items": "$steps.<alias>.<list>"}` to fan out over data: each element a
-provider, Source or transform produced becomes one item of the one proposal,
-with its own dependency closure and evidence. An empty list proposes nothing
-and the run succeeds; an element that is not a Claim or Subject proposal item refuses
-`proposal_item_invalid` naming its `child_index`, and `items` that does not
-resolve or is not a list refuses `proposal_item_invalid` with reason
-`items_unresolved` or `items_not_a_list` (an object is never unwrapped). Each
-element cites the Capture its own lineage reached; a list built from several
-Captures by a step that keeps no per-element lineage refuses
-`proposal_item_evidence_ambiguous` rather than giving every element all of
-them. Each resolved candidate
-template must be one Claim proposal item --
-a statement, a rationale, and optionally the Claim lineage it revises. The
-daemon supplies the evidence: the produced Capture in that item's own
-dependency closure is cited -- or, when the closure produced none, the one
-Capture the run was admitted (a Line's `trigger_input` Capture); none is
-`proposal_item_evidence_missing` and more than one
-`proposal_item_evidence_ambiguous`, and an item that names its Capture must
-name one in its own closure, produced or admitted -- so a computed interpretation is a Claim under its
-ClaimType's evidence admission policy, never an attested observation and never
-a self-asserted one. The items are lowered through the same change-set
-authoring every surface uses, the exact live ProcedureMandate is evaluated
-against the paths lowering actually changed, and the proposal is submitted
-once. The run reports, per terminal, the proposal id, the exact candidate
-digest, the operation key, the mandate bound, and the Claim path each item
-lowered into; `--json` carries them in `terminal_egress`. Producing the
-proposal activates nothing: retrieve it with `cruxible get PROPOSAL_ID`, review
-it in the ledger, and activate it with the existing proposal verbs.
+A Line whose Procedure ends in a `claims` terminal turns each record of its
+`for_each` into Claims about that record's Subject, as the terminal's
+templates declare: the Subject's `kind` and `key` (and `create: if_absent` to
+create a Subject the key does not name yet), and per template the ClaimType,
+its value, role and one-line `rationale` (which may interpolate `{$item...}`
+references). Source records carry values only; they never supply Claim IDs,
+revisions, retirements or attestations, so a write instruction cannot come
+from data. `expect` with `when_absent` on a template is how a run retires or
+states a none for an expected Subject the source no longer lists. [Declare
+Claims as templates](lines-and-automation.md#declare-claims-as-templates)
+covers templates, absence and completeness. Capped at propose, or under a
+propose mandate, the run's changes become one proposal, lowered through the
+same change-set authoring every surface uses; the exact live
+ProcedureMandate is evaluated against the paths lowering changed, and the
+proposal is submitted once.
+
+Each written value cites the one root Capture in its own dependency closure,
+the Capture its extract read or, when the closure produced none, the Capture
+the run was admitted on (a Line's `trigger_input`); none refuses
+`proposal_item_evidence_missing`, and a closure with several Captures and no
+derivation tying them to one root refuses `proposal_item_evidence_ambiguous`.
+A computed value is a Claim under its ClaimType's evidence admission policy,
+never an attested observation. The run reports, per terminal, the proposal
+id, the exact candidate digest, the operation key, the mandate bound, and the
+Claim path each item lowered into; `--json` carries them in
+`terminal_egress`. Producing the proposal activates nothing: review it with
+`proposal review` and settle it with the proposal verbs.
 
 A Line keeps one open proposal per terminal. A later run whose change equals
 that open proposal's -- the same statements (subject, predicate, qualifier,
@@ -2953,72 +2978,22 @@ one landed is left as it is. A proposal that went stale is still open work and
 is weighed the same way. Settle terminals are unaffected, including their
 fallback proposals.
 
-An item on a many-valued ClaimType adds a value, as `write`'s `add` does: the
-values already in its slot (and any sibling item in the same slot) stay, and
-each is dispositioned `not_tested`. An item on a single-valued slot that
-already holds a value names the Claim it `revises`. Each item's rationale is
-kept with the Claim (or Subject) it explains, whole up to 16,384 characters (a
-longer one is kept to that bound and marked `truncated`): the proposal's own
-`rationale` names only the run that proposed it and how many items it carries.
-`proposal review` pages the items' reasons (`item_reasons`, by member path,
-with `item_reason_count` and `item_reasons_next_cursor`), and once accepted
-`get CLM-... --detail why` carries the Claim's own `reason` -- with the
-proposal, Procedure, run and terminal that proposed it -- and `--detail
-evidence` its `rationale`. Both come from the exact admission that was
-accepted -- the one the accepted change-set record binds by actor, source
-compilation and candidate, never withdrawn or rejected; when no single
-admission matches, the revision carries no attributed `reason` or `rationale`.
-A proposal reads its items' reasons only through its own link to the Procedure
-operation that wrote them, never through its (reusable) proposal ref, and only
-an admission the operation's own terminal submitted (it records that
-`procedure_operation`; no public request can) is linked. When recovery
-delivers to an equivalent admission someone else submitted under the
-operation's ref, the reasons stay unattached and the run's receipt says
-`item_reasons_unattributed`. Reading
-one Claim's reason is one record read however many items its proposal carried. The reasons are provenance, not
-evidence: the Claim's Captures are unchanged.
-
-An item may also be a Subject item
-(`playbill-procedure-subject-proposal-item-v1`: `subject_kind`, `key`,
-`rationale`, optional `create_new` and `source`), which creates a Subject by its
-declared kind and key exactly as a `subject` authoring member does (see Subject
-kinds under `authoring`): a key one live Subject holds names it and the item
-creates nothing -- the run reports that child `unchanged`, with the Subject's
-path -- and its key Claims cite `source`, else the Capture its closure reached;
-either way the creation covers them (no evidence rule on the key ClaimType and
-no mandate namespace entry is needed for the run's own Capture).
-A Claim item names a Subject the run knows only by its key with a v3 item
-(`playbill-procedure-claim-proposal-item-v3`): its statement's `subject`, or a
-`{"kind": "subject_key", "subject": ...}` object, is `{"subject_kind": ...,
-"key": {...}}`, resolved to the Subject a Subject item of the same terminal
-lands on, else to the one live holder of the key; none refuses
-`proposal_lowering_refused` with `cruxible.subject.key_missing`, several with
-`key_ambiguous`. A v3 item without a `source` cites its closure's Capture as a
-v1 item does. A propose mandate reaches the created Subjects through its
-namespace (`subjects/<kind>`). From the SDK, build these items with
-`ProcedureKeyedClaimProposalItem`, `ProcedureSubjectProposalItem`,
-`ProcedureClaimRetirementItem`, `ProcedureClaimStatement`,
-`SubjectKeyReference` and `LiteralClaimObject`, with `Item(path)` naming the
-current row's field, all from `cruxible_client.authoring.procedures`; each
-emits its own format tag, as `WorkspaceFileSourceRequestV2` does for a
-`workspace.file` Source request.
-
-An item may also retire a live Claim
-(`playbill-procedure-claim-retirement-item-v1`: `retires`, the Claim ID;
-`reason`, `was-wrong`, `was-rescinded` or `superseded`; `rationale`; optional
-`effective_until`) -- for a record that left an export, say. The Claim is named
-by ID, read from accepted state by a Claim tap, never by statement, so one item
-ends exactly one lineage. The Procedure proposes and an agent judges what a
-disappearance means: the item is reviewed like any other, and it cites no
-evidence. The retirement
-carries the Claim's live dependent closure, each retired for the same reason,
-exactly as `retire` computes it, and the run's receipt binds the item to the
-retired member. A Claim that is not live at the run's admitted state refuses
-`proposal_item_invalid` with `cruxible.procedure.retirement_target_not_live`; a
-key Claim, which retires with its Subject and never on its own,
-`cruxible.procedure.key_claim_retirement`; and a terminal that both retires a
-lineage and revises, restates or dispositions it (or retires it twice)
-`cruxible.procedure.retirement_lineage_conflict`.
+A value for a many-valued ClaimType is added beside the values already there,
+as `write`'s `add` does; a one-valued slot revises its one eligible holder when
+the value changes. Each template's rationale is kept with the Claim it
+explains: the proposal's own `rationale` names only the run that proposed it
+and how many items it carries. `proposal review` shows each item's reason
+under its value change (`because:`) and `--detail` pages them
+(`--item-reasons-after`); once accepted, `get CLM-... --detail why` carries
+the Claim's own `reason`, with the proposal, Procedure, run and terminal that
+proposed it, and `--detail evidence` its `rationale`. Both come from the exact
+admission that was accepted; when no single admission matches, the revision
+carries no attributed `reason`. A proposal reads its items' reasons only
+through its own link to the Procedure operation that wrote them, and only an
+admission the operation's own terminal submitted is linked; when recovery
+delivers to an equivalent admission someone else submitted, the reasons stay
+unattached and the run's receipt says `item_reasons_unattributed`. The
+reasons are provenance, not evidence: the Claim's Captures are unchanged.
 
 The run's wall-clock budget is enforced inside the terminal, after its items
 are prepared and before anything is delivered: a run out of time ends
@@ -3030,13 +3005,14 @@ operation recovers the same proposal and publishes the same receipt; other
 member bytes under the same key refuse `effectful_operation_payload_mismatch`.
 A run that dies between preparing its egress and receiving the proposal's
 receipt is resolved at daemon startup through the same path and finalized as
-`terminal_egress_recovered` with the receipt on its run state. An item that is
-not a Claim or Subject proposal item refuses `proposal_item_invalid`; one whose closure
-reached no Capture, or more than one, refuses `proposal_item_evidence_missing`
-or `proposal_item_evidence_ambiguous`; a ClaimType that does not admit the
-Capture refuses `proposal_lowering_refused` naming the lowering diagnostic; a
-mandate that does not cover the request refuses `procedure_mandate_*` naming
-the failed law. None of these creates a proposal ref.
+`terminal_egress_recovered` with the receipt on its run state. A value whose
+closure reached no Capture, or more than one, refuses
+`proposal_item_evidence_missing` or `proposal_item_evidence_ambiguous`; a
+template the run cannot apply (a missing value, a forbidden role) refuses
+`proposal_item_invalid`; a ClaimType that does not admit the Capture refuses
+`proposal_lowering_refused` naming the lowering diagnostic; a mandate that does
+not cover the request refuses `procedure_mandate_*` naming the failed law.
+None of these creates a proposal ref.
 
 A Line whose Procedure ends in a `claims` terminal under a settle Mandate lands the change
 without candidate approvals when, and only when, exactly one live settle
@@ -3219,7 +3195,13 @@ settles and what would go to a proposal (and stop the run), and which
 capture_landing and generation_accepted Triggers its writes can set off, in
 or outside the Runbook. Order problems name a read of what only a later step
 writes, or of what no Line writes. It is composed from accepted definitions
-only: nothing runs and no outcome is predicted.
+only: nothing runs and no outcome is predicted. A call prints its slot, the
+bound build as `Provider:NAME/<12 hex>` and the operation, and the capability
+the slot names:
+
+~~~text
+      calls  SLOT -> Provider:NAME/<12 hex> OPERATION  (capability NAME@N)
+~~~
 
 Each step also lists what its run needs from outside accepted state, one
 `needs` line per input: a workspace `file`, the `files` a glob matches, a
@@ -3969,6 +3951,21 @@ changes:
     evidence: {kind: section, ref: basis}
 ```
 
+A change may cite any workspace file by its path
+(`suppliers/acme-2026.md#bp-1142: Front brake pads`, file or section
+evidence, in `write`, or `set` and `add` with `--evidence-file`). A file the
+catalog does not name yet is catalogued once the write is admitted, as `files
+add` would, and the outcome lists it (`catalogued`). The catalog keeps a
+derived name for it (`doc-` and its path), a stable handle mapped to the
+file's current path, so citations survive the file moving; you go on citing
+and reading it by path. To choose the name instead, catalogue the file first
+with `files add NAME PATH`. A dry run says `would catalogue` and writes
+nothing, and a refused write catalogues nothing. A derived name already bound
+to another file refuses `cruxible.doc.catalog_name_exists` before anything is
+sent, with the repair to catalogue the file under a name of your own and cite
+it. A path outside the workspace, a missing file and an anchor not found
+exactly once refuse, each with a repair.
+
 Use `write - --workspace-root DIR` for stdin and `write --schema` for the
 payload schema. Docs-only writes create no change set. Accepted and
 awaiting-approval outcomes write files; dry runs and refusals do not. Inspect
@@ -3993,11 +3990,14 @@ must already exist. FIELD is a field of the kind as
 `orient` names it, or the full predicate. VALUE is text: an enum member, an
 integer or `true`/`false` for such fields (values are booleans, integers or
 text; a field cannot be defined with a non-integer `number`), a Subject as `kind/id` (`@kind/id`
-names the same Subject, in SUBJECT too). Prose belongs in a Document section:
+names the same Subject, in SUBJECT too), or for a `key<K>` field a key of kind
+K, checked with K's identity rules as authoring checks it (a key not in
+canonical form refuses `canonical_form_failed`). Prose belongs in a Document section:
 use `files propose` for Document changes, then cite the section as evidence for
 a bounded Claim value (see `write` above). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
-catalogued workspace file, read on this side, and `--capture` an existing
+workspace file, read on this side (a file the catalog does not name is
+catalogued by the write, as below), and `--capture` an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
 unique among the verified Captures the instance holds, cited or not; ambiguous
 or unknown handles refuse with the nearest handles). A Capture under a
@@ -4083,9 +4083,12 @@ FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 `{"op": "retire", "target"}`, `{"op": "rebind", "target", "evidence"}` or
 `{"op": "create", "label", "subject_kind", "key"}`. `add` puts one more value in
 a many-valued field; two adds on one field land in one change set. A `create`
-makes a Subject of any declared kind: `key` is a one-key kind's value, every
-part of a composite key as `[{"predicate", "value"}, ...]`, or absent for a
-minted kind. The write's other changes name it `{"created": "<label>"}`, as
+makes a Subject of any declared kind: `key` is a one-key kind's value, a
+mapping of each key field to its value (`{"name": "honda-civic-2019"}`; a
+field by its name under the kind or its full predicate, a pair's end as
+`kind/id` or `{"created": "<label>"}`), the full form `[{"predicate",
+"value"}, ...]`, or absent for a minted kind. A key of no known shape refuses
+naming the shapes, with an example. The write's other changes name it `{"created": "<label>"}`, as
 their `subject` or as a Subject `value`, in any order. A key one live Subject
 holds lands on that Subject and creates nothing (the outcome says `create
 <ref>: existing`, so running a seed again answers as done); `"expect_new":
@@ -4151,13 +4154,15 @@ Reads one thing by any reference form you have seen: `CLM-...` (or a unique
 prefix of at least four hex digits), `kind/id` or `Subject:kind/id`, a
 predicate (full, or a dotted tail such as `status` or `work_item.status` that
 names exactly one live predicate) or `ClaimType:<predicate>` (the same tails),
-`Document:<name>`, `Procedure:<name>`, `Blueprint:<name>` (each open slot
-with its interface and the installed providers that fit it), `query:<name>`,
+`Document:<name>`, `Procedure:<name>` (each slot with the capability it
+names), `Capability:<name>@N`, `Contract:<name>@N`, `query:<name>`,
 `CaptureContract:<name>`, `Trigger:<name>`, `Principal:<id>`,
-`ProviderInterface:<name>`, `SourceAcquisitionPolicy:<name>`,
+`Provider:<name>` (each operation with what it serves and its source),
 `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, an artifact path,
 or a proposal id or prefix (a proposal's status, and for a refusal its code,
-message and repair). Operational things resolve too: `ProcedureRun:RUN-…` (or
+message and repair). A built-in name resolves in the `cruxible.` spelling
+cards print (`get CaptureContract:cruxible.coordinator-self-source-v1`): a ref
+resolves as written first, and only on a miss through that printed spelling. Operational things resolve too: `ProcedureRun:RUN-…` (or
 the bare run id) answers a run's state, outcomes and terminal detail;
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
 or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
@@ -4355,26 +4360,25 @@ page reads only its own rows through two projection indexes, so loading the
 whole graph costs its Subjects plus its Subject-valued Claims; every page reads
 at the first page's coordinate. Edges carry no contested status, and there is
 no edge total: neither is kept in those tables.
-`--section pins` lists the required pins of live definitions (Blueprints,
-CaptureContracts, ClaimTypes, Lines, Procedures, mandates, Providers, provider
-interfaces, queries, ResolutionContracts, source acquisition policies,
-SubjectKinds and Triggers), each `{source, role, target, target_digest,
+`--section pins` lists the required pins of live definitions (capabilities,
+CaptureContracts, ClaimTypes, Contracts, Lines, Procedures, mandates,
+Providers, queries, ResolutionContracts, SubjectKinds and Triggers), each `{source, role, target, target_digest,
 current}` by source then pin order, `current` false when the pin names an
 earlier version of its target. Read by target, the rows say who uses a
 definition: the Procedures that capture under a contract (role
 `capture-contract`), the Lines on a Procedure, the mandates that settle a
 ClaimType. A page reads only definition rows (never a Claim's or a Subject's
 pins), so the whole listing costs the ontology, not the instance.
-`--section interfaces` lists the provider interfaces a Procedure node can call,
-each with its interface digest, operation contract, the logical sources it
-declares it `produces` (empty when the caller names the source) and the implementing
-Providers with their implementation digests (`get ProviderInterface:NAME`
-reads one, `--detail proof` its accepted inventory entry). `--section
+`--section capabilities` lists the capabilities this instance holds, each
+with its effect, request and result Contracts and description (`get
+Capability:NAME@N` reads one); `--section operations` lists the provider
+operations a Line can bind a slot to, each with its own Contracts, effect,
+refusals and the capabilities it serves (`get Provider:NAME` reads a build);
+`--section contracts` lists the Contracts. `--section
 principals` lists the principal registry (`get Principal:ID` reads one), and
 `--section policies` every live standalone or embedded governed policy with its
 declaring artifact (`get ApprovalPolicy:instance` reads the approval policy,
-`get ProcedureRuntimePolicy:instance` the Procedure runtime ceilings and
-`get SourceAcquisitionPolicy:NAME` one source acquisition policy).
+and `get ProcedureRuntimePolicy:instance` the Procedure runtime ceilings).
 The default map also counts every accepted Claim by status (accepted,
 conflicted, ineligible, overturned, retired) under `artifacts.claims`. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.
@@ -4792,11 +4796,12 @@ cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal review PROPOSAL_ID [--detail] [--include-body|--redacted]
+  [--changes-from N] [--definitions-from N]
   [--summary-after CURSOR] [--summary-group GROUP] [--rows-after CURSOR]
   [--rows-limit N] [--groups-limit N] [--findings-after CURSOR]
   [--workspace-root DIR] [--item-reasons-after CURSOR] [--item-reasons-limit N] [--json]
 cruxible proposal approve PROPOSAL_ID
-  [--signer-id ID] [--key FILE] [--yes] [--hold] [--json]
+  [--signer-id ID] [--key FILE] [--yes] [--hold] [--full] [--json]
 cruxible proposal activate PROPOSAL_ID [--brief] [--json]
 cruxible get PROPOSAL_ID [--detail proof]
 ~~~
@@ -4860,9 +4865,11 @@ readmitting, withdrawing, or submitting corrected input. Exact-byte origins
 If an exact-byte proposal loses the publication compare-and-swap, activation
 recovers the winner and returns its `lost_cas` receipt without recompiling or retrying.
 
-`proposal approve` signs the reviewed candidate. At a terminal it shows the
-change summary and asks first; `--yes` signs without asking and prints one
-counts line plus any earlier refusals (`--full` renders every member). Without
+`proposal approve` signs the reviewed candidate. At a terminal it prints the
+first page of `proposal review` (its paging hints name the full `proposal
+review` command), then the approvals still required, and asks first; `--yes`
+signs without asking and prints one counts line plus any earlier refusals
+(`--full` renders every member). Without
 a terminal to prompt at (an agent, a script, CI) it refuses before calling the
 daemon unless `--yes` is passed, with the repair to review first and then
 approve with `--yes`. When that signature completes
@@ -5006,13 +5013,48 @@ distinct candidate digest. Match both IDs when inspecting the group. Activation
 checks original and materialized advisory aliases; recovery restores valid
 incomplete projections without treating modified records as accepted evidence.
 
-`proposal review` returns a factored summary by default, identically on CLI,
-MCP and HTTP. It counts creations, revisions and retirements per Subject kind,
-states shared fields once, and shows varying columns and the first five rows
-of each exact claims-template group (Procedure digest, node and template index).
-Findings come first, followed by revisions and retirements before creations.
-Each row preserves before/after values. Large field values are explicitly marked
-`truncated`; use `--detail --json` for the complete artifacts.
+`proposal review` prints the reviewer's view by default: the proposal and
+candidate digests, the originating Line, `Why:` (the change set's rationale),
+the required tier and approvals, findings, counts per Subject kind, then the
+value changes and the definitions.
+
+Each value change is printed as `write` prints it (op, Subject, field, value,
+Claim and verdict), with its role when not normative. Under it come up to
+three citations (`cites CAP-<12 hex> SOURCE#SECTION`, `(own words)` for the
+writer's own words) with the cited text, cut at 600 characters; cited text
+that is exactly the `Why:` line says so instead of repeating it. A citation
+whose Capture body was erased prints `erased by WHO at WHEN: WHY`; a body
+missing or damaged here prints `unavailable`; a reader without body access sees
+`cited text withheld`. A Procedure item's own reason prints as `because:`.
+
+Each definition prints its kind, name and action (`created`, `revised`,
+`retired`), then its typed fields: a Line's Procedure, authority, bindings
+(`slot -> NAME/<12 hex>#operation`), parameters, acquisition, budgets,
+inbox and trigger input; a ProcedureMandate's Line, grant, validity,
+namespace, Subjects, condition, the kinds it may create, and a table of its
+ClaimTypes with the basis for each of create, revise and retire (and value
+bounds and binding when any differ); a Runbook's description and steps; a
+Trigger's schedule and target. Other kinds print the heading only. A revision
+lists each changed field as `changed FIELD: BEFORE -> AFTER`. Names print in
+their public spelling (`cruxible.`); `--json` keeps the stored names.
+
+A page holds at most 10 value changes and 20 definitions. `--changes-from N`
+and `--definitions-from N` page them from the position the last page printed
+(`More values:`, `More definitions:`); a page that cuts the values also prints
+counts by Subject kind, field and op. When a proposed Claim cites a Capture
+the reader may not read, the summary is withheld: it says so, and each change
+keeps its op, Subject and field and each definition its kind, name and action,
+without values, verdicts, cited text, reasons or definition fields. The text
+is the same from the SDK (`str()` of the summary) and in the `proposal
+approve` prompt.
+
+`--json` adds the stored fields grouped by kind: per exact claims-template
+group (Procedure digest, node and template index), shared fields once and the
+varying columns of the first five rows, revisions and retirements before
+creations, each row with its before/after values. Large field values are
+marked `truncated`; use `--detail --json` for the complete artifacts. MCP
+`cruxible_proposal_review` adds the groups with `groups=true`; HTTP includes
+them unless the request sets `groups: false`.
 
 `--summary-after` pages groups; `--summary-group` with `--rows-after` pages rows
 of one group. `--rows-limit` and `--groups-limit` default to five and allow at
@@ -5026,7 +5068,7 @@ projection in member batches; subsequent pages use indexed reads.
 proposal review also prints one page of its items'
 reasons, each under the Claim or Subject path it explains (50 by default,
 `--item-reasons-limit` up to 500); `--item-reasons-after` with the printed
-cursor reads the next page. `proposal approve` shows the reason and change summary before
+cursor reads the next page. `proposal approve` shows the reviewer's view before
 asking for a signature; `--full` renders every member's artifact and semantic
 delta. The signature covers the exact candidate digest.
 
@@ -5087,7 +5129,7 @@ trusted and could load another principal's settings. See the
 ## files
 
 ~~~text
-cruxible files add NAME PATH [--document-id ID --document-kind KIND --title TEXT
+cruxible files add [NAME] PATH [--document-id ID --document-kind KIND --title TEXT
   --scope SCOPE... [--media-type TYPE] [--required-tier TIER] [--public-uri URI]]
   [--replace] [--root DIR] [--json]
 cruxible files remove NAME [--root DIR] [--json]
@@ -5105,13 +5147,19 @@ The file catalog (`.cruxible/files.yaml` or `files.yaml`, plus an optional
 evidence, projection blocks or a whole Document. Every command discovers it the same way; `--catalog` names
 another. An entry needs only `name` and `locator` to be cited as evidence
 (`set --evidence-file`, `cx.file`), covered (`coverage resolve`) and watched by
-`next`; adding `document_id`, `document_kind`, `title`, `media_type` and
+`next`. A write that cites a workspace file the catalog does not name
+catalogues it once the write is admitted (see [write](#set-add-retire-rebind-and-write)).
+Adding `document_id`, `document_kind`, `title`, `media_type` and
 `governance_scope` (all five together) makes it a Document that compiles and
 can be proposed.
 
-`files add NAME PATH` writes that entry so nobody hand-writes the YAML: PATH
+`files add [NAME] PATH` writes that entry so nobody hand-writes the YAML: PATH
 (relative to the current directory) must be a file inside the workspace, and
-becomes the entry's workspace-relative `locator`. `--document-id`,
+becomes the entry's workspace-relative `locator`. NAME is the stable handle
+the catalog maps to the file's current path; left out, it is derived from the
+path (`doc-` and the path), the handle a write citing the file would give it.
+A NAME that is not a valid catalog name refuses `name_invalid`, naming the
+allowed characters and the derived name as an example. `--document-id`,
 `--document-kind`, `--title` and `--scope` (repeatable) declare the Document;
 `--media-type` defaults from the file suffix (`.md` is `text/markdown`). The
 whole catalog is validated before the file is rewritten, so an existing NAME

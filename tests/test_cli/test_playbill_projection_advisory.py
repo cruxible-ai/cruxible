@@ -30,6 +30,8 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
         "bindings": [],
     }
 
+    grouped: list[object] = []
+
     class StubClient:
         def resolve_proposal_selector(
             self, instance_id: str, selector: str
@@ -54,6 +56,7 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
             assert proposal_id == "sha256:" + "a" * 64
             observation = values["workspace_observation"]
             assert values["detail"] == detail
+            grouped.append(values["groups"])
             if detail:
                 assert isinstance(observation, dict)
                 assert "source_observations" not in observation
@@ -154,4 +157,6 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
         )
         assert text.exit_code == 0, text.output
         assert "Changes: 1000 created / 0 revised / 0 retired" in text.output
-        assert "Full review: --detail" in text.output
+        assert "Every member's artifact and delta: --detail" in text.output
+        # --json keeps the grouped rows; the text view asks only for the reviewer's view.
+        assert grouped == [True, False]

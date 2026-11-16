@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
-from collections.abc import Iterable, Mapping
+import re
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal, Protocol
@@ -27,6 +30,11 @@ from cruxible_client.contracts.file_catalog import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.errors import DataValidationError
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not POSIX
+    fcntl = None  # type: ignore[assignment]
 
 
 class WorkspaceFileError(DataValidationError):
@@ -104,6 +112,7 @@ FileCatalogEditRefusal = Literal[
     "entry_exists",
     "entry_missing",
     "entry_invalid",
+    "name_invalid",
     "catalog_invalid",
     "catalog_ambiguous",
     "path_outside_workspace",
@@ -230,6 +239,55 @@ def _workspace_locator(root: Path, path: Path) -> str:
     return resolved.relative_to(root).as_posix()
 
 
+#: A catalog name, as ``FileCatalogEntry.name`` takes it.
+_CATALOG_NAME = re.compile(r"[a-z][a-z0-9_.-]{0,127}")
+
+
+def default_catalog_name(root: Path, path: Path) -> str:
+    """The catalog name a workspace file takes when none is given: ``doc-`` and its path.
+
+    A notes file a write creates, a workspace file a write cites, and ``files
+    add`` without NAME all name the file this way. The path is lowercased and
+    each ``/`` (and any other character a name cannot hold) becomes ``-``; when
+    that cannot be read back to the one path (the path held a ``-``, a capital,
+    such a character, or was cut to length), the name ends with ``-`` and 12 hex
+    of the path's sha256, so two paths never share a name (``a/b.py`` is
+    ``doc-a-b.py``; ``a-b.py`` is ``doc-a-b.py-<hex>``). A file already in the
+    catalog keeps the name it has.
+    """
+
+    relative = path.relative_to(root).as_posix()
+    flat = re.sub(r"[^a-z0-9_.-]+", "-", relative.lower()).strip("-.")
+    if len(flat) <= 120 and flat.replace("-", "/") == relative:
+        return "doc-" + flat
+    digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12]
+    return f"doc-{flat[:110]}-{digest}"
+
+
+@contextmanager
+def _catalog_lock(root: Path) -> Iterator[None]:
+    """Hold ``.cruxible/files.yaml.lock`` for one catalog read-modify-write.
+
+    Two processes editing the catalog (two writes cataloguing files they cite,
+    or ``files add`` beside one) take turns, so neither replaces the catalog
+    from a snapshot taken before the other's edit.
+    """
+
+    if fcntl is None:  # pragma: no cover - no advisory locks on this platform
+        yield
+        return
+    lock_path = workspace_path(root, "files.yaml.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o644
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)  # closing releases the lock
+
+
 def add_catalog_entry(
     root: Path,
     *,
@@ -248,12 +306,25 @@ def add_catalog_entry(
     """
 
     root = root.expanduser().resolve()
+    with _catalog_lock(root):
+        return _add_catalog_entry(root, name=name, path=path, fields=fields, replace=replace)
+
+
+def _add_catalog_entry(
+    root: Path, *, name: str, path: Path, fields: Mapping[str, object], replace: bool
+) -> FileCatalogEdit:
     catalog_path = _portable_catalog_path(root)
     entries = _read_portable(catalog_path)
-    try:
-        entry = FileCatalogEntry.model_validate(
-            {"name": name, "locator": _workspace_locator(root, path), **fields}
+    locator = _workspace_locator(root, path)
+    if not _CATALOG_NAME.fullmatch(name):
+        raise FileCatalogEditError(
+            "name_invalid",
+            f"{name!r} is not a catalog name: lowercase letters, digits, '_', '.' and '-', "
+            f"starting with a letter, at most 128; e.g. "
+            f"{default_catalog_name(root, root / locator)} (leave the name out to use that one)",
         )
+    try:
+        entry = FileCatalogEntry.model_validate({"name": name, "locator": locator, **fields})
     except ValidationError as exc:
         raise FileCatalogEditError("entry_invalid", str(exc)) from exc
     existing = tuple(
@@ -278,7 +349,7 @@ def add_catalog_entry(
 def catalog_file(
     root: Path,
     *,
-    name: str,
+    name: str | None = None,
     path: Path,
     document_id: str | None = None,
     document_kind: str | None = None,
@@ -294,6 +365,7 @@ def catalog_file(
     With ``document_id`` (and its kind, title and scope) the entry also declares
     the Document the file compiles to; its media type defaults from the file
     suffix and its scopes are sorted. Without one the file is a source to cite.
+    ``name`` None names the file as a write that cites it would (``doc-<path>``).
     """
 
     scopes = tuple(governance_scope)
@@ -317,6 +389,9 @@ def catalog_file(
         fields = {key: value for key, value in fields.items() if value is not None}
     elif scopes:
         fields["governance_scope"] = scopes
+    if name is None:
+        root = root.expanduser().resolve()
+        name = default_catalog_name(root, root / _workspace_locator(root, path))
     return add_catalog_entry(root, name=name, path=path, fields=fields, replace=replace)
 
 
@@ -324,6 +399,11 @@ def remove_catalog_entry(root: Path, *, name: str) -> FileCatalogEdit:
     """Remove NAME from the workspace's portable catalog; the last entry removes the file."""
 
     root = root.expanduser().resolve()
+    with _catalog_lock(root):
+        return _remove_catalog_entry(root, name=name)
+
+
+def _remove_catalog_entry(root: Path, *, name: str) -> FileCatalogEdit:
     catalog_path = _portable_catalog_path(root)
     entries = _read_portable(catalog_path)
     kept = tuple(
@@ -361,8 +441,8 @@ class WorkspaceCatalog:
 
     def add(
         self,
-        name: str,
-        path: str | Path,
+        name: str | Path | None = None,
+        path: str | Path | None = None,
         *,
         document_id: str | None = None,
         document_kind: str | None = None,
@@ -375,6 +455,8 @@ class WorkspaceCatalog:
     ) -> FileCatalogEdit:
         """Catalogue PATH under NAME, the source name evidence is cited under.
 
+        ``add(path)`` alone names the file ``doc-<path>``, as a write citing it would.
+
         With ``document_id``, ``document_kind``, ``title`` and ``governance_scope``
         the entry also declares the Document the file compiles to. An existing
         NAME refuses (``cruxible.files.catalog_edit_refused``, ``entry_exists``)
@@ -382,10 +464,15 @@ class WorkspaceCatalog:
         Next: ``cx.file(path).section("Heading")`` to cite it.
         """
 
+        if path is None:
+            if name is None:
+                raise TypeError("files.add() takes (path) or (name, path)")
+            name, path = None, name
+        assert path is not None
         target = Path(path).expanduser()
         return catalog_file(
             self._root,
-            name=name,
+            name=None if name is None else str(name),
             path=target if target.is_absolute() else self._root / target,
             document_id=document_id,
             document_kind=document_kind,

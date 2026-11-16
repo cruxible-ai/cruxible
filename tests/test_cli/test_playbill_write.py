@@ -326,6 +326,25 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
     assert "not a valid write file" in refused.output and "--schema" in refused.output
 
 
+def test_a_wrong_create_key_answers_with_its_shapes_and_help_shows_them(
+    served: _ServiceClient, tmp_path: Path
+) -> None:
+    """Walkthrough S10/S11: the key's shapes in --help and in the refusal, no union dump."""
+
+    help_text = _run("write", "--help").output
+    assert "{field: value, ...}" in help_text
+    bad = tmp_path / "bad-key.yaml"
+    bad.write_text(
+        "because: x\nchanges:\n  - op: create\n    label: a\n    subject_kind: k.x\n"
+        "    key: [one, two]\n",
+        encoding="utf-8",
+    )
+    refused = _run("write", str(bad))
+    assert refused.exit_code != 0
+    assert "key is one value for a kind with one key" in refused.output
+    assert "valid string" not in refused.output and "tuple" not in refused.output
+
+
 def test_a_write_file_names_its_subject_once(served: _ServiceClient, tmp_path: Path) -> None:
     schema = json.loads(_run("write", "--schema").stdout)
     assert "subject" in schema["properties"]
@@ -467,11 +486,29 @@ entries:
         str(workspace),
         "--dry-run",
     )
-    request = served.requests[-1]
-    assert isinstance(request.evidence, FileEvidence)
-    assert request.evidence.observation is not None
-    assert request.evidence.observation.source_id == "repo.notes"
+    # Sent through the workspace write, as write and add are.
+    evidence = served.requests[-1].changes[0].evidence
+    assert isinstance(evidence, FileEvidence)
+    assert evidence.observation is not None
+    assert evidence.observation.source_id == "repo.notes"
     assert "would" in result.output
+    # An uncatalogued workspace file is catalogued by set, as by write.
+    (workspace / "todo.txt").write_text("Title: Tidy the CLI now\n", encoding="utf-8")
+    catalogued = _run(
+        "set",
+        WI1,
+        "title",
+        "Tidy the CLI now",
+        "--because",
+        "The todo names it.",
+        "--evidence-file",
+        "todo.txt#Title: Tidy the CLI now",
+        "--workspace-root",
+        str(workspace),
+    )
+    assert catalogued.exit_code == 0, catalogued.output
+    assert "catalogued todo.txt (as doc-todo.txt)" in catalogued.output
+    assert "doc-todo.txt" in (workspace / ".cruxible" / "files.yaml").read_text()
     both = _run(
         "set",
         WI1,

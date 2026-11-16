@@ -173,6 +173,9 @@ def test_review_summary_options_are_forwarded_by_the_mcp_handler(monkeypatch):
         "rows_limit": 3,
         "groups_limit": 2,
         "findings_after": "findings",
+        "changes_from": 0,
+        "definitions_from": 0,
+        "groups": False,
         "item_reasons_after": None,
         "item_reasons_limit": None,
     }

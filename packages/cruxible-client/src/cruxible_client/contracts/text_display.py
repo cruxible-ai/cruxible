@@ -10,10 +10,13 @@ given: no I/O.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from cruxible_client._error_base import printable
+from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 from cruxible_client.contracts.get_display import get_value_display
+from cruxible_client.contracts.get_text import file_shown
 from cruxible_client.contracts.public_names import public_name as _public_name
 
 if TYPE_CHECKING:
@@ -25,12 +28,17 @@ if TYPE_CHECKING:
         NextStatus,
     )
     from cruxible_client.contracts.authoring_landing import AuthoringLanded, AuthoringProposed
+    from cruxible_client.contracts.proposal_summary import (
+        ProposalReviewSummary,
+        ReviewChange,
+        ReviewDefinition,
+    )
     from cruxible_client.contracts.vocabulary_file import (
         VocabularyApplyResult,
         VocabularyExportResult,
         VocabularyPlan,
     )
-    from cruxible_client.contracts.write import ApprovalNeeded, WriteOutcome
+    from cruxible_client.contracts.write import ApprovalNeeded, ChangeOutcome, WriteOutcome
 
 #: How many hex digits of a Git OID name a generation in text, as ``World`` prints it.
 SHORT_OID = 12
@@ -40,6 +48,17 @@ def short_oid(git_oid: str) -> str:
     """A Git OID as text shows it: its first ``SHORT_OID`` hex digits."""
 
     return git_oid[:SHORT_OID]
+
+
+def short_provider_build(name: str) -> str:
+    """A provider build as text shows it: ``NAME/<64 hex>`` (or ``Provider:NAME/...``)
+    as ``NAME/<12 hex>``, as coordinates show a Git OID."""
+
+    bare = name.removeprefix("Provider:")
+    head, separator, build = bare.rpartition("/")
+    if not separator or len(build) <= SHORT_OID:
+        return bare
+    return f"{head}/{build[:SHORT_OID]}"
 
 
 # -- orient --------------------------------------------------------------------
@@ -389,9 +408,65 @@ def awaiting_text(approval: ApprovalNeeded) -> str:
     return f"independent approval; approvers: {', '.join(approval.eligible_approvers)}"
 
 
-def write_outcome_lines(outcome: WriteOutcome) -> list[tuple[str, bool]]:
-    """A write outcome's lines, each with whether the CLI prints it to stderr."""
+def change_outcome_line(
+    change: ChangeOutcome,
+    *,
+    extra: Sequence[str] = (),
+    file_paths: Mapping[str, str] | None = None,
+) -> str:
+    """One change as a write outcome (and a proposal review) prints it, unindented.
 
+    ``extra`` are further bracketed details, after the outcome's own. A note's
+    file reads as its workspace path when ``file_paths`` maps it (``file_shown``).
+    """
+
+    target = " ".join(part for part in (change.subject, change.field) if part)
+    if change.op == "create":
+        line = f"create {change.subject or '(id assigned on submit)'}: {change.resolved}"
+    elif change.op == "retire" and change.field is None:
+        line = f"retire Subject {change.subject}"
+    elif change.op == "retire":
+        line = f"retire {target}: {_value_text(change.before)}"
+    elif change.op == "add":
+        line = f"add {target}: {_value_text(change.after)}"
+    elif change.op == "rebind":
+        line = f"rebind {target}: {_value_text(change.after)} (value unchanged)"
+    elif change.op == "about":
+        file = "-" if change.file is None else file_shown(change.file, file_paths)
+        where = f"{file}#{'/'.join(change.section or ())}"
+        about = ", ".join(change.about or ()) or "(unlinked: retired)"
+        line = f"note {where} about {about}  [{change.note}]"
+    elif change.before is None:
+        line = f"set {target}: {_value_text(change.after)}"
+    else:
+        line = f"set {target}: {_value_text(change.before)} -> {_value_text(change.after)}"
+    details = [item for item in (change.claim,) if item]
+    if change.already_live:
+        details.append("already live")
+    if change.verdict is not None:
+        details.append(f"verdict {change.verdict}")
+    if change.capture is not None:
+        details.append(f"evidence {change.capture}")
+    if change.retired:
+        details.append(f"also retires {', '.join(change.retired)}")
+    if change.contenders_created:
+        details.append(f"contends with {', '.join(change.contenders_created)}")
+    details.extend(extra)
+    return line + (f"  [{'; '.join(details)}]" if details else "")
+
+
+def write_outcome_lines(
+    outcome: WriteOutcome, *, file_paths: Mapping[str, str] | None = None
+) -> list[tuple[str, bool]]:
+    """A write outcome's lines, each with whether the CLI prints it to stderr.
+
+    A file reads as its workspace path: ``file_paths`` (by default the catalog
+    the workspace write read, ``WriteOutcome.file_paths``) maps a catalog name
+    to it; the name is shown only where nothing maps it.
+    """
+
+    if file_paths is None:
+        file_paths = outcome.file_paths
     lines: list[tuple[str, bool]] = []
 
     def out(text: str, *, err: bool = False) -> None:
@@ -403,43 +478,17 @@ def write_outcome_lines(outcome: WriteOutcome) -> list[tuple[str, bool]]:
         out(outcome.hint)
     for doc in outcome.docs:
         out(
-            f"  doc {doc.file or doc.source_id} {list(doc.section)}: "
+            f"  doc {doc.file or file_shown(doc.source_id or '-', file_paths)} "
+            f"{list(doc.section)}: "
             f"{'written' if doc.written else 'not written'} ({doc.after_digest})"
         )
         if doc.refusal:
             out(f"{doc.refusal.code}: {doc.refusal.message}. {doc.refusal.repair}", err=True)
+    for item in outcome.catalogued:
+        done = "catalogued" if item.written else "would catalogue"
+        out(f"  {done} {item.file} (as {item.name})")
     for change in outcome.changes:
-        target = " ".join(part for part in (change.subject, change.field) if part)
-        if change.op == "create":
-            line = f"  create {change.subject or '(id assigned on submit)'}: {change.resolved}"
-        elif change.op == "retire" and change.field is None:
-            line = f"  retire Subject {change.subject}"
-        elif change.op == "retire":
-            line = f"  retire {target}: {_value_text(change.before)}"
-        elif change.op == "add":
-            line = f"  add {target}: {_value_text(change.after)}"
-        elif change.op == "rebind":
-            line = f"  rebind {target}: {_value_text(change.after)} (value unchanged)"
-        elif change.op == "about":
-            where = f"{change.file}#{'/'.join(change.section or ())}"
-            about = ", ".join(change.about or ()) or "(unlinked: retired)"
-            line = f"  note {where} about {about}  [{change.note}]"
-        elif change.before is None:
-            line = f"  set {target}: {_value_text(change.after)}"
-        else:
-            line = f"  set {target}: {_value_text(change.before)} -> {_value_text(change.after)}"
-        details = [item for item in (change.claim,) if item]
-        if change.already_live:
-            details.append("already live")
-        if change.verdict is not None:
-            details.append(f"verdict {change.verdict}")
-        if change.capture is not None:
-            details.append(f"evidence {change.capture}")
-        if change.retired:
-            details.append(f"also retires {', '.join(change.retired)}")
-        if change.contenders_created:
-            details.append(f"contends with {', '.join(change.contenders_created)}")
-        out(line + (f"  [{'; '.join(details)}]" if details else ""))
+        out(f"  {change_outcome_line(change, file_paths=file_paths)}")
     for subject in outcome.subjects_added:
         out(f"  + subject {subject}")
     if outcome.proposal is not None and outcome.status != "accepted":
@@ -465,6 +514,351 @@ def render_write_outcome(outcome: WriteOutcome) -> str:
     """A write outcome as the CLI prints it, stdout and stderr lines in order."""
 
     return "\n".join(text for text, _err in write_outcome_lines(outcome))
+
+
+# -- proposal reviews ----------------------------------------------------------
+
+
+def _json_text(value: object) -> str:
+    import json
+
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _plain(value: object) -> str:
+    """A stored value in a text cell: a string as written, anything else as compact JSON."""
+
+    return printable(value) if isinstance(value, str) else printable(_json_text(value))
+
+
+def _summary_value_text(value: object) -> str:
+    """A bounded review value (``ReviewSummaryValue``) as one cell."""
+
+    if value is None:
+        return "-"
+    text = _plain(getattr(value, "value", None))
+    return text + ("..." if getattr(value, "truncated", False) else "")
+
+
+def _instant(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _table(rows: Sequence[Sequence[str]], indent: str) -> list[str]:
+    """Rows as left-aligned columns, two spaces apart."""
+
+    widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]))]
+    return [
+        (indent + "  ".join(cell.ljust(width) for cell, width in zip(row, widths))).rstrip()
+        for row in rows
+    ]
+
+
+def review_change_lines(
+    item: ReviewChange,
+    *,
+    why: str | None = None,
+    file_paths: Mapping[str, str] | None = None,
+) -> list[str]:
+    """One proposed value change: the write outcome's line, what it cites, and why.
+
+    Cited text that is exactly ``why`` (the proposal's own rationale, already
+    printed) is named, not repeated. A cited file reads as its workspace path
+    when ``file_paths`` maps its catalog name (``file_shown``).
+    """
+
+    extra = [] if item.role in (None, "normative") else [f"role {item.role}"]
+    lines = [f"  {change_outcome_line(item.change, extra=extra, file_paths=file_paths)}"]
+    for citation in item.citations:
+        where = file_shown(citation.source, file_paths, public=True) if citation.source else "-"
+        if citation.section:
+            where += "#" + "/".join(citation.section)
+        elif citation.anchor:
+            where += "#" + citation.anchor
+        origin = " (own words)" if citation.origin == "self_source" else ""
+        lines.append(f"    cites {citation.capture} {printable(where)}{origin}")
+        if citation.erased is not None:
+            erased = citation.erased
+            lines.append(
+                f"      erased by {printable(erased.by)} at {_instant(erased.at)}: "
+                f"{printable(erased.because)}"
+            )
+        elif citation.unavailable:
+            lines.append("      unavailable: the cited body is missing or damaged here")
+        elif citation.text_withheld:
+            lines.append("      (cited text withheld: needs body read)")
+        elif citation.text is not None and why is not None and citation.text == why.strip():
+            lines[-1] += ": the Why text above"
+        elif citation.text is not None:
+            text_lines = [line for line in citation.text.splitlines() if line.strip()]
+            if citation.text_truncated:
+                text_lines[-1:] = [(text_lines[-1] if text_lines else "") + " ..."]
+            lines.extend(f"      | {printable(line)}" for line in text_lines)
+    if item.citations_more:
+        lines.append(f"    cites {item.citations_more} more")
+    if item.rationale:
+        lines.append(f"    because: {printable(item.rationale)}")
+    return lines
+
+
+def review_definition_lines(item: ReviewDefinition) -> list[str]:
+    """One proposed definition: a heading, then its typed fields as terse rows."""
+
+    from cruxible_client.contracts.mandate_scope import MANDATE_CHANGE_KIND_ORDER
+    from cruxible_client.contracts.proposal_summary import (
+        ReviewLineDefinition,
+        ReviewMandateDefinition,
+        ReviewRunbookDefinition,
+        ReviewTriggerDefinition,
+    )
+
+    # Names read in their public spelling (`playbill.` -> `cruxible.`); JSON keeps them.
+    lines = [f"  {item.kind} {_public_name(item.name)}: {item.action}"]
+    rows: list[tuple[str, str]] = []
+    detail = item.detail
+    if isinstance(detail, ReviewLineDefinition):
+        rows.append(("procedure", detail.procedure))
+        rows.append(("authority", detail.authority))
+        rows.extend(
+            ("binding", f"{binding.slot} -> {binding.provider}#{binding.operation}")
+            for binding in detail.bindings
+        )
+        rows.extend(
+            ("parameter", f"{name} = {_summary_value_text(value)}")
+            for name, value in detail.parameters.items()
+        )
+        rows.extend(
+            ("acquisition", f"{output}: {', '.join(origins) or '(no origins)'}")
+            for output, origins in detail.acquisition.items()
+        )
+        if detail.budgets:
+            rows.append(
+                ("budget", "  ".join(f"{name}={value}" for name, value in detail.budgets.items()))
+            )
+        if detail.inbox:
+            rows.append(("inbox", ", ".join(detail.inbox)))
+        if detail.trigger_input:
+            rows.append(("trigger input", detail.trigger_input))
+    elif isinstance(detail, ReviewMandateDefinition):
+        rows.append(("line", detail.line))
+        rows.append(("grants", detail.grants))
+        rows.append(("valid", f"{_instant(detail.valid_from)} .. {_instant(detail.expires_at)}"))
+        if detail.namespace:
+            rows.append(("namespace", ", ".join(detail.namespace)))
+        if detail.subjects:
+            rows.append(("subjects", detail.subjects))
+        if detail.condition:
+            rows.append(("condition", _public_name(detail.condition)))
+        if detail.subject_creation:
+            rows.append(("may create", ", ".join(detail.subject_creation)))
+        if detail.suspended:
+            rows.append(("suspended", "yes"))
+    elif isinstance(detail, ReviewRunbookDefinition):
+        if detail.description:
+            lines.append(f"    {printable(detail.description)}")
+        rows.extend(
+            (str(index), _public_name(step)) for index, step in enumerate(detail.steps, start=1)
+        )
+    elif isinstance(detail, ReviewTriggerDefinition):
+        rows.append(("schedule", detail.schedule))
+        rows.append(("target", _public_name(detail.target)))
+    if rows:
+        lines.extend(_table([(label, printable(value)) for label, value in rows], "    "))
+    if isinstance(detail, ReviewMandateDefinition) and detail.scope:
+        moves = any(scope.value is not None for scope in detail.scope)
+        binds = any(scope.binds != "subject" for scope in detail.scope)
+        header = ["ClaimType", "create", "revise", "retire"]
+        header += ["value"] if moves else []
+        header += ["binds"] if binds else []
+        table: list[list[str]] = [header]
+        for scope in detail.scope:
+            row = [_public_name(scope.claim_type).removeprefix("ClaimType:")]
+            for kind in MANDATE_CHANGE_KIND_ORDER:
+                covered = scope.changes.of(kind)
+                row.append("-" if covered is None else "|".join(covered.basis))
+            if moves:
+                value = scope.value
+                row.append(
+                    "-"
+                    if value is None
+                    else " ".join(
+                        part
+                        for part in (
+                            None
+                            if value.from_ is None
+                            else "from " + "|".join(map(str, value.from_)),
+                            None if value.to is None else "to " + "|".join(map(str, value.to)),
+                        )
+                        if part
+                    )
+                )
+            if binds:
+                row.append(scope.binds)
+            table.append(row)
+        lines.extend(_table(table, "    "))
+    for change in item.changed:
+        lines.append(
+            f"    changed {change.field}: {_summary_value_text(change.before)} -> "
+            f"{_summary_value_text(change.after)}"
+        )
+    return lines
+
+
+def _why_lines(rationale: object) -> list[str]:
+    """The proposal's rationale: its own line breaks kept, continuation lines indented.
+
+    Each line still goes through ``printable``, so authored text cannot forge a
+    line of output; a non-text rationale stays one compact cell.
+    """
+
+    value = getattr(rationale, "value", None)
+    if not isinstance(value, str) or "\n" not in value.strip():
+        return [f"Why: {_summary_value_text(rationale)}"]
+    text_lines = value.strip().splitlines()
+    if getattr(rationale, "truncated", False):
+        text_lines[-1] += "..."
+    return [
+        f"Why: {printable(text_lines[0])}",
+        *(f"  {printable(line)}".rstrip() for line in text_lines[1:]),
+    ]
+
+
+def render_review_summary(
+    review: ProposalReviewSummary,
+    *,
+    command: str | None = None,
+    file_paths: Mapping[str, str] | None = None,
+) -> str:
+    """A proposal review summary as ``cruxible proposal review`` prints it.
+
+    ``command`` is the review command a paging hint runs, when the text is shown
+    by another verb (``proposal approve``); by default a hint names only flags.
+    ``file_paths`` is the workspace file catalog the caller read: a cited file
+    reads as its path (``file_shown``).
+    """
+
+    run = "" if command is None else f"{command} "
+    lines = [f"Proposal: {review.proposal_id}", f"Candidate: {review.candidate_digest}"]
+    if review.originating_line is not None:
+        lines.append(
+            f"Originating Line: {review.originating_line.identity.qualified} "
+            f"{review.originating_line.artifact_digest}"
+        )
+    if review.rationale is not None:
+        lines.extend(_why_lines(review.rationale))
+    lines.append(f"Required tier: {review.required_tier}; activation: {review.activation_policy}")
+    for requirement in review.approval_requirements:
+        lines.append(
+            f"Approval: {requirement.role}, "
+            f"{requirement.minimum_distinct_signers} distinct signer(s)"
+        )
+    if review.withheld is not None:
+        lines.append(
+            "Withheld: a proposed Claim cites a Capture this reader may not read; "
+            "proposed values, definition fields and cited text are left out"
+        )
+    if review.prior_refusal_member_count:
+        lines.append(
+            f"Earlier refusals: {review.prior_refusal_member_count} member(s); --detail for all"
+        )
+    if review.prior_refusal_coverage is not None:
+        coverage = review.prior_refusal_coverage
+        lines.append(
+            f"Earlier refusal coverage: generation {coverage.indexed_through_generation} "
+            f"of {coverage.accepted_generation} at summary build; --detail to refresh"
+        )
+    for guide in review.guidance:
+        title = "" if guide.title is None else f" ({guide.title})"
+        lines.append(
+            f"Guidance for {_public_name(guide.definition)}: {_public_name(guide.document)}{title}"
+        )
+    for finding in review.findings:
+        value = finding.value
+        if isinstance(value, Mapping) and "code" in value:
+            where = value.get("offending_element")
+            lines.append(
+                f"Finding: {value['code']}"
+                + (f" at {where}" if where else "")
+                + (f": {printable(str(value['message']))}" if value.get("message") else "")
+            )
+        else:
+            lines.append(f"Finding: {_summary_value_text(finding)}")
+    if review.findings_next_cursor:
+        lines.append(f"More findings: {run}--findings-after {review.findings_next_cursor}")
+    lines.append(
+        f"Changes: {review.counts.created} created / {review.counts.revised} revised / "
+        f"{review.counts.retired} retired"
+    )
+    for kind, counts in review.subject_kinds.items():
+        lines.append(
+            f"  {kind}: {counts.created} created / {counts.revised} revised / "
+            f"{counts.retired} retired"
+        )
+    if review.subject_kinds_truncated:
+        lines.append(
+            f"  ({len(review.subject_kinds)} of {review.subject_kind_count} kinds shown; "
+            "--json for all)"
+        )
+    if review.change_count:
+        shown = len(review.changes)
+        lines.append(
+            f"Values ({review.change_count}):"
+            if shown == review.change_count
+            else f"Values ({review.change_count}; showing {shown}):"
+        )
+        why = review.rationale.value if review.rationale is not None else None
+        for item in review.changes:
+            lines.extend(
+                review_change_lines(
+                    item, why=why if isinstance(why, str) else None, file_paths=file_paths
+                )
+            )
+        if review.changes_next is not None:
+            lines.append(f"More values: {run}--changes-from {review.changes_next}")
+        if shown < review.change_count and review.change_counts:
+            lines.append("Values by kind and field:")
+            lines.extend(
+                _table(
+                    [
+                        (row.subject_kind, row.field or "-", row.op, str(row.count))
+                        for row in review.change_counts
+                    ],
+                    "  ",
+                )
+            )
+            if review.change_counts_truncated:
+                lines.append("  (more kinds and fields: --json)")
+    if review.definition_count:
+        shown = len(review.definitions)
+        lines.append(
+            f"Definitions ({review.definition_count}):"
+            if shown == review.definition_count
+            else f"Definitions ({review.definition_count}; showing {shown}):"
+        )
+        for definition in review.definitions:
+            lines.extend(review_definition_lines(definition))
+        if review.definitions_next is not None:
+            lines.append(f"More definitions: {run}--definitions-from {review.definitions_next}")
+    if review.item_reason_count:
+        lines.append(f"Item reasons: {review.item_reason_count} (--detail to page them)")
+    for group in review.groups:
+        lines.append(
+            f"Group {group.subject_kind} {group.disposition} "
+            f"({sum(group.counts.model_dump().values())}) group={group.group}"
+        )
+        for row in group.rows:
+            lines.append(f"  {row.path}: {_json_text(row.model_dump(mode='json'))}")
+        if group.next_cursor:
+            lines.append(
+                f"  More rows: {run}--summary-group {group.group} --rows-after {group.next_cursor}"
+            )
+    if review.next_cursor:
+        lines.append(f"More groups: {run}--summary-after {review.next_cursor}")
+    lines.append(
+        f"Stored fields grouped by kind: {run}--json. "
+        f"Every member's artifact and delta: {run}--detail"
+    )
+    return "\n".join(lines)
 
 
 # -- authoring landings and intents --------------------------------------------
@@ -556,7 +950,11 @@ def vocabulary_plan_lines(plan: VocabularyPlan) -> list[str]:
     for item in () if preflight.frontier is None else preflight.frontier.diagnostics:
         lines.append(f"  {item.code} at {item.offending_element}: {item.message}")
     for warning in () if preflight.lint is None else preflight.lint.warnings:
-        lines.append(f"  lint {warning.code} ({warning.artifact})")
+        meaning = CLAIM_TYPE_LINT_TEXT.get(warning.code)
+        lines.append(
+            f"  lint {warning.code} ({warning.artifact})"
+            + ("" if meaning is None else f": {meaning}")
+        )
     return lines
 
 
@@ -578,6 +976,8 @@ def render_vocabulary_apply(result: VocabularyApplyResult) -> str:
         lines.append("Nothing to apply.")
     elif result.status == "refused":
         lines.append("Refused: nothing was submitted.")
+        if result.moved:
+            lines.append(f"Changed since the file's export: {', '.join(result.moved)}")
     elif result.outcome is not None:
         lines.append(str(result.outcome))
     if result.next:

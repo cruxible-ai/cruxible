@@ -294,3 +294,88 @@ def test_an_at_sign_subject_is_the_same_subject_reference() -> None:
     assert SlotRef(subject="@dev.roadmap_item/x", field="title").subject == "dev.roadmap_item/x"
     with pytest.raises(ValidationError):
         SetChange(subject="@@dev.roadmap_item/x", field="title", value="t")
+
+
+def test_a_create_key_takes_each_field_by_name_or_predicate() -> None:
+    """Walkthrough S10: the mapping ``cx.new_subject`` takes is a key on every surface."""
+
+    from cruxible_client.contracts.write import CreateChange, CreatedSubject, CreateKeyPart
+
+    change = CreateChange.model_validate(
+        {
+            "label": "pair",
+            "subject_kind": "sec.app_exposure",
+            "key": {
+                "occurrence": "sec.occurrence/web--pkg-a",
+                "sec.app_exposure.vulnerability": {"created": "v"},
+            },
+        }
+    )
+    assert change.key == (
+        CreateKeyPart(predicate="sec.app_exposure.occurrence", value="sec.occurrence/web--pkg-a"),
+        CreateKeyPart(
+            predicate="sec.app_exposure.vulnerability", value=CreatedSubject(created="v")
+        ),
+    )
+    # The other forms stand: one value, parts, none; a lone part needs no list.
+    assert CreateChange(label="a", subject_kind="k.x", key="v").key == "v"
+    assert CreateChange.model_validate(
+        {"label": "a", "subject_kind": "k.x", "key": {"predicate": "k.x.id", "value": 3}}
+    ).key == (CreateKeyPart(predicate="k.x.id", value=3),)
+    assert CreateChange.model_validate(change.model_dump(mode="json")) == change
+    schema = CreateChange.model_json_schema()["properties"]["key"]
+    assert any(branch.get("type") == "object" for branch in schema["anyOf"])
+
+
+@pytest.mark.parametrize("key", [[{"field": "x"}], 1.5, ["v"], [[1]]])
+def test_a_wrong_create_key_shape_answers_with_the_shapes_once(key: object) -> None:
+    """Walkthrough S11: one sentence with the accepted shapes, not a union dump."""
+
+    from cruxible_client.contracts.write import CREATE_KEY_SHAPES
+
+    with pytest.raises(ValidationError) as refused:
+        WriteRequest.model_validate(
+            {
+                "because": "x",
+                "changes": [{"op": "create", "label": "a", "subject_kind": "k.x", "key": key}],
+            }
+        )
+    (error,) = refused.value.errors()
+    assert error["loc"] == ("changes", 0, "create", "key")
+    assert CREATE_KEY_SHAPES in error["msg"]
+
+
+def test_a_bad_key_part_names_only_that_part() -> None:
+    with pytest.raises(ValidationError) as refused:
+        WriteRequest.model_validate(
+            {
+                "because": "x",
+                "changes": [
+                    {
+                        "op": "create",
+                        "label": "a",
+                        "subject_kind": "k.x",
+                        "key": [{"predicate": "Bad", "value": "v"}],
+                    }
+                ],
+            }
+        )
+    (error,) = refused.value.errors()
+    assert error["loc"][-2:] == (0, "predicate")
+
+
+def test_a_key_field_named_created_is_a_field_not_a_handle() -> None:
+    """Review: {created: ...} as the whole key names the kind's field ``created``."""
+
+    from cruxible_client.contracts.write import CreateChange, CreateKeyPart
+
+    change = WriteRequest.model_validate(
+        {
+            "because": "x",
+            "changes": [
+                {"op": "create", "label": "s", "subject_kind": "dev.stamp", "key": {"created": "a"}}
+            ],
+        }
+    ).changes[0]
+    assert isinstance(change, CreateChange)
+    assert change.key == (CreateKeyPart(predicate="dev.stamp.created", value="a"),)

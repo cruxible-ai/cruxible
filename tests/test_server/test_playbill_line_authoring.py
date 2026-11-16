@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.authoring.examples import authoring_example
+from cruxible_client.authoring.examples import authoring_example as served_example
 from cruxible_client.authoring.inputs import (
     ChangeSetInput,
     LineInput,
@@ -21,7 +21,7 @@ from cruxible_client.contracts.procedures.authored import (
     ReadStep,
 )
 from cruxible_client.transport.http import CruxibleClient
-from tests.support.procedures import procedure_spec_data, ref
+from tests.support.procedures import closed_transform_procedure, procedure_spec_data, ref
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 # Executor-only fixtures: these tests author Procedure step kinds the template
@@ -33,6 +33,17 @@ def _transport(http: TestClient) -> CruxibleClient:
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     return transport
+
+
+def authoring_example(name: str) -> object:
+    """The served example, except an observe-only Procedure and Line that need no
+    prerequisite: the served Procedure example reads a file and states Claims."""
+
+    if name == "procedure":
+        return closed_transform_procedure()
+    if name == "line":
+        return LineInput(kind="line", name="replace-me", procedure_name="replace-me", parameters={})
+    return served_example(name)  # type: ignore[arg-type]
 
 
 def _members(*names: str) -> ChangeSetInput:

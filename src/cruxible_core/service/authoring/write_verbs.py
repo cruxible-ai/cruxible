@@ -207,6 +207,7 @@ from cruxible_core.indexes.subject_identity import (
     IdentityOverlay,
     IdentityView,
     KeyReader,
+    KeyRules,
     KeyTuple,
     PendingEnd,
     PendingKey,
@@ -347,6 +348,19 @@ def _render_get(surface: ReadSurface, ref: str) -> str:
     if surface == "sdk":
         return f"cx.get({json.dumps(ref)})"
     return f"cruxible_get(ref={json.dumps(ref)})"
+
+
+def _sdk_create_repair(kind: str, keys: Sequence[str], named: str) -> str:
+    """How the SDK creates a Subject of ``kind`` in the same write batch."""
+
+    parts = ", ".join(
+        f"{json.dumps(predicate.removeprefix(kind + '.'))}: <value>" for predicate in keys
+    )
+    key = f", key={{{parts}}}" if keys else ""
+    return (
+        f"Create it in this write: new = batch.create({json.dumps(kind)}{key}), and pass new "
+        f"where this change names {named} (or pass a cx.new_subject(...) draft there)"
+    )
 
 
 def _render_commit(surface: ReadSurface, git_oid: str) -> str:
@@ -628,6 +642,7 @@ class _Planner:
         self._retired_here: dict[str, bool] | None = None
         self._pending_members: set[str] = set()
         self._key_reader: KeyReader | None = None
+        self._key_rules: KeyRules | None = None
         # Each re-bind a ``from_capture`` expanded into, by its position in the
         # expanded changes: the Capture whose citation it replaces.
         self._rebind_from: dict[int, str] = {}
@@ -967,6 +982,20 @@ class _Planner:
             )
         return self._kinds[kind]
 
+    @property
+    def key_rules(self) -> KeyRules:
+        """The head's SubjectKind identity rules, read per kind as a value names it: what
+        a ``key<K>`` or ``key_part<K:p>`` value is checked by, as acceptance checks it."""
+
+        if self._key_rules is None:
+
+            def claim_type_of(predicate: str) -> ClaimType | None:
+                info = self.vocabulary.predicates.get(predicate)
+                return None if info is None else info.claim_type
+
+            self._key_rules = KeyRules(self.declared_kind, claim_type_of)
+        return self._key_rules
+
     def _single_key(self, kind: str) -> SubjectKind | None:
         """The kind when it has one literal key: ``kind/<text>`` may then read as that key.
 
@@ -1037,7 +1066,9 @@ class _Planner:
                 "create one from a reference",
                 change=index,
                 repair=(
-                    f"Create it in this write: add the change {shape}"
+                    _sdk_create_repair(kind, declared.keys, f"{kind}/{subject_id}")
+                    if self.request.surface == "sdk"
+                    else f"Create it in this write: add the change {shape}"
                     + ("" if declared.minted else " with each key value filled in")
                     + ', and name it {"created": "new"} where this change names '
                     f"{kind}/{subject_id}"
@@ -1107,8 +1138,7 @@ class _Planner:
                 change=index,
                 candidates=declared.keys,
                 repair=(
-                    "Give key: the value for a one-key kind, or each key part as "
-                    '{"predicate", "value"}'
+                    "Give key: the value for a one-key kind, or each key field as {field: value}"
                 ),
                 field_path=path,
             )
@@ -1131,7 +1161,7 @@ class _Planner:
                 f"({', '.join(declared.keys)}); a bare key value names only a one-key kind",
                 change=index,
                 candidates=declared.keys,
-                repair='Give each key part as {"predicate", "value"}',
+                repair="Give each key field as {field: value}",
                 field_path=path,
             )
         else:
@@ -1664,7 +1694,7 @@ class _Planner:
                     repair=f"Use one of: {spelled}",
                     field_path=path,
                 )
-        violated = claim_literal_problem(value, info.claim_type.value)
+        violated = claim_literal_problem(value, info.claim_type.value, keys=self.key_rules)
         if violated is not None:
             violated = claim_literal_detail(value, info.claim_type.value, violated)
             expected = info.value_type if info.value_type != "json" else "value"
@@ -3693,10 +3723,17 @@ class _Planner:
                 touched[claim] = index
             if isinstance(change, SetChange) and planned.slot is not None:
                 if planned.slot in slots:
+                    subject = planned.outcome["subject"]
+                    if subject is None and isinstance(change.subject, CreatedSubject):
+                        # Not named until lowering: the create it names, by label and kind.
+                        bound = self.plan.labels.get(change.subject.created)
+                        subject = f"{{created: {change.subject.created}}}" + (
+                            f" ({bound.kind})" if bound is not None else ""
+                        )
                     raise _refuse(
                         "cruxible.write.slot_set_twice",
                         f"changes {slots[planned.slot]} and {index} both set "
-                        f"{planned.outcome['subject']} {planned.outcome['field']}",
+                        f"{subject} {planned.outcome['field']}",
                         change=index,
                         repair="Keep one set per field in a write",
                     )

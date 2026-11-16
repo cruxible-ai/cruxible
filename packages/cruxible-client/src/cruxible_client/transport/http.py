@@ -1014,11 +1014,17 @@ class CruxibleClient:
         rows_limit: int = 5,
         groups_limit: int = 5,
         findings_after: str | None = None,
+        changes_from: int = 0,
+        definitions_from: int = 0,
+        groups: bool = True,
     ) -> contracts.ProposalReviewResponse:
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/review",
             json={
                 "detail": detail,
+                "changes_from": changes_from,
+                "definitions_from": definitions_from,
+                "groups": groups,
                 "summary_after": summary_after,
                 "summary_group": summary_group,
                 "rows_after": rows_after,

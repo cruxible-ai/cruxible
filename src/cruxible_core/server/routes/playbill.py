@@ -588,6 +588,9 @@ def review_proposal(
         rows_limit=req.rows_limit,
         groups_limit=req.groups_limit,
         findings_after=req.findings_after,
+        changes_from=req.changes_from,
+        definitions_from=req.definitions_from,
+        groups=req.groups,
         workspace_observation=(
             None
             if req.workspace_observation is None

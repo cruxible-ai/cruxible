@@ -424,7 +424,12 @@ def test_fresh_consumer_installs_the_bundled_provider_with_no_contract_prerequis
             (step,) = added.providers
             assert step.proposal_id is not None
             consumer.approve(step.proposal_id)
-            resumed = playbill_api.playbill_kit_status(consumer.instance_id).resumes
+            # Creation's base kit add stopped at its proposal too; it has its own row.
+            resumed = [
+                row
+                for row in playbill_api.playbill_kit_status(consumer.instance_id).resumes
+                if row.kit_id == "acme"
+            ]
             assert len(resumed) == 1 and resumed[0].proposal_id is not None
             consumer.approve(resumed[0].proposal_id)
         else:

@@ -578,7 +578,7 @@ def evaluate_subject_kind_law(
         ):
             return _refusal(
                 "cruxible.subject_kind.revival_refused",
-                "A retired SubjectKind cannot be revived.",
+                "A retired SubjectKind cannot be revived; propose a new SubjectKind name instead.",
                 path=path,
             )
     if subject_kind.lifecycle.state == "live":

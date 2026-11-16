@@ -348,7 +348,7 @@ def test_kit_build_bundles_a_provider_directory_as_staged_wheels_and_lock(
         "cruxible_provider_runtime-0.2.0-py3-none-any.whl"
     ]
     assert sorted(client.stored) == sorted(files.values())
-    assert "1 provider package(s)" in result.output
+    assert "1 provider package(s), content sha256:" in result.output
     assert (out / "providers" / "kit_call-0.2.0-py3-none-any.whl").read_bytes() == b"wheel"
 
 
@@ -477,6 +477,58 @@ def test_kit_status_shows_each_required_kit_and_whether_it_is_met(
     assert result.exit_code == 0, result.output
     assert "  requires base >= 1.0.0: met (installed 1.2.0)\n" in result.output
     assert "  requires other >= 2.0.0: not met (not installed)\n" in result.output
+    # S4: the digest is labelled: the content digest kit add pins, not an image digest.
+    assert f"acme 1.0.0 content sha256:{'1' * 64}; update check local source\n" in result.output
+
+
+def test_kit_add_preview_shows_requires_met_and_one_heading_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S1-S3: the preview says what a commit does now, shows requires and whether it is
+    met, and spells every heading one way (``Document:`` beside ``ClaimType:``)."""
+
+    from cruxible_core.service.kits import KIT_PREVIEW_AWAITING_INSTALL
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status="would_propose",
+                requires=(
+                    KitRequirementStatus(
+                        kit_id="base", min_version="1.0.0", installed_version="1.0.0", met=True
+                    ),
+                ),
+                plan=(
+                    KitPathPlan(
+                        path="claim-types/acme/plan.json",
+                        action="add",
+                        identity="ClaimType:acme.plan",
+                    ),
+                    KitPathPlan(
+                        path="documents/acme.guide.json",
+                        action="add",
+                        identity="document:acme.guide",
+                    ),
+                ),
+                detail=KIT_PREVIEW_AWAITING_INSTALL,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme-1.0.0")
+    )
+
+    result = CliRunner().invoke(cli, [*BASE, "add", "acme-1.0.0"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "  requires base >= 1.0.0: met (installed 1.0.0)" in lines
+    assert "  requires: base >= 1.0.0" not in lines
+    assert "ClaimType:" in lines and "Document:" in lines and "document:" not in lines
+    assert "Contracts first" not in result.output
+    assert KIT_PREVIEW_AWAITING_INSTALL in lines
 
 
 def test_a_registry_refusal_prints_its_code_without_the_class_name() -> None:
@@ -825,3 +877,108 @@ def test_kit_status_compares_the_base_kit_with_the_bundled_copy_offline(
     assert "base 0.9.0" in result.output
     assert "latest 1.0.0 available" in result.output
     assert "source: bundled" in result.output
+
+
+@pytest.mark.parametrize(
+    ("available", "shown"),
+    [
+        ("sha256:" + "2" * 64, "; differs from the available 1.0.0, content sha256:" + "2" * 64),
+        ("sha256:" + "1" * 64, "; up to date"),
+    ],
+)
+def test_kit_status_says_a_same_version_receipt_differs_from_the_bundled_content(
+    monkeypatch: pytest.MonkeyPatch, available: str, shown: str
+) -> None:
+    """Base 1.0.0 installed with other content than the bundled 1.0.0 is not up to date."""
+
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="base",
+                        version="1.0.0",
+                        content_digest="sha256:" + "1" * 64,
+                        source="bundled",
+                        latest_available="1.0.0",
+                        latest_content_digest=available,
+                        update_check="checked",
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert f"base 1.0.0 content sha256:{'1' * 64}{shown}\n" in result.output
+
+
+def test_kit_status_shows_a_pending_kit_and_the_command_that_approves_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under independent approval, kit status said "No kits installed." while the base
+    kit's install proposal waited; init had reported it."""
+
+    from cruxible_client.contracts.kits import KitResumeStatus
+
+    proposal = "sha256:" + "c" * 64
+
+    class StubClient:
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                resumes=(
+                    KitResumeStatus(
+                        kit_id="base",
+                        version="1.0.0",
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id=proposal,
+                        proposal_open=True,
+                        source="bundled",
+                    ),
+                    KitResumeStatus(
+                        kit_id="acme",
+                        version="1.0.0",
+                        state="proposed",
+                        actor_id="owner",
+                        recorded_at="2026-11-15T00:00:00Z",
+                        proposal_id="sha256:" + "d" * 64,
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+
+    assert result.exit_code == 0, result.output
+    assert "No kits installed." not in result.output
+    assert f"base 1.0.0: kit add proposed (as owner); proposal {proposal}\n" in result.output
+    assert (
+        f"  next: cruxible proposal approve {proposal} --signer-id ID --key FILE "
+        "(the approval that completes it activates it)\n" in result.output
+    )
+    # A proposal no longer open names no next step.
+    assert result.output.count("next: cruxible proposal approve") == 1
+
+
+def test_kit_help_says_what_a_default_provider_stands_for_now() -> None:
+    """Providers no longer implement interfaces: operations serve capabilities, and a
+    default provider is skipped when installed operations already serve every slot."""
+
+    import inspect
+
+    from cruxible_core.mcp import tools
+    from cruxible_core.service.kits import service_add_kit
+
+    for command in ("add", "build"):
+        result = CliRunner().invoke(cli, ["kit", command, "--help"])
+        assert result.exit_code == 0, result.output
+        text = " ".join(result.output.split())
+        assert "interfaces" not in text
+        assert "serve every slot's capability" in text
+    assert "with interfaces" not in inspect.getsource(tools)
+    assert "operation Contracts first" not in (service_add_kit.__doc__ or "")

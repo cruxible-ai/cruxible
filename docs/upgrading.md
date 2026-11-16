@@ -24,7 +24,7 @@ before enabling them.
 | `cruxible instance` | Managed config-authority instances | Decommissions a daemon-hosted instance |
 | `cruxible query` | Ran a named query from the config | Runs a compact or named query over accepted state |
 | `cruxible procedure` | Listed, showed, ran and withdrew config procedures | Runs and measures governed Procedures; `cruxible get Procedure:NAME` reads one |
-| `cruxible_init` (MCP) | Initialized or reloaded a config instance | Removed: setup is an operator step (`cruxible init`) |
+| `cruxible_init` (MCP) | Initialized or reloaded a config instance | Makes the workspace folder an instance over the local daemon socket, as `cruxible init` does |
 | `cruxible_query` (MCP) | Ran a named query | Runs a compact or named query over accepted state |
 | `.cruxible/` in a project | The 0.3 instance directory (`instance.json`, `state.db`) | The workspace directory (workspace config, file catalog, floor, block stamps); a worktree whose `.cruxible/` holds a 0.3 instance is refused until it moves aside, and so is one whose `.cruxible/` is, lies inside or holds the daemon state root (`~/.cruxible` or `CRUXIBLE_STATE_ROOT`) |
 
@@ -203,21 +203,26 @@ compiler, so reads and proofs at them are unchanged. The instance descriptor
 keeps its genesis compiler; inspection reports the active compiler from
 accepted history.
 
-This release installs one compiler, revision 42 (`typed-authoring-identity-v1`), and
+This release installs one compiler, revision 72 (`one-capture-per-citation`), and
 no upgrade edge leads to or from it: `cruxible compiler upgrade` refuses
 `cruxible.compiler_upgrade.already_current` (or
 `cruxible.compiler_upgrade.unsupported_transition` for any other target). An
-instance created by an earlier, unshipped build records another compiler or
-another genesis and is refused, never converted: the daemon answers
-`cruxible.instance.reseed_required` and `cruxible host show` reports it
-`reseed_required` (`compiler_lineage_not_writable`). Move it aside and re-import
-its content into a fresh instance.
+instance created by an earlier build (any 0.3.x release, or an unshipped
+development build) records another compiler and is refused, never converted:
+the daemon answers `cruxible.instance.reseed_required` and `cruxible host
+show` reports it `reseed_required` (`compiler_lineage_not_writable`). Move it
+aside and re-import its content into a fresh instance. A fresh instance starts
+with the base kit installed ([Kits](kits.md#the-base-kit)), so a kit that
+requires `base` installs on it directly.
 
 A ClaimType has one format (`cruxible-claim-type-v11`) with one evidence
 policy (`cruxible-claim-evidence-admission-policy-v4`), and a Claim one artifact
 (`playbill-claim-v4`). A Procedure has one format (`cruxible-procedure-v4`): its
-input, params and output name governed Contracts, and a Procedure carries no
-Contracts of its own. Accepted state under an earlier format is refused with the
+input, params and output name governed Contracts, a Procedure carries no
+Contracts of its own, each slot names a capability, and each extract names a
+record set of its CaptureKind's layout. A provider package registers in
+schema 3 ([Kits](kits.md#what-a-provider-package-declares)); a package in an
+earlier schema is refused at install. Accepted state under an earlier format is refused with the
 reseed answer above, never restated.
 
 ## Compiler facet states

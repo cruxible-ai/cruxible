@@ -236,3 +236,22 @@ def test_injected_instructions_are_small_and_do_not_enumerate_the_catalog(
         assert "Denied at this tier" not in instructions
         if instance_id and len(instance_id) <= 40:
             assert instance_id in instructions
+
+
+def test_the_server_logs_warnings_and_errors_only_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S13: each daemon request logged an INFO line on stderr (``HTTP Request: ...``)."""
+
+    from cruxible_core.mcp.server import mcp_log_level
+
+    monkeypatch.delenv("FASTMCP_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_DEBUG", raising=False)
+    assert create_server().settings.log_level == "WARNING"
+    assert mcp_log_level({}) == "WARNING"
+    # Request logs come back on request: the library's own setting, or CRUXIBLE_DEBUG.
+    assert mcp_log_level({"FASTMCP_LOG_LEVEL": "info"}) == "INFO"
+    assert mcp_log_level({"FASTMCP_LOG_LEVEL": "nonsense"}) == "WARNING"
+    assert mcp_log_level({"CRUXIBLE_DEBUG": "1"}) == "INFO"
+    monkeypatch.setenv("FASTMCP_LOG_LEVEL", "DEBUG")
+    assert create_server().settings.log_level == "DEBUG"

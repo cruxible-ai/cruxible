@@ -60,7 +60,7 @@ from cruxible_client.authoring.files import (
 from cruxible_client.authoring.folder_identity import write_folder_identity
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.sdk_types import SourceSelectionError
-from cruxible_client.authoring.selectors import WorkspaceFiles
+from cruxible_client.authoring.selectors import WorkspaceFiles, catalog_file_paths
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.vocabulary_file import (
     vocabulary_apply_for,
@@ -85,7 +85,6 @@ from cruxible_client.authoring.workspace import (
 from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
 from cruxible_client.authoring.write_evidence import (
     observe_changes,
-    observe_evidence,
     rebind_evidence,
 )
 from cruxible_client.contracts.artifacts import parse_artifact_identity
@@ -121,15 +120,16 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.file_catalog import FileCatalog, FileCompilationBundle
 from cruxible_client.contracts.get_text import attestation_counts_text as _attestation_counts_text
 from cruxible_client.contracts.get_text import backlink_line as _backlink_line
+from cruxible_client.contracts.get_text import (
+    file_ref_shown,
+    history_lines,
+    proposed_reason_lines,
+    render_get,
+)
 
 # Re-exported under the names the CLI's tests read them by.
 from cruxible_client.contracts.get_text import (  # noqa: F401
     get_value_text as _get_value_text,
-)
-from cruxible_client.contracts.get_text import (
-    history_lines,
-    proposed_reason_lines,
-    render_get,
 )
 from cruxible_client.contracts.get_text import (  # noqa: F401
     provider_operation_line as _provider_operation_line,
@@ -142,6 +142,7 @@ from cruxible_client.contracts.kits import (
     KitBuildRequest,
     KitChangeResult,
     KitRemoveRequest,
+    KitRequirementStatus,
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
@@ -174,7 +175,9 @@ from cruxible_client.contracts.text_display import (
     landing_lines,
     next_lines,
     render_orient,
+    render_review_summary,
     short_oid,
+    short_provider_build,
     write_outcome_lines,
 )
 from cruxible_client.contracts.text_display import (  # noqa: F401
@@ -190,12 +193,12 @@ from cruxible_client.contracts.write import (
     Change,
     ContractEvidence,
     DocOp,
-    FileEvidence,
     RetireRequest,
     SetRequest,
     SubjectRef,
     WriteOutcome,
     WriteRequest,
+    as_write_request,
     capture_handle,
 )
 from cruxible_client.errors import DataValidationError
@@ -567,6 +570,22 @@ def _emit_git_workspace_note(resolution: _LocalWorkspaceResult) -> None:
         f"precedence over inherited Git worktree {str(note.inherited_workspace_root)!r}.",
         err=True,
     )
+
+
+def _display_file_paths(workspace: Path | None = None) -> Mapping[str, str]:
+    """The workspace catalog's file names to paths, read once for one command's text.
+
+    Text names a cited file by its path; JSON keeps the stored name. ``workspace``
+    is the command's own ``--workspace-root``; without one, the workspace around
+    the CWD. No workspace or catalog maps nothing, and text shows names.
+    """
+
+    if workspace is None:
+        try:
+            workspace = _local_workspace_root(fallback_to_start=False).workspace_root
+        except click.UsageError:
+            return {}
+    return catalog_file_paths(workspace)
 
 
 def _existing_workspace_root() -> Path | None:
@@ -2237,6 +2256,27 @@ def _echo_kit_requires(requires: tuple[KitRequirement, ...]) -> None:
         )
 
 
+def _echo_kit_requirements(requires: Sequence[KitRequirementStatus]) -> None:
+    """Each kit a release requires and whether this instance meets it (add and status)."""
+
+    for required in requires:
+        held = (
+            "not installed"
+            if required.installed_version is None
+            else f"installed {required.installed_version}"
+        )
+        click.echo(
+            f"  requires {required.kit_id} >= {required.min_version}: "
+            f"{'met' if required.met else 'not met'} ({held})"
+        )
+
+
+def _kit_plan_heading(kind: str) -> str:
+    """A kit plan group's heading: every identity kind capitalized (``document`` too)."""
+
+    return kind[:1].upper() + kind[1:]
+
+
 def _echo_kit_change(
     result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
 ) -> None:
@@ -2256,6 +2296,7 @@ def _echo_kit_change(
         if step.detail is not None:
             line += f" ({printable(step.detail)})"
         click.echo(line)
+    _echo_kit_requirements(result.requires)
     _echo_provider_repins(result.repins, result.stops, result.automation_carries)
     if result.provenance is not None:
         provenance = result.provenance
@@ -2267,7 +2308,7 @@ def _echo_kit_change(
     for item in result.plan:
         if item.action == "unchanged":
             continue
-        kind = (item.identity or item.path).partition(":")[0]
+        kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
         line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
         notes = []
         if item.consequence is not None:
@@ -2345,13 +2386,14 @@ def _echo_kit_change(
     multiple=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help=(
-        "A published provider package directory the kit names as the default "
-        "implementation of its interfaces (repeatable): pyproject.toml, uv.lock and the "
+        "A published provider package directory the kit names as the default provider "
+        "for its Procedures' slots (repeatable): pyproject.toml, uv.lock and the "
         "published wheel in dist/ (path dependencies' wheels are not needed). The kit "
         "carries none of its files. kit add installs it by name at exactly this version "
-        "from the provider index, refusing any other build, unless a live Provider already "
-        "implements its interfaces; a daemon with provider_repository configured refuses "
-        "that install (install the repository's build first with provider install)."
+        "from the provider index, refusing any other build, unless live operations of "
+        "other providers already installed serve every slot's capability and fit it; "
+        "a daemon with provider_repository configured refuses that install (install "
+        "the repository's build first with provider install)."
     ),
 )
 @click.option(
@@ -2422,7 +2464,7 @@ def build_kit(
         click.echo(
             f"{kit_id} {version}: {len(bundle.artifacts)} artifacts, "
             f"{len(bundle.manifest.providers)} provider package(s), "
-            f"{bundle.manifest.content_digest}"
+            f"content {bundle.manifest.content_digest}"
         )
         _echo_kit_requires(bundle.manifest.requires)
         template = bundle.manifest.automation_template
@@ -2497,12 +2539,12 @@ def add_kit(
     stops at proposed. A kit that bundles provider packages installs the missing
     ones first (admin permission, the transfer install; registry dependencies
     resolve from the daemon's provider index, PyPI unless configured), installs a
-    default provider by name from that index unless an installed Provider already
-    implements its interfaces (satisfied), and proposes the definitions once they
-    land; an install awaiting approval stops at awaiting_providers, and its
-    activation proposes the definitions on their own, as you (kit status shows
-    the resume). It previews by default; commit with
-    ``--commit --at OID``.
+    default provider by name from that index unless live operations of installed
+    providers already serve every slot's capability (satisfied), and proposes the
+    definitions once they land (each provider carries its own shapes); an
+    install awaiting approval stops at awaiting_providers, and its activation
+    proposes the definitions on their own, as you (kit status shows the resume).
+    It previews by default; commit with ``--commit --at OID``.
     """
     # ``base`` is the base kit this core bundles, read before any directory or registry.
     bundle, origin = bundled_kit_reference(kit) or resolve_kit(kit)
@@ -2539,7 +2581,6 @@ def add_kit(
             template_on_disk=_kit_directory_file(kit, result.automation_template),
             source=_pull_reference(kit, origin),
         )
-        _echo_kit_requires(bundle.manifest.requires)
 
 
 @kit_group.command("pull")
@@ -2606,7 +2647,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if not result.kits:
+    if not result.kits and not result.resumes:
         click.echo("No kits installed.")
     for resume in result.resumes:
         line = f"{resume.kit_id} {resume.version}: kit add {resume.state} (as {resume.actor_id})"
@@ -2617,14 +2658,34 @@ def kit_status(offline: bool, output_json: bool) -> None:
         click.echo(line)
         if resume.detail:
             click.echo(f"  {printable(resume.detail)}")
+        if resume.proposal_open and resume.proposal_id is not None:
+            click.echo(
+                f"  next: cruxible proposal approve {resume.proposal_id} --signer-id ID "
+                "--key FILE (the approval that completes it activates it)"
+            )
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
             newer = kit_version_key(kit.latest_available) > kit_version_key(kit.version)
-            available = f"; latest {kit.latest_available} available" if newer else "; up to date"
+            differs = (
+                kit.latest_available == kit.version
+                and kit.latest_content_digest is not None
+                and kit.latest_content_digest != kit.content_digest
+            )
+            if newer:
+                available = f"; latest {kit.latest_available} available"
+            elif differs:
+                # Same version, other content: not up to date, whatever the version says.
+                available = (
+                    f"; differs from the available {kit.latest_available}, content "
+                    f"{kit.latest_content_digest}"
+                )
+            else:
+                available = "; up to date"
         elif kit.update_check != "checked":
             available = f"; update check {kit.update_check.replace('_', ' ')}"
-        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}{available}")
+        # The content digest (what kit add pins), not an OCI image digest.
+        click.echo(f"{kit.kit_id} {kit.version} content {kit.content_digest}{available}")
         if kit.source is not None:
             click.echo(f"  source: {kit.source}")
         if kit.provenance is not None:
@@ -2641,16 +2702,7 @@ def kit_status(offline: bool, output_json: bool) -> None:
                 f"  provider {provider.provider_id} ({provider.package} {provider.version}): "
                 f"{state}"
             )
-        for required in kit.requires:
-            held = (
-                "not installed"
-                if required.installed_version is None
-                else f"installed {required.installed_version}"
-            )
-            click.echo(
-                f"  requires {required.kit_id} >= {required.min_version}: "
-                f"{'met' if required.met else 'not met'} ({held})"
-            )
+        _echo_kit_requirements(kit.requires)
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
         for kept in kit.kept:
@@ -3013,9 +3065,26 @@ def reject_proposal(
     type=click.IntRange(1, 500),
     help="Item reasons per page (default 50).",
 )
-@click.option("--detail", is_flag=True, help="Return the full candidate review.")
-@click.option("--summary-after", default=None, help="Next group page cursor.")
-@click.option("--summary-group", default=None, help="Page rows of this exact group.")
+@click.option(
+    "--detail",
+    is_flag=True,
+    help="The full candidate review: every member's artifact and semantic delta, "
+    "governance and attestation coverage.",
+)
+@click.option(
+    "--changes-from",
+    default=0,
+    type=click.IntRange(0),
+    help="Show value changes from this position (the last page's More values:).",
+)
+@click.option(
+    "--definitions-from",
+    default=0,
+    type=click.IntRange(0),
+    help="Show definitions from this position (the last page's More definitions:).",
+)
+@click.option("--summary-after", default=None, help="Next group page cursor (grouped rows).")
+@click.option("--summary-group", default=None, help="Page the stored rows of this exact group.")
 @click.option("--rows-after", default=None, help="Next row page cursor.")
 @click.option("--rows-limit", default=5, type=click.IntRange(1, 10))
 @click.option("--groups-limit", default=5, type=click.IntRange(1, 10))
@@ -3036,8 +3105,15 @@ def review_proposal(
     rows_limit: int,
     groups_limit: int,
     findings_after: str | None,
+    changes_from: int,
+    definitions_from: int,
 ) -> None:
+    """Read a proposal before approving it: its value changes and what each cites, and its
+    definitions. ``--json`` adds the stored fields grouped by kind; ``--detail`` is the
+    full candidate review."""
+
     workspace = Path(workspace_root)
+    grouped = output_json or any(item is not None for item in (summary_after, summary_group))
 
     def _review_at_observed_coordinate(
         client: CruxibleClient, instance_id: str
@@ -3077,6 +3153,9 @@ def review_proposal(
             workspace_observation=observation,
             item_reasons_after=item_reasons_after,
             item_reasons_limit=item_reasons_limit,
+            changes_from=changes_from,
+            definitions_from=definitions_from,
+            groups=grouped,
         )
 
     result = _server_call(
@@ -3086,9 +3165,7 @@ def review_proposal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     elif isinstance(result, contracts.ProposalReviewSummary):
-        from cruxible_core.service.proposals.summary import render_review_summary
-
-        click.echo(render_review_summary(result), nl=False)
+        click.echo(render_review_summary(result, file_paths=_display_file_paths(workspace)))
     else:
         review = ProposalReview.model_validate(result.model_dump(mode="json"))
         click.echo(render_playbill_proposal_review_pointer(review), nl=False)
@@ -3163,22 +3240,36 @@ def approve_proposal(
         signer_id = str(configured)
     resolved_signer: str = signer_id
 
+    # The prompt shows the reviewer's view `proposal review` prints (its first page).
+    shows_summary = not (output_json or full or yes)
+
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
-    ) -> tuple[str, contracts.ApprovalChallenge, CompilerUpgradeSigningKey]:
+    ) -> tuple[
+        str,
+        contracts.ApprovalChallenge,
+        CompilerUpgradeSigningKey,
+        contracts.ProposalReviewSummary | None,
+    ]:
         key = _signing_key(private_key_path, instance_id=instance_id, signer_id=resolved_signer)
         if key is None:
             raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        summary = None
+        if shows_summary:
+            page = client.review_proposal(instance_id, resolved_id, groups=False)
+            assert isinstance(page, contracts.ProposalReviewSummary)
+            summary = page
         return (
             resolved_id,
             client.prepare_approval(
                 instance_id, resolved_id, signer_id=resolved_signer, include_body=True
             ),
             key,
+            summary,
         )
 
-    resolved_id, challenge, key = _server_call(
+    resolved_id, challenge, key, summary = _server_call(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
@@ -3190,11 +3281,17 @@ def approve_proposal(
             for line in _approval_counts_lines(review):
                 click.echo(line)
         else:
-            click.echo(render_playbill_approval_summary(review), nl=False)
+            assert summary is not None
+            click.echo(
+                render_playbill_approval_summary(review, summary, file_paths=_display_file_paths()),
+                nl=False,
+            )
     if key.source != "option":
         click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?", err=True):
-        raise click.Abort()
+        # Declining is an answer, not an error: say so and sign nothing.
+        click.echo("Not approved.", err=True)
+        raise SystemExit(1)
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(
         signer_id=resolved_signer,
@@ -3619,8 +3716,9 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
 
 
 @files_group.command("add")
-@click.argument("name")
-@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.argument(
+    "path", nargs=-1, required=True, metavar="[NAME] PATH", type=click.Path(dir_okay=False)
+)
 @click.option("--document-id", default=None, help="The Document this file compiles to.")
 @click.option("--document-kind", default=None, help="The Document's kind (with --document-id).")
 @click.option("--title", default=None, help="The Document's title (with --document-id).")
@@ -3652,8 +3750,7 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
 @json_option
 @handle_errors
 def add_file(
-    name: str,
-    path: Path,
+    path: tuple[str, ...],
     document_id: str | None,
     document_kind: str | None,
     title: str | None,
@@ -3668,7 +3765,8 @@ def add_file(
     """Catalogue PATH under NAME in the workspace's .cruxible/files.yaml.
 
     NAME is the stable source name evidence is cited under (`--evidence-file
-    PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
+    PATH#ANCHOR` resolves through it); left out, it is doc-<path>, the name a
+    write citing the file gives it. With --document-id, --document-kind,
     --title and --scope the entry also declares the Document it compiles to
     (files compile, files propose); without them the file is still a source
     to cite and a page to project blocks into, just not a Document. The
@@ -3677,10 +3775,13 @@ def add_file(
     target refuses. Writes only the catalog file (commit it with Git, if you use Git).
     """
 
+    # NAME is optional and comes first: one argument is PATH, two are NAME PATH.
+    if len(path) > 2:
+        raise click.UsageError("files add takes PATH, or NAME PATH")
     result = catalog_file(
         _catalog_edit_root(repository_root),
-        name=name,
-        path=path,
+        name=path[0] if len(path) == 2 else None,
+        path=Path(path[-1]),
         document_id=document_id,
         document_kind=document_kind,
         title=title,
@@ -4449,7 +4550,7 @@ def propose_claim_type(
 def _claim_type_lint_meaning(code: str) -> str:
     """``: what it means`` for a lint warning that has words, else nothing."""
 
-    from cruxible_core.claims.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
+    from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 
     meaning = CLAIM_TYPE_LINT_TEXT.get(code)
     return "" if meaning is None else f": {meaning}"
@@ -4847,7 +4948,10 @@ def run_action(
 @click.option(
     "--evidence-file",
     default=None,
-    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+    help=(
+        "PATH#ANCHOR: cite text found once in a workspace file; the write catalogues "
+        "the file if it is not yet."
+    ),
 )
 @click.option(
     "--section",
@@ -5577,14 +5681,8 @@ def _evidence_option_value(
         return {"kind": "contract", "contract": contract}
     if evidence_file is None:
         return None
-    try:
-        observed = observe_evidence(
-            FileEvidence(file=evidence_file), workspace=Path(workspace_root)
-        )
-    except (ValidationError, CoreError) as exc:
-        raise click.UsageError(f"--evidence-file {evidence_file}: {exc}") from None
-    assert observed is not None
-    return observed.model_dump(mode="json")
+    # Read on this side by the workspace write (_workspace_write), as write does.
+    return {"kind": "file", "file": evidence_file}
 
 
 _NONE_HELP = (
@@ -5602,7 +5700,10 @@ _NONE_HELP = (
 @click.option(
     "--evidence-file",
     default=None,
-    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+    help=(
+        "PATH#ANCHOR: cite text found once in a workspace file; the write catalogues "
+        "the file if it is not yet."
+    ),
 )
 @click.option(
     "--capture",
@@ -5682,6 +5783,17 @@ def set_value(
         },
         example='cruxible set dev.item/tidy-cli status done --because "Shipped."',
     )
+    if evidence_file is not None:
+        _workspace_write(
+            as_write_request(request),
+            workspace_root=workspace_root,
+            send=lambda observed: _server_call(
+                lambda client, instance_id: client.write(instance_id, request=observed),
+                command_name="cruxible set",
+            ),
+            output_json=output_json,
+        )
+        return
     outcome = _server_call(
         lambda client, instance_id: client.set(instance_id, request=request),
         command_name="cruxible set",
@@ -5704,7 +5816,10 @@ def set_value(
 @click.option(
     "--evidence-file",
     default=None,
-    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+    help=(
+        "PATH#ANCHOR: cite text found once in a workspace file; the write catalogues "
+        "the file if it is not yet."
+    ),
 )
 @click.option(
     "--capture",
@@ -5781,11 +5896,15 @@ def add_value(
             'cruxible add dev.item/tidy-cli governs dev.item/cli-docs --because "Linked in review."'
         ),
     )
-    outcome = _server_call(
-        lambda client, instance_id: client.write(instance_id, request=request),
-        command_name="cruxible add",
+    _workspace_write(
+        request,
+        workspace_root=workspace_root,
+        send=lambda observed: _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible add",
+        ),
+        output_json=output_json,
     )
-    _finish_write(outcome, output_json=output_json)
 
 
 @playbill_group.command("retire")
@@ -6010,8 +6129,10 @@ def write_changes(
     FILE (YAML or JSON; - reads stdin) holds {"because": ..., "changes": [...]},
     or a bare list of changes with --because. Each change is {"op": "set" |
     "add", "subject", "field", "value"}, {"op": "retire", "target"} or {"op":
-    "create", "label", "subject_kind", "key"}; other changes name a created
-    Subject {"created": label}, as subject or value. A top-level "subject" is
+    "create", "label", "subject_kind", "key"}, where key is one value or
+    {field: value, ...} (e.g. {"occurrence": "kind/id", "vulnerability":
+    "kind/id"}); other changes name a created Subject {"created": label}, as
+    subject or value. A top-level "subject" is
     the Subject of every change that names none. --schema prints the schema.
     Optional docs hold append {file, under, text} or replace {file, section,
     text, expect}. Paths are heading lists; [] selects the preamble. Section
@@ -6050,6 +6171,26 @@ def write_changes(
         },
         example="cruxible write changes.yaml",
     )
+    _workspace_write(
+        request,
+        workspace_root=workspace_root,
+        send=lambda observed: _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible write",
+        ),
+        output_json=output_json,
+    )
+
+
+def _workspace_write(
+    request: WriteRequest,
+    *,
+    workspace_root: str,
+    send: Callable[[WriteRequest], WriteOutcome],
+    output_json: bool,
+) -> None:
+    """Send a write through the workspace seam: cited files are read (and catalogued) here."""
+
     from cruxible_client.contracts.errors import WriteRefusalError
     from cruxible_core.cli.commands._common import _echo_refusal
 
@@ -6058,15 +6199,12 @@ def write_changes(
     def submit(observed: WriteRequest) -> WriteOutcome:
         nonlocal submitted
         submitted = True
-        return _server_call(
-            lambda client, instance_id: client.write(instance_id, request=observed),
-            command_name="cruxible write",
-        )
+        return send(observed)
 
     try:
         outcome = write_workspace(request, workspace=Path(workspace_root), submit=submit)
     except WriteRefusalError as exc:
-        # A doc write refused while observing files never reached the daemon.
+        # A write refused while observing files never reached the daemon.
         if submitted or output_json:
             raise
         _echo_refusal(
@@ -6237,12 +6375,14 @@ def backlinks(
     if output_json:
         _emit_json(result.model_dump(mode="json", exclude_none=True))
         return
+    file_paths = _display_file_paths(workspace)
     click.echo(
-        f"backlinks of {result.target} (generation {result.coordinate.generation}, "
+        f"backlinks of {file_ref_shown(result.target, file_paths)} "
+        f"(generation {result.coordinate.generation}, "
         f"{result.coordinate.git_oid}): {len(result.links)}"
     )
     for link in result.links:
-        click.echo("  " + _backlink_line(link))
+        click.echo("  " + _backlink_line(link, file_paths=file_paths))
     if result.next_cursor is not None:
         click.echo(f"next: cruxible backlinks ... --cursor {result.next_cursor}")
 
@@ -6453,7 +6593,12 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     ``evidence_erased`` marks a stale Claim's verdict as read from erased evidence.
     """
 
-    text = render_get(result, evidence_erased=evidence_erased)
+    names_files = result.evidence is not None or result.backlinks is not None
+    text = render_get(
+        result,
+        evidence_erased=evidence_erased,
+        file_paths=_display_file_paths() if names_files else None,
+    )
     if text is None:
         _emit_json(result.proof)
         return
@@ -8675,8 +8820,13 @@ def _echo_runbook_preview(preview: Any) -> None:
         for write in step.writes:
             click.echo(f"      writes {write.subject_kind}: {', '.join(write.claim_types)}")
         for call in step.calls:
-            bound = f" -> {call.build} {call.operation}" if call.build else ""
-            click.echo(f"      calls  {call.slot}{bound}")
+            bound = (
+                f" -> Provider:{short_provider_build(call.build)} {call.operation}"
+                if call.build
+                else ""
+            )
+            capability = f"  (capability {call.capability})" if call.capability else ""
+            click.echo(f"      calls  {call.slot}{bound}{capability}")
         for item in step.inputs:
             for line in _runbook_input_lines(item):
                 click.echo(f"      {line}")

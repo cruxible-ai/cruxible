@@ -12,6 +12,7 @@ from cruxible_client.contracts import ProposalReviewSummary
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import OriginatingLine
+from cruxible_client.contracts.proposal_summary import REVIEW_CHANGES_PAGE
 from cruxible_client.contracts.refs import Ref
 from cruxible_core.service.proposals.review import ProposalReview, service_review_playbill_proposal
 from cruxible_core.service.proposals.summary import BATCH_SIZE
@@ -23,9 +24,8 @@ ACCESS = BodyAccessContext(principal_id="test", can_read_body=True)
 
 
 def _review(instance, proposal_id, **options):
-    return service_review_playbill_proposal(
-        instance, proposal_id=proposal_id, access=ACCESS, **options
-    )
+    options.setdefault("access", ACCESS)
+    return service_review_playbill_proposal(instance, proposal_id=proposal_id, **options)
 
 
 def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_path, monkeypatch):
@@ -120,6 +120,15 @@ def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_pat
     assert summary_size < 32_000
     assert summary_size * 100 < before_size
     assert reads and max(reads) <= BATCH_SIZE
+    # The reviewer's view is paged too: one page of changes and the counts per field.
+    assert summary.change_count == 1000
+    assert len(summary.changes) == REVIEW_CHANGES_PAGE == summary.changes_next
+    (count,) = summary.change_counts
+    assert count.subject_kind == claims.KIND and count.count == 1000
+    rendered = str(summary)
+    assert f"Values (1000; showing {REVIEW_CHANGES_PAGE}):" in rendered
+    assert f"More values: --changes-from {REVIEW_CHANGES_PAGE}" in rendered
+    assert "Values by kind and field:" in rendered
     # Warm paging must not decode the candidate or read any proposal member.
     monkeypatch.setattr(
         type(instance.proposal_evidence()),
@@ -134,6 +143,13 @@ def test_thousand_item_summary_is_small_exact_and_warm_reads_are_bounded(tmp_pat
     expected = sorted(m.path for m in full.members)
     assert [r.path for r in next_page.groups[0].rows] == expected[5:10]
     assert next_page.groups[0].counts == group.counts
+    later = _review(instance, proposal_id, changes_from=summary.changes_next, groups=False)
+    assert later.groups == () and later.group_count == 1 and later.next_cursor is None
+    assert len(later.changes) == REVIEW_CHANGES_PAGE
+    assert later.changes_next == 2 * REVIEW_CHANGES_PAGE
+    assert {item.change.claim for item in later.changes}.isdisjoint(
+        item.change.claim for item in summary.changes
+    )
     (tmp_path / "summary-sizes.json").write_text(
         json.dumps(
             {"full_bytes": before_size, "summary_bytes": summary_size, "members": len(full.members)}
@@ -365,6 +381,27 @@ def test_admitted_mixed_proposal_preserves_before_after_and_action_counts(tmp_pa
         revision.shared_fields["after.object"].value
         == changed.candidate_semantic_artifact["statement"]["object"]
     )
+    # The same members in the write outcome's form: a revision shows before -> after,
+    # a retirement the value it ends, a new Claim its value.
+    by_claim = {item.change.claim: item.change for item in summary.changes}
+    assert len(by_claim) == 3
+    set_change = by_claim[revised.identity.name]
+    before_value = revised.statement.object.value
+    after_value = changed.candidate_semantic_artifact["statement"]["object"]["value"]
+    assert set_change.op == "set" and set_change.before == before_value
+    assert set_change.after == after_value != before_value
+    ended = by_claim[retired.identity.name]
+    assert ended.op == "retire" and ended.after is None
+    assert ended.before == retired.statement.object.value
+    (added,) = [
+        change
+        for claim, change in by_claim.items()
+        if claim not in {revised.identity.name, retired.identity.name}
+    ]
+    assert added.op in {"set", "add"} and added.after and added.before is None
+    rendered = str(summary)
+    assert f"{set_change.field}: {before_value} -> {after_value}" in rendered
+    assert f"retire {ended.subject} {ended.field}: {ended.before}" in rendered
 
 
 @pytest.mark.parametrize(
@@ -510,6 +547,22 @@ def test_typed_line_subject_and_definition_revisions_show_actual_fields(tmp_path
             ]
             assert shared[f"before.{field}"]["value"] == old[field]
             assert shared[f"after.{field}"]["value"] == new[field]
+            definition = json.loads(
+                connection.execute("SELECT data FROM review_definitions").fetchone()[0]
+            )
+            assert definition["action"] == "revised"
+            if kind == "subject":
+                assert definition["kind"] == "Subject"
+                continue
+            assert field in [change["field"] for change in definition["changed"]]
+            if kind == "line" and field == "parameters":
+                detail = definition["detail"]
+                assert detail["kind"] == "line" and detail["parameters"]["changed"]["value"]
+                for binding, original in zip(detail["bindings"], line.bindings.values()):
+                    # A provider build shows as NAME/<12 hex>, as coordinates do.
+                    name = original.build.target.name
+                    head, slash, build = name.rpartition("/")
+                    assert binding["provider"] == (f"{head}/{build[:12]}" if slash else name)
 
 
 def test_closure_role_splits_groups_and_findings_storage_is_bounded(tmp_path):
@@ -647,11 +700,22 @@ def test_summary_preserves_governance_and_bounded_item_reasons(tmp_path):
     ]
     assert summary.item_reason_count == full.item_reason_count == 1
     assert summary.item_reasons[0].value["reason"] == full.item_reasons[0].reason
-    from cruxible_core.service.proposals.summary import render_review_summary
-
-    rendered = render_review_summary(summary)
+    rendered = str(summary)
     assert "Required tier:" in rendered and "Item reasons: 1" in rendered
-    assert "projection coverage" in rendered and "--detail" in rendered
+    assert "--detail" in rendered
+    # The reviewer's view: each Claim in the write outcome's form, with the item's
+    # own reason and the text it cites, read from the Capture body.
+    (claim,) = [item for item in summary.changes if item.change.claim is not None]
+    assert claim.rationale == full.item_reasons[0].reason
+    assert claim.change.verdict is not None
+    assert claim.citations and claim.citations[0].capture.startswith("CAP-")
+    assert claim.citations[0].text and not claim.citations[0].text_withheld
+    assert f"because: {claim.rationale}" in rendered
+    assert f"| {claim.citations[0].text.splitlines()[0]}" in rendered
+    # A reader without body read sees where the citation points, not its text.
+    blind = _review(instance, proposal, access=BodyAccessContext(principal_id="blind"))
+    (cited,) = [item for item in blind.changes if item.change.claim is not None]
+    assert cited.citations[0].text is None and cited.citations[0].text_withheld
 
 
 def test_summary_prior_refusals_are_bounded_and_ordered_as_problems(tmp_path):
@@ -750,3 +814,173 @@ def test_closing_a_proposal_prunes_its_summary(tmp_path, close):
         instance.retire_settled_candidates()
         with sqlite3.connect(instance.proposal_review_projection_path()) as connection:
             assert connection.execute("SELECT count(*) FROM review_builds").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind,heading", [("capability", "Capability"), ("contract", "Contract")])
+def test_a_versioned_definition_reads_as_its_name_and_version(tmp_path, kind, heading):
+    """A Capability or Contract carries name and version, not an identity: the review
+    showed `capability v1` for each of the base kit's eight."""
+
+    old = {"name": "web.fetch", "version": 1, "description": "before"}
+    new = {**old, "description": "after"}
+    with _project(tmp_path, [(kind, old, new, "authored")]) as connection:
+        definition = json.loads(
+            connection.execute("SELECT data FROM review_definitions").fetchone()[0]
+        )
+    assert (definition["kind"], definition["name"]) == (heading, "web.fetch/v1")
+
+
+def test_withholding_covers_definition_fields_on_every_surface():
+    """C14 (review P1): a Runbook description can copy a restricted Capture's text, so a
+    withheld summary drops each definition's fields and keeps kind, name and action."""
+
+    from cruxible_client.contracts.text_display import render_review_summary
+    from cruxible_core.service.proposals.summary import withhold_summary_values
+
+    secret = "private note copied from the restricted capture"
+    summary = ProposalReviewSummary.model_validate(
+        {
+            "proposal_id": "sha256:" + "a" * 64,
+            "candidate_digest": "sha256:" + "b" * 64,
+            "settlement_base": {
+                "git_oid": "0" * 40,
+                "semantic_root": "sha256:" + "1" * 64,
+                "generation_root": "sha256:" + "2" * 64,
+                "compiler_digest": "sha256:" + "3" * 64,
+            },
+            "counts": {"created": 1, "revised": 1},
+            "subject_kinds": {},
+            "subject_kind_count": 0,
+            "required_tier": "governed_write",
+            "activation_policy": "snapshot",
+            "approval_requirements": [],
+            "findings": [],
+            "finding_count": 0,
+            "groups": [],
+            "group_count": 0,
+            "definitions": [
+                {
+                    "kind": "Runbook",
+                    "name": "acme.daily",
+                    "action": "created",
+                    "detail": {"kind": "runbook", "description": secret, "steps": ["Line:a"]},
+                },
+                {
+                    "kind": "Trigger",
+                    "name": "acme.nightly",
+                    "action": "revised",
+                    "changed": [
+                        {"field": "note", "before": {"value": "old"}, "after": {"value": secret}}
+                    ],
+                },
+            ],
+            "definition_count": 2,
+        }
+    )
+    reader = BodyAccessContext(principal_id="reader", can_read_body=True)
+    # A build that records no cited Captures withholds (fail closed): the same branch
+    # a restricted citation takes, without needing an instance.
+    withheld = withhold_summary_values(None, summary, None, reader)
+    assert withheld.withheld is not None
+    assert [(d.kind, d.name, d.action) for d in withheld.definitions] == [
+        ("Runbook", "acme.daily", "created"),
+        ("Trigger", "acme.nightly", "revised"),
+    ]
+    assert all(d.detail is None and d.changed == () for d in withheld.definitions)
+    text = render_review_summary(withheld)
+    for served in (withheld.model_dump_json(), str(withheld), text):
+        assert secret not in served
+    assert "  Runbook acme.daily: created" in text
+    assert "definition fields" in text
+    # A reader with the key still sees them.
+    keyed = BodyAccessContext(principal_id="key", can_read_body=True, can_read_restricted=True)
+    assert secret in str(withhold_summary_values(None, summary, None, keyed))
+
+
+def test_an_erased_citation_says_erased_not_just_no_excerpt(tmp_path):
+    """Review P2: after an authorized erasure of the cited Capture, the review showed the
+    citation's handle and source with no text and no sign the evidence was destroyed."""
+
+    from unittest.mock import patch
+
+    from tests.test_service.test_capture_erasure import BECAUSE, _erase
+
+    original = claims.file_contract
+    with patch.object(claims, "file_contract", lambda **kw: original(erasure=True, **kw)):
+        instance, workspace = claims.claims_world(
+            tmp_path, {"entries": [{"id": "item-1", "status": "open"}]}
+        )
+    claims.install(instance, claims.claims_spec())
+    state = claims.run(instance, workspace)
+    proposal_id = state.terminal_egress[0].proposal_id
+    before = _review(instance, proposal_id, groups=False)
+    (cited,) = [c for change in before.changes for c in change.citations]
+    assert cited.text and cited.erased is None and not cited.unavailable
+
+    world = SimpleNamespace(instance=instance, capture=cited.capture)
+    preview = _erase(world)
+    assert _erase(world, dry_run=False, at=preview.coordinate.digest).status == "erased"
+
+    after = _review(instance, proposal_id, groups=False)
+    (gone,) = [c for change in after.changes for c in change.citations]
+    assert gone.text is None and not gone.unavailable
+    assert gone.erased is not None and gone.erased.because == BECAUSE
+    lines = str(after).splitlines()
+    assert any(line.startswith("      erased by ") and BECAUSE in line for line in lines)
+
+
+def test_a_missing_cited_body_reads_as_unavailable(tmp_path, monkeypatch):
+    """A body missing or damaged (not erased) reads as unavailable, by the landing index."""
+
+    instance, _owner, root, line, _procedure = delivery.proposal_world(tmp_path)
+    state = delivery.run_line(instance, root, line)
+    proposal_id = state.terminal_egress[0].proposal_id
+    from cruxible_core.storage import read_positions
+
+    monkeypatch.setattr(read_positions, "body_present", lambda *_a, **_k: False)
+    summary = _review(instance, proposal_id, groups=False)
+    citations = [c for change in summary.changes for c in change.citations]
+    assert citations and all(c.unavailable and c.text is None for c in citations)
+    assert "unavailable: the cited body is missing or damaged here" in str(summary)
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_a_citation_without_excerpt_ranges_still_reads_unavailable(tmp_path, monkeypatch, present):
+    """Review r2 P2: with no span mappings the citation returned before its availability
+    check, so a missing body looked like an ordinary citation. Presence comes from the
+    landing index, independently of excerpt ranges, and no body is read."""
+
+    import sqlite3
+
+    from cruxible_core.service.proposals import review_view
+    from cruxible_core.storage import read_positions
+
+    instance, _owner, root, line, _procedure = delivery.proposal_world(tmp_path)
+    state = delivery.run_line(instance, root, line)
+    _review(instance, state.terminal_egress[0].proposal_id, groups=False)
+    with sqlite3.connect(instance.proposal_review_projection_path()) as connection:
+        rows = [
+            json.loads(data) for (data,) in connection.execute("SELECT data FROM review_changes")
+        ]
+    row = next(item for item in rows if item["citations"])
+    # An admitted Claim with no byte-span mappings: its citations map no excerpt.
+    row = {**row, "spans": []}
+    original = read_positions.body_present
+    monkeypatch.setattr(
+        read_positions,
+        "body_present",
+        lambda store, digest: original(store, digest) and present,
+    )
+    reads: list[str] = []
+    monkeypatch.setattr(review_view.CitedText, "_body", lambda self, digest: reads.append(digest))
+    cited = review_view.CitedText(instance, ACCESS, withheld=False)
+    change = review_view.review_change(row, cited=cited, reason=lambda _path: None, withheld=False)
+    (citation,) = change.citations[:1]
+    assert citation.text is None and citation.erased is None
+    assert citation.unavailable is (not present)
+    assert ("unavailable" in citation.model_dump_json()) is (not present)
+    from cruxible_client.contracts.text_display import review_change_lines
+
+    text = "\n".join(review_change_lines(change))
+    assert ("unavailable: the cited body is missing or damaged here" in text) is (not present)
+    assert reads == []

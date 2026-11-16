@@ -25,11 +25,11 @@
       "path": "capabilities/web.search/v1.json"
     },
     {
-      "artifact_digest": "sha256:b751c693fd6e2203ec5d445faac08d08058c5547f2c7d3a9fc073618daf2f0c2",
+      "artifact_digest": "sha256:bf3721f916492c908d0db48103a457caad6b2f58c6ad0babc92470a0fdccea5e",
       "path": "capabilities/workspace.file/v1.json"
     },
     {
-      "artifact_digest": "sha256:9ae7e2ec4204c7b9b418c9b0fa2e7eb76ad6ac9a3d5088f7cfbacf9c24b2b0e4",
+      "artifact_digest": "sha256:3e8d151894e7a048849562f0467795dc402763ab02a1f858d059aa3a64e156e3",
       "path": "capabilities/workspace.files/v1.json"
     },
     {
@@ -97,7 +97,7 @@
       "path": "contracts/web.search.results.result/v1.json"
     },
     {
-      "artifact_digest": "sha256:8b0e608c43148f94b2202b7fd23e4c6a9424f43bce6d82d292a69fe5ea889a18",
+      "artifact_digest": "sha256:e24daf181788973fdde6e450828328eafdcf963c42bb03e411b7d60cdd7f1426",
       "path": "contracts/workspace.file.request/v1.json"
     },
     {
@@ -105,7 +105,7 @@
       "path": "contracts/workspace.file.result/v1.json"
     },
     {
-      "artifact_digest": "sha256:3cc368bbe921ad83c5b151d23fe896f0b9c0e89813209d8c08270057b1044bad",
+      "artifact_digest": "sha256:d8df103fa8bfcfe093ce837f52a232b4cfacebd0306b703c53948291a512058e",
       "path": "contracts/workspace.files.request/v1.json"
     },
     {

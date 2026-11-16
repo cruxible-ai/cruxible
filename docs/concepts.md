@@ -176,8 +176,10 @@ and two parts could share it.
 A **ClaimType** defines one field of a kind. It names the predicate
 (`catalog.part.category`, whose field name is `category`) and says:
 
-- what the value is: a literal checked against a JSON schema, a reference to
-  another Subject, or exact content;
+- what the value is: a typed literal (text with its bounds, an integer, a
+  date, one of a closed list of members, and the other [value
+  types](evolving-your-vocabulary.md#value-types)), or a reference to another
+  Subject;
 - whether a Subject holds one value or many;
 - which roles a Claim may take (`normative`, `observation`,
   `environment_binding`, `derivation`);
@@ -275,7 +277,7 @@ passage, file or fetched response it came from, not a paraphrase. A Claim's
 evidence is one or more of:
 
 - **its author's own words**: the `--because` text every write carries;
-- **a citation**: a passage quoted from a catalogued workspace file
+- **a citation**: a passage quoted from a workspace file
   (`--evidence-file PATH#ANCHOR`, `cx.file(path).anchor(...)` in the SDK), like
   the line of the supplier's catalog above;
 - **a Capture**: retained evidence recorded under a CaptureContract, for
@@ -293,8 +295,8 @@ the CaptureContract's `decoding`. One Capture is one payload from one origin
 response or one file; a derived form (rendered HTML, text extracted from a page,
 a format conversion) is a separate operation whose output is its own Capture,
 citing the one it was made from. Cruxible acts only on declared types, never on a
-provider, operation or kit name; its one exception is its own `workspace.file`
-read, recognized by its builtin signature.
+provider, operation or kit name; its one exception is its own file reads, the
+`workspace.file` and `workspace.files` capabilities, which only core serves.
 
 A ClaimType's evidence rules say which of these support a value of that field.
 A Claim whose evidence the rules do not admit is still recorded, with the
@@ -359,8 +361,10 @@ evidence, verdicts, freshness and attestations in full.
 ### Files, citations and Documents
 
 The file catalog, `.cruxible/files.yaml`, gives each workspace file a stable
-name. An entry needs only a `name` and a `locator` (its path) to be cited;
-`cruxible files add NAME PATH` writes one. Two different things can rest on a
+name, a handle mapped to the file's current path so citations survive the file
+moving. You cite a file by its path; a write that cites a file the catalog
+does not name yet catalogues it under a name derived from the path, and
+`cruxible files add NAME PATH` chooses the name yourself. Two different things can rest on a
 catalogued file:
 
 | | Citation | Document |
@@ -502,9 +506,10 @@ cited workspace files and pages.
 A **proposal** is a frozen candidate: the exact change, evaluated against the
 accepted base it names. It is not accepted state. A refused proposal is kept
 with its diagnostics, and `get PROPOSAL_ID` reads any proposal, its status, and
-for a refusal the code, message and repair. `proposal review` shows the
-candidate as a paged, factored summary; `proposal review --detail` shows how
-to diff it with plain Git.
+for a refusal the code, message and repair. `proposal review` reads the
+candidate as a reviewer needs it: each value change as a write prints it, with
+the text it cites, then one block per definition; `proposal review --detail`
+shows every member and how to diff it with plain Git.
 
 The instance's **approval policy** (`ApprovalPolicy:instance`) decides how much
 review a change needs. It is either `self_approval_allowed`, where an author
@@ -520,7 +525,10 @@ approver's private key on the client; only the signature reaches the daemon.
 **Activation** checks the approvals and the policy and advances accepted state
 by compare-and-set. When an approval completes what the candidate needs and the
 approver may activate, the same `proposal approve` activates it (`--hold` signs
-only, and someone runs `proposal activate` later).
+only, and someone runs `proposal activate` later). A proposal kept with
+`--no-accept` under a policy that needs no approval waits as
+`ready_to_activate`; a second agent, as its own principal, reviews it and runs
+`proposal approve` or `proposal activate`.
 
 Because every change records the generation it was made on, many writers can
 work at once without silently overwriting each other. A proposal becomes
@@ -766,52 +774,50 @@ without someone doing it by hand: pipelines that observe, and act, under
 rules you declare. [Lines and automation](lines-and-automation.md) walks
 through one from its first run to settling on its own.
 
-### Procedures, Blueprints and providers
+### Procedures, capabilities and providers
 
 A **Procedure** is a governed, deterministic graph: it reads accepted state
-(named queries and Claims), acquires observations through Sources, calls
-providers, transforms and routes values, and ends in a result or a terminal
-that retains a Capture, proposes a change set, or settles one. A Procedure
-might fetch a supplier's fitment API for every part, compare what it finds
-with the recorded fitments, and propose the differences, each with the
-response it fetched as evidence. Every provider it calls is pinned to one
-exact implementation, so a run is reproducible from its record, and you can
-always answer what a pipeline did and why it proposed what it did. `cruxible
+(named queries and Claims), calls providers to fetch and derive, extracts
+records from what they returned, narrows them, and ends in Claims it proposes
+or settles, or in inbox posts. A Procedure might fetch a supplier's fitment API
+for every part, compare what it finds with the recorded fitments, and propose
+the differences, each with the response it fetched as evidence. `cruxible
 procedure run NAME INPUT` runs one directly; `get Procedure:NAME` says whether
 it runs directly, only as a Line (its terminals act only there), or not at
 all. A Procedure may declare measurements, which `procedure measure` evaluates
 once due and `procedure readings` reads.
 
-A Procedure may leave Provider slots open, each naming its required interface.
-A direct run selects the single installed build that fits each slot. No fit refuses
-`cruxible.procedure.slot_binding_missing`; several fits refuse
-`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
-with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
-`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
-carry the same `bindings` mapping alongside its Procedure and parameters.
-Existing Blueprint artifacts remain readable, and their exact Procedure instances
-keep running. New definitions are Procedures with slots.
+A Procedure never names a provider. Each provider call goes through a **slot**,
+and each slot names a **capability**: a small, immutable, versioned artifact
+(`workspace.file@1`, `web.fetch@1`) that says what kind of call it is, with
+its request Contract, its result Contract and its effect (`pure`,
+`external_read` or `external_mutation`). Capabilities are what make a
+Procedure's action space explicit: what it may do to the outside world is
+whatever effects its slots' capabilities declare. A **Provider** is an
+installed package whose operations each declare the capabilities they serve,
+and carry their own copies of the shapes they accept and return.
 
-A **ProviderInterface** is a typed contract (input, output, effect); a
-**Provider** is an installed package that implements interfaces. Interfaces
-are what make a Procedure's action space explicit: what it may do to the
-outside world is whatever effects its pinned providers' interfaces declare. An
-interface is registered once per instance by its definition, so every package
-implementing the same definition binds the same registration, and a slot typed
-by it takes any of them; a provider runs only the kinds of input it claims.
-Every instance starts with the built-in `workspace.file` provider. Others
-install with `cruxible provider install`, or arrive with a kit (bundled, or a
-default installed by name); installing grants no permission to run anything. New registrations store the typed definition
-at `provider-interfaces/<id>/v<version>.json`, with one effect declaration:
-`pure`, `external_read`, or `external_mutation`. An installed name and version
-has one definition; a changed definition requires a new version. Calls use the
-interface's input and output schemas directly. An acquisition interface whose
-provider names its own logical source may declare `produces`: the sorted source
-names (`pypi.release`, `cisa.kev.catalog`) it writes on its Captures'
-`source_identity`, so Trigger and evidence-rule authors can read them from
-`orient --section interfaces` or `get ProviderInterface:NAME`. Interfaces whose
-caller names the source (`web.fetch`, `workspace.file`) omit it. The
-declaration is not yet checked against what a run stamps.
+A Line binds each slot to one exact provider build and operation when it is
+accepted: one that serves the slot's capability and fits it, request and
+result, Captures included. Its runs never rebind, so a run is reproducible
+from its record, and you can always answer what a pipeline did and why it
+proposed what it did. A direct run fits each slot to the single live operation
+that serves and fits it. No fit refuses `cruxible.line.slot_unfilled`; several
+fits refuse `cruxible.line.slot_ambiguous` and list the candidates. Select
+explicitly with `cruxible procedure run NAME INPUT --bind slot=provider`, or
+pass `bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line`
+member carries the same `bindings` mapping alongside its Procedure and
+parameters.
+
+What a Capture looks like inside is declared once, on its CaptureKind: a
+**layout** names its header fields and its record sets, with the key and row
+Contract of each. A Procedure's extract step only names a record set, so every
+Procedure and every provider that reads or produces a kind agrees on one
+declaration. Every instance starts with the **base kit**, which holds the
+shared capabilities (`workspace.file`, `workspace.files`, the `web.`
+capabilities); core serves the two file reads itself, and other providers
+install with `cruxible provider install` or arrive with a kit (bundled, or a
+default installed by name). Installing grants no permission to run anything.
 
 A Procedure is authored in one typed form, the `ProcedureSpec`: references are
 typed (`{"$ref": "step", "step": "parse", "path": ["items"]}`), and filters and
@@ -872,9 +878,11 @@ compare experiment arms.
 
 ## Kits
 
-A **kit** is a release of definitions (ClaimTypes, CaptureContracts, named
-queries, Procedures, Blueprints, ProviderInterfaces and acquisition policies)
-that another instance installs and upgrades as one reviewed change set. A
+A **kit** is a release of definitions (ClaimTypes, SubjectKinds,
+CaptureContracts, Contracts, capabilities, named queries, Procedures and
+Documents) that another instance installs and upgrades as one reviewed change
+set. A kit may require another kit, as most require the base kit every
+instance starts with. A
 parts supplier could publish a kit with the vocabulary for parts and vehicles,
 the `parts_for_vehicle` query and a Line that checks its fitment API, and
 every garage that installs it describes parts the same way. See

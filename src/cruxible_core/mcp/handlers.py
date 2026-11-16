@@ -54,7 +54,6 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor,
     write_workspace_floor_delta,
 )
-from cruxible_client.authoring.write_evidence import observe_evidence
 from cruxible_client.compatibility import check_daemon_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
@@ -121,6 +120,7 @@ from cruxible_client.contracts.write import (
     SetRequest,
     WriteOutcome,
     WriteRequest,
+    as_write_request,
 )
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
@@ -501,6 +501,9 @@ def handle_playbill_review(
     rows_limit: int = 5,
     groups_limit: int = 5,
     findings_after: str | None = None,
+    changes_from: int = 0,
+    definitions_from: int = 0,
+    groups: bool = False,
 ) -> contracts.ProposalReviewResponse:
     return _daemon_call(
         lambda client: client.review_proposal(
@@ -508,6 +511,9 @@ def handle_playbill_review(
             proposal_id,
             include_body=include_body,
             detail=detail,
+            changes_from=changes_from,
+            definitions_from=definitions_from,
+            groups=groups,
             summary_after=summary_after,
             summary_group=summary_group,
             rows_after=rows_after,
@@ -1563,12 +1569,6 @@ def _write_request(
                 for error in exc.errors(include_url=False)
             ],
         ) from exc
-    if isinstance(request, SetRequest) and isinstance(
-        request.evidence, FileEvidence | SectionEvidence
-    ):
-        request = request.model_copy(
-            update={"evidence": observe_evidence(request.evidence, workspace=mcp_workspace_root())}
-        )
     return request
 
 
@@ -1576,6 +1576,17 @@ def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
     """Put one value in one field of one Subject."""
 
     request = _write_request(SetRequest, "cruxible_set", fields)
+    if isinstance(request.evidence, FileEvidence | SectionEvidence):
+        # Through the workspace write, as cruxible_write: the cited file is read
+        # here and catalogued when the catalog did not name it.
+        return write_workspace(
+            as_write_request(request),
+            workspace=mcp_workspace_root(),
+            submit=lambda observed: _daemon_call(
+                lambda client: client.write(instance_id, request=observed),
+                operation_name="cruxible_set",
+            ),
+        )
     return _daemon_call(
         lambda client: client.set(instance_id, request=request), operation_name="cruxible_set"
     )
@@ -2323,7 +2334,13 @@ def handle_playbill_vocabulary_apply(
     path = None if file is None else resolve_workspace_path(file, root=root, kind="file")
     return _daemon_call(
         lambda client: vocabulary_apply_for(
-            client, instance_id, workspace=root, path=path, rationale=rationale, accept=accept
+            client,
+            instance_id,
+            workspace=root,
+            path=path,
+            rationale=rationale,
+            accept=accept,
+            surface="mcp",
         ),
         operation_name="cruxible_vocabulary_apply",
     )
