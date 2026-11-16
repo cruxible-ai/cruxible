@@ -669,7 +669,7 @@ def activation_not_permitted_detail(proposal_id: str) -> str:
 
     return (
         "Not activated: this request's tier cannot activate (needs graph_write). "
-        f"Next: someone who can runs cruxible proposal activate {proposal_id}"
+        f"Next: someone at graph_write activates proposal {proposal_id}"
     )
 
 
@@ -706,10 +706,13 @@ def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
     if reason is not None:
         # Refused before anything is evaluated or published at the head.
         why, command = reason
+        from cruxible_core.service.proposals.proposals import author_repair
+
         raise ProposalReadmitRequiresResubmission(
             f"proposal {proposal_id} {why}, so it cannot be landed at the head for a signer "
             f"registered after its base; its author {proposal.admission.actor_id!r} "
-            f"{command}, and you approve the new proposal"
+            f"{command}, and you approve the new proposal",
+            repair=author_repair(proposal),
         )
     recompiled = _recompile_for_review(instance, proposal, approver=True)
     if recompiled is None:

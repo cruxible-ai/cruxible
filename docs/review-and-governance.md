@@ -163,7 +163,11 @@ exact candidate and, since nothing else is required, activates it, or
 change down with `proposal reject`. A reviewer registered after the author
 wrote is absent at the proposal's base; its `proposal approve` lands the
 proposal at the head first (`Landed at the head as NEW ... before reviewer was
-registered`) and signs that, so nobody needs to readmit it. Every one of these
+registered`) and signs that, so nobody needs to readmit it. A kit change or a
+generated ClaimType migration is the exception: planned against the instance
+at its base, it refuses `cruxible.proposal.readmit_requires_resubmission` for
+such a reviewer, naming its author and the command that remakes it at the
+head (the kit committed again, or the migration run again). Every one of these
 acts needs a named principal: a session that names none refuses
 `cruxible.identity.principal_unconfigured`.
 

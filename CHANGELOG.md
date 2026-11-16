@@ -469,6 +469,34 @@ quickstart and concepts pages.
   their terminal's shared set by digest (about 1.2 kB an item instead of up to
   68 kB), and a Query read's stored result leaves out its evaluation instant,
   so an identical read stores about 320 bytes.
+- **Repairs and next lines run as written, in each client's spelling.** A
+  refusal's repair printed an operation id and JSON on the CLI (`Repair:
+  cruxible.proposal.readmit {"dry_run":true}`), and MCP and SDK results named
+  CLI commands. One renderer now prints a `cruxible ...` command on the CLI
+  (a retry repeats the caller's own command and selectors), the tool call with
+  its own argument names on MCP, and the `Cruxible` call in the SDK (as a
+  traceback note on a refusal); an operation a client lacks names the client
+  that has it. Operands only the caller holds show as quoted placeholders
+  (`'<TEXT>'`, `<SIGNER_ID>`) that refuse if sent unchanged, and a line left
+  with only a content placeholder renders as a preview. Writes name their
+  required `--because`; a stale retire repairs with a retire; a dry run's next
+  line keeps `--no-accept`; an approval stop names its signer; `since` and
+  `audit` print a runnable next page; `credential rotate` repairs with
+  `rotate --key-dir`; a revoked bearer token refuses
+  `cruxible.auth.credential_unrecognized`; `next` dispatches a Line by name;
+  `kit add`'s missing requirement names a release or local build. The `next`
+  state rebuilds once (format 16).
+- **A late reviewer can approve an authored change set.** A reviewer
+  registered after the proposal's base now lands a change set holding a
+  ClaimType at the head as its author's readmit would. A kit change or a
+  generated ClaimType migration refuses
+  `cruxible.proposal.readmit_requires_resubmission` for such a reviewer,
+  naming its author and the command that remakes it, and publishes nothing.
+- **Withdrawing or rejecting an accepted proposal says it is accepted**
+  (`cruxible.proposal.already_accepted`, with its git oid and generation).
+- **CLI `proposal approve` with no principal refuses as every proposal act
+  does** (`cruxible.identity.principal_unconfigured` or `credential_unbound`),
+  adding that `--principal-id ID --key FILE` signs as that principal.
 
 ## [0.3.2] - 2026-08-06
 

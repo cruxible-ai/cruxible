@@ -308,7 +308,10 @@ def test_activating_an_unapproved_moved_proposal_refuses_and_changes_nothing(
         assert refused.value.error_code == "cruxible.approval.requirement_unsatisfied"
         assert (refused.value.remaining, refused.value.eligible_signers) == (1, ("reviewer",))
         assert refused.value.repair.operation == "cruxible.proposal.approve"
-        assert refused.value.repair.arguments == {"proposal_id": source_id}
+        assert refused.value.repair.arguments == {
+            "proposal_id": source_id,
+            "signer_id": "reviewer",
+        }
         assert "Nothing was changed" in str(refused.value)
 
     assert instance.accepted_coordinate() == head
@@ -410,7 +413,7 @@ def test_an_approval_that_lands_a_moved_proposal_names_its_source(tmp_path: Path
     with pytest.raises(ProposalWithdrawnError) as refused:
         service_activate_playbill_proposal(instance, proposal_id=source_id, activated_by="owner")
     assert refused.value.superseded_by == landed.proposal_id
-    assert f"cruxible proposal activate {landed.proposal_id}" in str(refused.value)
+    assert f"act on {landed.proposal_id} instead: activate it" in str(refused.value)
     assert "author the change again" not in str(refused.value)
     assert refused.value.repair.operation == "cruxible.proposal.activate"
     assert refused.value.repair.arguments == {"proposal_id": landed.proposal_id}
@@ -475,7 +478,8 @@ def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
             instance, proposal_id=source_id, signer_id="late", access=access
         )
     assert refused.value.error_code == "cruxible.approval.signer_after_base"
-    assert f"cruxible proposal readmit {source_id}" in str(refused.value)
+    assert "otherwise its author 'owner' readmits it" in str(refused.value)
+    assert refused.value.repair.arguments == {"proposal_id": source_id}
     assert instance.proposal_evidence().read_withdrawal(source_id) is None
 
     landed_by: list[str] = []

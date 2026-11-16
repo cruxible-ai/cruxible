@@ -109,8 +109,8 @@ def _intent_submitted(current: AuthoringIntent) -> AuthoringIntentRefused:
     proposal = (
         ""
         if status.proposal_id is None
-        else f" as proposal {status.proposal_id} (withdraw it with "
-        f"`cruxible proposal withdraw {status.proposal_id}` if the revision replaces it)"
+        else f" as proposal {status.proposal_id} (withdraw it with a reason if the "
+        "revision replaces it)"
     )
     return AuthoringIntentRefused(
         "cruxible.authoring.intent_submitted",

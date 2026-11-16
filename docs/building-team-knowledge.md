@@ -186,7 +186,7 @@ cruxible.write.field_is_many (change 0): fits holds many values, so set has noth
 $ cruxible add catalog.part/bp-1142 title "Pads" --because "…"
 refused (generation 18, f31713020dd9)
 cruxible.write.field_is_single (change 0): title holds one value, so add would contend with it
-  repair: Use set to replace the value (contend: true to contest it)
+  repair: Use set to replace the value (--contend to contest it)
 ~~~
 
 ### Anything you will ask about is an edge, never prose
@@ -295,7 +295,7 @@ next: Run the same command without --dry-run, adding --at a4cd9ab8aff0
 $ cruxible set catalog.part/bp-1142 title "Front brake pads, organic" --because "…" --at a4cd9ab8aff0
 refused (generation 26, bcb9f74ad949)
 cruxible.write.slot_changed (change 0): catalog.part/bp-1142 title changed after your read: it now holds 'Front pads' as CLM-…, accepted in generation 26 by YOUR_ID
-  repair: Re-set it to replace it, or set it with contend: true to contest it
+  repair: Read it again (cruxible get catalog.part/bp-1142); to replace what it holds now, run it again without --at, or set it with --contend to contest it
 ~~~
 
 ## Where a vocabulary comes from

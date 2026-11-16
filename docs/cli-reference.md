@@ -4968,7 +4968,8 @@ afterwards refuses as superseded, naming the proposal that replaced it, with
 the repair `cruxible proposal activate NEW`. Approving, activating or
 approve-submitting a proposal that is already accepted refuses
 `cruxible.proposal.already_accepted`, naming the accepted git oid and
-generation (repair `cruxible get`), and stores nothing.
+generation (repair `cruxible get`), and stores nothing; so do withdrawing and
+rejecting one.
 
 A signer registered after a proposal's base is absent at that base, where its
 signature would be checked. `proposal approve` by such a signer, active at the
@@ -4978,7 +4979,14 @@ candidate; the signer's eligibility is checked first, so a refused signer
 changes nothing. Only a caller who may submit approvals triggers the landing;
 any other refuses `cruxible.approval.signer_after_base` with the author's
 `proposal readmit` as the repair. The SDK refuses too and names the landed
-proposal to review, since its approval is bound to the candidate it reviewed. A Line's or Procedure's
+proposal to review, since its approval is bound to the candidate it reviewed.
+A change set the author's readmit would recompile (retained authoring input,
+including one holding a ClaimType) lands at the head the same way for such a
+signer. A kit change or a generated ClaimType migration does not: it was
+planned against the instance at its base, so the approval refuses
+`cruxible.proposal.readmit_requires_resubmission`, naming its author and the
+command that remakes it at the head (`kit add` or `kit remove` committed
+again, or `claim-type migrate`), and publishes nothing. A Line's or Procedure's
 proposal re-decides at the head instead, as below. Approving a stale proposal
 refuses `cruxible.proposal.stale` (reason `changed_since_base`, naming the
 paths): only its author's readmit answers it.
@@ -5006,7 +5014,10 @@ signs without asking and prints one counts line plus any earlier refusals
 (`--full` renders every member). Without
 a terminal to prompt at (an agent, a script, CI) it refuses before calling the
 daemon unless `--yes` is passed, with the repair to review first and then
-approve with `--yes`. When that signature completes
+approve with `--yes`. Like every proposal act it needs a named principal:
+with none it refuses as the daemon answers (`cruxible.identity.principal_unconfigured`,
+or `cruxible.identity.credential_unbound` for an unbound credential), adding
+that `--principal-id ID --key FILE` signs as that principal. When that signature completes
 the candidate's required approvals and your tier may activate (`graph_write`),
 the same command activates it and reports both: the JSON receipt carries
 `activation`, the activation receipt. `--hold` signs only, for a reviewer
@@ -5049,7 +5060,9 @@ with terminal reason `withdrawn`. Only the actor who submitted a proposal may
 withdraw it (a later run of a Line withdraws its Line's open proposal as
 superseded, naming the successor in `superseded_by`; see [line](#line)); withdrawing an already-withdrawn proposal repeats the first answer
 rather than rewriting its reason, and a settled proposal refuses, because its
-outcome is not an intention to overwrite. Authoring the same change again
+outcome is not an intention to overwrite: an accepted one refuses
+`cruxible.proposal.already_accepted` (naming its git oid and generation), as
+`proposal reject` does. Authoring the same change again
 after a withdrawal makes a new proposal.
 
 `proposal reject` is the reviewer's side of the same ending: a reviewer

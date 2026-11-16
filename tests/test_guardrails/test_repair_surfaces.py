@@ -117,6 +117,10 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
         "cruxible.kit.build": frozenset(),
         "cruxible.kit.add": frozenset(),
     },
+    (
+        "packages/cruxible-client/src/cruxible_client/contracts/errors.py",
+        "ApprovalRequirementUnmet.__init__",
+    ): {"cruxible.proposal.approve": frozenset({"proposal_id", "signer_id"})},
     ("src/cruxible_core/service/authoring/landing.py", "_stopped"): {
         "cruxible.proposal.approve": frozenset({"proposal_id", "signer_id"})
     },

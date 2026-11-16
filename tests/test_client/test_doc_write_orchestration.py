@@ -129,7 +129,8 @@ def test_each_doc_refusal_carries_its_own_repair(tmp_path: Path) -> None:
         ReplaceSection(file="notes.md", section=("Decision", "Protected"), text="## Protected\nx")
     )
     assert projection.error_code == "cruxible.doc.projection_edit"
-    assert projection.repair_line == "cruxible block repin notes.md summary"
+    # Spelled for the request's client (MCP when unnamed; the CLI sends "cli").
+    assert projection.repair_line == 'cruxible_block_repin(file="notes.md", block="summary")'
     invalid = refused(AppendSection(file="new.md", text="no heading"))
     assert invalid.error_code == "cruxible.doc.section_invalid"
     # A heading-less append names the heading it needs (gapb-25).

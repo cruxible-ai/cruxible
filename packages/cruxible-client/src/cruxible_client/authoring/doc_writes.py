@@ -44,6 +44,9 @@ from cruxible_client.contracts.doc_sections import (
 )
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.file_catalog import FileCatalogEntry
+from cruxible_client.contracts.get_reads import ReadSurface
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.contracts.write import (
     AboutChange,
@@ -115,7 +118,9 @@ def _read(held: HeldRoot | None, workspace: Path, path: Path) -> bytes | None:
         ) from exc
 
 
-def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
+def _apply(
+    content: bytes | None, op: DocOp, surface: ReadSurface = "cli"
+) -> tuple[SectionEdit, int, int]:
     document = parse_sections(content or b"", file=op.file)
     text = op.text
     if isinstance(op, AppendSection):
@@ -151,10 +156,15 @@ def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
             "projection_edit",
             "A doc write edits prose only; a projection block changes through its backing",
             repair=(
-                "cruxible block repin "
-                f"{shlex.quote(op.file)} {shlex.quote(overlapping[0].block_id)}"
+                render_repair(
+                    RepairOperation(
+                        operation="cruxible.block.repin",
+                        arguments={"source_id": op.file, "block_id": overlapping[0].block_id},
+                    ),
+                    surface=surface,
+                )
                 if overlapping
-                else "write the section without block markers; declare blocks with cruxible block"
+                else "write the section without block markers; declare blocks with block repin"
             ),
         )
     return result, start, end
@@ -387,7 +397,7 @@ def _write_workspace(
                 op.file, name=op.name if isinstance(op, AppendSection) else None, editing=True
             )
             before = state.current
-            result, start, end = _apply(before, op)
+            result, start, end = _apply(before, op, request.surface)
             if op.id is not None:
                 if op.id in sections:
                     raise DocSectionError("section_ref_ambiguous", f"Duplicate doc id {op.id!r}.")
@@ -529,7 +539,7 @@ def _write_workspace(
             except PageWriteError:
                 rebase_original = moved = _read(held, workspace, state.path)
                 for index, (op, previous) in enumerate(zip(state.ops, state.edits, strict=True)):
-                    rebased, _, _ = _apply(moved, op)
+                    rebased, _, _ = _apply(moved, op, request.surface)
                     applied[index] = rebased.changed
                     if (
                         isinstance(op, ReplaceSection)

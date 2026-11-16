@@ -212,7 +212,7 @@ def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
     assert who["principal_registration_status"] is None
     assert refused.status_code == 403, refused.text
     assert refused.json()["error_code"] == "cruxible.identity.credential_unbound"
-    assert "cruxible credential mint --principal-id ID --key-dir DIR" in refused.json()["message"]
+    assert "mint one bound to your principal, signed with its key" in refused.json()["message"]
 
 
 def _accept_principal_change(
@@ -620,7 +620,7 @@ def test_an_unbound_credential_gets_the_typed_refusal_at_every_actor_door(
         "arguments": {"unbound_credential_id": unbound.record.credential_id},
     }
     # MCP tool errors carry the message: the code and the runnable repair.
-    assert "cruxible credential mint --principal-id ID --key-dir DIR" in answer["message"]
+    assert "mint one bound to your principal, signed with its key" in answer["message"]
     # The SDK reads the same envelope back as a coded error, not an auth failure.
     from cruxible_client.errors import AuthenticationError as ClientAuthenticationError
     from cruxible_client.errors import ErrorResponse, response_to_error

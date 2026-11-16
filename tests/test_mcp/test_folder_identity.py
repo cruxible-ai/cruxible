@@ -201,7 +201,7 @@ def test_without_a_record_the_server_is_the_unconfigured_operator(
     assert whoami.identity.actor_id == "operator"
     refusal = whoami.identity.authoring_refusal
     assert refusal is not None and refusal.code == "cruxible.identity.principal_unconfigured"
-    assert "cruxible init" in refusal.detail
+    assert "initialize in the project folder" in refusal.detail
 
 
 def test_a_second_projects_record_is_never_used_from_the_first(

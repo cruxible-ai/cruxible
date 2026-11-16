@@ -31,6 +31,7 @@ from cruxible_client.contracts.procedures.node_summary import (
     SummaryCount,
 )
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.proposals.proposal_index import timestamp
@@ -1362,14 +1363,13 @@ def cannot_rebase(source: ProposalResult, *, late_signer: bool = False) -> tuple
     kit = (
         "is a kit change planned against an earlier state (kit ownership, "
         "requirements, provider pins, local edits)",
-        f"runs `cruxible kit add {kit_id} --commit --at OID` again (or `cruxible kit "
-        f"remove {kit_id} --commit --at OID` for a removal) at the current head",
+        f"commits kit {kit_id} again at the current head (kit add, or kit remove for a removal)",
     )
     if holds_claim_type_closure(source):
         if leaf.startswith("claim-type-migration-"):
             return (
                 "is a generated dependency-closure migration with no retained input",
-                "reruns `cruxible claim-type migrate` preflight/submit at the current head",
+                "migrates the ClaimType again (preflight, then submit) at the current head",
             )
         if leaf.startswith("kit-"):
             return kit
@@ -1394,11 +1394,29 @@ def requires_resubmission(source: ProposalResult) -> ProposalReadmitRequiresResu
     assert reason is not None
     why, command = reason
     if why.startswith("is a generated"):
-        return ProposalReadmitRequiresResubmission()
+        return ProposalReadmitRequiresResubmission(repair=author_repair(source))
     return ProposalReadmitRequiresResubmission(
         f"proposal {source.admission.proposal_id} {why}, so it is not readmitted or "
-        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}"
+        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}",
+        repair=author_repair(source),
     )
+
+
+def author_repair(source: ProposalResult) -> RepairOperation:
+    """The author's command that remakes a change set its bytes cannot carry to the head.
+
+    A kit change is the kit's add again (a removal is the kit's remove, which the
+    refusal names in words); a migration, or another closure, is authored again.
+    """
+
+    leaf = _target_leaf(source)
+    if leaf.startswith("kit-"):
+        # Which release or build to add is the author's (a bare id names no
+        # release a registry is known to hold): the line leaves KIT to name.
+        return RepairOperation(operation="cruxible.kit.add")
+    if leaf.startswith("claim-type-migration-"):
+        return RepairOperation(operation="cruxible.claim-type.migrate")
+    return RepairOperation(operation="cruxible.authoring.list")
 
 
 def _readmit_exact_bytes(

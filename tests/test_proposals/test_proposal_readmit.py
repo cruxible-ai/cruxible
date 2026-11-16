@@ -234,7 +234,7 @@ def test_readmit_refuses_stale_generated_claim_type_closure_before_admission(
 
     with pytest.raises(
         ProposalReadmitRequiresResubmission,
-        match="rerun claim-type migration preflight/submit at current head",
+        match="its author migrates the ClaimType again",
     ):
         service_readmit_playbill_proposal(
             instance,
@@ -591,7 +591,7 @@ def test_stale_message_is_plain_words_with_one_period_and_the_code_structured(
             False,
             "cruxible.line.run",
             {"line": "advisories"},
-            "cruxible line run advisories",
+            "Run Line advisories again",
         ),
         (
             "procedure",
@@ -599,7 +599,7 @@ def test_stale_message_is_plain_words_with_one_period_and_the_code_structured(
             False,
             "cruxible.procedure.run",
             {"procedure": "import"},
-            "cruxible procedure run import INPUT",
+            "Run Procedure import again at the head",
         ),
         ("write", None, False, "cruxible.write", {}, "Make the write again at the current head"),
         (
@@ -616,7 +616,7 @@ def test_stale_message_is_plain_words_with_one_period_and_the_code_structured(
             True,
             "cruxible.proposal.reject",
             {"proposal_id": "prop-1"},
-            "cruxible proposal reject prop-1 --reason TEXT",
+            "reject it with a reason so the author learns why",
         ),
     ],
 )
@@ -647,7 +647,9 @@ def test_a_refused_readmit_names_the_real_exit_by_origin_never_readmit(
     assert says in message
     assert "(effectful_operation_payload_mismatch: Recovery re-derived another change)" in message
     assert "proposal readmit" not in message
-    assert ("proposal withdraw prop-1" in message) is not approver
+    # The command is the structured repair, spelled by each client; the prose says it.
+    assert ("withdraw prop-1 with a reason" in message) is not approver
+    assert "cruxible " not in message.split(": ", 1)[1]
 
 
 def test_a_late_signer_is_told_a_generated_migration_cannot_land_and_who_reruns_it(
@@ -721,7 +723,8 @@ def test_a_late_signer_is_told_a_generated_migration_cannot_land_and_who_reruns_
     message = str(refused.value)
     assert "generated dependency-closure migration" in message
     assert "signer registered after its base" in message
-    assert "its author 'owner' reruns `cruxible claim-type migrate`" in message
+    assert "its author 'owner' migrates the ClaimType again" in message
+    assert refused.value.repair.operation == "cruxible.claim-type.migrate"
     assert instance.proposal_evidence().list_admissions() == admissions
     assert instance.proposal_evidence().read_withdrawal(source_id) is None
 

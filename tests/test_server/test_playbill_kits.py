@@ -855,7 +855,7 @@ def test_a_kept_definition_stays_held_when_a_release_narrows_its_prefix(
     assert refusal.owning_prefix is None
     assert refusal.identity == f"ClaimType:{flag}"
     assert refusal.owning_kit_id == "acme"
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
     assert consumer.claim_type(flag).value.max_len == 256
 
     # The holder still removes it, as an unedited definition it installed.
@@ -975,7 +975,7 @@ def test_overlapping_ownership_is_refused(
     assert refusal.owning_prefix == "acme."
     assert refusal.identity is None
     assert refusal.owning_kit_id == "acme"
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
     assert "release that does not own the overlapping prefix" in refusal.repair
     assert consumer.tree() == before
 
@@ -1024,7 +1024,7 @@ def test_reusing_an_installed_kit_id_with_disjoint_prefixes_is_refused(
     assert refusal.owning_kit_id == "acme"
     assert refusal.our_prefixes == ("beta.",)
     assert refusal.installed_prefixes == ("acme.",)
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
     assert consumer.tree() == before
     assert result.plan == ()
 
@@ -1528,7 +1528,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     assert refusal.owning_prefix == "acme."
     assert refusal.identity == "CaptureContract:acme.orders-v1"
     assert refusal.owning_kit_id == "acme"
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
 
     removed = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="beta")
@@ -2633,7 +2633,7 @@ def test_a_kit_commit_below_graph_write_proposes_and_does_not_activate(
     assert capped.status == "proposed", capped.detail
     assert capped.proposal_id is not None
     assert capped.detail is not None
-    assert f"someone who can runs cruxible proposal activate {capped.proposal_id}" in capped.detail
+    assert f"someone at graph_write activates proposal {capped.proposal_id}" in capped.detail
     assert consumer.tree() == before
     activated = playbill_api.playbill_activate(consumer.instance_id, capped.proposal_id)
     assert activated.status == "accepted"  # type: ignore[union-attr]
@@ -2679,7 +2679,8 @@ def test_a_late_reviewer_is_refused_a_kit_change_before_anything_is_published(
     body = refused.json()
     assert body["error_code"] == "cruxible.proposal.readmit_requires_resubmission"
     assert "kit change planned against an earlier state" in body["message"]
-    assert "cruxible kit add acme --commit --at OID" in body["message"]
+    assert "commits kit acme again at the current head (kit add" in body["message"]
+    assert body["repair"]["operation"] == "cruxible.kit.add"
     assert "migration" not in body["message"]
     assert evidence.list_admissions() == admissions
     assert evidence.read_withdrawal(proposed.proposal_id) is None

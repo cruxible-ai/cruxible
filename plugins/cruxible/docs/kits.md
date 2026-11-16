@@ -253,7 +253,8 @@ refuses to take away a kit another one needs:
 
 ~~~text
 $ cruxible kit add ./catalog-1.0.0
-Error: cruxible.kit.requires_missing: Kit catalog 1.0.0 requires kit base 1.0.0 or later; this instance holds none. Add it first: cruxible kit add base.
+Error: cruxible.kit.requires_missing: Kit catalog 1.0.0 requires kit base 1.0.0 or later; this instance holds none. Add it first, from a release or a local build of base 1.0.0 or later: kit add '<KIT>', where <KIT> is that release's reference or the built kit's path.
+Repair: cruxible kit add '<KIT>'
 
 $ cruxible kit remove base
 Error: cruxible.kit.remove_required: Kit base cannot be removed: kit catalog requires it.
