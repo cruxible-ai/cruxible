@@ -233,10 +233,32 @@ def _journal(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]
 
     journal, stream = journal_of(instance)
     access = BodyAccessContext(principal_id="test", can_read_body=True)
-    return [
+    payloads = [
         read_payload(instance.body_store(), stored.record.payload_digest, access=access)
         for stored in journal.select_records(stream, run_id=run_id, event_kind=event_kind)
     ]
+    if event_kind != "source_acquisition":
+        return payloads
+    return [member for payload in payloads for member in _acquisition_members(instance, payload)]
+
+
+def _acquisition_members(instance: Any, payload: Any) -> list[dict[str, Any]]:
+    """A call's one ``source_acquisition`` record, as its members (each with its node)."""
+
+    import json
+
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    assert payload["tag"] == "playbill-procedure-source-acquisition-v2"
+    body = json.loads(
+        instance.body_store().read(
+            payload["members_digest"],
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert body["tag"] == "playbill-acquired-members-v1"
+    assert len(body["members"]) == payload["count"]
+    return [{**member, "node_id": payload["node_id"]} for member in body["members"]]
 
 
 def _paired_output(*, right_observed_at: str = "2026-10-29T12:00:00Z"):  # type: ignore[no-untyped-def]

@@ -212,6 +212,19 @@ def journal(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]]
     return _journal(instance, run_id, event_kind)
 
 
+def _raw_records(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]]:
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.service.procedures.measurements import _journal as journal_of
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    journal, stream = journal_of(instance)
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return [
+        read_payload(instance.body_store(), stored.record.payload_digest, access=access)
+        for stored in journal.select_records(stream, run_id=run_id, event_kind=event_kind)
+    ]
+
+
 def test_each_list_member_is_its_own_capture_committed_in_order(tmp_path: Path) -> None:
     from cruxible_client.contracts.capture_reads import CaptureReadRequest
     from cruxible_client.contracts.captures import capture_contract_digest
@@ -243,6 +256,12 @@ def test_each_list_member_is_its_own_capture_committed_in_order(tmp_path: Path) 
         for item in journal(instance, state.run_id, "source_acquisition")
     ]
     assert decisions == [("pages/0", "selected"), ("pages/1", "selected"), ("pages/2", "selected")]
+    # The call journals ONE acquisition record citing its members, with the
+    # span its members were observed over.
+    (record,) = _raw_records(instance, state.run_id, "source_acquisition")
+    assert record["tag"] == "playbill-procedure-source-acquisition-v2"
+    assert record["count"] == 3 and record["node_id"] == "doc"
+    assert record["observed"]["earliest"] <= record["observed"]["latest"]
     (final,) = journal(instance, state.run_id, "attempt_finalized")
     assert final["capture_bytes"] == sum(len(body) for body in content)
     assert state.completeness is None

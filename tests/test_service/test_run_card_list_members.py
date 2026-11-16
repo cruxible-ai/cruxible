@@ -470,3 +470,78 @@ def test_the_members_read_is_flat_in_other_runs(tmp_path: Path, traced: None) ->
     assert large["sql_statements"] == small["sql_statements"], (small, large)
     assert large["file_opens"] <= small["file_opens"], (small, large)
     assert large["sql_vm_steps"] <= small["sql_vm_steps"] * 1.10 + 200, (small, large)
+
+
+def _stored_call_acquisition(
+    instance: Any, *, node_id: str, field: str, members: int, sequence: int
+) -> _FakeStored:
+    """One call's v2 ``source_acquisition`` record: every member in one cited body."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    body = canonical_bytes(
+        {
+            "tag": "playbill-acquired-members-v1",
+            "members": [
+                {
+                    "field": f"{field}/{index}",
+                    "input_name": "doc.pages",
+                    "decision": {"disposition": "selected", "selected_capture_digests": []},
+                    "result": {"outcome": "acquired"},
+                }
+                for index in range(members)
+            ],
+        }
+    )
+    members_digest = instance.body_store().store(body, journal_payload=True).digest
+    digest = _store_payload(
+        instance,
+        {
+            "tag": "playbill-procedure-source-acquisition-v2",
+            "node_id": node_id,
+            "members_digest": members_digest,
+            "count": members,
+            "observed": None,
+        },
+    )
+    return _FakeStored(record=_FakeRecord(sequence=sequence, payload_digest=digest))
+
+
+def test_a_calls_one_record_serves_its_members_and_flags_its_own_overflow(
+    tmp_path: Path,
+) -> None:
+    """One v2 record per call: its members body is read once and capped by the page."""
+
+    from cruxible_client.contracts.operational_reads import (
+        RUN_CARD_LIST_MEMBERS_MAX,
+        GetRunNode,
+    )
+    from cruxible_core.service.discovery.runs import _list_members
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    records = [
+        _stored_call_acquisition(instance, node_id="small", field="pages", members=3, sequence=1),
+        _stored_call_acquisition(
+            instance,
+            node_id="large",
+            field="pages",
+            members=RUN_CARD_LIST_MEMBERS_MAX,
+            sequence=3,
+        ),
+    ]
+    nodes = [
+        GetRunNode(node="small", kind="provider", sequence=2),
+        GetRunNode(node="large", kind="provider", sequence=4),
+    ]
+    journal = _FakeJournal(_FakeIndex(records))
+    found, truncated = _list_members(instance, journal, object(), "run-1", nodes)
+    assert [(member.field, member.index) for member in found["small"]] == [
+        ("pages", 0),
+        ("pages", 1),
+        ("pages", 2),
+    ]
+    assert len(found["large"]) == RUN_CARD_LIST_MEMBERS_MAX - 3
+    assert truncated == frozenset({"large"})
+    # One index range: the two records, no probe per member.
+    assert journal.index.calls == 1

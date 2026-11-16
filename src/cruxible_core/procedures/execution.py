@@ -2501,6 +2501,42 @@ def _fetched_captures(state: _RunState) -> list[str]:
     return sorted(digest for digest in state.fetched_captures)
 
 
+#: One call's ``source_acquisition`` record: its members body and observed span.
+SOURCE_ACQUISITION_RECORD_V2 = "playbill-procedure-source-acquisition-v2"
+#: A call's acquisition members, in field order: run-free, content-addressed.
+ACQUIRED_MEMBERS_BODY_V1 = "playbill-acquired-members-v1"
+
+
+def _acquired_member(
+    *,
+    field: str,
+    result: ProcedureSourceAcquisitionResultV1,
+    decision: AcquisitionInputDecision,
+    provider_refusal: object | None = None,
+    member_request_digest: str | None = None,
+) -> dict[str, object]:
+    """One capture output's acquisition attempt and decision, as its members-body entry.
+
+    The fields of a v1 per-member record less its run-bound ones (tag,
+    node, audit time): the result (without its Capture acquisition, which the
+    decision's selected digests name), the decision, and a list member's
+    request digest.
+    """
+
+    return {
+        "field": field,
+        "input_name": result.input_name,
+        "result": result.model_dump(mode="json", exclude={"acquisition", "node_id"}),
+        "decision": decision.model_dump(mode="json"),
+        **({} if provider_refusal is None else {"provider_refusal": provider_refusal}),
+        **(
+            {}
+            if member_request_digest is None
+            else {"member_request_digest": member_request_digest}
+        ),
+    }
+
+
 def _consumed(state: _RunState) -> dict[str, object]:
     """The run's consumed Captures so far, versioned: an empty set is proven empty."""
 
@@ -4628,6 +4664,7 @@ class ProcedureExecutor:
                     raise
                 unavailable: dict[str, ProcedureSourceAcquisitionResultV1] = {}
                 unavailable_decisions: dict[str, AcquisitionInputDecision] = {}
+                refused_members: list[dict[str, object]] = []
                 for field, rule in rules.items():
                     unavailable[field] = ProcedureSourceAcquisitionResultV1(
                         node_id=node.node_id,
@@ -4642,15 +4679,17 @@ class ProcedureExecutor:
                         default_authorized=rule.input_name in self.default_authorizations,
                         evaluation_time=admission.occurrence_evaluation_time,
                     )
-                    self._journal_acquisition(
-                        admission,
-                        records,
-                        node=node,
-                        field=field,
-                        result=unavailable[field],
-                        decision=unavailable_decisions[field],
-                        provider_refusal=exc.outcome.model_dump(mode="json"),
+                    refused_members.append(
+                        _acquired_member(
+                            field=field,
+                            result=unavailable[field],
+                            decision=unavailable_decisions[field],
+                            provider_refusal=exc.outcome.model_dump(mode="json"),
+                        )
                     )
+                self._journal_acquisition(
+                    admission, records, node=node, members=refused_members, observed=()
+                )
                 for field, rule in rules.items():
                     self._bind_omission(
                         admission=admission,
@@ -4951,16 +4990,22 @@ class ProcedureExecutor:
                 disposition="omitted",
                 reason_codes=(reason,),
             )
-        for field in fields:
-            self._journal_acquisition(
-                admission,
-                records,
-                node=node,
-                field=field,
-                result=results[field],
-                decision=decisions[field],
-                member_request_digest=member_requests.get(field),
-            )
+        self._journal_acquisition(
+            admission,
+            records,
+            node=node,
+            members=[
+                _acquired_member(
+                    field=field,
+                    result=results[field],
+                    decision=decisions[field],
+                    member_request_digest=member_requests.get(field),
+                )
+                for field in fields
+            ],
+            # When the call's members were observed: their own fetch instants.
+            observed=tuple(wires[field].observed_at for field in built),
+        )
         for field in fields:
             if decisions[field].disposition == "refused":
                 # The attempted reads remain journaled, but an ineligible
@@ -5541,38 +5586,40 @@ class ProcedureExecutor:
         records: list[StoredProcedureJournalRecordV1],
         *,
         node: CallNode,
-        field: str,
-        result: ProcedureSourceAcquisitionResultV1,
-        decision: AcquisitionInputDecision,
-        provider_refusal: object | None = None,
-        member_request_digest: str | None = None,
+        members: list[dict[str, object]],
+        observed: tuple[datetime, ...],
     ) -> None:
-        """Journal one capture output's acquisition attempt and its decision.
+        """Journal one call's acquisition: one record citing its run-free members body.
 
-        A list member (``field`` is ``<field>/<i>``) also names its identity,
-        the request digest its coordinate carries (D-R37 a2).
+        Each member (a capture field, or a list member ``<field>/<i>`` naming
+        the request digest its coordinate carries, D-R37 a2) is its attempt and
+        decision, in the call's field order. Nothing in the members body names
+        the run or a time, so a call whose members are unchanged reproduces the
+        body an earlier run stored. The record keeps what is this call's own:
+        the earliest and latest instant its acquired members were observed.
+
+        The members list grows with the call's capture outputs; it is built
+        once per call, never per member.
         """
 
+        members_digest = self.bodies.store(
+            canonical_bytes({"tag": ACQUIRED_MEMBERS_BODY_V1, "members": members}),
+            journal_payload=True,
+        ).digest
         self._append_event(
             admission,
             records,
             "source_acquisition",
             {
-                "tag": "playbill-procedure-source-acquisition-v1",
+                "tag": SOURCE_ACQUISITION_RECORD_V2,
                 "node_id": node.node_id,
-                "input_name": result.input_name,
-                "field": field,
-                "result": result.model_dump(mode="json", exclude={"acquisition"}),
-                "decision": decision.model_dump(mode="json"),
-                **({} if provider_refusal is None else {"provider_refusal": provider_refusal}),
-                **(
-                    {}
-                    if member_request_digest is None
-                    else {"member_request_digest": member_request_digest}
-                ),
-                "audit": {
-                    "deployment_digest": admission.deployment_snapshot_digest,
-                    "recorded_at": format_datetime(self.clock.now()),
+                "members_digest": members_digest,
+                "count": len(members),
+                "observed": None
+                if not observed
+                else {
+                    "earliest": format_datetime(min(observed)),
+                    "latest": format_datetime(max(observed)),
                 },
             },
         )
