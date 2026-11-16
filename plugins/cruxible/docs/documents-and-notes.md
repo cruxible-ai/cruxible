@@ -174,9 +174,9 @@ ID, and `get CLAIM_ID --detail evidence` shows what that Claim rests on.
 `cruxible.get.detail_unsupported` and lists the details it takes):
 
 ~~~text
-$ cruxible get CLM-65fd183b… --detail evidence
+$ cruxible get CLM-65f3a838… --detail evidence
 value: 2026-11-12
-capture CAP-9ec7c0ed0601  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=doc-docs-decisions.md  ...  own words in doc-docs-decisions.md (181 bytes): admitted
+capture CAP-a344c0846930  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=docs/decisions.md  ...  own words in docs/decisions.md (181 bytes): admitted
 rationale: Brake pad choice for the 2019 Civic.
 ~~~
 
