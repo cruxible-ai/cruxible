@@ -648,14 +648,12 @@ def test_an_authored_parameter_description_is_shown_as_written(tmp_path: Path) -
     output = CliRunner().invoke(show).output
     assert (
         "      needs  file data/doc.json (json, at most 256 KiB per its CaptureContract, "
-        "parameter path): present\n"
-        in output
+        "parameter path): present\n" in output
     )
     assert f"        {DOC_HELP}\n" in output
     assert (
         "      needs  file data/missing.json (json, at most 256 KiB per its CaptureContract, "
-        "parameter path): absent\n"
-        in output
+        "parameter path): absent\n" in output
     )
 
 
