@@ -1314,13 +1314,13 @@ def handle_playbill_block_repin(
 ) -> BlockRepinResult:
     """Repin one projection block adapter-side: this process computes the stamp (Q17).
 
-    The block is named by its file catalog entry. The SDK reads the page and
-    its backings, rewrites the marker and declares the block.
+    The page is named by its workspace path or its file catalog entry. The SDK
+    reads the page and its backings, rewrites the marker and declares the block.
     """
 
     root = mcp_workspace_root()
     sources = WorkspaceFiles(root)
-    source_id = file
+    source_id = sources.file_name(file)
     path = sources.path_for_file(source_id)
     stamp = _daemon_call(
         lambda client: repin_projection_block(

@@ -1452,8 +1452,9 @@ def repin_projection_block(
     instant = ensure_utc(evaluation_time)
     formatted = cast(str, format_datetime(instant))
     root = ensure_workspace_directory(Path(workspace).resolve())
-    source_id = file
     sources = WorkspaceFiles(root)
+    # The page's workspace path or its catalog name; the stamp records the name.
+    source_id = sources.file_name(file)
     path = sources.path_for_file(source_id)
     content = read_projection_source(path)
     blocks = parse_projection_blocks(

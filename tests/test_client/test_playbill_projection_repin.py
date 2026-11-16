@@ -1043,3 +1043,40 @@ def test_a_repin_keeps_a_rendered_block_its_author_edited_as_prose(tmp_path: Pat
     )
 
     assert _body(source, tmp_path) == prose
+
+
+def test_repin_takes_the_page_path_as_well_as_its_catalog_name(tmp_path: Path) -> None:
+    """gapc-27: the `write` refusal's repair names the path; repin took only the name."""
+
+    source = _workspace(tmp_path)
+    client = _RepinClient()
+
+    by_path = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="runbook.md",
+        block_id="summary",
+        claims=("CLM-first",),
+        evaluation_time=NOW,
+    )
+    by_absolute_path = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file=str(source),
+        block_id="summary",
+        evaluation_time=NOW,
+    )
+
+    # The stamp records the catalog name whichever way the page was named.
+    assert by_path.source_id == by_absolute_path.source_id == "corpus.runbook"
+    with pytest.raises(Exception, match="neither a catalogued file name nor the path"):
+        repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="missing.md",
+            block_id="summary",
+            evaluation_time=NOW,
+        )

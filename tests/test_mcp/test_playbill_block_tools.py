@@ -60,6 +60,13 @@ def test_repin_by_page_previews_then_stamps_and_declares(
     assert b"<!-- cruxible:block:summary:ref:" in (tmp_path / "runbook.md").read_bytes()
 
 
+def test_repin_names_the_page_by_its_path(adapter: _RepinClient) -> None:
+    stamped = handlers.handle_playbill_block_repin(
+        "inst_projection", file="runbook.md", block="summary", claims=["CLM-first"]
+    )
+    assert (stamped.source_id, stamped.path) == ("corpus.runbook", "runbook.md")
+
+
 def test_repin_requires_a_catalog_file(adapter: _RepinClient) -> None:
     from cruxible_client.authoring.sdk_types import SourceSelectionError
 

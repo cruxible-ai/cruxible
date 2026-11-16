@@ -6738,12 +6738,13 @@ def repin_projection(
 ) -> None:
     """Stamp one block's marker from its backings and declare it to the instance.
 
-    The client reads the backings and computes the stamp, rewrites the opening
-    marker and then declares the block, creating its registration the first
-    time. The authored body is kept as written, unless ``--render`` writes it
-    from the block's one query backing (a table, or a list when the query
-    projects no fields). A body that is still its query's rendering is
-    rendered again, so a repin never stamps an old table current.
+    FILE is the page: its workspace path or its file catalog name. The client
+    reads the backings and computes the stamp, rewrites the opening marker and
+    then declares the block, creating its registration the first time. The
+    authored body is kept as written, unless ``--render`` writes it from the
+    block's one query backing (a table, or a list when the query projects no
+    fields). A body that is still its query's rendering is rendered again, so
+    a repin never stamps an old table current.
     """
 
     if (clear_claims and claims) or (clear_queries and queries) or (clear_artifacts and artifacts):
@@ -6931,14 +6932,15 @@ def _echo_block_sync(result: BlockSyncResult, *, output_json: bool) -> None:
         suffix = "" if item.reason is None else f":{item.reason}"
         click.echo(f"{target}: {item.outcome}{suffix}")
         if item.repair is not None:
-            click.echo(f"  repair: {_block_repair_line(item.repair)}")
+            click.echo(f"  repair: {_block_repair_line(item.repair, path=item.path)}")
 
 
-def _block_repair_line(repair: Any) -> str:
+def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
     """A block repair as the command that performs it, in the files vocabulary.
 
     The served arguments keep their wire names (``source_id`` is the catalog
-    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``.
+    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``, naming
+    the page by ``path`` (the workspace path people read and type) when known.
     """
 
     if not isinstance(repair, RepairOperation):
@@ -6946,7 +6948,7 @@ def _block_repair_line(repair: Any) -> str:
     values = repair.arguments
     operation = normalize_code(repair.operation)
     if operation == "cruxible.block.repin":
-        file, block = values.get("source_id"), values.get("block_id")
+        file, block = path or values.get("source_id"), values.get("block_id")
         if not isinstance(file, str) or not isinstance(block, str):
             return render_served_repair(repair)
         parts = ["cruxible block repin", shlex.quote(file), shlex.quote(block)]
