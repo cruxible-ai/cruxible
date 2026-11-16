@@ -48,16 +48,17 @@ MODE_INSUFFICIENT_CODE = "cruxible.mcp.mode_insufficient"
 
 BASE_INSTRUCTIONS = """\
 Cruxible holds typed shared state and evidence. Start with cruxible_orient's small
-index; expand only relevant kinds or sections. ClaimType descriptions and linked
-guidance Documents explain meaning. cruxible_query answers, cruxible_get gives
-details, and cruxible_next lists attention. Preserve verdicts, coordinates,
-paging, and none versus unknown.
+index; expand only relevant kinds or sections. ClaimType descriptions and guidance
+Documents explain meaning. cruxible_query answers, cruxible_get details,
+cruxible_next attention. Preserve verdicts, coordinates, paging, none vs
+unknown.
 
-Point, don't copy, unless a rule must notice change, a declared consumer needs
-prior state, a cross-source join needs it, or the source forgets. Use expect or
-at for shared edits. A second agent reviews the exact candidate; never
-self-approve, including with auth off. Accept the tailored kit template before
-previewing and running its start Runbook.
+Point, don't copy, unless a rule must notice change, a consumer needs prior
+state, a join needs it, or the source forgets. Use expect or at for shared
+edits. Even with auth off, never self-approve: a subagent as principal
+reviewer (init --reviewer-key-dir or principal add) reviews the exact candidate and
+approves via the CLI (context use --principal reviewer); subagents share this
+MCP server. No reviewer: set one up. A person approves only if asked.
 
 A proposal is not accepted state; an approval is not activation. Transport tiers
 only control endpoint reachability; Cruxible principals and acceptance laws

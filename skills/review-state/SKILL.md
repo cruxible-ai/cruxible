@@ -36,9 +36,14 @@ passage, a Capture or a contract. Supporting, contradicting and unsure have
 different consequences. An attestation is a signed append, never proposal
 approval; append one only when requested, with what was actually examined.
 
-For proposal review, use the exact candidate digest from a separate agent
-session (its own principal); never approve your own proposal, even with auth
-off. `proposal review` prints each proposed value change with the Captures it
+Never approve your own proposal, even with auth off. A second agent (normally
+a subagent) acting as its own principal (`reviewer`, from `init --reviewer-key-dir
+DIR --require-independent-approval` or `principal add`) reviews the exact
+candidate digest and approves; with no second principal, set one up rather than
+self-approve, and the person approves only if they asked to. A reviewer
+subagent uses the CLI with the reviewer's settings (`cruxible context use
+--principal reviewer` or `CRUXIBLE_PRINCIPAL_ID=reviewer`): subagents share the
+parent's MCP servers. `proposal review` prints each proposed value change with the Captures it
 cites and their text (an erased or unavailable body says so), then one block
 per definition (a Line's bindings and parameters, a mandate's ClaimType table,
 a Runbook's steps, a Trigger's schedule); `--json` adds the stored fields
