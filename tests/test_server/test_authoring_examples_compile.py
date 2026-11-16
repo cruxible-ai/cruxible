@@ -51,6 +51,7 @@ FRESH_PREREQUISITES: dict[str, frozenset[str]] = {
     "claim-adjudicate-unreviewed-evidence": frozenset({"cruxible.authoring.claim_type_not_found"}),
     # The CaptureKind it reads: its layout declares the records the extract names.
     "procedure": frozenset({"cruxible.authoring.artifact_reference_unresolved"}),
+    "query-definition": frozenset({"cruxible.query.unknown_kind"}),
     "query-claims-by-type": frozenset({"cruxible.authoring.claim_type_missing"}),
     "query-ontology": frozenset(),
     "query-procedures": frozenset(),

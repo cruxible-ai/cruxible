@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-11-16:kit-authoring-messages",
-    "surface_digest": "sha256:b79dd690db17f16a02fb2c266705cb237e79925e0b839a587142f0eb7ff7c346"
+    "surface_digest": "sha256:2099b7f9fc4f5492a57ec0dd09673a59dbe45d0f56b7ae8194a28be7b5673029"
   },
   "surface": {
     "cli_leaves": [
@@ -2173,9 +2173,9 @@
       {
         "client_operations": [],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_example",
-        "input_schema_digest": "sha256:f32d0be3764b2253fd33cd605ab29c1642f919182ecb8298443147028da61871",
+        "input_schema_digest": "sha256:b97fb69e75ab21971c42f380de4190cca69652c60bce60e0135212b41a9d9d09",
         "name": "cruxible_authoring_example",
-        "output_schema_digest": "sha256:c277240a4c0402bb51c257d33fe13b5bde94db5479c2d75e0104912cf0bb7d72",
+        "output_schema_digest": "sha256:dac793a576e60e2e2d10b9fb83b227d695473742dcd254fe7ab057fc424a4557",
         "permission": "READ_ONLY"
       },
       {

@@ -362,6 +362,8 @@ def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
     kind = payload.get("kind")
     if kind == "procedure":
         return ("procedure",)
+    if kind == "query_definition":
+        return ("query-definition", "query-claims-by-type")
     if kind != "claim":
         return tuple(AUTHORING_EXAMPLE_FACTORIES)
     source = payload.get("source")

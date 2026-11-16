@@ -2492,7 +2492,9 @@ statuses are an analyst's judgment, project
 (`{"kind": "comparison", "left": <that ref>, "operator": "eq", "right":
 {"kind": "literal", "value": "normative"}, "value_type": "string"}`).
 
-`authoring example query-claims-by-type` provides a Claim query without
+`authoring example query-definition` prints a named query in the authored
+form (`query`, `params`, `from`, `where`, `fields`), with the parameter types
+beside it. `authoring example query-claims-by-type` provides a Claim query without
 placeholder digests. `authoring example query-ontology` and `authoring example query-procedures`
 provide artifact queries; MCP's authoring-example and authoring-compile tools use
 these same typed inputs. Both are `query_definition` inputs.
