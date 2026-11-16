@@ -566,7 +566,9 @@ class GetTriggerCard(_StrictGetModel):
     trigger: str
     lifecycle: str
     schedule: dict[str, Any]
-    #: ``Line:<name>`` or the internal action it fires.
+    #: The schedule, compact: ``cron 0 14 * * *``, ``every 3600s``, ``when ... lands``.
+    sched: str | None = Field(default=None, exclude_if=_omit_none)
+    #: ``Line:<name>``, ``Runbook:<name>`` or the internal action it fires.
     target: str
     next: tuple[str, ...] = ()
 

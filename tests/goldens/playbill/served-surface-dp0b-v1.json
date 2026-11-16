@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-16:unchanged-answers",
-    "surface_digest": "sha256:3f181abef8464f199dc09174e218c2b2271f3498994f0c8cf9effaad1b2b63df"
+    "register_entry": "2026-11-16:compact-trigger-text",
+    "surface_digest": "sha256:3fb7a6474d16fdd1794422b8518eba9d0fe1f24d564fe5f43c56f48ff882efa9"
   },
   "surface": {
     "cli_leaves": [
@@ -1304,7 +1304,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
         "request_schema_digest": "sha256:225e6febd38c1cf6ba12bcfa91d6783eedb37004f415c445b11064471d1101b3",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
-        "response_schema_digest": "sha256:9bcaf2f7064ce849c0f8256004028e91cf417d5c08e2dacded23a8694d36984f"
+        "response_schema_digest": "sha256:ea1551e3cc37215c6015c0e5bb724a3372eccb8f3294c1748e50d7913e04bce3"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.get_batch",
@@ -1316,7 +1316,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
         "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
-        "response_schema_digest": "sha256:8ec84b0698ed38fd6500bc37ea43d9fce9f75cf02377d35f46ce509e186010ea"
+        "response_schema_digest": "sha256:ded58905fa3a6651eae801e5e5d2158ebdb17b84650abbfbd6a01b0c5944a3c1"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.head",
@@ -2384,7 +2384,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
         "input_schema_digest": "sha256:3bf2d49daa21f34ea696d8f23040827c29d81243e20b4f4aa53fffa95ec1e38e",
         "name": "cruxible_get",
-        "output_schema_digest": "sha256:85f8414136f3a830dbe53bcfdd8e1ae88c2319112c52ff8bd18c6ce0bd1368c7",
+        "output_schema_digest": "sha256:a80d3fe42340bb88e9d928d230ab28019dba86fb5b6d0777431f080a446ceb0a",
         "permission": "READ_ONLY"
       },
       {

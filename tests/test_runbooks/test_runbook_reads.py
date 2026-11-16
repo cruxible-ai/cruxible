@@ -278,3 +278,39 @@ def test_a_get_costs_the_same_beside_10_100_and_1000_unrelated_runbooks_and_runs
     # VM steps: B-tree seeks are one step at any size; the few-step wobble is the
     # pages a seek lands on, never a walk (growth would be hundreds per 900 rows).
     assert max(steps.values()) - min(steps.values()) <= 10, measured
+
+
+def test_s3_a_runbook_trigger_card_and_the_lines_it_runs_name_each_other(tmp_path: Path) -> None:
+    """S3: the Trigger card names its Runbook; a Line card shows the Runbook's schedule."""
+
+    from cruxible_client.contracts.get_text import render_get
+
+    instance, _root = _start_world(tmp_path)
+
+    trigger = _get(instance, "Trigger:test.start-daily", surface="cli")
+    assert trigger.card.target == f"Runbook:{START}"
+    assert trigger.card.sched == "cron 0 6 * * *"
+    text = render_get(trigger)
+    assert text is not None
+    assert f"target: Runbook:{START}" in text and "sched: cron 0 6 * * *" in text
+    assert "None" not in text and "expression=" not in text
+
+    line = _get(instance, f"Line:{SETTLE}", surface="cli")
+    assert line.card.trigger == "runbook"
+    assert line.card.sched == f"cron 0 6 * * * (Trigger:test.start-daily via Runbook:{START})"
+    shown = render_get(line)
+    assert shown is not None
+    assert f"sched: cron 0 6 * * * (Trigger:test.start-daily via Runbook:{START})" in shown
+    assert "trigger: manual" not in shown
+
+
+def test_s3_card_cells_read_as_plain_values_never_python_reprs() -> None:
+    from cruxible_client.contracts.get_text import _card_cell
+
+    assert [_card_cell(v) for v in (True, False, None, 3, {"a": [1]})] == [
+        "true",
+        "false",
+        "none",
+        "3",
+        '{"a":[1]}',
+    ]

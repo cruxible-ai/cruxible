@@ -420,9 +420,21 @@ def proposed_reason_lines(reason: Any) -> list[str]:
 
 
 def _card_cell(part: object) -> str:
-    """One card cell: a reserved stored name in its public spelling, anything else as text."""
+    """One card cell: a reserved stored name in its public spelling, anything else as text.
 
-    return public_name(part) if isinstance(part, str) else str(part)
+    S3: a boolean reads ``true``/``false`` and a missing value ``none``, never a
+    Python repr; a nested value reads as compact JSON.
+    """
+
+    if isinstance(part, str):
+        return public_name(part)
+    if isinstance(part, bool):
+        return "true" if part else "false"
+    if part is None:
+        return "none"
+    if isinstance(part, dict | list):
+        return json.dumps(part, ensure_ascii=False, separators=(",", ":"), default=str)
+    return str(part)
 
 
 def render_get(
@@ -534,6 +546,11 @@ def render_get(
                     lines.append(json.dumps(concise(value), ensure_ascii=False, indent=2))
                     continue
                 if value in (None, [], {}):
+                    continue
+                if key == "schedule" and result.kind == "trigger" and card.get("sched"):
+                    # S3: the compact ``sched`` line says it; JSON keeps the schedule.
+                    continue
+                if key == "trigger" and result.kind == "line" and card.get("sched"):
                     continue
                 if key == "operations" and result.kind == "provider":
                     lines.append("operations:")

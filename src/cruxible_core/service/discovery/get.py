@@ -2063,11 +2063,20 @@ def _trigger_card(
 ) -> GetTriggerCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         trigger = cast(Trigger, projection.typed.source(resolved.identity))
-    target = trigger.line.qualified if trigger.line is not None else str(trigger.action)
+    from cruxible_core.service.discovery.operational import compact_schedule
+
+    target = (
+        trigger.line.qualified
+        if trigger.line is not None
+        else trigger.runbook.qualified
+        if trigger.runbook is not None
+        else str(trigger.action)
+    )
     return GetTriggerCard(
         trigger=resolved.identity,
         lifecycle=trigger.lifecycle.state,
         schedule=trigger.schedule.model_dump(mode="json"),
+        sched=compact_schedule(trigger.schedule),
         target=target,
         next=(_render_get(surface, resolved.display, "history"),),
     )

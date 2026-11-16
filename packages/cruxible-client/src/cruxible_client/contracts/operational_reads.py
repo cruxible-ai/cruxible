@@ -166,8 +166,12 @@ class GetLineCard(_StrictOperationalModel):
     lifecycle: str
     procedure: str
     authority: Literal["observe", "propose", "settle"]
-    #: The kinds of schedule that set this Line off (``manual`` with none).
+    #: The kinds of schedule that set this Line off (``manual`` with none);
+    #: a Line a Runbook step runs counts its Runbook's Triggers.
     trigger: str
+    #: When a Runbook's Trigger runs this Line: each such schedule, compact, with
+    #: the Trigger and Runbook, e.g. ``cron 0 14 * * * (Trigger:t via Runbook:r)``.
+    sched: str | None = Field(default=None, exclude_if=_omit_none)
     #: The first live Triggers aimed at this Line, in identity order;
     #: ``get Trigger:<name>`` reads one, ``query Trigger --where target=...`` lists all.
     triggers: tuple[GetLineTrigger, ...] = ()

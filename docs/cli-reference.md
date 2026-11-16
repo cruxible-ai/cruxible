@@ -4276,8 +4276,10 @@ the bare run id) answers a run's state, outcomes and terminal detail;
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
 or as a 12+ hex prefix) answers the Line's Procedure, its schedule kinds, each
 Trigger aimed at it by name and version (with the `get Trigger:<name>` that
-reads it), its authority, `triggers_inactive: not enabled` while Triggers aim
-at it but it is not enabled, its enablements (the principal kind, state and
+reads it), `sched` when a Runbook step runs it (each Runbook Trigger, compact:
+`cron 0 14 * * * (Trigger:T via Runbook:R)`; its schedule kind then reads
+`runbook`, never `manual`), its authority, `triggers_inactive: not enabled`
+while Triggers aim at it but it is not enabled, its enablements (the principal kind, state and
 stop reason, the pinned Line digest and Trigger versions, how far its daemon
 matched (`evaluated_until`), and who enabled each: a runtime credential's id
 and label only to that credential or an admin, otherwise
