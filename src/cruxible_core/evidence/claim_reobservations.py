@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
@@ -74,7 +74,7 @@ OBSERVED_CONTENTS_BODY = "cruxible-observed-contents-v1"
 CONTENT_TRANSITION_TAG = "cruxible-content-transition-v1"
 CONTENT_TRANSITIONS_BODY = "cruxible-content-transitions-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -117,58 +117,81 @@ CREATE TABLE IF NOT EXISTS observed_sets (
  capture_digest TEXT NOT NULL,
  PRIMARY KEY(contract_digest, observed_content_digest, set_digest)
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS observed_sets_by_set ON observed_sets (set_digest);
+CREATE TABLE IF NOT EXISTS instants (
+ sequence INTEGER PRIMARY KEY, recorded_us INTEGER NOT NULL, generation INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS instants_by_recorded ON instants (recorded_us, sequence);
+CREATE INDEX IF NOT EXISTS instants_by_generation ON instants (generation, sequence);
+CREATE TABLE IF NOT EXISTS limits (
+ singleton INTEGER PRIMARY KEY, max_delay_us INTEGER NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS observation_sets (
- set_digest TEXT PRIMARY KEY, last_recorded_us INTEGER NOT NULL, last_sequence INTEGER NOT NULL
+ set_digest TEXT PRIMARY KEY, procedure TEXT NOT NULL, last_sequence INTEGER NOT NULL,
+ earliest_us INTEGER NOT NULL, earliest_recorded_us INTEGER NOT NULL,
+ earliest_sequence INTEGER NOT NULL, latest_us INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS observation_points (
- set_digest TEXT NOT NULL, recorded_us INTEGER NOT NULL, sequence INTEGER NOT NULL,
+ set_digest TEXT NOT NULL, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL,
  earliest_us INTEGER NOT NULL, latest_us INTEGER NOT NULL,
- PRIMARY KEY(set_digest, recorded_us, sequence)
+ PRIMARY KEY(set_digest, sequence)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS set_peaks (
+ set_digest TEXT NOT NULL, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL,
+ earliest_us INTEGER NOT NULL, earliest_recorded_us INTEGER NOT NULL,
+ earliest_sequence INTEGER NOT NULL, latest_us INTEGER NOT NULL,
+ PRIMARY KEY(set_digest, sequence)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS source_heads (
+ source TEXT PRIMARY KEY, set_digest TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS key_sources (
+ contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL, source TEXT NOT NULL,
+ PRIMARY KEY(contract_digest, observed_content_digest, source)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS key_heads (
+ contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL, source TEXT NOT NULL,
+ sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL, set_digest TEXT NOT NULL,
+ carried_us INTEGER NOT NULL, carried_recorded_us INTEGER NOT NULL,
+ carried_sequence INTEGER NOT NULL, carried_capture TEXT NOT NULL,
+ carried_latest_us INTEGER NOT NULL,
+ PRIMARY KEY(contract_digest, observed_content_digest, source, sequence)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS transitions (
  contract_digest TEXT NOT NULL, from_content_digest TEXT NOT NULL, recorded_us INTEGER NOT NULL,
  sequence INTEGER NOT NULL, earliest_us INTEGER NOT NULL, latest_us INTEGER NOT NULL,
  to_capture_digest TEXT NOT NULL, to_content_digest TEXT NOT NULL,
- PRIMARY KEY(contract_digest, from_content_digest, recorded_us, sequence, to_capture_digest)
+ PRIMARY KEY(contract_digest, from_content_digest, sequence, to_capture_digest)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS transition_exceptions (
  sequence INTEGER NOT NULL, claim_id TEXT NOT NULL, PRIMARY KEY(sequence, claim_id)
 ) STRICT, WITHOUT ROWID;
 """
-# Content observations (ruling 1a). ``observed_sets`` holds one row per member of
-# each distinct observed set, written once when the set first appears; a call
-# whose members are unchanged writes one ``observation_points`` row and moves its
-# set's ``observation_sets`` head, never a row per content. A key's latest
-# observation at an instant is one seek per set that ever held it, newest first,
-# stopping once no older set can beat what was found (an observation is never
-# recorded before it is made). Each point keeps the call's earliest and latest
-# member instants (ruling 1b): freshness reads the earliest, a deadline the latest.
-_SETS_OF_KEY = (
-    "SELECT o.set_digest, o.capture_digest, s.last_recorded_us FROM observed_sets o "
-    "JOIN observation_sets s ON s.set_digest=o.set_digest "
-    "WHERE o.contract_digest=? AND o.observed_content_digest=? "
-    "ORDER BY s.last_recorded_us DESC, o.set_digest DESC"
-)
-_SET_POINT = (
-    "SELECT earliest_us, latest_us, recorded_us, sequence FROM observation_points "
-    "WHERE set_digest=? AND recorded_us<=? AND sequence<=? AND latest_us<=? "
-    "ORDER BY recorded_us DESC, sequence DESC LIMIT 1"
-)
-_SET_NEXT = (
-    "SELECT recorded_us FROM observation_points WHERE set_digest=? AND recorded_us>? "
-    "AND sequence<=? ORDER BY recorded_us LIMIT 1"
-)
-_LAST_TRANSITION = (
-    "SELECT earliest_us, latest_us, recorded_us, sequence, to_capture_digest, to_content_digest "
-    "FROM transitions t WHERE contract_digest=? AND from_content_digest=? AND recorded_us<=? "
-    "AND sequence<=? AND latest_us<=? AND NOT EXISTS (SELECT 1 FROM transition_exceptions e "
-    "WHERE e.sequence=t.sequence AND e.claim_id=?) "
-    "ORDER BY recorded_us DESC, sequence DESC, to_capture_digest DESC LIMIT 1"
-)
-_NEXT_TRANSITION = (
-    "SELECT recorded_us FROM transitions WHERE contract_digest=? AND from_content_digest=? "
-    "AND recorded_us>? AND sequence<=? ORDER BY recorded_us LIMIT 1"
-)
+# Content observations (ruling 1a) and transitions (1d), as maintained heads.
+#
+# ``observed_sets`` holds one row per member of each distinct observed set,
+# written once when the set first appears. Every observation writes one
+# ``observation_points`` row (the history, for bounded windows only), one
+# ``instants`` row (its recording instant and the accepted generation it was
+# made at) and moves its set's ``observation_sets`` head, which keeps the set's
+# running maxima: the greatest call-earliest instant (with the record that set
+# it) and the greatest call-latest instant. ``set_peaks`` holds one row per
+# change of those maxima, by sequence: a set's maxima through any journal
+# position are one seek, so an older call recorded later never moves freshness
+# back (F-003), and historical and read-position reads see exactly the records
+# they admit.
+#
+# Each content key's observations are reached through ``key_heads``: for each
+# observing source (Procedure and call node), the set the source's latest call
+# holding the key observed, with the best observation of the key carried from
+# the sets that source held it in before. A row is written only when a source's
+# call observes a different set than its last (a change: the same O(set) as the
+# set's first appearance); an unchanged call writes none. A key's freshness
+# through a position is then, per source, one seek on ``key_heads`` and one on
+# ``set_peaks``: never a walk over the sets or calls that ever held it (F-004).
+# Recorded order is journal order, so a recording instant maps to a journal
+# position by one seek on ``instants``; so does an accepted generation (the
+# head a record was made at only moves forward).
 _LAST_POINT = (
     "SELECT capture_digest, observed_us, recorded_us FROM reobservation_points "
     "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us<=? "
@@ -354,8 +377,14 @@ class ClaimReobservationStore:
                     conn.execute("DROP TABLE IF EXISTS reobservation_points")
                     for table in (
                         "observed_sets",
+                        "instants",
+                        "limits",
                         "observation_sets",
                         "observation_points",
+                        "set_peaks",
+                        "source_heads",
+                        "key_sources",
+                        "key_heads",
                         "transitions",
                         "transition_exceptions",
                     ):
@@ -364,6 +393,7 @@ class ClaimReobservationStore:
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
                 start = row[0] + 1 if row else 1
+                generations: dict[str, int] = {}
                 for stored in (
                     ()
                     if journal is None
@@ -378,7 +408,13 @@ class ClaimReobservationStore:
                     )
                     if isinstance(payload, dict) and payload.get("tag") in _SHARED_TAGS:
                         self._apply_shared(
-                            conn, payload, stored.record.sequence, stored.record.recorded_at
+                            conn,
+                            payload,
+                            stored.record.sequence,
+                            stored.record.recorded_at,
+                            generation=self._generation(
+                                stored.record.accepted_coordinate.git_oid, generations
+                            ),
                         )
                         continue
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
@@ -445,30 +481,58 @@ class ClaimReobservationStore:
                 )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
 
+    def _generation(self, git_oid: str, known: dict[str, int]) -> int:
+        """The accepted generation a record was made at (-1 when not in the history).
+
+        One indexed lookup per record (``known`` remembers them for one catch-up).
+        """
+
+        if git_oid not in known:
+            with self.instance.accepted_history_reader() as history:
+                location = history.generation_for_oid(git_oid)
+            known[git_oid] = -1 if location is None else int(location.sequence)
+        return known[git_oid]
+
     def _apply_shared(
         self,
         conn: sqlite3.Connection,
         payload: Mapping[str, Any],
         sequence: int,
         recorded_at: datetime,
+        *,
+        generation: int,
     ) -> None:
-        """Project one content observation or transition: rows for what is new only.
+        """Project one content observation or transition: rows for what changed only.
 
         A content observation writes its set's members once (the first time the
-        set appears), then one point and its set's head. A transition writes one
-        row per (contract, from content) it re-checked and one per excepted
-        Claim: its size, never the Claims citing the content.
+        set appears), then its point, its instant, its set's head and, when it
+        raised the set's maxima, one change point. When the observing source's
+        call observed another set before, each member key gets a ``key_heads``
+        row carrying its best observation so far: that is the set's size, paid
+        only on a change. A transition writes one row per (contract, from
+        content) it re-checked and one per excepted Claim: its size, never the
+        Claims citing the content.
         """
 
         recorded_us = _ordered(conn, sequence, recorded_at)
         earliest_us = _micros(_instant(payload["earliest"]))
         latest_us = _micros(_instant(payload["latest"]))
+        conn.execute(
+            "INSERT OR REPLACE INTO instants VALUES (?,?,?)", (sequence, recorded_us, generation)
+        )
+        delay = conn.execute("SELECT max_delay_us FROM limits WHERE singleton=1").fetchone()
+        if delay is None or recorded_us - latest_us > int(delay[0]):
+            conn.execute(
+                "INSERT OR REPLACE INTO limits VALUES (1,?)", (max(0, recorded_us - latest_us),)
+            )
         if payload["tag"] == CONTENT_OBSERVATION_TAG:
             set_digest = str(payload["set_digest"])
-            known = conn.execute(
-                "SELECT 1 FROM observation_sets WHERE set_digest=?", (set_digest,)
+            head = conn.execute(
+                "SELECT procedure, earliest_us, earliest_recorded_us, earliest_sequence, "
+                "latest_us FROM observation_sets WHERE set_digest=?",
+                (set_digest,),
             ).fetchone()
-            if known is None:
+            if head is None:
                 body = _shared_body(self.instance, set_digest, tag=OBSERVED_CONTENTS_BODY)
                 conn.executemany(
                     "INSERT OR REPLACE INTO observed_sets VALUES (?,?,?,?)",
@@ -477,13 +541,32 @@ class ClaimReobservationStore:
                         for contract, content, capture in body["contents"]
                     ],
                 )
-            conn.execute(
-                "INSERT OR REPLACE INTO observation_sets VALUES (?,?,?)",
-                (set_digest, recorded_us, sequence),
-            )
+                lineage = body.get("lineage")
+                procedure = str(lineage.get("procedure", "")) if isinstance(lineage, dict) else ""
+            else:
+                procedure = str(head[0])
+            source = f"{procedure}\x1f{payload.get('node_id', '')}"
+            last = conn.execute(
+                "SELECT set_digest FROM source_heads WHERE source=?", (source,)
+            ).fetchone()
+            if last is None or str(last[0]) != set_digest:
+                self._switch_source(conn, source, set_digest, sequence, recorded_us)
             conn.execute(
                 "INSERT OR IGNORE INTO observation_points VALUES (?,?,?,?,?)",
-                (set_digest, recorded_us, sequence, earliest_us, latest_us),
+                (set_digest, sequence, recorded_us, earliest_us, latest_us),
+            )
+            best = (earliest_us, recorded_us, sequence)
+            if head is not None and int(head[1]) >= earliest_us:
+                best = (int(head[1]), int(head[2]), int(head[3]))
+            latest = latest_us if head is None else max(latest_us, int(head[4]))
+            if head is None or best[2] == sequence or latest != int(head[4]):
+                conn.execute(
+                    "INSERT OR IGNORE INTO set_peaks VALUES (?,?,?,?,?,?,?)",
+                    (set_digest, sequence, recorded_us, *best, latest),
+                )
+            conn.execute(
+                "INSERT OR REPLACE INTO observation_sets VALUES (?,?,?,?,?,?,?)",
+                (set_digest, procedure, sequence, *best, latest),
             )
         else:
             body = _shared_body(
@@ -510,6 +593,49 @@ class ClaimReobservationStore:
                 [(sequence, str(claim_id)) for claim_id in body["except"]],
             )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
+
+    @staticmethod
+    def _switch_source(
+        conn: sqlite3.Connection, source: str, set_digest: str, sequence: int, recorded_us: int
+    ) -> None:
+        """Point each member key of the set at it for this source, carrying its best so far.
+
+        A key's carried observation is the best of what it carried and what its
+        previous set held for this source, as of just before this record: two
+        seeks per member, written only when the source's set changed.
+        """
+
+        rows = []
+        for contract, content, _capture in conn.execute(
+            "SELECT contract_digest, observed_content_digest, capture_digest FROM observed_sets "
+            "WHERE set_digest=?",
+            (set_digest,),
+        ).fetchall():
+            prior = conn.execute(
+                "SELECT k.carried_us, k.carried_recorded_us, k.carried_sequence, "
+                "k.carried_capture, k.carried_latest_us, s.earliest_us, s.earliest_recorded_us, "
+                "s.earliest_sequence, s.latest_us, o.capture_digest FROM key_heads k "
+                "JOIN observation_sets s ON s.set_digest=k.set_digest "
+                "JOIN observed_sets o ON o.contract_digest=k.contract_digest AND "
+                "o.observed_content_digest=k.observed_content_digest AND "
+                "o.set_digest=k.set_digest "
+                "WHERE k.contract_digest=? AND k.observed_content_digest=? AND k.source=? "
+                "ORDER BY k.sequence DESC LIMIT 1",
+                (contract, content, source),
+            ).fetchone()
+            carried: tuple[int, int, int, str, int] = (-1, -1, -1, "", -1)
+            if prior is not None:
+                held = (int(prior[0]), int(prior[1]), int(prior[2]), str(prior[3]))
+                peak = (int(prior[5]), int(prior[6]), int(prior[7]), str(prior[9]))
+                top = max(held, peak, key=lambda item: (item[0], item[3]))
+                carried = (*top, max(int(prior[4]), int(prior[8])))
+            rows.append((contract, content, source, sequence, recorded_us, set_digest, *carried))
+        conn.executemany("INSERT OR IGNORE INTO key_heads VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+        conn.executemany(
+            "INSERT OR IGNORE INTO key_sources VALUES (?,?,?)",
+            [(row[0], row[1], source) for row in rows],
+        )
+        conn.execute("INSERT OR REPLACE INTO source_heads VALUES (?,?)", (source, set_digest))
 
     # -- admission ----------------------------------------------------------
 
@@ -1038,7 +1164,7 @@ class ClaimReobservationStore:
                 row = conn.execute(
                     "SELECT sequence, to_capture_digest FROM transitions "
                     "WHERE contract_digest=? AND from_content_digest=? "
-                    "ORDER BY recorded_us DESC, sequence DESC LIMIT 1",
+                    "ORDER BY sequence DESC LIMIT 1",
                     (item.contract_digest, item.from_content_digest),
                 ).fetchone()
                 if row is None or str(row[1]) != item.to_capture_digest:
@@ -1108,7 +1234,13 @@ class ClaimReobservationStore:
                 payload=payload,
                 expected_head=head,
             )
-            self._apply_shared(conn, payload, stored.record.sequence, stored.record.recorded_at)
+            self._apply_shared(
+                conn,
+                payload,
+                stored.record.sequence,
+                stored.record.recorded_at,
+                generation=self._generation(stored.record.accepted_coordinate.git_oid, {}),
+            )
             conn.commit()
             return stored.record.sequence
 
@@ -1422,7 +1554,7 @@ class ReobservationReader:
             found = 0 if row is None or row[0] is None else int(row[0])
             if keys and self._content_observed(conn):
                 for pair in {(key.contract_digest, key.observed_content_digest) for key in keys}:
-                    found = max(found, self._key_sequence(conn, claim_id, pair, through))
+                    found = max(found, self._key_sequence(conn, pair, through))
         return found
 
     def latest_observation(
@@ -1432,8 +1564,8 @@ class ReobservationReader:
 
         What a Capture's minimum retention counts from once a re-fetch reuses
         it (ruling 1c): the envelope's instant is when its contents were first
-        observed. Sets are visited newest first and the walk stops once no
-        older set can hold a later observation. None when never observed here.
+        observed. Per observing source, its key head and its set's maxima
+        through the read position: two seeks each. None when never observed.
         """
 
         self._guard_fork()
@@ -1441,21 +1573,52 @@ class ReobservationReader:
             conn = self._connection()
             if conn is None or not self._content_observed(conn):
                 return None
-            best: int | None = None
-            for set_digest, _capture, last in conn.execute(
-                _SETS_OF_KEY, (contract_digest, observed_content_digest)
-            ).fetchall():
-                if best is not None and int(last) <= best:
-                    break
-                self.probes += 1
-                row = conn.execute(
-                    "SELECT MAX(latest_us) FROM observation_points WHERE set_digest=? "
-                    "AND sequence<=?",
-                    (set_digest, _through()),
-                ).fetchone()
-                if row is not None and row[0] is not None:
-                    best = int(row[0]) if best is None else max(best, int(row[0]))
-        return None if best is None else _from_micros(best)
+            through = _through()
+            best = -1
+            pair = (contract_digest, observed_content_digest)
+            for source in self._sources(conn, pair):
+                head = self._head(conn, pair, source, through)
+                if head is None:
+                    continue
+                best = max(best, int(head[10]))
+                peak = self._peak(conn, str(head[0]), through)
+                if peak is not None:
+                    best = max(best, int(peak[3]))
+        return None if best < 0 else _from_micros(best)
+
+    def observed(self, claim_id: str, keys: Sequence[ReobservationKey]) -> bool:
+        """Whether the lineage, or any content it cites, was ever observed here.
+
+        One seek for the lineage and two per cited (contract, content): what
+        decides whether a Claim's freshness can read anything at all.
+        """
+
+        self._guard_fork()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return False
+            self.probes += 1
+            row = conn.execute(_LAST_SEQUENCE, (claim_id, _NEVER)).fetchone()
+            if row is not None and row[0] is not None:
+                return True
+            for key in keys:
+                pair = (key.contract_digest, key.observed_content_digest)
+                self.probes += 2
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM key_sources WHERE contract_digest=? "
+                        "AND observed_content_digest=? LIMIT 1",
+                        pair,
+                    ).fetchone()
+                    or conn.execute(
+                        "SELECT 1 FROM transitions WHERE contract_digest=? "
+                        "AND from_content_digest=? LIMIT 1",
+                        pair,
+                    ).fetchone()
+                ):
+                    return True
+        return False
 
     def content_observed(self) -> bool:
         """Whether any content observation or transition was ever recorded (one probe)."""
@@ -1479,71 +1642,195 @@ class ReobservationReader:
             self._shared = bool(row[0]) or None
         return bool(self._shared)
 
-    def _key_sequence(
-        self, conn: sqlite3.Connection, claim_id: str, pair: tuple[str, str], through: int
-    ) -> int:
-        """The last content observation or transition of one key through ``through``."""
+    # -- maintained heads ---------------------------------------------------
 
-        found = 0
-        for set_digest, _capture, _last in conn.execute(_SETS_OF_KEY, pair).fetchall():
-            self.probes += 1
-            row = conn.execute(
-                "SELECT MAX(sequence) FROM observation_points WHERE set_digest=? AND sequence<=?",
-                (set_digest, through),
-            ).fetchone()
-            if row is not None and row[0] is not None:
-                found = max(found, int(row[0]))
+    def _position(self, conn: sqlite3.Connection, at_us: int) -> int:
+        """The last content record recorded by ``at_us``: one seek (recorded order is
+        journal order)."""
+
+        if at_us >= _NEVER:
+            return _NEVER
         self.probes += 1
         row = conn.execute(
-            "SELECT MAX(sequence) FROM transitions WHERE contract_digest=? "
-            "AND from_content_digest=? AND sequence<=?",
-            (*pair, through),
+            "SELECT sequence FROM instants WHERE recorded_us<=? "
+            "ORDER BY recorded_us DESC, sequence DESC LIMIT 1",
+            (at_us,),
         ).fetchone()
-        if row is not None and row[0] is not None:
-            found = max(found, int(row[0]))
-        return found
+        return 0 if row is None else int(row[0])
 
-    def _content_point(
+    def _window(
         self,
         conn: sqlite3.Connection,
-        pair: tuple[str, str],
         *,
         at_us: int,
         through: int,
-        deadline_us: int,
-        after_us: int = -1,
+        deadline_us: int = _NEVER,
+        lo: int = 0,
+        hi: int = _NEVER,
+    ) -> "_Window":
+        """The journal positions a read admits, as sequence bounds.
+
+        Everything recorded by the deadline ended by it (a record is never made
+        before its call ends); a call that ended by the deadline but was
+        recorded after it lies within the store's largest recording delay of
+        it, so only that bounded window is searched point by point.
+        """
+
+        upper = min(through, hi, self._position(conn, at_us))
+        if deadline_us >= _NEVER:
+            return _Window(through=upper, lo=lo)
+        row = conn.execute("SELECT max_delay_us FROM limits WHERE singleton=1").fetchone()
+        delay = 0 if row is None else int(row[0])
+        late = min(through, hi, self._position(conn, min(at_us, deadline_us + delay)))
+        return _Window(
+            through=min(upper, self._position(conn, deadline_us)),
+            lo=lo,
+            deadline_us=deadline_us,
+            late=late,
+        )
+
+    def _sources(self, conn: sqlite3.Connection, pair: tuple[str, str]) -> list[str]:
+        """The sources (Procedure and call node) whose calls ever observed the key."""
+
+        self.probes += 1
+        return [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT source FROM key_sources WHERE contract_digest=? "
+                "AND observed_content_digest=?",
+                pair,
+            )
+        ]
+
+    def _head(
+        self, conn: sqlite3.Connection, pair: tuple[str, str], source: str, through: int
+    ) -> tuple[Any, ...] | None:
+        """The source's key head through ``through``: its set and carried best (one seek)."""
+
+        self.probes += 1
+        row = conn.execute(
+            "SELECT set_digest, carried_us, carried_recorded_us, carried_sequence, "
+            "carried_capture, sequence, recorded_us, 0, 0, 0, carried_latest_us FROM key_heads "
+            "WHERE contract_digest=? AND observed_content_digest=? AND source=? AND sequence<=? "
+            "ORDER BY sequence DESC LIMIT 1",
+            (*pair, source, through),
+        ).fetchone()
+        return None if row is None else tuple(row)
+
+    def _peak(
+        self, conn: sqlite3.Connection, set_digest: str, through: int
+    ) -> tuple[int, ...] | None:
+        """A set's maxima through ``through``: (earliest, its recording, its sequence, latest)."""
+
+        self.probes += 1
+        row = conn.execute(
+            "SELECT earliest_us, earliest_recorded_us, earliest_sequence, latest_us FROM set_peaks "
+            "WHERE set_digest=? AND sequence<=? ORDER BY sequence DESC LIMIT 1",
+            (set_digest, through),
+        ).fetchone()
+        return None if row is None else tuple(int(item) for item in row)
+
+    def _capture(self, conn: sqlite3.Connection, pair: tuple[str, str], set_digest: str) -> str:
+        row = conn.execute(
+            "SELECT capture_digest FROM observed_sets WHERE contract_digest=? "
+            "AND observed_content_digest=? AND set_digest=?",
+            (*pair, set_digest),
+        ).fetchone()
+        return "" if row is None else str(row[0])
+
+    def _next(
+        self, conn: sqlite3.Connection, sql: str, params: tuple[object, ...], into: set[datetime]
+    ) -> None:
+        row = conn.execute(sql, params).fetchone()
+        if row is not None:
+            into.add(_from_micros(row[0]))
+
+    def _key_point(
+        self,
+        conn: sqlite3.Connection,
+        pair: tuple[str, str],
+        window: "_Window",
         boundaries: set[datetime] | None = None,
     ) -> _Point | None:
-        """The latest observation of one key recorded by ``at_us``, newest set first.
+        """The best observation of one key the window admits.
 
-        Sets are visited by when they were last observed; once a set's last
-        observation is no later than the best observation instant found, no
-        point of it can be later, so the walk stops. ``after_us`` keeps only
-        points recorded at or after it (a transition's chain); ``deadline_us``
-        only points whose call ended by it (ruling 1b).
+        Per observing source: the best of its carried observation and its
+        current set's maximum through the window (one seek each). When the
+        window starts later (a Claim version's live interval) and neither lies
+        in it, the source's latest point in it (one seek). A deadline adds the
+        bounded late-recorded window. Ties prefer the larger Capture digest.
         """
 
         best: _Point | None = None
-        for set_digest, capture, last in conn.execute(_SETS_OF_KEY, pair).fetchall():
-            if best is not None and int(last) <= best.observed_us:
-                break
-            self.probes += 1
-            row = conn.execute(_SET_POINT, (set_digest, at_us, through, deadline_us)).fetchone()
+        for source in self._sources(conn, pair):
+            head = self._head(conn, pair, source, window.through)
             if boundaries is not None:
-                upcoming = conn.execute(_SET_NEXT, (set_digest, at_us, through)).fetchone()
-                if upcoming is not None:
-                    boundaries.add(_from_micros(upcoming[0]))
-            if row is None or int(row[2]) < after_us:
-                continue
-            point = _Point(
-                observed_us=int(row[0]),
-                latest_us=int(row[1]),
-                recorded_us=int(row[2]),
-                sequence=int(row[3]),
-                capture_digest=str(capture),
-            )
-            if best is None or point.rank() > best.rank():
-                best = point
+                self._next(
+                    conn,
+                    "SELECT recorded_us FROM key_heads WHERE contract_digest=? "
+                    "AND observed_content_digest=? AND source=? AND sequence>? "
+                    "ORDER BY sequence LIMIT 1",
+                    (*pair, source, window.through),
+                    boundaries,
+                )
+            found: list[_Point] = []
+            sets: set[str] = set()
+            if head is not None:
+                set_digest = str(head[0])
+                sets.add(set_digest)
+                capture = self._capture(conn, pair, set_digest)
+                peak = self._peak(conn, set_digest, window.through)
+                if boundaries is not None:
+                    self._next(
+                        conn,
+                        "SELECT recorded_us FROM set_peaks WHERE set_digest=? AND sequence>? "
+                        "ORDER BY sequence LIMIT 1",
+                        (set_digest, window.through),
+                        boundaries,
+                    )
+                if peak is not None and peak[2] >= window.lo:
+                    found.append(_Point(peak[0], peak[3], peak[1], peak[2], capture))
+                if int(head[3]) >= max(window.lo, 0):
+                    found.append(
+                        _Point(
+                            int(head[1]), int(head[10]), int(head[2]), int(head[3]), str(head[4])
+                        )
+                    )
+                if not found and window.lo > 0:
+                    self.probes += 1
+                    row = conn.execute(
+                        "SELECT earliest_us, latest_us, recorded_us, sequence "
+                        "FROM observation_points WHERE set_digest=? AND sequence<=? "
+                        "AND sequence>=? ORDER BY sequence DESC LIMIT 1",
+                        (set_digest, window.through, window.lo),
+                    ).fetchone()
+                    if row is not None:
+                        found.append(_point_row(row, capture))
+            if window.late > window.through:
+                self.probes += 1
+                sets.update(
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT set_digest FROM key_heads WHERE contract_digest=? "
+                        "AND observed_content_digest=? AND source=? AND sequence>? "
+                        "AND sequence<=?",
+                        (*pair, source, window.through, window.late),
+                    )
+                )
+                for set_digest in sorted(sets):
+                    self.probes += 1
+                    row = conn.execute(
+                        "SELECT earliest_us, latest_us, recorded_us, sequence "
+                        "FROM observation_points WHERE set_digest=? AND sequence>? "
+                        "AND sequence<=? AND sequence>=? AND latest_us<=? "
+                        "ORDER BY earliest_us DESC LIMIT 1",
+                        (set_digest, window.through, window.late, window.lo, window.deadline_us),
+                    ).fetchone()
+                    if row is not None:
+                        found.append(_point_row(row, self._capture(conn, pair, set_digest)))
+            for point in found:
+                if best is None or point.rank() > best.rank():
+                    best = point
         return best
 
     def _transition_point(
@@ -1551,47 +1838,117 @@ class ReobservationReader:
         conn: sqlite3.Connection,
         claim_id: str,
         pair: tuple[str, str],
-        *,
-        at_us: int,
-        through: int,
-        deadline_us: int,
+        window: "_Window",
         boundaries: set[datetime] | None = None,
     ) -> _Point | None:
         """The latest re-check of one cited key in new bytes that applies to this lineage.
 
-        The latest transition from the key that does not except the lineage,
-        then the latest observation of the content it moved to, recorded since
-        (ruling 1d): later unchanged fetches of the new bytes keep re-checking
-        the Claims that still cite the old content, with no record per run.
+        The latest transition from the key the window admits that does not
+        except the lineage (one seek), then the best observation of the content
+        it moved to: those bytes state what the Claim states (D-R8), so every
+        fetch of them re-checks it, with no record per run (ruling 1d).
         """
 
         self.probes += 1
+        upper = window.late if window.late > window.through else window.through
         row = conn.execute(
-            _LAST_TRANSITION, (*pair, at_us, through, deadline_us, claim_id)
+            "SELECT earliest_us, latest_us, recorded_us, sequence, to_capture_digest, "
+            "to_content_digest FROM transitions t WHERE contract_digest=? "
+            "AND from_content_digest=? AND sequence<=? AND sequence>=? AND latest_us<=? "
+            "AND NOT EXISTS (SELECT 1 FROM transition_exceptions e "
+            "WHERE e.sequence=t.sequence AND e.claim_id=?) "
+            "ORDER BY sequence DESC, to_capture_digest DESC LIMIT 1",
+            (*pair, upper, window.lo, window.deadline_us, claim_id),
         ).fetchone()
         if boundaries is not None:
-            upcoming = conn.execute(_NEXT_TRANSITION, (*pair, at_us, through)).fetchone()
-            if upcoming is not None:
-                boundaries.add(_from_micros(upcoming[0]))
+            self._next(
+                conn,
+                "SELECT recorded_us FROM transitions WHERE contract_digest=? "
+                "AND from_content_digest=? AND sequence>? ORDER BY sequence LIMIT 1",
+                (*pair, window.through),
+                boundaries,
+            )
         if row is None:
             return None
-        moved = _Point(
-            observed_us=int(row[0]),
-            latest_us=int(row[1]),
-            recorded_us=int(row[2]),
-            sequence=int(row[3]),
-            capture_digest=str(row[4]),
-        )
-        later = self._content_point(
-            conn,
-            (pair[0], str(row[5])),
-            at_us=at_us,
-            through=through,
-            deadline_us=deadline_us,
-            after_us=moved.recorded_us,
-            boundaries=boundaries,
-        )
+        moved = _Point(int(row[0]), int(row[1]), int(row[2]), int(row[3]), str(row[4]))
+        later = self._key_point(conn, (pair[0], str(row[5])), window, boundaries)
         return later if later is not None and later.rank() > moved.rank() else moved
+
+    def _key_sequence(self, conn: sqlite3.Connection, pair: tuple[str, str], through: int) -> int:
+        """The last content observation or transition a read of one key depends on.
+
+        Per source, its key head and its set's last point (one seek each); the
+        key's latest transition and its target content's sources likewise.
+        """
+
+        found = 0
+        targets = [pair]
+        self.probes += 1
+        row = conn.execute(
+            "SELECT sequence, to_content_digest FROM transitions WHERE contract_digest=? "
+            "AND from_content_digest=? AND sequence<=? ORDER BY sequence DESC LIMIT 1",
+            (*pair, through),
+        ).fetchone()
+        if row is not None:
+            found = int(row[0])
+            targets.append((pair[0], str(row[1])))
+        for key in targets:
+            for source in self._sources(conn, key):
+                head = self._head(conn, key, source, through)
+                if head is None:
+                    continue
+                found = max(found, int(head[5]))
+                self.probes += 1
+                last = conn.execute(
+                    "SELECT sequence FROM observation_points WHERE set_digest=? AND sequence<=? "
+                    "ORDER BY sequence DESC LIMIT 1",
+                    (str(head[0]), through),
+                ).fetchone()
+                if last is not None:
+                    found = max(found, int(last[0]))
+        return found
+
+    def _version_window(
+        self, conn: sqlite3.Connection, claim_id: str, version: str
+    ) -> tuple[int, int] | None:
+        """The journal positions made while one Claim version was live at the head.
+
+        The version's accepted generations come from the lineage's own path
+        history; each bound is one seek on ``instants`` by generation. None
+        when the version was never accepted or no content record was made
+        while it was live.
+        """
+
+        path = claim_path(claim_id)
+        with self.instance.accepted_history_reader() as history:
+            versions = history.member_versions([path])[path]
+        start: int | None = None
+        end: int | None = None
+        for index, (generation, digest) in enumerate(versions):
+            if digest == version:
+                start = generation
+                end = versions[index + 1][0] if index + 1 < len(versions) else None
+        if start is None:
+            return None
+        self.probes += 1
+        low = conn.execute(
+            "SELECT sequence FROM instants WHERE generation>=? ORDER BY generation, sequence "
+            "LIMIT 1",
+            (start,),
+        ).fetchone()
+        if low is None:
+            return None
+        if end is None:
+            return int(low[0]), _NEVER
+        self.probes += 1
+        high = conn.execute(
+            "SELECT sequence FROM instants WHERE generation<? "
+            "ORDER BY generation DESC, sequence DESC LIMIT 1",
+            (end,),
+        ).fetchone()
+        if high is None or int(high[0]) < int(low[0]):
+            return None
+        return int(low[0]), int(high[0])
 
     def latest_version_record(
         self,
@@ -1607,10 +1964,13 @@ class ReobservationReader:
         count only when admitted while that exact version was live: one seek
         on ``reobservations_by_version``. The content observations and
         transitions of the content the version cites (``keys``) count when
-        their call ended by ``observed_by`` (a call running across the deadline
-        does not count, ruling 1b) and the version was live at the head the
-        record was made at; the instant reported is the call's earliest. The
-        latest of these wins; its journal record is read by its sequence.
+        recorded while the version was live at the head (its live interval,
+        as journal positions) and their call ended by ``observed_by`` (a call
+        running across the deadline does not count, ruling 1b); the instant
+        reported is the call's earliest. The best eligible one is selected
+        within those bounds, never selected globally and then discarded
+        (F-002). The latest of these wins; its journal record is read by its
+        sequence.
         """
 
         observed_us = _micros(observed_by)
@@ -1625,22 +1985,26 @@ class ReobservationReader:
                 _VERSION_RECORD, (claim_id, version, observed_us, through)
             ).fetchone()
             content: list[tuple[_Point, tuple[str, str]]] = []
-            if keys and self._content_observed(conn):
+            live = (
+                self._version_window(conn, claim_id, version)
+                if keys and self._content_observed(conn)
+                else None
+            )
+            if live is not None:
+                window = self._window(
+                    conn,
+                    at_us=_NEVER,
+                    through=through,
+                    deadline_us=observed_us,
+                    lo=live[0],
+                    hi=live[1],
+                )
                 for pair in sorted(
                     {(key.contract_digest, key.observed_content_digest) for key in keys}
                 ):
                     for point in (
-                        self._content_point(
-                            conn, pair, at_us=_NEVER, through=through, deadline_us=observed_us
-                        ),
-                        self._transition_point(
-                            conn,
-                            claim_id,
-                            pair,
-                            at_us=_NEVER,
-                            through=through,
-                            deadline_us=observed_us,
-                        ),
+                        self._key_point(conn, pair, window),
+                        self._transition_point(conn, claim_id, pair, window),
                     ):
                         if point is not None:
                             content.append((point, pair))
@@ -1672,41 +2036,36 @@ class ReobservationReader:
                     point.sequence,
                 )
             )
+        if not candidates:
+            return None
+        _rank, record, sequence = max(candidates, key=lambda item: item[0])
         journal = self.store._journal(create=False)
-        for _rank, record, sequence in sorted(candidates, key=lambda item: item[0], reverse=True):
-            self.rows_read += 1
-            stored = (
-                ()
-                if journal is None
-                else journal.select_records(
-                    self.store.stream,
-                    partition_id=_PARTITION,
-                    first_sequence=sequence,
-                    last_sequence=sequence,
-                )
+        self.rows_read += 1
+        stored = (
+            ()
+            if journal is None
+            else journal.select_records(
+                self.store.stream,
+                partition_id=_PARTITION,
+                first_sequence=sequence,
+                last_sequence=sequence,
             )
-            if (
-                len(stored) != 1
-                or stored[0].record.event_kind != "claim_reobservation"
-                or stored[0].record.recorded_at != record.recorded_at
-            ):
-                raise ClaimReobservationJournalCorrupt(
-                    f"re-observation record {sequence} of Claim {claim_id} is not in the journal "
-                    "its projection was caught up from"
-                )
-            coordinate = stored[0].record.accepted_coordinate
-            if (
-                row is not None
-                and sequence == int(row[5])
-                or self.store._version_at(claim_id, coordinate.git_oid) == version
-            ):
-                return RecordedReobservation(
-                    record=record,
-                    sequence=sequence,
-                    record_digest=stored[0].record_digest,
-                    accepted_coordinate=coordinate,
-                )
-        return None
+        )
+        if (
+            len(stored) != 1
+            or stored[0].record.event_kind != "claim_reobservation"
+            or stored[0].record.recorded_at != record.recorded_at
+        ):
+            raise ClaimReobservationJournalCorrupt(
+                f"re-observation record {sequence} of Claim {claim_id} is not in the journal "
+                "its projection was caught up from"
+            )
+        return RecordedReobservation(
+            record=record,
+            sequence=sequence,
+            record_digest=stored[0].record_digest,
+            accepted_coordinate=stored[0].record.accepted_coordinate,
+        )
 
     def latest(
         self, claim_id: str, keys: Sequence[ReobservationKey], at: datetime
@@ -1720,9 +2079,9 @@ class ReobservationReader:
         last change point of that key recorded by ``at``), the content
         observations of the key (ruling 1a, the call's earliest instant), and
         the latest transition from the key that does not except this lineage,
-        with the later observations of the content it moved to (ruling 1d).
-        Work is a few seeks per distinct key, however many records the lineage
-        holds, runs observed the content, or were recorded late.
+        with the observations of the content it moved to (ruling 1d). Work is
+        a few seeks per distinct key and observing source, however many
+        records the lineage holds, runs observed the content, or sets held it.
         """
 
         at_us = _micros(at)
@@ -1740,6 +2099,7 @@ class ReobservationReader:
             shared = self._content_observed(conn)
             if not sequence and not shared:
                 return ReobservationReading()
+            window = self._window(conn, at_us=at_us, through=through) if shared else None
             found: dict[tuple[str, str], _Point | None] = {}
             for key in keys:
                 pair = (key.contract_digest, key.observed_content_digest)
@@ -1763,29 +2123,14 @@ class ReobservationReader:
                                 sequence=0,
                                 capture_digest=str(hit[0]),
                             )
-                    if shared:
+                    if window is not None:
                         for point in (
-                            self._content_point(
-                                conn,
-                                pair,
-                                at_us=at_us,
-                                through=through,
-                                deadline_us=_NEVER,
-                                boundaries=boundaries,
-                            ),
-                            self._transition_point(
-                                conn,
-                                claim_id,
-                                pair,
-                                at_us=at_us,
-                                through=through,
-                                deadline_us=_NEVER,
-                                boundaries=boundaries,
-                            ),
+                            self._key_point(conn, pair, window, boundaries),
+                            self._transition_point(conn, claim_id, pair, window, boundaries),
                         ):
                             if point is not None and (best is None or point.rank() > best.rank()):
                                 best = point
-                        sequence = max(sequence, self._key_sequence(conn, claim_id, pair, through))
+                        sequence = max(sequence, self._key_sequence(conn, pair, through))
                     self.rows_read += int(best is not None)
                     found[pair] = best
                 selected = found[pair]
@@ -1809,6 +2154,30 @@ class ReobservationReader:
             boundaries=tuple(sorted(boundaries)),
             sequence=sequence,
         )
+
+
+def _point_row(row: Sequence[object], capture: str) -> _Point:
+    """A point from an (earliest, latest, recorded, sequence) row."""
+
+    earliest, latest, recorded, sequence = (int(cast(int, item)) for item in row)
+    return _Point(earliest, latest, recorded, sequence, capture)
+
+
+@dataclass(frozen=True)
+class _Window:
+    """The journal positions one read admits.
+
+    ``through`` is the last position whose records all count (by the read's
+    instant, read position, version interval end and deadline); ``lo`` the
+    first a Claim version's interval admits; with a deadline, ``late`` is the
+    last position of the bounded window searched for calls that ended by it
+    but were recorded after it.
+    """
+
+    through: int
+    lo: int = 0
+    deadline_us: int = _NEVER
+    late: int = 0
 
 
 def _after_fork_in_child() -> None:
@@ -1846,16 +2215,23 @@ def cited_content_keys(
 ) -> tuple[ReobservationKey, ...]:
     """Each Capture digest with the (contract, content) it observed: one lookup each."""
 
-    keys: list[ReobservationKey] = []
     with instance.bind_accepted_projection(coordinate) as projection:
-        for digest in capture_digests:
-            row = projection.typed.connection.execute(
-                "SELECT contract_digest, observed_content_digest FROM captures "
-                "WHERE capture_digest=?",
-                (digest,),
-            ).fetchone()
-            if row is not None:
-                keys.append(ReobservationKey(digest, str(row[0]), str(row[1])))
+        return content_keys_on(projection.typed.connection, capture_digests)
+
+
+def content_keys_on(
+    connection: sqlite3.Connection, capture_digests: Sequence[str]
+) -> tuple[ReobservationKey, ...]:
+    """``cited_content_keys`` on an accepted projection connection already bound."""
+
+    keys: list[ReobservationKey] = []
+    for digest in capture_digests:
+        row = connection.execute(
+            "SELECT contract_digest, observed_content_digest FROM captures WHERE capture_digest=?",
+            (digest,),
+        ).fetchone()
+        if row is not None:
+            keys.append(ReobservationKey(digest, str(row[0]), str(row[1])))
     return tuple(keys)
 
 
@@ -1896,6 +2272,7 @@ __all__ = [
     "ReobservationRecord",
     "RecordedReobservation",
     "cited_content_keys",
+    "content_keys_on",
     "cited_reobservation_keys",
     "reobservation_journal_identity",
     "reobservation_journal_signature",

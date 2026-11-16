@@ -1712,9 +1712,10 @@ finalizes the attempt.
 An observation counts for freshness through the content it observed. Under a
 ClaimType's `evidence_freshness.stale_after`, a cited Capture expires at the
 latest instant its contract and content were observed -- its own
-`observed_at`, a content observation's earliest member instant, a transition
-from that content (and the later observations of the content it moved to,
-unless the transition excepts the Claim), or a per-Claim re-observation an
+`observed_at`, the greatest earliest member instant among the calls that
+observed that content (an older call recorded later never moves it back), a
+transition from that content (and the observations of the content it moved
+to, unless the transition excepts the Claim), or a per-Claim re-observation an
 authored restatement recorded -- plus `stale_after`. Only observations
 recorded by the evaluation instant count, so a verdict evaluated at an earlier
 instant reproduces byte for byte and its committed expirations still verify.
@@ -1727,9 +1728,12 @@ the clock has gone back: that one value is the journal record's `recorded_at`,
 so records append in recorded order by construction, a rebuild reproduces the
 projection exactly, and a journal out of recorded order is refused as corrupt
 (`cruxible.claim.reobservation_journal_corrupt`). The latest applicable
-observation of a cited contract and content is read with a few seeks at the
-evaluation instant, however long its history (kept in full for audit) or
-however many runs observed it. An observation that set an expiry is named in
+observation of a cited contract and content is read with a few seeks per
+observing Procedure call at the evaluation instant, however long its history
+(kept in full for audit), however many runs observed it, or however many
+different result sets held it. A prediction settles on the best observation
+made while the predicted Claim version was live whose call ended by the
+deadline, never on one made after the version was retired. An observation that set an expiry is named in
 the verdict's `freshness_expirations` entry (`reobserved_by`,
 `reobserved_at`). A Capture's minimum retention counts from the latest
 instant its contents were observed, not its envelope's first observation. A
