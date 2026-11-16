@@ -3275,12 +3275,7 @@ def approve_proposal(
         )
     configured = _root_ctx_obj().get("principal_id")
     if signer_id is None:
-        if configured is None:
-            raise click.UsageError(
-                "proposal approve needs the signing principal; repair: pass --signer-id ID "
-                "or set CRUXIBLE_PRINCIPAL_ID"
-            )
-        signer_id = str(configured)
+        signer_id = str(configured) if configured is not None else _signer_from_daemon()
     resolved_signer: str = signer_id
 
     # The prompt shows the reviewer's view `proposal review` prints (its first page).
@@ -3403,6 +3398,57 @@ def _replaces_line(proposal_id: str, source_id: str) -> str:
     """A readmission's receipt names the proposal it replaces, which is the one reviewed."""
 
     return f"{proposal_id} replaces {source_id} (readmitted at the head); act on {proposal_id}"
+
+
+def _signer_from_daemon() -> str:
+    """The signer when this process configures none: the principal the daemon says acts.
+
+    A bearer credential bound to a principal names it. A process acting as no
+    principal is refused exactly as every other proposal act refuses it (the
+    daemon's ``authoring_refusal``: ``principal_unconfigured`` or
+    ``credential_unbound``), with ``--principal-id ID --key FILE`` added to the
+    repair: the submitter must be a principal too, so ``--signer-id`` alone
+    would still refuse.
+    """
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.errors import PrincipalRefusedError
+
+    identity = _server_call(
+        lambda client, instance_id: client.whoami(instance_id),
+        command_name="cruxible proposal approve",
+    )
+    if identity.can_author and identity.actor_id is not None:
+        return identity.actor_id
+    refusal = identity.authoring_refusal
+    if refusal is None or refusal.code not in {
+        "cruxible.identity.principal_unconfigured",
+        "cruxible.identity.credential_unbound",
+    }:
+        if identity.actor_id is not None and identity.actor_id_source != "local_operator":
+            return identity.actor_id
+        raise click.UsageError(
+            "proposal approve needs the signing principal; repair: pass --signer-id ID "
+            "or set CRUXIBLE_PRINCIPAL_ID"
+        )
+    repair = refusal.repair
+    if isinstance(repair, RepairOperation):
+        repair = repair.model_copy(
+            update={"arguments": {**repair.arguments, "or_pass": "--principal-id ID --key FILE"}}
+        )
+    code: Literal[
+        "cruxible.identity.principal_unconfigured", "cruxible.identity.credential_unbound"
+    ] = (
+        "cruxible.identity.principal_unconfigured"
+        if refusal.code == "cruxible.identity.principal_unconfigured"
+        else "cruxible.identity.credential_unbound"
+    )
+    raise PrincipalRefusedError(
+        code,
+        f"{refusal.detail}; to approve, pass --principal-id ID --key FILE (it signs as that "
+        "principal; --signer-id names a different signer, whose approval it submits)",
+        repair=repair,
+    )
 
 
 def _landed_same_change_set(result: contracts.ProposalApprovalResult) -> str | None:

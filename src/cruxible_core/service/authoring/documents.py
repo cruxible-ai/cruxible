@@ -37,6 +37,7 @@ from cruxible_client.contracts.errors import (
     ProposalActivationRequestInvalid,
     ProposalAlreadyAccepted,
     ProposalIntegrityError,
+    ProposalReadmitRequiresResubmission,
     ProposalStale,
     SettlementIntegrityError,
 )
@@ -637,7 +638,11 @@ def outstanding_approvals(
 
 
 def refuse_accepted(
-    instance: PlaybillInstance, proposal_id: str, candidate_digest: str | None
+    instance: PlaybillInstance,
+    proposal_id: str,
+    candidate_digest: str | None,
+    *,
+    acts: str = "approve or activate",
 ) -> None:
     """Refuse a settlement door asked to settle a proposal accepted state already holds.
 
@@ -651,7 +656,7 @@ def refuse_accepted(
         accepted = history.generation_for_candidate(candidate_digest)
     if accepted is not None:
         raise ProposalAlreadyAccepted(
-            proposal_id, git_oid=accepted.git_oid, generation=accepted.sequence
+            proposal_id, git_oid=accepted.git_oid, generation=accepted.sequence, acts=acts
         )
 
 
@@ -687,6 +692,24 @@ def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
             proposal_id,
             reason="changed_since_base",
             detail="changed at the head since its base: " + render_stale_paths(stale_paths),
+        )
+    from cruxible_core.service.proposals.proposals import cannot_rebase
+    from cruxible_core.service.proposals.recompile import lowering_origin
+
+    try:
+        origin = lowering_origin(instance, proposal)
+    except ProposalStale:
+        origin = None
+    # Retained authoring input recompiles at the head; anything else would land
+    # by its bytes, which a late signer may not do for a kit change or a closure.
+    reason = None if origin is not None else cannot_rebase(proposal, late_signer=True)
+    if reason is not None:
+        # Refused before anything is evaluated or published at the head.
+        why, command = reason
+        raise ProposalReadmitRequiresResubmission(
+            f"proposal {proposal_id} {why}, so it cannot be landed at the head for a signer "
+            f"registered after its base; its author {proposal.admission.actor_id!r} "
+            f"{command}, and you approve the new proposal"
         )
     recompiled = _recompile_for_review(instance, proposal, approver=True)
     if recompiled is None:
@@ -1084,10 +1107,17 @@ def _recompile_for_review(
         origin = lowering_origin(instance, source)
     except ProposalStale:
         origin = None
-    if origin is None or origin.admission.procedure_operation is None:
+    from cruxible_core.service.proposals.proposals import holds_claim_type_closure
+
+    if (origin is None or origin.admission.procedure_operation is None) and not (
+        origin is not None and holds_claim_type_closure(source)
+    ):
         # Nothing it touches changed since its base: the same change set lands
         # at the head by its own bytes. A Line's or Procedure's proposal
-        # re-decides at the head instead, as its recompilation always has.
+        # re-decides at the head instead, as its recompilation always has, and
+        # so does an authored change set holding a ClaimType among other
+        # members (its closure is rebuilt from its retained input), exactly as
+        # its author's readmit does.
         landed = _land_exact_bytes_for_review(instance, source)
         if landed is not None:
             return landed
@@ -1141,13 +1171,15 @@ def _land_exact_bytes_for_review(
         return None
     if candidate_accepted(instance, source.candidate.candidate_digest):
         return None  # accepted itself: nothing is left to land
-    successor = land_exact_bytes(instance, source)
+    # Checked first: a landing the head refuses publishes nothing.
+    successor = land_exact_bytes(instance, source, check_first=True)
     if successor.candidate is None:
         raise ProposalStale(
             source.admission.proposal_id,
             reason="evaluation_refused",
             detail="; ".join(item.code for item in successor.evaluation.diagnostics),
         )
+    assert isinstance(successor, ProposalResult)
     before = {member.path: member.candidate_artifact_digest for member in source.candidate.members}
     after = {
         member.path: member.candidate_artifact_digest for member in successor.candidate.members
