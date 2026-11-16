@@ -2454,7 +2454,14 @@ row read, traversal paths, bound parameters, verdict, and the
 
 Author named queries with a `query_definition` input through `cruxible authoring
 submit` (or `compile` for a staged intent); it lands when policy and the
-caller's tier allow. A definition needs only `identity`, `entry` and
+caller's tier allow. A filter's `now` is the read's evaluation time
+(`--evaluation-time`; a Line's run reads at its own evaluation instant) and takes
+a fixed offset: `where: incident.opened_at < now - 3d` or `due_at < now + 12h`,
+units `d`, `h`, `m`, `s` in UTC (months and years refuse with
+`cruxible.query.time_offset_unit_unsupported`; write days). The offset is held in
+whole seconds, so `now - 72h` and `now - 3d` are one definition, shown as
+`now - 3d`; such a query is a `cruxible-query-definition-v4` (see [Asking
+questions](asking-questions.md)). A definition needs only `identity`, `entry` and
 `result_binding` (plus the `where`, `projection` and `parameters` it uses);
 the rest defaults to one row per Subject (`result_shape: subject`,
 `result_cardinality: many`, `dedupe: subject`), supported and current values

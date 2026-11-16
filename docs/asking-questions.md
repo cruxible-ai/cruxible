@@ -153,8 +153,25 @@ written in full.
 
 Filters support `==`, `!=`, `<`, `<=`, `>`, `>=`, `in (value, value)`,
 `exists binding.predicate`, parentheses, and `not`, `and`, `or` in that order of
-precedence. Quote text literals; `$name` references a declared parameter and
-`now` references the query's evaluation time.
+precedence. Quote text literals (double quotes); `$name` references a declared
+parameter and `now` references the query's evaluation time.
+
+`now` takes a fixed offset, Elasticsearch style: `incident.opened_at < now - 3d`
+(opened more than three days ago), `remediation.due_at < now + 12h` (due within
+twelve hours, or overdue). Units are `d`, `h`, `m` and `s`, all fixed length and
+in UTC; months and years vary in length and refuse with
+`cruxible.query.time_offset_unit_unsupported` (write `now - 90d`), and ISO
+durations such as `P3D` are not read. A shifted `now` is a timestamp, so it
+compares only with a timestamp field. The offset is stored in whole seconds:
+`now - 72h` and `now - 3d` are one definition, and `get` shows it in the largest
+unit that divides it (`now - 3d`). A query that shifts `now` is stored as
+`cruxible-query-definition-v4`; one that does not stays
+`cruxible-query-definition-v3`.
+
+`now` is always an explicit evaluation time, never a wall clock read inside the
+query: `query --name` takes `--evaluation-time` (default the current instant),
+and a Line's Procedure that reads a query gets `now` from its run's evaluation
+instant, so `opened_at < now - 3d` in a Line moves forward with each run.
 
 A relation hop adds a binding:
 
