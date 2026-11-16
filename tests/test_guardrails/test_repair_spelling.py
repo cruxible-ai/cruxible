@@ -220,7 +220,7 @@ def test_a_placeholder_reason_is_refused_where_the_reason_is_read(
     module, name = model_path.split(":")
     model = getattr(importlib.import_module(module), name)
     errors: list[str] = []
-    for text in ("<TEXT>", "<REASON>", " <TEXT> "):
+    for text in ("<TEXT>", "<REASON>"):
         try:
             model.model_validate({field: text})
         except ValidationError as exc:
@@ -229,11 +229,14 @@ def test_a_placeholder_reason_is_refused_where_the_reason_is_read(
             raise AssertionError(f"{name}.{field} accepted {text!r}")
     assert errors and all("placeholder" in message for message in errors), errors
     # Ordinary text, including text that mentions a placeholder, still passes the field.
-    for text in ("Reviewer confirmed the fix.", "replace <TEXT> later"):
+    for text in ("Reviewer confirmed the fix.", "replace <TEXT> later", " <TEXT> ", "<HTML>"):
         try:
             model.model_validate({field: text})
         except ValidationError as exc:
-            assert all(item["loc"][:1] != (field,) for item in exc.errors()), exc
+            assert not any(
+                item["loc"][:1] == (field,) and "placeholder" in str(item["msg"])
+                for item in exc.errors()
+            ), exc
 
 
 def test_identifier_placeholders_fail_their_own_formats() -> None:
@@ -302,8 +305,7 @@ def test_a_composed_repair_keeps_every_control_it_carries() -> None:
         'cruxible_block_repin(file="status", block="tiers", dry_run=true, claims=[])'
     )
     assert render_repair(repin, surface="sdk") == (
-        'cx.block.repin("status", "tiers", evaluation_time=datetime.now(UTC), claims=[], '
-        "dry_run=True)"
+        'cx.block.repin("status", "tiers", claims=[], dry_run=True)'
     )
     # Without controls, the composer's line is unchanged.
     plain = RepairOperation(

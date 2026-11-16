@@ -5674,7 +5674,7 @@ class ProjectionBlocks:
         artifacts: Sequence[ArtifactIdentity] | None = None,
         currency_policy: ProjectionCurrencyPolicy | None = None,
         backing_digest: str | None = None,
-        evaluation_time: datetime,
+        evaluation_time: datetime | None = None,
         body: str | bytes | None = None,
         compact: bool = True,
         render: bool = False,
@@ -5686,7 +5686,8 @@ class ProjectionBlocks:
         repins preserve that format. ``render`` writes the body as a table or list from
         the block's one query backing instead of ``body``; a body that is still its
         query's rendering is rendered again without it. ``dry_run`` returns the stamp
-        it would write and writes nothing.
+        it would write and writes nothing. ``evaluation_time`` defaults to now, on this
+        handle's clock, as the CLI and MCP repins do.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
@@ -5718,7 +5719,9 @@ class ProjectionBlocks:
             artifacts=artifacts,
             currency_policy=currency_policy,
             backing_digest=backing_digest,
-            evaluation_time=evaluation_time,
+            evaluation_time=(
+                evaluation_time if evaluation_time is not None else self._playbill._clock()
+            ),
             coordinate=self._playbill.coordinate,
             body=body.encode("utf-8") if isinstance(body, str) else body,
             compact=compact,

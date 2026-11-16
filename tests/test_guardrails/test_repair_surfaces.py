@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import re
 import shlex
 import typing
 from collections import defaultdict
@@ -40,7 +41,11 @@ import click
 import httpx
 import pytest
 
-from cruxible_client.contracts.placeholders import PLACEHOLDER_PATTERN, is_placeholder
+from cruxible_client.contracts.placeholders import (
+    PLACEHOLDER_PATTERN,
+    RENDERED_PLACEHOLDERS,
+    is_placeholder,
+)
 from cruxible_client.contracts.repair_spelling import (
     REPAIR_SPELLINGS,
     RepairSpelling,
@@ -64,34 +69,115 @@ _NOT_REPAIR_OPERATIONS = frozenset(
     }
 )
 
-#: Producers whose operation or arguments are computed, so a static read cannot
-#: collect their keys; each names the keys it can carry, reviewed by hand.
-COMPUTED_PRODUCERS: Mapping[str, frozenset[str]] = {
-    # server/errors.py: the credential refusals' context, and the bootstrap
-    # refusals' instance (operation from _BOOTSTRAP_REPAIR_OPERATIONS).
-    "credential.mint": frozenset(
-        {
-            "refused_operation",
-            "credential_env",
-            "accepted_credentials",
-            "credential_options",
-            "unbound_credential_id",
-        }
-    ),
-    "credential.claim-bootstrap": frozenset({"instance_id"}),
-    "credential.recover-admin": frozenset({"instance_id"}),
-    # (service/identity.py adds an unbound credential's id, for the reader.)
-    # next.py rows build these from dicts the row derives (the composer's keys).
-    "cruxible.set": frozenset(
-        {"subject", "field", "value", "role", "capture_digest", "evidence_contract", "claim_id"}
-    ),
-    "cruxible.rebind": frozenset({"claim_id", "citation", "section_file", "section"}),
-    "cruxible.block.repin": frozenset({"source_id", "block_id", "claim", "clear_claims"}),
-    "cruxible.block.depublish": frozenset({"source_id", "block_id"}),
-    "cruxible.proposal.approve": frozenset({"proposal_id", "signer_id"}),
-    "cruxible.authoring.example": frozenset({"example", "claim_id", "capture_digest"}),
-    "cruxible.kit.add": frozenset({"reference"}),
-    "cruxible.get": frozenset({"ref", "detail", "range"}),
+#: Producers a static read cannot resolve -- a computed operation name, or
+#: arguments that are not one literal dict -- named by file and function, with
+#: every operation each can produce and the keys it can carry. ``CHANGE`` stands
+#: for the change operation a change-control refusal repairs (each found where
+#: its change runs). The scan fails on any unresolved producer missing here.
+CHANGE = "<change operation>"
+COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
+    ("src/cruxible_core/errors.py", "ChangeRefusedError.__init__"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    ("src/cruxible_core/service/change_preview.py", "ChangeMode.refuse_moved_head"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    # Change control passing its caller's operation through: each caller's own
+    # literal operation is scanned where it runs.
+    ("src/cruxible_core/service/change_preview.py", "ChangeMode.confirm_head"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    ("src/cruxible_core/service/change_preview.py", "StateChange.observe"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    ("src/cruxible_core/service/change_preview.py", "_pin"): {CHANGE: frozenset({"dry_run"})},
+    ("src/cruxible_core/service/change_preview.py", "change_scope"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    ("src/cruxible_core/service/change_preview.py", "state_change_scope"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    ("src/cruxible_core/service/authoring/documents.py", "admit_proposal"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    ("src/cruxible_core/service/discovery/curation.py", "_record_ruling"): {
+        CHANGE: frozenset({"dry_run"})
+    },
+    ("src/cruxible_core/server/errors.py", "_repair_for_error"): {
+        "credential.mint": frozenset(
+            {"refused_operation", "credential_env", "accepted_credentials", "credential_options"}
+        ),
+        "credential.claim-bootstrap": frozenset({"instance_id"}),
+        "credential.recover-admin": frozenset({"instance_id"}),
+    },
+    ("src/cruxible_core/service/identity.py", "credential_unbound_refusal"): {
+        "credential.mint": frozenset({"unbound_credential_id"})
+    },
+    ("src/cruxible_core/service/kits.py", "_require_staged"): {
+        "cruxible.kit.build": frozenset(),
+        "cruxible.kit.add": frozenset(),
+    },
+    ("src/cruxible_core/service/authoring/landing.py", "_stopped"): {
+        "cruxible.proposal.approve": frozenset({"proposal_id", "signer_id"})
+    },
+    ("src/cruxible_core/service/discovery/get.py", "_body"): {
+        "cruxible.get": frozenset({"ref", "detail", "range"})
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_restating_repair"): {
+        "cruxible.authoring.bind": frozenset({"claim_id", "citation_id", "source_id"}),
+        "cruxible.authoring.example": frozenset({"example", "claim_id", "capture_digest"}),
+        "cruxible.set": frozenset(
+            {"subject", "field", "value", "role", "capture_digest", "evidence_contract", "claim_id"}
+        ),
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_evidence_repair"): {
+        "cruxible.set": frozenset(
+            {"subject", "field", "value", "role", "capture_digest", "evidence_contract", "claim_id"}
+        )
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_contradicting_capture_repair"): {
+        "cruxible.set": frozenset(
+            {"subject", "field", "value", "role", "capture_digest", "evidence_contract", "claim_id"}
+        )
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_claim_slot_rows"): {
+        "cruxible.authoring.example": frozenset({"example", "claim_id", "capture_digest"})
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_contest_repair"): {
+        "cruxible.authoring.example": frozenset({"example", "claim_id", "capture_digest"})
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_citation_drift_item"): {
+        "cruxible.rebind": frozenset({"claim_id", "citation", "section_file", "section"})
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_evidence_erased_items"): {
+        "cruxible.rebind": frozenset({"claim_id", "citation"})
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_consumer_stalled_items"): {
+        # Each consumer's health repair (ConsumerRepair, scanned with the rest).
+        "cruxible.floor.export": frozenset({"mode"}),
+        "cruxible.line.enable": frozenset({"line"}),
+        "cruxible.line.dispatch": frozenset({"line"}),
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_kit_resume_items"): {
+        "cruxible.kit.add": frozenset({"reference"})
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_projection_marker_invalid_item"): {
+        "cruxible.block.depublish": frozenset({"source_id", "block_id"}),
+        "cruxible.block.repin": frozenset({"source_id", "block_id"}),
+    },
+    ("src/cruxible_core/service/discovery/next.py", "_projection_items"): {
+        "cruxible.block.repin": frozenset({"source_id", "block_id", "claim", "clear_claims"}),
+        "cruxible.block.depublish": frozenset({"source_id", "block_id"}),
+    },
+    (
+        "packages/cruxible-client/src/cruxible_client/authoring/blocks.py",
+        "_sync_item_from_read_refusal",
+    ): {"cruxible.block.repin": frozenset({"source_id", "block_id", "claim", "clear_claims"})},
+    ("packages/cruxible-client/src/cruxible_client/authoring/vocabulary_file.py", "_call"): {
+        "cruxible.vocabulary.export": frozenset({"force"}),
+        "cruxible.vocabulary.plan": frozenset(),
+        "cruxible.vocabulary.apply": frozenset(),
+    },
 }
 
 #: Operations class (c) cannot execute, with why. Reviewed in the report.
@@ -101,8 +187,35 @@ PLACEHOLDER_EXECUTION_EXCEPTIONS: Mapping[tuple[str, str], str] = {}
 # -- producers ---------------------------------------------------------------------------
 
 
-_REPAIR_CALLS = {"RepairOperation", "PlaybillNextRepairV1", "NextRepair"}
+_REPAIR_CALLS = {"RepairOperation", "PlaybillNextRepairV1", "NextRepair", "ConsumerRepair"}
 _CHANGE_CALLS = {"change_scope", "state_change_scope", "ChangeMode", "_pin", "ChangeRefusedError"}
+
+
+def _producers() -> Iterator[tuple[str, str, ast.Call, str | None]]:
+    """Every call that names an operation: (file, function, call, callee name)."""
+
+    for base in (_ROOT / "src", _ROOT / "packages" / "cruxible-client" / "src"):
+        for path in sorted(base.rglob("*.py")):
+            relative = path.relative_to(_ROOT).as_posix()
+
+            def walk(
+                node: ast.AST, names: tuple[str, ...]
+            ) -> Iterator[tuple[str, str, ast.Call, str | None]]:
+                for child in ast.iter_child_nodes(node):
+                    scope = names
+                    if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                        scope = (*names, child.name)
+                    if isinstance(child, ast.Call) and any(
+                        item.arg == "operation" for item in child.keywords
+                    ):
+                        func = child.func
+                        callee = (
+                            func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+                        )
+                        yield relative, ".".join(scope), child, callee
+                    yield from walk(child, scope)
+
+            yield from walk(ast.parse(path.read_text(encoding="utf-8")), ())
 
 
 @cache
@@ -110,36 +223,70 @@ def producer_keys() -> Mapping[str, frozenset[str]]:
     """Every argument key a producer in the source can put on each operation's repair."""
 
     found: dict[str, set[str]] = defaultdict(set)
-    for base in (_ROOT / "src", _ROOT / "packages" / "cruxible-client" / "src"):
-        for path in base.rglob("*.py"):
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-                kw = {item.arg: item.value for item in node.keywords if item.arg}
-                op = kw.get("operation")
-                if not (isinstance(op, ast.Constant) and isinstance(op.value, str)):
-                    continue
-                if name in _REPAIR_CALLS:
-                    found[op.value]
-                    arguments = kw.get("arguments")
-                    if isinstance(arguments, ast.Dict):
-                        found[op.value].update(
-                            key.value
-                            for key in arguments.keys
-                            if isinstance(key, ast.Constant) and isinstance(key.value, str)
-                        )
-                elif name in _CHANGE_CALLS and "repair" not in kw:
-                    # A change's refusal repairs it with a preview or a retry.
-                    found[op.value].add("dry_run")
-    for operation, keys in COMPUTED_PRODUCERS.items():
-        found[operation].update(keys)
+    unresolved: list[str] = []
+    for relative, function, call, callee in _producers():
+        kw = {item.arg: item.value for item in call.keywords if item.arg}
+        op = kw["operation"]
+        literal = isinstance(op, ast.Constant) and isinstance(op.value, str)
+        is_repair = callee in _REPAIR_CALLS
+        is_change = callee in _CHANGE_CALLS or "dry_run" in kw
+        if not (is_repair or is_change):
+            continue
+        arguments = kw.get("arguments")
+        computed = not literal or (
+            is_repair
+            and arguments is not None
+            and not (isinstance(arguments, ast.Dict) and None not in arguments.keys)
+        )
+        if computed:
+            if (relative, function) not in COMPUTED_PRODUCERS:
+                unresolved.append(f"{relative}::{function} ({callee})")
+            continue
+        assert isinstance(op, ast.Constant)
+        if is_repair:
+            found[op.value]
+            if isinstance(arguments, ast.Dict):
+                found[op.value].update(
+                    key.value
+                    for key in arguments.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                )
+        elif "repair" not in kw:
+            # A change's refusal repairs it with a preview or a retry.
+            found[op.value].add("dry_run")
+    assert not unresolved, (
+        "producers the scan cannot resolve; name each in COMPUTED_PRODUCERS:\n"
+        + "\n".join(unresolved)
+    )
+    for entries in COMPUTED_PRODUCERS.values():
+        for operation, keys in entries.items():
+            if operation != CHANGE:
+                found[operation].update(keys)
     return {
         operation: frozenset(keys)
         for operation, keys in found.items()
         if operation not in _NOT_REPAIR_OPERATIONS
     }
+
+
+def test_every_producer_resolves_or_is_named() -> None:
+    """Review round 4, finding 3: no producer is skipped silently."""
+
+    keys = producer_keys()
+    assert keys["cruxible.vocabulary.export"] >= {"force"}
+    stale = [
+        f"{path}::{function}"
+        for path, function in COMPUTED_PRODUCERS
+        if not any(p == path and f == function for p, f, _c, _n in _producers())
+    ]
+    assert not stale, f"COMPUTED_PRODUCERS names producers that no longer exist: {stale}"
+
+
+def test_every_renderable_operation_has_a_declared_spelling() -> None:
+    """Composer-only operations are checked like the rest (finding 3)."""
+
+    assert set(REPAIR_COMMAND_PATHS) <= set(REPAIR_SPELLINGS)
+    assert set(producer_keys()) <= set(REPAIR_SPELLINGS)
 
 
 def _operations() -> list[str]:
@@ -293,11 +440,20 @@ def _returned(member: Any, attribute: str | None = None) -> Any:
 def _sdk_call(line: str) -> tuple[Any, list[object], dict[str, object]]:
     """The callable an SDK line ends in, with its literal arguments."""
 
-    from cruxible_client.authoring import examples
+    import importlib
+
     from cruxible_client.authoring.sdk import Cruxible
 
-    expression = ast.parse(line, mode="eval").body
-    assert isinstance(expression, ast.Call), line
+    # A line is self-contained: it may import what it calls, then make one call.
+    *setup, last = ast.parse(line, mode="exec").body
+    imported: dict[str, Any] = {}
+    for statement in setup:
+        assert isinstance(statement, ast.ImportFrom) and statement.module, line
+        module = importlib.import_module(statement.module)
+        for alias in statement.names:
+            imported[alias.asname or alias.name] = getattr(module, alias.name)
+    assert isinstance(last, ast.Expr) and isinstance(last.value, ast.Call), line
+    expression = last.value
 
     def resolve(node: ast.expr, attribute: str | None) -> Any:
         """The class this expression evaluates to (``attribute`` picks among a union)."""
@@ -318,7 +474,8 @@ def _sdk_call(line: str) -> tuple[Any, list[object], dict[str, object]]:
 
     func = expression.func
     if isinstance(func, ast.Name):
-        target: Any = getattr(examples, func.id)
+        assert func.id in imported, f"{line}: {func.id} is neither cx nor imported by the line"
+        target: Any = imported[func.id]
     else:
         assert isinstance(func, ast.Attribute), line
         owner = resolve(func.value, func.attr)
@@ -636,8 +793,7 @@ def test_the_fallback_spellings_take_each_surfaces_argument_shape() -> None:
         },
     )
     assert render_repair(repin, surface="sdk") == (
-        'cx.block.repin("status", "summary", evaluation_time=datetime.now(UTC), '
-        'claims=["CLM-1", "CLM-2"], dry_run=True)'
+        'cx.block.repin("status", "summary", claims=["CLM-1", "CLM-2"], dry_run=True)'
     )
     detach = RepairOperation(
         operation="cruxible.block.detach",
@@ -651,48 +807,9 @@ def test_the_fallback_spellings_take_each_surfaces_argument_shape() -> None:
 
 # -- (c) placeholders --------------------------------------------------------------------
 
-
-class _Recorder:
-    """A daemon that answers the version probe and refuses everything else, recording it."""
-
-    def __init__(self) -> None:
-        self.requests: list[httpx.Request] = []
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        from cruxible_client import __version__
-        from cruxible_client.contracts.authoring.models import (
-            AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
-        )
-
-        self.requests.append(request)
-        if request.url.path == "/version":
-            return httpx.Response(
-                200,
-                json={
-                    "version": __version__,
-                    "sdk_contract_snapshot_digest": AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
-                },
-            )
-        return httpx.Response(
-            409, json={"error_type": "CoreError", "message": "recorded, not served"}
-        )
-
-    def leaked(self) -> list[str]:
-        found = []
-        for request in self.requests:
-            text = f"{request.url.path} {request.content.decode('utf-8', 'replace')}"
-            found.extend(PLACEHOLDER_PATTERN.findall(text))
-        return found
-
-
-def _recording_client(recorder: _Recorder) -> Any:
-    from cruxible_client import CruxibleClient
-
-    client = CruxibleClient(base_url="http://placeholder.test")
-    client._client._client = httpx.Client(  # type: ignore[attr-defined]
-        base_url="http://placeholder.test", transport=httpx.MockTransport(recorder)
-    )
-    return client
+#: Bare names an SDK line uses for an object only the caller holds; running the
+#: line unchanged raises NameError on exactly these.
+SDK_BARE_PLACEHOLDERS = frozenset({"SIGNER", "INPUT"})
 
 
 def _placeholder_lines() -> Iterator[tuple[str, str, str]]:
@@ -708,13 +825,117 @@ def _placeholder_lines() -> Iterator[tuple[str, str, str]]:
                 yield operation, surface, line
 
 
+def test_the_renderer_emits_only_the_registered_placeholders() -> None:
+    """The field check refuses exactly these tokens, so none may escape the list."""
+
+    emitted = {
+        token
+        for _operation, _surface, line in _placeholder_lines()
+        for token in PLACEHOLDER_PATTERN.findall(line)
+    }
+    assert emitted <= RENDERED_PLACEHOLDERS, sorted(emitted - RENDERED_PLACEHOLDERS)
+
+
 def test_every_operation_with_a_required_operand_emits_a_placeholder_somewhere() -> None:
     """A new operation with a required operand is covered by class (c) automatically."""
 
     covered = {operation for operation, _surface, _line in _placeholder_lines()}
     for operation, spelling in REPAIR_SPELLINGS.items():
-        if spelling.required and (operation, "*") not in PLACEHOLDER_EXECUTION_EXCEPTIONS:
+        if spelling.required:
             assert operation in covered, f"{operation} renders no placeholder on any client"
+
+
+@pytest.fixture
+def daemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, str, Path]]:
+    """A real initialized daemon behind a client every surface shares."""
+
+    from tests.test_server.conftest import _playbill_http
+
+    from cruxible_client import CruxibleClient
+
+    served = _playbill_http(tmp_path, monkeypatch)
+    test_client, instance_id, reviewer_key = next(served)
+    _REFUSED.clear()
+
+    def record(response: httpx.Response) -> None:
+        # The daemon refusing a request that carries a placeholder (a lookup or
+        # a format check on the operand) is that operand's own refusal.
+        request = response.request
+        text = f"{request.url.path} {request.content.decode('utf-8', 'replace')}"
+        if 400 <= response.status_code < 500 and PLACEHOLDER_PATTERN.search(text):
+            _REFUSED.append(response.status_code)
+
+    test_client.event_hooks["response"].append(record)
+    client = CruxibleClient(base_url="http://testserver")
+    client._client._client = test_client  # type: ignore[attr-defined]  # noqa: SLF001
+    try:
+        yield client, instance_id, reviewer_key
+    finally:
+        served.close()
+
+
+#: 4xx answers the daemon gave to requests carrying a placeholder, this case.
+_REFUSED: list[int] = []
+
+
+def _head(instance_id: str) -> str:
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    return get_playbill_manager().get(instance_id).accepted_coordinate().git_oid
+
+
+#: A served refusal code (``cruxible.write.unknown_kind``, ``runtime_credential.auth_off``).
+_CODE = re.compile(r"\b[a-z_]+\.[a-z_]+(?:\.[a-z_]+)*: ")
+#: Request or field validation, as each client words it.
+_VALIDATION = (
+    "invalid input",
+    "invalid arguments",
+    "Invalid value",
+    "validation failed",
+    "Value error",
+)
+#: A typed client refusal, as the CLI prints one (``Error: ProviderFormatError: ...``).
+_TYPED = re.compile(r"^Error: [A-Z][A-Za-z]+(?:Error|Refused|Refusal): ")
+
+
+def _message_refuses(message: str, tokens: set[str]) -> bool:
+    """A validation refusal, a coded refusal, or a refusal naming the placeholder."""
+
+    return (
+        any(marker in message for marker in _VALIDATION)
+        or bool(_CODE.search(message))
+        or any(token in message for token in tokens)
+    )
+
+
+def _cli_refusal(exit_code: int, output: str, tokens: set[str]) -> bool:
+    if exit_code == 0:
+        return False
+    if exit_code == 2 or _REFUSED:
+        return True  # a click usage error, or the daemon refused the operand
+    errors = [line for line in output.splitlines() if line.startswith("Error:")]
+    return any(_TYPED.match(line) or _message_refuses(line, tokens) for line in errors)
+
+
+def _sdk_refusal(exc: BaseException, tokens: set[str]) -> bool:
+    from pydantic import ValidationError
+
+    from cruxible_client.errors import ConfigError, DataValidationError
+
+    if isinstance(exc, NameError):
+        return exc.name in SDK_BARE_PLACEHOLDERS
+    if isinstance(exc, ValidationError | DataValidationError | ConfigError) or _REFUSED:
+        return True
+    code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
+    if isinstance(code, str) and "." in code:
+        return True
+    if isinstance(exc, TypeError):
+        return False  # a call that does not bind is a broken line, never protection
+    from cruxible_client.errors import CoreError
+
+    if isinstance(exc, CoreError) and type(exc) is not CoreError:
+        return True  # a typed client refusal (ProviderFormatError, ...)
+    return _message_refuses(str(exc), tokens)
 
 
 @pytest.mark.parametrize(
@@ -722,96 +943,110 @@ def test_every_operation_with_a_required_operand_emits_a_placeholder_somewhere()
     list(_placeholder_lines()),
     ids=lambda value: value if isinstance(value, str) and " " not in value else None,
 )
-def test_a_line_run_unchanged_refuses_and_sends_no_placeholder(
+def test_a_line_run_unchanged_refuses_specifically_and_changes_nothing(
     operation: str,
     surface: str,
     line: str,
+    daemon: tuple[Any, str, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """(c) Every placeholder line, run as printed on its own client, refuses before acting."""
+    """(c) Every placeholder line, run as printed against a real daemon, refuses by
+    a field's own validation, a coded refusal, or a documented bare name."""
 
-    reason = PLACEHOLDER_EXECUTION_EXCEPTIONS.get((operation, surface))
-    if reason is not None:
-        pytest.skip(reason)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
-    recorder = _Recorder()
-    client = _recording_client(recorder)
-    refused: bool
+    client, instance_id, reviewer_key = daemon
+    tokens = set(PLACEHOLDER_PATTERN.findall(line))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    before = _head(instance_id)
     if surface == "cli":
         from click.testing import CliRunner
 
         monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+        command, _, here = line.partition(" <<< ")
         result = CliRunner().invoke(
             cli,
             [
                 "--server-url",
-                "http://placeholder.test",
+                "http://testserver",
                 "--instance-id",
-                "inst_placeholder",
+                instance_id,
                 "--no-autostart",
-                *shlex.split(line.split(" <<< ")[0])[1:],
+                *shlex.split(command)[1:],
             ],
-            input="",
+            input=shlex.split(here)[0] if here else "",
         )
-        refused = result.exit_code != 0
+        refused = _cli_refusal(result.exit_code, result.output, tokens)
         detail = result.output
     elif surface == "mcp":
         monkeypatch.setattr("cruxible_core.mcp.handlers._get_client", lambda: client)
-        monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+        # An approver with a key, so an approval reaches its operands.
+        monkeypatch.setenv("CRUXIBLE_MCP_KEY_DIR", str(reviewer_key.parent))
         call = ast.parse(line, mode="eval").body
         assert isinstance(call, ast.Call)
         tool = _mcp_tools()[call.func.id]  # type: ignore[attr-defined]
         kwargs = {item.arg: _mcp_literal(item.value) for item in call.keywords if item.arg}
         if "instance_id" in tool.parameters.get("properties", {}):
-            kwargs.setdefault("instance_id", "inst_placeholder")
+            kwargs.setdefault("instance_id", instance_id)
         try:
             asyncio.run(tool.run(kwargs))
-        except Exception as exc:  # noqa: BLE001 - any refusal is the expected outcome
-            refused, detail = True, repr(exc)
+        except Exception as exc:  # noqa: BLE001 - classified below
+            detail = str(exc)
+            cause = exc.__cause__
+            refused = (
+                bool(_REFUSED)
+                or _message_refuses(detail, tokens)
+                or (cause is not None and _sdk_refusal(cause, tokens))
+            )
         else:
             refused, detail = False, "returned"
     else:
-        from cruxible_client.authoring import examples
         from cruxible_client.authoring.sdk import Cruxible
 
-        cx = Cruxible.__new__(Cruxible)
+        cx = Cruxible._from_client(client, instance_id=instance_id, workspace=workspace)  # noqa: SLF001
         try:
-            cx.__init__(  # type: ignore[misc]
-                client=client,
-                instance_id="inst_placeholder",
-                workspace=tmp_path,
-                access_profile=None,
-                clock=None,
-            )
-        except Exception:  # noqa: BLE001 - a bare handle is enough to call the method
-            pass
-        try:
-            eval(line, {"cx": cx, "authoring_example": examples.authoring_example})  # noqa: S307
-        except Exception as exc:  # noqa: BLE001 - any refusal is the expected outcome
-            refused, detail = True, repr(exc)
+            exec(line, {"cx": cx})  # noqa: S102 - the line as printed, beside only cx
+        except Exception as exc:  # noqa: BLE001 - classified below
+            refused, detail = _sdk_refusal(exc, tokens), repr(exc)
         else:
             refused, detail = False, "returned"
-    assert refused, f"{operation} on {surface} acted on its placeholders: {line} -> {detail}"
-    assert not recorder.leaked(), f"{operation} on {surface} sent {recorder.leaked()}: {line}"
+    assert refused, f"{operation} on {surface}: no specific refusal for {line}: {detail}"
+    assert _head(instance_id) == before, f"{operation} on {surface} changed accepted state"
 
 
-def test_a_placeholder_never_leaves_the_client() -> None:
-    """The one transport check every client shares; ordinary text passes."""
+def test_opaque_content_that_reads_like_a_placeholder_is_sent() -> None:
+    """Review round 4, finding 1: a Claim value of exactly <TEXT> is data, and is sent."""
 
-    from cruxible_client.transport.http import PlaceholderRefused, refuse_placeholders
+    from cruxible_client import CruxibleClient
+    from cruxible_client.contracts.write import WriteRequest
 
-    with pytest.raises(PlaceholderRefused, match="<NAME> is a placeholder"):
-        refuse_placeholders("/api/v1/inst/files/propose", {"proposal_name": "<NAME>"})
-    with pytest.raises(PlaceholderRefused):
-        refuse_placeholders("/api/v1/inst/proposals/%3CPROPOSAL_ID%3E/readmit", None)
-    refuse_placeholders("/api/v1/inst/write", {"because": "fix <TEXT> later", "n": [1, "a"]})
-    assert is_placeholder(" <TEXT> ") and not is_placeholder("<text>")
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(409, json={"error_type": "CoreError", "message": "recorded"})
+
+    client = CruxibleClient(base_url="http://opaque.test")
+    client._client._client = httpx.Client(  # type: ignore[attr-defined]  # noqa: SLF001
+        base_url="http://opaque.test", transport=httpx.MockTransport(answer)
+    )
+    request = WriteRequest.model_validate(
+        {
+            "because": "The source names this field literally.",
+            "changes": [
+                {"op": "set", "subject": "dev.item/a", "field": "status", "value": "<TEXT>"}
+            ],
+        }
+    )
+    with pytest.raises(Exception, match="recorded"):
+        client.write("inst", request=request)
+    assert sent and b'"<TEXT>"' in sent[-1].content
 
 
-def test_a_proposal_name_placeholder_is_refused_by_the_request() -> None:
-    """Review round 3, finding 2: the name a suggestion leaves is not a name."""
+def test_a_reason_or_name_placeholder_is_refused_by_its_field() -> None:
+    """The one field check: only the rendered tokens, only on the caller's own words."""
 
     from pydantic import ValidationError
 
@@ -819,3 +1054,5 @@ def test_a_proposal_name_placeholder_is_refused_by_the_request() -> None:
 
     with pytest.raises(ValidationError, match="placeholder"):
         FileProposeRequest.model_validate({"file": "status", "proposal_name": "<NAME>"})
+    assert is_placeholder("<TEXT>") and not is_placeholder(" <TEXT> ")
+    assert not is_placeholder("<HTML>") and not is_placeholder("<P>")

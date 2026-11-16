@@ -105,6 +105,7 @@ from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.repair_spelling import (
     _mcp_call,
     _sdk_call,
+    _sdk_example,
 )
 from cruxible_client.contracts.repair_spelling import (
     next_repair_command as _repair_command,
@@ -1248,9 +1249,7 @@ def _item(
                 capture_digest=capture_digest,
             )
         elif isinstance(claim_id, str) and isinstance(capture_digest, str) and surface == "sdk":
-            command = _sdk_call(
-                "authoring_example", example, claim_id=claim_id, capture_digest=capture_digest
-            )
+            command = _sdk_example(example, claim_id=claim_id, capture_digest=capture_digest)
         elif isinstance(claim_id, str) and isinstance(capture_digest, str):
             command = " ".join(
                 (

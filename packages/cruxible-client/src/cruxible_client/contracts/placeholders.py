@@ -5,14 +5,18 @@ caller holds (why, which signer, which file) is shown as a placeholder such as
 ``<TEXT>`` or ``<SIGNER_ID>``. A placeholder must never be accepted as the
 operand itself, so a line run unchanged refuses instead of acting:
 
-- free text (``because``, ``reason``) is checked here, once, by every request
-  model that takes it (``NotPlaceholder``);
+- the caller's own words (``because``, ``reason``, ``proposal_name``) are
+  checked here, once, by every request field that takes them
+  (``NotPlaceholder``), against the exact tokens the renderer emits;
 - an identifier, digest, choice or path placeholder fails the field's own
   format, lookup or file read (``<CLAIM_ID>`` is no Claim ID, ``<DIR>`` no
   directory).
 
-The CLI quotes each placeholder (``'<TEXT>'``), so the shell passes it through
-and this boundary is what refuses it.
+Opaque content (a Claim's value, a document's text, a Procedure's input, query
+parameters) is never checked: ``<TEXT>`` there is data. A suggested line whose
+missing operand is such content also carries a ``because`` placeholder, which
+refuses. The CLI quotes each placeholder (``'<TEXT>'``), so the shell passes it
+through and these boundaries are what refuse it.
 """
 
 from __future__ import annotations
@@ -24,8 +28,27 @@ from pydantic import AfterValidator
 
 from cruxible_client._error_base import CoreError
 
-#: ``<NAME>`` or ``<NAME#PART>``: upper case, digits and underscores.
+#: The form every placeholder takes: ``<NAME>`` or ``<NAME#PART>``.
 PLACEHOLDER_PATTERN = re.compile(r"<[A-Z][A-Z0-9_]*(?:#[A-Z][A-Z0-9_]*)?>")
+
+#: Every operand name the renderer can leave as a placeholder; the guardrail
+#: holds the renderer to this list. A check refuses only these, whole.
+RENDERED_PLACEHOLDER_NAMES: frozenset[str] = frozenset(
+    {
+        "ANCHOR", "BLOCK_ID", "BUILD", "CAP", "CAPTURE_DIGEST", "CHANGES", "CLAIM_ID",
+        "CREDENTIAL_ID", "DIGEST", "DIR", "ENVELOPE", "EXAMPLE",
+        "EXPECTED_LATEST_EVENT_DIGEST", "FIELD", "FILE", "FILE#ANCHOR", "ID", "INPUT",
+        "INPUT_FILE", "INTENT_ID", "ITEM_ID", "KEY_DIR", "KIT", "KIT_ID", "LINE",
+        "MODE", "NAME", "OUT", "OWNS", "PACKAGE", "PATHS", "PAYLOAD", "PAYLOAD_FILE",
+        "PERMISSION_MODE", "PREDICTION_ID", "PRINCIPAL_ID", "PROCEDURE", "PROPOSAL_ID",
+        "PROVIDER", "REASON", "REF", "REQUEST", "REQUEST_FILE", "SCOPE", "SECRET_FILE",
+        "SIGNER_ID", "SINCE", "SOURCE_ID", "STATE", "SUBJECT", "TEXT", "TO", "UNTIL",
+        "VALUE", "VERSION",
+    }
+)  # fmt: skip
+RENDERED_PLACEHOLDERS: frozenset[str] = frozenset(
+    f"<{name}>" for name in RENDERED_PLACEHOLDER_NAMES
+)
 
 
 def placeholder(name: str) -> str:
@@ -35,7 +58,9 @@ def placeholder(name: str) -> str:
 
 
 def is_placeholder(value: object) -> bool:
-    return isinstance(value, str) and PLACEHOLDER_PATTERN.fullmatch(value.strip()) is not None
+    """Whether ``value`` is, whole, a token the renderer emits."""
+
+    return isinstance(value, str) and value in RENDERED_PLACEHOLDERS
 
 
 def refuse_placeholder(value: str) -> str:
@@ -43,7 +68,7 @@ def refuse_placeholder(value: str) -> str:
 
     if is_placeholder(value):
         raise ValueError(
-            f"{value.strip()} is a placeholder a suggested command left for you to fill in: "
+            f"{value} is a placeholder a suggested command left for you to fill in: "
             "replace it with your own words"
         )
     return value
@@ -75,7 +100,7 @@ def refuse_placeholder_operands(*values: object) -> None:
             text = str(item)
             for candidate in (text, text.rsplit("/", 1)[-1]):
                 if is_placeholder(candidate):
-                    raise PlaceholderRefused(candidate.strip())
+                    raise PlaceholderRefused(candidate)
 
 
 #: Free text a caller writes (why, a reason), never a suggestion's placeholder.
@@ -85,6 +110,8 @@ CallerText: TypeAlias = Annotated[str, NotPlaceholder]
 
 __all__ = [
     "PLACEHOLDER_PATTERN",
+    "RENDERED_PLACEHOLDERS",
+    "RENDERED_PLACEHOLDER_NAMES",
     "CallerText",
     "NotPlaceholder",
     "PlaceholderRefused",

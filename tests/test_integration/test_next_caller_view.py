@@ -530,7 +530,10 @@ def test_every_sdk_rendered_repair_is_python() -> None:
 
     assert all(command is not None for command in commands), commands
     for command in commands:
-        ast.parse(str(command), mode="eval")
+        # A line may import what it calls (authoring_example), then make the call.
+        *setup, last = ast.parse(str(command), mode="exec").body
+        assert all(isinstance(statement, ast.ImportFrom) for statement in setup), command
+        assert isinstance(last, ast.Expr) and isinstance(last.value, ast.Call), command
 
 
 def test_the_sdk_block_sync_repair_runs_as_written() -> None:

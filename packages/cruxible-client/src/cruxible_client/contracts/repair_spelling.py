@@ -303,14 +303,6 @@ def _mcp_repair_call(
     return None
 
 
-class _Expression(str):
-    """Python source spelled as is in an SDK call (``cx.now()``), not as a string literal."""
-
-
-#: The SDK's repin asks when it evaluates; the call names now.
-_SDK_NOW = _Expression("datetime.now(UTC)")
-
-
 def _python_literal(value: object) -> str:
     """Render a str, bool, None, int, or list/dict of those as Python source.
 
@@ -319,8 +311,6 @@ def _python_literal(value: object) -> str:
     `null` are not Python, so they are rendered here.
     """
 
-    if isinstance(value, _Expression):
-        return str(value)
     if value is None or isinstance(value, bool):
         return repr(value)
     if isinstance(value, int):
@@ -338,6 +328,15 @@ def _python_literal(value: object) -> str:
             + "}"
         )
     raise TypeError(f"no Python literal for an SDK repair operand of type {type(value).__name__}")
+
+
+#: ``authoring_example`` is a module function, not a ``Cruxible`` method: its line
+#: imports it, so it runs as printed beside a connected ``cx``.
+_AUTHORING_EXAMPLE_IMPORT = "from cruxible_client.authoring.examples import authoring_example; "
+
+
+def _sdk_example(example: object, **keywords: object) -> str:
+    return _AUTHORING_EXAMPLE_IMPORT + _sdk_call("authoring_example", example, **keywords)
 
 
 def _sdk_call(target: str, *positional: object, **keywords: object) -> str:
@@ -390,7 +389,7 @@ def _sdk_repair_call(
         return _sdk_call("cx.settle", prediction, observation=_OBSERVATION_PLACEHOLDER)
     if operation == "cruxible.authoring.example":
         example = text("example")
-        return None if example is None else _sdk_call("authoring_example", example)
+        return None if example is None else _sdk_example(example)
     if operation == "cruxible.authoring.submit":
         # The facade authors a Line as a changeset member; other kinds have
         # their own builders, which no repair names yet.
@@ -439,10 +438,8 @@ def _sdk_repair_call(
             value.removeprefix("Claim:") for value in named if isinstance(value, str) and value
         ]
         if claims:
-            return _sdk_call(
-                "cx.block.repin", source, block, claims=claims, evaluation_time=_SDK_NOW
-            )
-        return _sdk_call("cx.block.repin", source, block, evaluation_time=_SDK_NOW)
+            return _sdk_call("cx.block.repin", source, block, claims=claims)
+        return _sdk_call("cx.block.repin", source, block)
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return _sdk_call("cx.block.sync", all=True)
     if operation == "cruxible.block.detach" and _repair_paths(values):
@@ -710,6 +707,8 @@ class RepairSpelling:
     #: a client's form does not declare leaves that client with no form, so a
     #: carried control is never dropped silently.
     context: frozenset[str] = frozenset()
+    #: Tool arguments every MCP form of this operation sends (``mode="write"``).
+    mcp_fixed: Mapping[str, object] = field(default_factory=dict)
     #: A CLI operand that travels on stdin as ``{key: value}`` JSON
     #: (``- <<< '...'``); missing, the line names the payload file to write.
     cli_stdin: str | None = None
@@ -782,10 +781,11 @@ def _sdk_procedure(method: str) -> SdkSpelling:
     return spell
 
 
-def _sdk_curation(verb: str, *keywords: str) -> SdkSpelling:
+def _sdk_curation(verb: str, *keywords: str, required: tuple[str, ...] = ()) -> SdkSpelling:
     def spell(values: Mapping[str, object]) -> str:
-        operands = {key: _operand(values, key) for key in _CURATION_REQUIRED}
-        return _sdk_call(f"cx.curation_{verb}", **operands, **_given(values, *keywords))
+        operands = {key: _operand(values, key) for key in (*_CURATION_REQUIRED, *required)}
+        optional = tuple(key for key in keywords if key not in required)
+        return _sdk_call(f"cx.curation_{verb}", **operands, **_given(values, *optional))
 
     return spell
 
@@ -820,7 +820,7 @@ def _curation(verb: str, **extra: str) -> RepairSpelling:
         cli_flags=_flags(_CURATION_FLAGS, **{key: f"--{flag}" for key, flag in extra.items()}),
         mcp=f"cruxible_curation_{verb.replace('-', '_')}",
         mcp_args=_flags(_CURATION_ARGS, **{key: key for key in extra}),
-        sdk=_sdk_curation(verb.replace("-", "_"), *extra, "dry_run", "at"),
+        sdk=_sdk_curation(verb.replace("-", "_"), *extra, "dry_run", "at", required=tuple(extra)),
         required=(*_CURATION_REQUIRED, *extra),
     )
 
@@ -916,10 +916,8 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         cli_flags={"claim_id": "--attestation-claim-id", "capture_digest": "--capture-digest"},
         mcp="cruxible_authoring_example",
         mcp_args={"example": "name", "claim_id": "claim_id", "capture_digest": "capture_digest"},
-        sdk=lambda values: _sdk_call(
-            "authoring_example",
-            _operand(values, "example"),
-            **_given(values, "claim_id", "capture_digest"),
+        sdk=lambda values: _sdk_example(
+            _operand(values, "example"), **_given(values, "claim_id", "capture_digest")
         ),
         required=("example",),
         context=frozenset({"mandate_name"}),
@@ -939,11 +937,8 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         cli_stdin="changes",
         mcp="cruxible_write",
         mcp_args=_flags(_CHANGE_ARGS, changes="changes", because="because"),
-        sdk=lambda values: (
-            _sdk_call("cx.changes", because=_OPERAND_PLACEHOLDERS["because"])
-            + ".set(...)"
-            + _sdk_call(".write", **_given(values, "dry_run"))
-        ),
+        # The SDK writes a batch change by change (cx.changes(because=...).set(...)):
+        # no one call states it, so the SDK points at another client's form.
         required=("changes", "because"),
     ),
     "cruxible.set": RepairSpelling(
@@ -990,14 +985,16 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         composed_first=True,
         composed_keys=frozenset({"claim_id", "citation", "section_file", "section"}),
         cli_args=("claim_id",),
-        cli_flags=_flags(_WRITE_FLAGS, because="--because"),
+        cli_flags=_flags(_WRITE_FLAGS, because="--because", file="--file"),
         sdk=lambda values: _sdk_call(
             "cx.rebind",
             _operand(values, "claim_id"),
+            file=_operand(values, "file"),
             because=_OPERAND_PLACEHOLDERS["because"],
             **_given(values, "dry_run"),
         ),
-        required=("claim_id", "because"),
+        # The new text is the re-binder's: a file citation's anchor, by default.
+        required=("claim_id", "file", "because"),
     ),
     "cruxible.authoring.submit": RepairSpelling(
         cli="authoring submit",
@@ -1048,6 +1045,36 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         required=("source_id", "name"),
         context=frozenset({"document_id"}),
     ),
+    "cruxible.authoring.bind": RepairSpelling(
+        cli="authoring bind",
+        composed_first=True,
+        composed_keys=frozenset({"payload_file"}),
+        cli_flags={"file": "--file", "anchor": "--anchor", "payload_file": "--payload-file"},
+        mcp="cruxible_authoring_bind",
+        mcp_args={"file": "source_path", "anchor": "anchor", "payload": "payload"},
+        required=("file", "anchor", "payload_file", "payload"),
+        # The row names the Claim and the citation to observe again, for the reader.
+        context=frozenset({"claim_id", "citation_id", "source_id"}),
+    ),
+    "cruxible.floor.export": RepairSpelling(
+        cli="floor export",
+        composed_first=True,
+        cli_flags={"force": "--force"},
+        mcp="cruxible_floor_export",
+        mcp_args={"force": "force"},
+        mcp_fixed={"mode": "write"},
+        # A consumer's repair says which mode; writing is the only one a repair runs.
+        context=frozenset({"mode"}),
+    ),
+    "cruxible.vocabulary.export": RepairSpelling(
+        cli="vocabulary export",
+        composed_first=True,
+        composed_keys=frozenset({"force"}),
+        cli_flags={"force": "--force"},
+        mcp="cruxible_vocabulary_export",
+        mcp_args={"force": "force"},
+        sdk=lambda values: _sdk_call("cx.vocabulary.export", **_given(values, "force")),
+    ),
     "cruxible.claim-type.migrate": RepairSpelling(
         cli="claim-type migrate",
         cli_args=("request_file",),
@@ -1060,7 +1087,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         cli_flags=_flags(_CHANGE_FLAGS, input="--input", builtin="--builtin", name="--name"),
         mcp="cruxible_claim_type_propose",
         mcp_args=_flags(_CHANGE_ARGS, input="input", builtin="builtin", name="proposal_name"),
-        required=("name",),
+        required=("input", "name"),
     ),
     "cruxible.document.propose": RepairSpelling(
         cli="document propose",
@@ -1119,7 +1146,6 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
             "cx.block.repin",
             _operand(values, "source_id"),
             _operand(values, "block_id"),
-            evaluation_time=_SDK_NOW,
             **(
                 {"claims": []}
                 if values.get("clear_claims") is True
@@ -1498,6 +1524,7 @@ def _mcp_line(spelling: RepairSpelling, values: Mapping[str, object]) -> str:
             request[name.removeprefix("request.")] = value
         else:
             top[name] = value
+    top.update(spelling.mcp_fixed)
     for key, (name, constant) in spelling.mcp_constants.items():
         if values.get(key) is True:
             top[name] = constant
