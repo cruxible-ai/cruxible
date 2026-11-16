@@ -278,10 +278,12 @@ def test_every_producer_resolves_or_is_named() -> None:
 
     keys = producer_keys()
     assert keys["cruxible.vocabulary.export"] >= {"force"}
+    # One scan of the source, not one per named producer.
+    present = {(path, function) for path, function, _call, _callee in _producers()}
     stale = [
         f"{path}::{function}"
         for path, function in COMPUTED_PRODUCERS
-        if not any(p == path and f == function for p, f, _c, _n in _producers())
+        if (path, function) not in present
     ]
     assert not stale, f"COMPUTED_PRODUCERS names producers that no longer exist: {stale}"
 
