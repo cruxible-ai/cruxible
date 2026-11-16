@@ -5171,12 +5171,15 @@ def _line_dispatch_health(
             "FROM pending WHERE disposition='pending' GROUP BY line_id ORDER BY line_id",
             (format_datetime(evaluation_time),) * 2,
         ).fetchall()
+    live: dict[str, str] = {}
     if rows:
         with instance.bind_accepted_projection(coordinate) as projection:
+            # Each live Line's name, so the repair names the Line as people
+            # type it rather than by its identity digest.
             live = {
-                row[0]
+                str(row[0]): str(row[1]).removeprefix("Line:")
                 for row in projection.typed.connection.execute(
-                    "SELECT identity_digest FROM lines "
+                    "SELECT identity_digest,identity FROM lines "
                     "WHERE lifecycle='live' AND identity_digest IN ("
                     + ",".join("?" for _ in rows)
                     + ")",
@@ -5208,7 +5211,7 @@ def _line_dispatch_health(
         operation="cruxible.line.dispatch",
         target=line_id,
         required_change="dispatch_the_due_line_occurrences",
-        arguments={"line": line_id, "limit": min(due, _LINE_DISPATCH_LIMIT)},
+        arguments={"line": live.get(line_id) or line_id, "limit": min(due, _LINE_DISPATCH_LIMIT)},
     )
     return PlaybillNextHealthV1(
         state="due",

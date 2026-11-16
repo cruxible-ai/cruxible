@@ -106,11 +106,13 @@ def test_the_refusals_name_the_kit_and_the_repair() -> None:
 
     assert requires_missing_message("security", "1.3.0", base, None) == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds none. "
-        "Add it first: cruxible kit add base."
+        "Add it first, from a release or a local build of base 1.0.0 or later: kit add KIT, "
+        "where KIT is that release's reference or the built kit's path."
     )
     assert requires_missing_message("security", "1.3.0", base, "0.9.0") == (
         "Kit security 1.3.0 requires kit base 1.0.0 or later; this instance holds base 0.9.0. "
-        "Upgrade it first: cruxible kit add base."
+        "Upgrade it first, from a release or a local build of base 1.0.0 or later: kit add "
+        "KIT, where KIT is that release's reference or the built kit's path."
     )
     assert requires_unresolved_message(
         "security", "1.3.0", "base", "Capability:web.fetch/v1", exact=True

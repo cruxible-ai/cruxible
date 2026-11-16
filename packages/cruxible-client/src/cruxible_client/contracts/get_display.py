@@ -75,7 +75,9 @@ def _cut_hint(length: int, claim: str | None, *, whole_in_json: bool = False) ->
         return f" ({length} chars; cruxible get {_short_claim(claim)} --detail evidence)"
     if whole_in_json:
         return f" ({length} chars; --json for all)"
-    return f" ({length} chars; --detail evidence for all)"
+    # No Claim is known to name, and the bare flag runs only on a Claim's own
+    # card (a Subject or a file refuses it): say it is cut, and name no read.
+    return f" ({length} chars, cut)"
 
 
 def get_value_display(
@@ -91,8 +93,8 @@ def get_value_display(
     it. Exact-content markers name unavailable text and are never shortened; a
     ``TruncatedText`` preview always reads as cut. A cut names the read of the
     whole value: the preview's own ``read_whole`` Claim, else ``claim`` (the
-    Claim behind the shown value), else ``--json`` for a value cut only for width
-    and the bare ``--detail evidence`` flag for a preview.
+    Claim behind the shown value), else ``--json`` for a value cut only for width;
+    a preview with neither names no read.
     """
     value = _shown(value)
     if isinstance(value, TruncatedText):

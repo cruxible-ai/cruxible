@@ -1080,6 +1080,11 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         ),
         required=("capture", "because"),
     ),
+    "cruxible.curation.list": RepairSpelling(
+        cli="curation list",
+        mcp="cruxible_curation_list",
+        sdk=lambda _values: "cx.curation_list()",
+    ),
     "cruxible.curation.suppress": _curation("suppress", scope="scope"),
     "cruxible.curation.unsuppress": _curation("unsuppress"),
     "cruxible.curation.overrule": _curation("overrule"),

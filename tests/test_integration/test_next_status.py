@@ -334,7 +334,8 @@ def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path:
     due = _status(instance, _request(instance, evaluation_time=now))
     assert due.line_dispatch.state == "due"
     assert due.line_dispatch.repair is not None
-    assert due.line_dispatch.repair.command == f"cruxible line dispatch {identity}"
+    # Named as people type it, not by its identity digest (gapd-F8).
+    assert due.line_dispatch.repair.command == f"cruxible line dispatch {line.identity.name}"
     assert _attention(due) == (("line_dispatch", due.line_dispatch),)
     hidden = NextRequest(
         evaluation_time=now,

@@ -37,11 +37,12 @@ def test_a_cut_value_names_the_claims_evidence_read() -> None:
     shown = get_value_display(preview).text
     assert shown.endswith("(900 chars; cruxible get CLM-0816c943abcd --detail evidence)")
     # With no Claim known, a value cut only for width is whole in --json, which
-    # every read takes; a preview with no Claim keeps the flag.
+    # every read takes; a preview with no Claim names no read: the bare flag is
+    # refused on a Subject's or a file's card (gapb-11).
     assert get_value_display("x" * 200).text.endswith("(200 chars; --json for all)")
     assert get_value_display(
         TruncatedText(truncated=True, preview="n" * 500, length=900)
-    ).text.endswith("(900 chars; --detail evidence for all)")
+    ).text.endswith("(900 chars, cut)")
     assert get_value_display("x" * 200, claim=CLAIM).text.endswith(
         "(200 chars; cruxible get CLM-0816c943abcd --detail evidence)"
     )

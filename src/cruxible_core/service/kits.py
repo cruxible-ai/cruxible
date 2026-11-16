@@ -2226,9 +2226,9 @@ def _required_receipts(
             raise RequestRefusedError(
                 KIT_REQUIRES_MISSING,
                 requires_missing_message(manifest.kit_id, manifest.version, requirement, version),
-                repair=RepairOperation(
-                    operation="cruxible.kit.add", arguments={"kit": requirement.kit_id}
-                ),
+                # The kit id alone names no release a registry is known to hold;
+                # the reference or build path is the caller's to name (KIT).
+                repair=RepairOperation(operation="cruxible.kit.add"),
             )
     return {item.kit_id: installed[item.kit_id] for item in manifest.requires}
 
@@ -3230,9 +3230,7 @@ def _refuse_unmet_requires(
                 raise RequestRefusedError(
                     KIT_REQUIRES_MISSING,
                     requires_missing_message(kit_id, receipt.version, requirement, version),
-                    repair=RepairOperation(
-                        operation="cruxible.kit.add", arguments={"kit": requirement.kit_id}
-                    ),
+                    repair=RepairOperation(operation="cruxible.kit.add"),
                 )
 
 

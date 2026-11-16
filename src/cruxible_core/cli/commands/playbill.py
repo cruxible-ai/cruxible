@@ -146,6 +146,7 @@ from cruxible_client.contracts.kits import (
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import (
     ProcedureHaltTerminal,
@@ -2252,16 +2253,19 @@ def _echo_automation_template(
 
     if path is None:
         return
+    name = Path(path).name
     if on_disk is not None:
+        # The kit's own copy is the release's, kept as shipped: the adopter
+        # tailors a copy in the workspace and submits that.
         click.echo(
-            f"automation template: {on_disk} (never installed: tailor it, then "
-            f"cruxible authoring submit {on_disk})"
+            f"automation template: {on_disk} (never installed: copy it into your "
+            f"workspace, tailor the copy, then cruxible authoring submit {shlex.quote(name)})"
         )
     else:
         click.echo(
             f"automation template: {path} (never installed: cruxible kit pull {reference} "
-            f"--out DIR writes it, and --json output carries its content; tailor it, then "
-            f"cruxible authoring submit DIR/{path})"
+            f"--out DIR writes it, and --json output carries its content; copy it into your "
+            f"workspace, tailor the copy, then cruxible authoring submit {shlex.quote(name)})"
         )
 
 
@@ -9160,7 +9164,18 @@ def _echo_curation_action(result: contracts.CurationActionResult, done: str) -> 
         click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
         echo_preview_next(result.status, result.coordinate)
         return
-    click.echo(f"Curation item {result.item['item_id']}: {done}")
+    item_id = str(result.item["item_id"])
+    latest = result.item.get("latest_event_digest")
+    click.echo(f"Curation item {item_id}: {done}")
+    if isinstance(latest, str):
+        # The next ruling on this item names this digest; a suppressed item
+        # leaves `curation list`, so this line is where it can be read.
+        click.echo(f"latest_event_digest: {latest}")
+        if done.startswith("suppressed"):
+            click.echo(
+                "Undo: cruxible curation unsuppress "
+                f"{shlex.quote(item_id)} --expected-latest-event-digest {latest} --reason TEXT"
+            )
 
 
 def _curation_item_line(item: Mapping[str, Any]) -> str:
@@ -9568,7 +9583,22 @@ def audit(
     if not result.rows:
         click.echo("No Claims in the visible audit scope.")
     if result.next_cursor is not None:
-        click.echo(f"More: {result.next_cursor.cursor_digest}")
+        scope = [
+            *(item for value in claim_types for item in ("--claim-type", value)),
+            *(item for value in subject_kinds for item in ("--subject-kind", value)),
+        ]
+        click.echo(
+            "More: "
+            + _cursor_page_line(
+                [
+                    "audit",
+                    *map(shlex.quote, scope),
+                    *_page_bounds(max_rows, max_bytes),
+                    *_profile_flag(access_profile_path),
+                ],
+                result.next_cursor.model_dump(mode="json"),
+            )
+        )
 
 
 @playbill_group.command("since")
@@ -9633,7 +9663,40 @@ def since(
         name = row.member_path.split("/", 1)[-1].removesuffix(".json")
         click.echo(f"{lead}  {row.artifact_kind} {_public_name(name)}")
     if result.next_cursor is not None:
-        click.echo(f"More: {result.next_cursor.cursor_digest}")
+        click.echo(
+            "More: "
+            + _cursor_page_line(
+                [
+                    "since",
+                    str(generation),
+                    *_page_bounds(max_rows, max_bytes),
+                    *_profile_flag(access_profile_path),
+                ],
+                result.next_cursor.model_dump(mode="json"),
+            )
+        )
+
+
+def _page_bounds(max_rows: int, max_bytes: int) -> list[str]:
+    """The page bounds a continuation repeats: a cursor continues the page it was cut from."""
+
+    return ["--max-rows", str(max_rows), "--max-bytes", str(max_bytes)]
+
+
+def _profile_flag(access_profile_path: str | None) -> list[str]:
+    """The access profile a continuation repeats (the cursor binds it), when named by path."""
+
+    if access_profile_path is None or access_profile_path == "-":
+        return []
+    return ["--access-profile", shlex.quote(access_profile_path)]
+
+
+def _cursor_page_line(command: list[str], cursor: Mapping[str, Any]) -> str:
+    """The next page as one command: the cursor travels on stdin, so no file is needed."""
+
+    return " ".join(
+        ["cruxible", *command, "--cursor", "-", "<<<", shlex.quote(canonical_json(cursor))]
+    )
 
 
 #: The orient text is the client's, so ``print(cx.orient())`` reads the same.
