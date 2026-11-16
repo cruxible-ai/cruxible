@@ -30,6 +30,7 @@ from cruxible_core.errors import PrincipalRefusalCode, PrincipalRefusedError
 from cruxible_core.runtime.permissions import (
     PermissionMode,
     clamp_to_capability_ceiling,
+    request_ceiling_scope,
     request_instance_scope,
     request_permission_scope,
 )
@@ -587,7 +588,7 @@ async def token_auth_middleware(
         # CRUXIBLE_MODE) asks for its own cap and gets the lower of the two.
         effective_mode = clamp_to_capability_ceiling(requested_mode)
 
-    with _auth_context_scope(resolved_context, request):
+    with _auth_context_scope(resolved_context, request), request_ceiling_scope(requested_mode):
         if effective_mode is not None:
             with (
                 request_permission_scope(effective_mode),

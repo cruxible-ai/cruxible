@@ -25,7 +25,7 @@ from cruxible_core.runtime.permissions import (
     PermissionMode,
     clamp_to_capability_ceiling,
     get_capability_ceiling,
-    get_current_mode,
+    get_requested_ceiling,
 )
 from cruxible_core.server.actor_identity import (
     LOCAL_OPERATOR_ACTOR_ID,
@@ -61,22 +61,17 @@ def current_arm_principal() -> LineEnablementPrincipal:
             raise credential_unbound_refusal(
                 credential_id=auth.credential_id, credential_label=auth.credential_label
             )
-        record = get_runtime_credential_store().get(auth.credential_id)
         return LineEnablementPrincipal(
             kind="runtime_credential",
             credential_id=auth.credential_id,
             label=auth.credential_label,
-            permission_ceiling=_requested_ceiling(
-                clamp_to_capability_ceiling(
-                    record.permission_mode if record is not None else get_current_mode()
-                )
-            ),
+            permission_ceiling=_requested_ceiling(),
         )
     if not is_server_auth_enabled() and (auth is None or auth.credential_type == "principal_claim"):
         # Auth off: the arm records its provenance. A request that claims a
         # principal arms as that claim, rechecked before every admission; one
         # that claims none arms as the implicit local operator.
-        ceiling = _requested_ceiling(get_capability_ceiling())
+        ceiling = _requested_ceiling()
         if auth is None:
             return LineEnablementPrincipal(
                 kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID, permission_ceiling=ceiling
@@ -90,15 +85,19 @@ def current_arm_principal() -> LineEnablementPrincipal:
     )
 
 
-def _requested_ceiling(baseline: PermissionMode) -> Any:
-    """This request's tier when a client ceiling lowered it below ``baseline``, else None.
+def _requested_ceiling() -> Any:
+    """The ceiling the enabling request's client explicitly asked for, else None.
 
     An MCP server under CRUXIBLE_MODE caps its requests; a Line it enables keeps
-    that cap for every automatic run, as the enabling request had it.
+    that cap for every automatic run, even when it changed nothing at enable time
+    (a daemon or credential at the same tier) and the daemon's tier rises later.
+    Absence means no client ceiling was supplied; admin caps nothing.
     """
 
-    current = get_current_mode()
-    return current.name.lower() if current < baseline else None
+    requested = get_requested_ceiling()
+    if requested is None or requested >= PermissionMode.ADMIN:
+        return None
+    return requested.name.lower()
 
 
 def _capped(mode: PermissionMode, principal: LineEnablementPrincipal) -> PermissionMode:

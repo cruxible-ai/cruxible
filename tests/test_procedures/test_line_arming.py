@@ -409,11 +409,11 @@ def test_an_arm_keeps_the_ceiling_its_enabling_request_was_capped_at(monkeypatch
     """Round 2 of gapa-06: a Line enabled through an MCP server under CRUXIBLE_MODE
     never runs above that cap, though the credential or daemon would allow more."""
 
-    from cruxible_core.runtime.permissions import request_permission_scope
+    from cruxible_core.runtime.permissions import request_ceiling_scope
 
     monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
     monkeypatch.setattr(line_arms, "get_current_auth_context", lambda: None)
-    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+    with request_ceiling_scope(PermissionMode.GOVERNED_WRITE):
         capped = line_arms.current_arm_principal()
     uncapped = line_arms.current_arm_principal()
 
@@ -1962,3 +1962,35 @@ def test_triggers_aimed_at_a_line_read_inactive_until_it_is_enabled(tmp_path):
         instance, line.identity.name, actor=_actor(instance), now=start + timedelta(seconds=2)
     )
     assert inactive(start + timedelta(seconds=3)) == "not enabled"
+
+
+def test_an_arm_keeps_a_ceiling_that_changed_nothing_when_it_was_enabled(monkeypatch):
+    """Round 3: enabled through an MCP server capped at governed_write while the daemon
+    also ran at governed_write, the cap was redundant and was not stored; after a
+    restart at admin the arm ran at admin. The explicit ceiling is kept as asked."""
+
+    from cruxible_core.runtime.permissions import (
+        init_permissions,
+        request_ceiling_scope,
+        reset_permissions,
+    )
+
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    monkeypatch.setattr(line_arms, "get_current_auth_context", lambda: None)
+    reset_permissions()
+    init_permissions(PermissionMode.GOVERNED_WRITE)
+    try:
+        with request_ceiling_scope(PermissionMode.GOVERNED_WRITE):
+            enabled = line_arms.current_arm_principal()
+    finally:
+        reset_permissions()
+    assert enabled.permission_ceiling == "governed_write"
+
+    init_permissions(PermissionMode.ADMIN)  # the daemon restarts at admin
+    try:
+        _, rung = arm_authority(
+            _registry_instance("owner", "active"), enabled, now=datetime.now(UTC)
+        )
+    finally:
+        reset_permissions()
+    assert rung == PermissionMode.GOVERNED_WRITE.value - 1
