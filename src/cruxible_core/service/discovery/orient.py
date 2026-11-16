@@ -1227,18 +1227,24 @@ def service_playbill_orient(
         heads: ReadHeads | None = read_heads(instance, coordinate=coordinate)
     except CruxibleError:
         heads = None
-    attention = _attention(
-        instance,
-        coordinate=coordinate,
-        evaluation_time=moment,
-        state=state,
-        caller=caller,
-        caller_rung=caller_rung,
-        surface=surface,
-        caller_tools=caller_tools,
-        heads=heads,
-        provider_lane=provider_lane,
-        consumers_running=consumers_running,
+    # S4: attention is the live queue; a read at an earlier generation omits it.
+    historical = coordinate.git_oid != instance.accepted_coordinate().git_oid
+    attention = (
+        None
+        if historical
+        else _attention(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=moment,
+            state=state,
+            caller=caller,
+            caller_rung=caller_rung,
+            surface=surface,
+            caller_tools=caller_tools,
+            heads=heads,
+            provider_lane=provider_lane,
+            consumers_running=consumers_running,
+        )
     )
     focus = max(kinds_page, key=lambda row: (row.subjects, len(row.predicates)), default=None)
     if focus is not None:
@@ -1246,7 +1252,7 @@ def service_playbill_orient(
         select = _select_names(focus)
         if select:
             calls.append(_Call("query", (("kind", focus.kind), ("select", select), ("limit", 10))))
-    if attention.next_items or attention.setup_items:
+    if attention is not None and (attention.next_items or attention.setup_items):
         calls.append(_Call("next"))
     if len(state.queries) > ORIENT_DEFAULT_QUERIES:
         calls.append(_Call("orient", (("section", "queries"),)))
@@ -1264,13 +1270,14 @@ def service_playbill_orient(
     if next_cursor is not None:
         calls.append(_Call("orient", (("cursor", next_cursor),)))
     live_procedures = sum(item.lifecycle == "live" for item in state.procedures)
-    if attention.enablements is not None or counts["runs"]:
+    enablements = None if attention is None else attention.enablements
+    if enablements is not None or counts["runs"]:
         base["live"] = live_view(
             instance,
             tuple(
                 name
                 for name, present in (
-                    ("attention.enablements", attention.enablements is not None),
+                    ("attention.enablements", enablements is not None),
                     ("artifacts.runs", bool(counts["runs"])),
                     ("artifacts.running", bool(counts["runs"])),
                 )
@@ -1293,6 +1300,7 @@ def service_playbill_orient(
         queries=state.queries[:ORIENT_DEFAULT_QUERIES],
         queries_truncated=len(state.queries) > ORIENT_DEFAULT_QUERIES,
         attention=attention,
+        attention_scope="head_only" if historical else None,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

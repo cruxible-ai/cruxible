@@ -837,6 +837,9 @@ class OrientResult(_StrictOrientModel):
     kinds: tuple[OrientKindSummary, ...] | None = Field(default=None, exclude_if=_is_none)
     artifacts: OrientArtifactCounts | None = Field(default=None, exclude_if=_is_none)
     attention: OrientAttention | None = Field(default=None, exclude_if=_is_none)
+    #: ``head_only`` on a read at an earlier generation (``at``): attention is
+    #: the live queue, so it is answered only at the head (S4).
+    attention_scope: Literal["head_only"] | None = Field(default=None, exclude_if=_is_none)
     kind_detail: OrientKindDetail | None = Field(default=None, exclude_if=_is_none)
     section: OrientSection | None = Field(default=None, exclude_if=_is_none)
     documents: tuple[OrientDocument, ...] | None = Field(default=None, exclude_if=_is_none)

@@ -297,6 +297,11 @@ def test_orient_reads_an_earlier_coordinate_by_git_oid(seeded) -> None:  # type:
     result = service_playbill_orient(seeded, at=earlier.oid)
 
     assert result.coordinate.git_oid == earlier.oid and result.generation == earlier.sequence
+    # S4: attention is the live queue, answered at the head only.
+    assert result.attention is None and result.attention_scope == "head_only"
+    assert "attention: head only" in str(result).splitlines()
+    head = service_playbill_orient(seeded, at=seeded.accepted_coordinate().git_oid)
+    assert head.attention is not None and head.attention_scope is None
 
 
 def test_an_unaccepted_at_refuses_with_the_shared_read_code(seeded) -> None:  # type: ignore[no-untyped-def]

@@ -4378,7 +4378,9 @@ admits, by name), the artifact counts, the named queries with their parameters,
 who you are and whether you can author (when not, the same `authoring_refusal`
 code, detail and repair that `whoami` reports), what the `next` queue
 holds (its problems as `next_items` and the first of them in `top`, its setup
-rows apart as `setup_items`), and the next commands to run. When any Line was ever enabled, attention
+rows apart as `setup_items`), and the next commands to run. Attention is the
+live queue, so `--at` an earlier generation omits it and prints `attention: head
+only` (`attention_scope: head_only`). When any Line was ever enabled, attention
 counts the enablements as the instance's Line consumer reports them (running,
 stalled, stopped) and names up to three stalled or stopped Lines with the stop
 reason, for any caller of the instance, without daemon scope; it also notes

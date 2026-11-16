@@ -369,6 +369,8 @@ def render_orient(result: Mapping[str, Any]) -> str:
                 f"  {query['name']}({params})" + (f"  {description}" if description else "")
             )
     attention = result.get("attention")
+    if result.get("attention_scope") == "head_only":
+        lines.append("attention: head only")
     if attention is not None:
         setup = attention.get("setup_items")
         lines.append(

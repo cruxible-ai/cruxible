@@ -44428,6 +44428,27 @@
             "default": null
           }
         },
+        "attention_scope": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "attention_scope",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "const": "head_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attention Scope"
+          }
+        },
         "capabilities": {
           "default": null,
           "default_json_serializable": true,
@@ -48738,6 +48759,19 @@
               }
             ],
             "default": null
+          },
+          "attention_scope": {
+            "anyOf": [
+              {
+                "const": "head_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attention Scope"
           },
           "capabilities": {
             "anyOf": [
