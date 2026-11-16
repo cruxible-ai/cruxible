@@ -4268,7 +4268,12 @@ path or a catalog name. There are two links, in two lanes:
   awaiting approval): a dry run or a refused proposal leaves it unchanged. The
 catalog lock is not held across the daemon call; an entry another command
 changed meanwhile is left as it reads and the link exits 1 asking to run it
-again (`catalog_conflict`).
+again (`catalog_conflict`). The proposal may already have landed: reconcile
+the conflict (run the link again) before a later `files propose`, which
+compiles the catalog's links. The page compiles alone, against only its own
+accepted Document. A page `.cruxible/files.local.yaml` also catalogues
+refuses `cruxible.link.file_overlaid` (the overlay's entry would hide the
+links), and a path several entries locate refuses `cruxible.link.file_ambiguous`.
 
 `--unlink` removes the named links. Arguments that mix the two refuse before
 anything is sent, each saying which link is which: a Subject given to
