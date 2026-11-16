@@ -355,8 +355,9 @@ quickstart and concepts pages.
   `cruxible instance rebuild-next` rebuilds the `next` worker's state from
   nothing. `cruxible host create|show` allocates and inspects hosts.
 - **Provider-lane detail.** `server status` reports a degraded Provider
-  lane's reason; transient process-table failures surface their bounded count,
-  retained ring occupancy, and last typed message in the lane's detail.
+  lane's reason; transient process-table failures surface their
+  bounded count, retained ring occupancy, and last typed message in the
+  lane's detail.
 - **Client timeouts.** `CRUXIBLE_CLIENT_TIMEOUT_S` sets the client's read
   budget; a value that is not a positive number is refused.
 - **Runtime image and isolated executors.** A container image is published
