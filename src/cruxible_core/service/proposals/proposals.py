@@ -1422,13 +1422,17 @@ def _is_kit_removal(source: ProposalResult) -> bool:
 
     Additions and removals share the ``kit-{id}-{digest}`` target, and the
     candidate does not tell them apart by itself (a removal that only keeps
-    and carries retires nothing). The one transition the submitter records on
-    the proposal is its rationale, written by one format for each: ``Remove kit
-    {id} {version}.`` for a removal, Install/Upgrade/Downgrade/Reinstall for the
-    rest. The check is that exact form.
+    and carries retires nothing). The kit door records the transition on the
+    admission (``kit_transition``). A kit proposal admitted before that field
+    existed falls back to its rationale, written by one format for each:
+    ``Remove kit {id} {version}.`` for a removal, Install/Upgrade/Downgrade/
+    Reinstall for the rest; the check is that exact form.
     """
 
     kit_id = _kit_id(source)
+    recorded = source.admission.kit_transition
+    if kit_id is not None and recorded is not None:
+        return recorded == "remove"
     rationale = source.admission.rationale or ""
     return (
         kit_id is not None

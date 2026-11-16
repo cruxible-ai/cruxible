@@ -1930,7 +1930,11 @@ def _submit(
     else:
         rationale = f"{transition.capitalize()} kit {kit_id} from {installed_version} to {version}."
     request = ProposalAdmissionRequest(
-        target_ref=target, proposed_base_oid=base.git_oid, rationale=rationale
+        target_ref=target,
+        proposed_base_oid=base.git_oid,
+        rationale=rationale,
+        # Typed, so a later reader (the late-signer refusal) never parses prose.
+        kit_transition="remove" if transition is None else "add",
     )
     binding: dict[str, Any] = {}
     if removal and not mode.previewing:

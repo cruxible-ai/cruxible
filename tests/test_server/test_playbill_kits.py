@@ -2799,6 +2799,13 @@ def test_a_late_signer_on_a_kit_change_is_told_the_kits_own_command(
             consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
         )
     assert proposed.status == "proposed" and proposed.proposal_id is not None, proposed
+    # The kit door records the transition as a typed field on the admission.
+    from cruxible_core.service.proposals.proposals import _proposal_result
+
+    admitted = _proposal_result(
+        get_playbill_manager().get(consumer.instance_id), proposed.proposal_id
+    ).admission
+    assert admitted.kit_transition == change
     late_key = register_late(
         consumer.http,
         consumer.instance_id,
@@ -2892,3 +2899,34 @@ def test_s7_an_upgrade_keeps_a_definition_the_consumer_retired(
         consumer.add(publisher.build("1.2.0"))
     assert refused.value.error_code == "cruxible.kit.retired_dependency"
     assert "acme.plans" in str(refused.value) and f"ClaimType:{PLAN}" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "rationale", "removal"),
+    [
+        ("remove", "Install kit acme 1.0.0.", True),  # the typed field wins over prose
+        ("add", "Remove kit acme 1.0.0.", False),
+        (None, "Remove kit acme 1.0.0.", True),  # recorded before the field: the prose
+        (None, "Upgrade kit acme from 1.0.0 to 1.1.0.", False),
+    ],
+)
+def test_a_kit_removal_is_read_from_its_recorded_transition_then_its_rationale(
+    recorded: str | None, rationale: str, removal: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.proposals.proposals import _is_kit_removal, author_repair
+
+    source = SimpleNamespace(
+        admission=SimpleNamespace(
+            actor_id="owner",
+            target_ref="refs/proposals/owner/kit-acme-0123456789abcdef",
+            rationale=rationale,
+            kit_transition=recorded,
+        )
+    )
+
+    assert _is_kit_removal(source) is removal  # type: ignore[arg-type]
+    assert author_repair(source).operation == (  # type: ignore[arg-type]
+        "cruxible.kit.remove" if removal else "cruxible.kit.add"
+    )

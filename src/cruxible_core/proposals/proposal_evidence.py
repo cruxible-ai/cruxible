@@ -820,6 +820,7 @@ class ProposalEvidenceStore:
                     source_compilation_digest=value.source_compilation_digest,
                     claim_type_expansions=value.claim_type_expansions,
                     rationale=value.rationale,
+                    kit_transition=value.kit_transition,
                 ),
                 candidate_commit_oid=value.candidate_commit_oid,
                 candidate_tree_oid=value.candidate_tree_oid,
