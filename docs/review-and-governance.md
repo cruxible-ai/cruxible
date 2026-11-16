@@ -55,7 +55,7 @@ Values (2):
   set catalog.part/bp-2210 category: brake-pads  [CLM-f836c274c35fd8336c23418c7c1a972c; verdict supported]
     cites CAP-4a44b941b725 Principal:owner (own words): the Why text above
   add catalog.part/bp-2210 replaces: catalog.part/bp-1142  [CLM-6952e393f1cbf0b55c19a8f31b0ba7b0; verdict supported; role observation]
-    cites CAP-a7886657755c doc-catalogs-acme.md#Replaces bp-1142.
+    cites CAP-a7886657755c catalogs/acme.md#Replaces bp-1142.
       | Replaces bp-1142.
 Stored fields grouped by kind: --json. Every member's artifact and delta: --detail
 ~~~

@@ -84,11 +84,12 @@ quickstart and concepts pages.
   `key` takes `{field: value}` (CLI write files, MCP `cruxible_write`, the
   SDK) beside the full `[{predicate, value}]` form.
 - **A write catalogues the workspace files it cites.** A file or section
-  citation (in `write`, or `set`/`add` with file evidence) of a file
-  `.cruxible/files.yaml` does not name catalogues it as `doc-<path>` once the
-  write is admitted, and the outcome lists it (`catalogued`). A name already
-  bound to another file refuses `cruxible.doc.catalog_name_exists`.
-  `files add [NAME] PATH` derives the same name when NAME is left out.
+  citation by path (in `write`, or `set`/`add` with file evidence) of a file
+  `.cruxible/files.yaml` does not name catalogues it once the write is
+  admitted, and the outcome lists it (`catalogued`). The catalog's derived
+  name is a stable handle mapped to the file's current path; `files add NAME
+  PATH` chooses one (NAME is now optional). A derived name already bound to
+  another file refuses `cruxible.doc.catalog_name_exists`.
 - **Cruxible names every new Subject.** A SubjectKind declares how a kind's
   Subjects are named: by key ClaimTypes (`unique` or `hint`), or minted
   (`sub-<32 hex>`). A creation names the kind and key; Cruxible assigns the id.
