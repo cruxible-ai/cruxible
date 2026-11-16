@@ -6487,6 +6487,7 @@ class ProcedureExecutor:
                 claims_changes=state.claims_changes.get(node.node_id, ()),
                 derivations=state.derivations,
                 capture_root_cache=state.capture_root_cache,
+                capture_spans=state.capture_spans,
             )
         except TerminalEgressError as exc:
             refusal = self._terminal_refusal(exc, node_id=node.node_id)
@@ -6779,6 +6780,7 @@ class ProcedureExecutor:
         claims_changes: tuple[CoreClaimsChange, ...] = (),
         derivations: Mapping[str, Collection[str]] | None = None,
         capture_root_cache: CaptureRootCache | None = None,
+        capture_spans: Mapping[str, tuple[datetime, datetime]] | None = None,
     ) -> tuple[TerminalEgressRequestV1, PreparedTerminalEgressV1 | None]:
         """Hand the sink the exact pins this terminal kind's law traverses.
 
@@ -6841,6 +6843,17 @@ class ProcedureExecutor:
                 if claims_evidence
                 else {}
             ),
+            # The acquiring call's span for each Capture an item cites: one
+            # entry per distinct cited Capture, so O(the terminal's items).
+            observation_spans={
+                cited: capture_spans[cited]
+                for receipt in claims_evidence
+                if receipt is not None
+                and isinstance(cited := getattr(receipt.value, "capture_digest", None), str)
+                and cited in capture_spans
+            }
+            if capture_spans and claims_evidence
+            else {},
             prepared_at=self.clock.now(),
         )
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it

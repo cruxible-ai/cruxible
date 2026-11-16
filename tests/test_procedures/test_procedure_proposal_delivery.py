@@ -2290,6 +2290,130 @@ def test_a_terminal_restating_live_claims_on_new_bytes_records_one_transition(
     assert unchanged["reobserving_capture_digest"] == observation.capture_digest
 
 
+def _restate_as(root: Path, note: str) -> None:
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"severity": "high", "note": note})
+    )
+
+
+def _run_records(instance: PlaybillInstance, tag: str, run_id: str | None) -> list[dict[str, Any]]:
+    return [record for record in _shared_records(instance, tag) if record["run_id"] == run_id]
+
+
+def test_a_transition_to_a_reused_capture_carries_the_fetching_call_span(
+    tmp_path: Path,
+) -> None:
+    """F-001: a transition's instants are the acquiring call's, not the envelope's.
+
+    The fourth run re-reads bytes an earlier run captured: it reuses that held
+    Capture, whose envelope says when the bytes were first observed. Its
+    transition carries this run's fetch, exactly as its content observation does.
+    """
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_OBSERVATION_TAG,
+        CONTENT_TRANSITION_TAG,
+    )
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    _accept_first_run(instance, owner, root, line)
+    _restate_as(root, "b")
+    second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+    _restate_as(root, "c")
+    run_line(instance, root, line, at=NOW + timedelta(hours=2))
+    _restate_as(root, "b")
+    fourth = run_line(instance, root, line, at=NOW + timedelta(hours=3))
+
+    assert fourth.status == "succeeded", fourth.terminal
+    reused = fourth.source_observations[0].capture_digest
+    assert reused == second.source_observations[0].capture_digest
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    envelope = parse_capture_envelope(instance.body_store().read(reused, access=access))
+    (transition,) = _run_records(instance, CONTENT_TRANSITION_TAG, fourth.run_id)
+    ((_contract, _from, to_capture, _to),) = transition["body"]["transitions"]
+    assert to_capture == reused
+    (observation,) = _run_records(instance, CONTENT_OBSERVATION_TAG, fourth.run_id)
+    assert (transition["earliest"], transition["latest"]) == (
+        observation["earliest"],
+        observation["latest"],
+    )
+    assert datetime.fromisoformat(transition["earliest"].replace("Z", "+00:00")) > (
+        envelope.observed_at
+    )
+
+
+@pytest.mark.parametrize("lane", ["delivered", "recovered"])
+def test_a_transition_records_the_whole_call_span_through_delivery_and_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lane: str
+) -> None:
+    """F-001: a call whose members straddle a deadline is recorded as its span.
+
+    The run's acquiring call is widened to members observed ten minutes apart,
+    the restated one being the later. The durable request carries the span, so
+    the delivered transition, and the one recovery records after a crash at the
+    sink, both say earliest-to-latest: a deadline between them is not met.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import (
+        CONTENT_TRANSITION_TAG,
+        ReobservationReader,
+        cited_content_keys,
+    )
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    first = _accept_first_run(instance, owner, root, line)
+    _restate_in_new_bytes(root)
+    at = NOW + timedelta(hours=1)
+    build = ProcedureExecutor._terminal_egress_request
+
+    def widened(self, node, **kwargs):  # type: ignore[no-untyped-def]
+        spans = kwargs.get("capture_spans") or {}
+        kwargs["capture_spans"] = {
+            digest: (latest - timedelta(minutes=10), latest)
+            for digest, (_earliest, latest) in spans.items()
+        }
+        return build(self, node, **kwargs)
+
+    monkeypatch.setattr(ProcedureExecutor, "_terminal_egress_request", widened)
+    if lane == "delivered":
+        second = run_line(instance, root, line, at=at)
+        assert second.status == "succeeded", second.terminal
+        run_id = second.run_id
+    else:
+        with monkeypatch.context() as patch:
+            saved = _die_at_delivery(patch, journal_failure=True)
+            with pytest.raises(_Crash):
+                run_line(instance, root, line, at=at)
+        assert _shared_records(instance, CONTENT_TRANSITION_TAG) == []
+        recovered = service_recover_proposal_egress(instance, recorded_at=at + timedelta(hours=1))
+        assert recovered == {saved["run_id"]: "delivered"}
+        run_id = saved["run_id"]
+
+    (transition,) = _run_records(instance, CONTENT_TRANSITION_TAG, run_id)
+    earliest = datetime.fromisoformat(transition["earliest"].replace("Z", "+00:00"))
+    latest = datetime.fromisoformat(transition["latest"].replace("Z", "+00:00"))
+    assert latest - earliest == timedelta(minutes=10)
+    # Freshness reads the earliest; a deadline between the two is not met.
+    head = instance.accepted_coordinate()
+    claim = parse_claim(
+        instance.tree_at(head.git_oid)[first.children[0].path], path=first.children[0].path
+    )
+    keys = cited_content_keys(
+        instance, coordinate=head, capture_digests=tuple(claim.backing.capture_digests)
+    )
+    reader = ReobservationReader(instance)
+    version = claim_artifact_digest(claim).tagged
+    middle = earliest + timedelta(minutes=5)
+    assert (
+        reader.latest_version_record(claim.identity.name, version, observed_by=middle, keys=keys)
+        is None
+    )
+    met = reader.latest_version_record(claim.identity.name, version, observed_by=latest, keys=keys)
+    assert met is not None and met.record.observed_at == earliest
+
+
 def test_a_mixed_terminal_proposes_the_change_and_reports_the_unchanged_item(
     tmp_path: Path,
 ) -> None:

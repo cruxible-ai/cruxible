@@ -613,8 +613,28 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     claims_evidence: dict[str, ClaimEvidenceReceipt] = Field(
         default_factory=dict, exclude_if=lambda value: not value
     )
+    #: The acquiring call's earliest and latest member observation instants
+    #: for each Capture the items cite that this run fetched (ruling 1b). A
+    #: transition the delivery records (ruling 1d) carries the call's span,
+    #: never one envelope's first-observed instant; recovery reads it here.
+    observation_spans: dict[str, tuple[datetime, datetime]] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
+
+    @field_validator("observation_spans")
+    @classmethod
+    def _observation_spans(
+        cls, value: dict[str, tuple[datetime, datetime]]
+    ) -> dict[str, tuple[datetime, datetime]]:
+        spans = {
+            _tagged(digest): (ensure_utc(earliest), ensure_utc(latest))
+            for digest, (earliest, latest) in value.items()
+        }
+        if any(earliest > latest for earliest, latest in spans.values()):
+            raise ValueError("an observation span's earliest instant follows its latest")
+        return spans
 
     @field_validator("prepared_at")
     @classmethod
@@ -640,7 +660,7 @@ class TerminalEgressRequestV1(_StrictEgressModel):
                 raise ValueError(
                     "claims egress requires the executor's typed changes; use a claims node"
                 )
-        elif self.claims_changes or self.claims_evidence:
+        elif self.claims_changes or self.claims_evidence or self.observation_spans:
             raise ValueError("only the claims executor produces Claim changes and evidence")
         if not self.items:
             raise ValueError("terminal egress requires at least one child item")

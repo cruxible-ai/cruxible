@@ -2427,7 +2427,12 @@ class ProposalTerminalEgressSink:
                     to_content_digest=target[1],
                 )
             )
-            moved_instants.append(moved.observed_at)
+            # The acquiring call's span (ruling 1b), carried in the durable
+            # request so recovery records the same; a request written before
+            # spans were carried falls back to the envelope's instant.
+            moved_instants.extend(
+                request.observation_spans.get(capture, (moved.observed_at, moved.observed_at))
+            )
         if not transitions:
             return refused
         moved_from = {(item.contract_digest, item.from_content_digest) for item in transitions}

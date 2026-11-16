@@ -126,6 +126,20 @@ def test_split_then_join_restores_the_exact_record_and_shares_unchanged_bodies()
     assert join_terminal_egress_payload(split_delivered, store.read) == delivered
 
 
+def test_observation_spans_travel_in_the_items_body_and_join_back() -> None:
+    """F-001: a request's call spans are item-sized: they leave the run header."""
+
+    store = _Store()
+    original = _prepared(3)
+    original["request"]["observation_spans"] = {
+        _digest(f"capture-{index}"): ["2026-11-16T00:00:00Z", "2026-11-16T00:10:00Z"]
+        for index in range(3)
+    }
+    split = split_terminal_egress_payload(original, store=store.store)
+    assert "observation_spans" not in split["request"]
+    assert join_terminal_egress_payload(split, store.read) == original
+
+
 def test_other_terminals_and_inline_history_pass_through() -> None:
     store = _Store()
     capture = {"node_id": "emit", "kind": "emit_capture", "children": _children(2)}
