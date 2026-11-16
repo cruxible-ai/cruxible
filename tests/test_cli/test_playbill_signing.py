@@ -504,3 +504,86 @@ def test_cli_approval_prompt_shows_the_reviewers_view_before_asking(
     assert lines[-1] == "Not approved."
     assert result.exit_code == 1
     assert "Error" not in result.output and "Abort" not in result.output
+
+
+def test_an_approval_awaiting_more_names_whose_and_the_approve_next() -> None:
+    """gapa-08 (the parts that are this computation): "Awaiting 1 more approval"
+    says whose, and the next line approves rather than activates (which refuses)."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.cli.commands.playbill import (
+        _approval_outcome_lines,
+        _principal_add_next_steps,
+    )
+
+    receipt = contracts.ApprovalReceipt(
+        proposal_id="sha256:" + "a" * 64,
+        candidate_digest="sha256:" + "b" * 64,
+        signer_id="reviewer",
+        submitted_by="reviewer",
+        signing_semantic_root="sha256:" + "c" * 64,
+        attestation_digest="sha256:" + "d" * 64,
+        key_history_ref="principals/reviewer.json@sha256:" + "c" * 64,
+        not_activated="approvals_remaining",
+        approvals_remaining=2,
+        required_signers=("owner",),
+        eligible_signers=("ops2",),
+    )
+    proposal = receipt.proposal_id
+
+    lines = _approval_outcome_lines(receipt)
+    steps = _principal_add_next_steps(
+        SimpleNamespace(  # type: ignore[arg-type]
+            activated=False, proposal_id=proposal, signer_id="reviewer", approval=receipt
+        ),
+        "newcomer",
+        Path("/keys"),
+        "governed_write",
+    )
+
+    assert lines[0] == (
+        "Awaiting 2 more approvals (owner must sign; 1 from: ops2); the approval that "
+        "completes it activates it"
+    )
+    assert lines[1:] == [
+        f"Next: cruxible proposal approve {proposal} --signer-id owner --key FILE",
+        f"Next: cruxible proposal approve {proposal} --signer-id ops2 --key FILE",
+    ]
+    assert steps[:2] == [
+        f"cruxible proposal approve {proposal} --signer-id owner --key FILE",
+        f"cruxible proposal approve {proposal} --signer-id ops2 --key FILE",
+    ]
+    assert not any("proposal activate" in step for step in steps)
+
+
+def test_a_principal_change_proposal_names_its_proposers_approval_next(capsys) -> None:  # type: ignore[no-untyped-def]
+    """gapa-08: rotate, revoke and recover printed `next: cruxible get`; a principal
+    change needs its proposer's own signature, so the next line is that approval."""
+
+    from cruxible_core.cli.commands.playbill import _echo_proposal
+
+    proposal_id = "sha256:" + "e" * 64
+    inspection = contracts.ProposalInspection(
+        proposal={
+            "admission": {"proposal_id": proposal_id, "actor_id": "ops2"},
+            "evaluation": {"verdict": "candidate"},
+        },
+        accepted_coordinate=contracts.AcceptedCoordinate(
+            git_oid="f" * 40,
+            semantic_root="sha256:" + "1" * 64,
+            generation_root="sha256:" + "2" * 64,
+            compiler_digest="sha256:" + "3" * 64,
+        ),
+    )
+
+    _echo_proposal(inspection, None, principal_change=True)
+    principal = capsys.readouterr().out
+    _echo_proposal(inspection, None)
+    ordinary = capsys.readouterr().out
+
+    assert (
+        f"next: cruxible proposal approve {proposal_id} --signer-id ops2 --key FILE "
+        "(a principal change needs its proposer's own signature)"
+    ) in principal
+    assert f"next: cruxible get {proposal_id}" in ordinary

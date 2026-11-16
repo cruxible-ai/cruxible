@@ -2074,6 +2074,22 @@
             "type": "string"
           }
         },
+        "eligible_signers": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "eligible_signers",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Eligible Signers",
+            "type": "array"
+          }
+        },
         "git_workspace_note": {
           "default": null,
           "default_json_serializable": true,
@@ -2157,6 +2173,22 @@
             ],
             "default": null,
             "title": "Readmits"
+          }
+        },
+        "required_signers": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "required_signers",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Signers",
+            "type": "array"
           }
         },
         "signer_id": {
@@ -2433,6 +2465,14 @@
             "title": "Candidate Digest",
             "type": "string"
           },
+          "eligible_signers": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Eligible Signers",
+            "type": "array"
+          },
           "git_workspace_note": {
             "anyOf": [
               {
@@ -2481,6 +2521,14 @@
             ],
             "default": null,
             "title": "Readmits"
+          },
+          "required_signers": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Signers",
+            "type": "array"
           },
           "signer_id": {
             "title": "Signer Id",

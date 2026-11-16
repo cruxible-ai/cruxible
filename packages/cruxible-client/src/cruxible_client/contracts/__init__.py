@@ -1165,6 +1165,10 @@ class ApprovalReceipt(BaseModel):
     #: The proposal this one re-admitted at the head, when it is a readmission
     #: (a moved proposal an approval landed): the one the signer reviewed.
     readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: While approvals remain: who must each still sign (a principal change's
+    #: proposer), and who may give the rest.
+    required_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    eligible_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 ProposalActivationResult = ActivationReceipt | ProposalRecompiled

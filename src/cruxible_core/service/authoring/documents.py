@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, cast
 
@@ -173,6 +174,10 @@ class ApprovalReceipt(_StrictServiceModel):
     #: The proposal this one re-admitted at the head, when it is a readmission
     #: (a moved proposal an approval landed): the one the signer reviewed.
     readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: While approvals remain: who must each still sign (a principal change's
+    #: proposer), and who may give the rest.
+    required_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    eligible_signers: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def _one_outcome(self) -> "ApprovalReceipt":
@@ -478,13 +483,14 @@ def service_submit_playbill_approval(
             previous_notes = grouped.validate_and_snapshot(instance._ledger, affected)
             evidence.write_approval(candidate.candidate_digest, submission)
             grouped.publish(instance._ledger, affected, previous=previous_notes)
-    remaining = _approvals_remaining(
+    outstanding = outstanding_approvals(
         evidence.read_approvals(candidate.candidate_digest),
         candidate,
         creator=proposal.admission.actor_id,
         principals=signing_generation.principals,
         principal_lifecycle=principal_lifecycle,
     )
+    remaining = outstanding.remaining
     # A compiler-upgrade candidate needs cruxible_compiler_upgrade at ADMIN to
     # activate, on top of the generic cruxible_proposal_activate this caller's
     # tier may already admit; decided up front so an eligible-but-insufficient
@@ -537,22 +543,45 @@ def service_submit_playbill_approval(
         not_activated=reason,
         approvals_remaining=remaining,
         readmits=readmits,
+        outstanding=outstanding if remaining else None,
     )
 
 
-def _approvals_remaining(
+@dataclass(frozen=True)
+class OutstandingApprovals:
+    """The signatures a candidate still needs before it settles, and whose.
+
+    ``required_signers`` must each sign (a principal change needs its
+    proposer's own signature). ``eligible_needed`` more signatures come from
+    ``eligible_signers``: active ordinary principals other than the author when
+    an independent approval is required, or any active ordinary principal for a
+    compiler upgrade's one signature.
+    """
+
+    required_signers: tuple[str, ...] = ()
+    eligible_needed: int = 0
+    eligible_signers: tuple[str, ...] = ()
+    independent: bool = False
+
+    @property
+    def remaining(self) -> int:
+        return len(self.required_signers) + self.eligible_needed
+
+
+def outstanding_approvals(
     submissions: tuple[ApprovalSubmission, ...],
     candidate: CandidateRecord,
     *,
     creator: str,
     principals: PrincipalRegistrySnapshot,
     principal_lifecycle: bool,
-) -> int:
+) -> OutstandingApprovals:
     """Signatures settlement still needs, counted as settlement counts them.
 
     Distinct active ordinary signers other than the creator toward the approval
     requirement; a principal-lifecycle candidate also needs its actor's own
-    signature, and a compiler upgrade at least one signature of any kind.
+    signature, and a compiler upgrade at least one signature of any kind. Reads
+    only this candidate's approvals and its parent's principal registry.
     """
 
     verified: list[VerifiedApproval] = []
@@ -569,22 +598,38 @@ def _approvals_remaining(
         except ApprovalIntegrityError:
             continue
     signers = {approval.signer_id for approval in verified}
-    remaining = 0
+    ordinary = tuple(
+        sorted(
+            principal.principal_id
+            for principal in principals.principals
+            if principal.status == "active" and principal.kind == "ordinary"
+        )
+    )
+    required = (creator,) if principal_lifecycle and creator not in signers else ()
     if candidate.approval_requirements:
-        eligible = {
+        independent = {
             signer
             for signer in signers
             if signer != creator and principals.require_active(signer).kind == "ordinary"
         }
         minimum = candidate.approval_requirements[0].minimum_distinct_signers
-        remaining = max(0, minimum - len(eligible))
-    if principal_lifecycle and creator not in signers:
-        remaining += 1
-    if not verified and any(
-        member.artifact_kind == "compiler-upgrade" for member in candidate.members
+        needed = max(0, minimum - len(independent))
+        if needed:
+            return OutstandingApprovals(
+                required_signers=required,
+                eligible_needed=needed,
+                eligible_signers=tuple(
+                    item for item in ordinary if item != creator and item not in signers
+                ),
+                independent=True,
+            )
+    if (
+        not verified
+        and not required
+        and any(member.artifact_kind == "compiler-upgrade" for member in candidate.members)
     ):
-        remaining = max(remaining, 1)
-    return remaining
+        return OutstandingApprovals(eligible_needed=1, eligible_signers=ordinary)
+    return OutstandingApprovals(required_signers=required)
 
 
 def refuse_accepted(
@@ -617,37 +662,28 @@ def _refuse_unmet_approval(
     instance: PlaybillInstance, proposal: ProposalResult, candidate: CandidateRecord
 ) -> None:
     """Refuse to activate a candidate whose approval requirement is not met, naming
-    who may approve; reads only this candidate's approvals and principal registry."""
+    whose signatures are outstanding; reads only this candidate's approvals and
+    principal registry."""
 
-    principals = instance.generation_for_semantic_root(
-        candidate.candidate.parent_semantic_root
-    ).principals
-    approvals = instance.proposal_evidence().read_approvals(candidate.candidate_digest)
-    creator = proposal.admission.actor_id
-    remaining = _approvals_remaining(
-        approvals,
+    outstanding = outstanding_approvals(
+        instance.proposal_evidence().read_approvals(candidate.candidate_digest),
         candidate,
-        creator=creator,
-        principals=principals,
+        creator=proposal.admission.actor_id,
+        principals=instance.generation_for_semantic_root(
+            candidate.candidate.parent_semantic_root
+        ).principals,
         principal_lifecycle=all(
             member.artifact_kind == "principal-lifecycle" for member in candidate.members
         ),
     )
-    if not remaining:
+    if not outstanding.remaining:
         return
-    signed = {submission.attestation.signer_id for submission in approvals}
-    eligible = tuple(
-        sorted(
-            principal.principal_id
-            for principal in principals.principals
-            if principal.status == "active"
-            and principal.kind == "ordinary"
-            and principal.principal_id != creator
-            and principal.principal_id not in signed
-        )
-    )
     raise ApprovalRequirementUnmet(
-        proposal.admission.proposal_id, remaining=remaining, eligible_signers=eligible
+        proposal.admission.proposal_id,
+        remaining=outstanding.remaining,
+        required_signers=outstanding.required_signers,
+        eligible_signers=outstanding.eligible_signers,
+        independent=outstanding.independent,
     )
 
 
@@ -660,6 +696,7 @@ def _approval_receipt(
     not_activated: ApprovalNotActivated | None = None,
     approvals_remaining: int = 0,
     readmits: str | None = None,
+    outstanding: OutstandingApprovals | None = None,
 ) -> ApprovalReceipt:
     return ApprovalReceipt(
         proposal_id=proposal_id,
@@ -673,6 +710,8 @@ def _approval_receipt(
         not_activated=not_activated,
         approvals_remaining=approvals_remaining,
         readmits=readmits,
+        required_signers=() if outstanding is None else outstanding.required_signers,
+        eligible_signers=() if outstanding is None else outstanding.eligible_signers,
     )
 
 

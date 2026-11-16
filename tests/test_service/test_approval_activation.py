@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.documents import render_document
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.service.authoring.documents import (
@@ -182,6 +184,9 @@ def test_lifecycle_candidate_counts_its_actors_own_signature(tmp_path: Path) -> 
     )
     assert voluntary.not_activated == "approvals_remaining"
     assert voluntary.approvals_remaining == 1
+    # The outstanding signature is the proposer's own, and the receipt says so.
+    assert voluntary.required_signers == ("owner",)
+    assert voluntary.eligible_signers == ()
     assert instance.accepted_coordinate() == head
 
     completing = _approve(
@@ -189,3 +194,68 @@ def test_lifecycle_candidate_counts_its_actors_own_signature(tmp_path: Path) -> 
     )
     assert completing.activation is not None
     assert completing.activation.status == "accepted"
+
+
+def test_activating_an_unsigned_lifecycle_change_names_its_proposer(tmp_path: Path) -> None:
+    """Round 2: the approvals-missing refusal named other principals for a principal
+    change, whose missing signature is its proposer's own."""
+
+    from cruxible_client.contracts.errors import ApprovalRequirementUnmet
+
+    instance, _owner = initialize_local(tmp_path)
+    newcomer = generate_client_principal_key(
+        tmp_path / "newcomer-keys",
+        principal_id="newcomer",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=newcomer.principal,
+        actor_id="owner",
+        proposal_name="register-newcomer",
+        timestamp="2026-08-16T17:02:00.000000Z",
+    ).proposal
+
+    with pytest.raises(ApprovalRequirementUnmet) as refused:
+        service_activate_playbill_proposal(
+            instance, proposal_id=registration.admission.proposal_id, activated_by="owner"
+        )
+
+    assert refused.value.required_signers == ("owner",)
+    assert refused.value.remaining == 1
+    assert "owner must sign (a principal change needs its proposer's own signature)" in str(
+        refused.value
+    )
+    assert "--signer-id owner" in str(refused.value)
+
+
+def test_a_compiler_upgrades_one_signature_may_be_its_authors() -> None:
+    """With no independent requirement, a compiler upgrade needs one signature of any
+    active ordinary principal, its author's included."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.authoring.documents import outstanding_approvals
+
+    registry = SimpleNamespace(
+        principals=[
+            SimpleNamespace(principal_id=name, status="active", kind=kind)
+            for name, kind in (("owner", "ordinary"), ("reviewer", "ordinary"), ("d", "daemon"))
+        ]
+    )
+    upgrade = SimpleNamespace(
+        approval_requirements=(),
+        members=(SimpleNamespace(artifact_kind="compiler-upgrade"),),
+    )
+
+    outstanding = outstanding_approvals(
+        (),
+        upgrade,  # type: ignore[arg-type]
+        creator="owner",
+        principals=registry,  # type: ignore[arg-type]
+        principal_lifecycle=False,
+    )
+
+    assert (outstanding.remaining, outstanding.independent) == (1, False)
+    assert outstanding.eligible_signers == ("owner", "reviewer")

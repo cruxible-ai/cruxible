@@ -639,30 +639,55 @@ class ApprovalRequirementUnmet(ApprovalIntegrityError):
     """Activation refused: the candidate's approval requirement is not met yet.
 
     Activation never changes a proposal that may not settle: it refuses before
-    anything is landed, readmitted or withdrawn, and names who may approve.
+    anything is landed, readmitted or withdrawn, and names whose signatures are
+    outstanding: ``required_signers`` must each sign (a principal change needs its
+    proposer's own signature); the rest come from ``eligible_signers``.
     """
 
     error_code = "cruxible.approval.requirement_unsatisfied"
 
     def __init__(
-        self, proposal_id: str, *, remaining: int, eligible_signers: tuple[str, ...]
+        self,
+        proposal_id: str,
+        *,
+        remaining: int,
+        required_signers: tuple[str, ...] = (),
+        eligible_signers: tuple[str, ...] = (),
+        independent: bool = True,
     ) -> None:
         from cruxible_client.contracts.repairs import RepairOperation
 
         self.proposal_id = proposal_id
         self.remaining = remaining
+        self.required_signers = required_signers
         self.eligible_signers = eligible_signers
+        self.independent = independent
         self.repair = RepairOperation(
             operation="cruxible.proposal.approve", arguments={"proposal_id": proposal_id}
         )
-        who = ", ".join(eligible_signers) if eligible_signers else "none registered yet"
         plural = "s" if remaining != 1 else ""
+        needs = []
+        if required_signers:
+            needs.append(
+                f"{', '.join(required_signers)} must sign (a principal change needs its "
+                "proposer's own signature)"
+            )
+        others = remaining - len(required_signers)
+        if others:
+            who = ", ".join(eligible_signers) if eligible_signers else "none registered yet"
+            rule = (
+                "an independent approver (independent_approval_required mode needs an "
+                "active ordinary approver other than the candidate creator)"
+                if independent
+                else "any active ordinary principal (a compiler upgrade needs one signature)"
+            )
+            needs.append(f"{others} from {rule}: {who}")
+        signer = (required_signers or eligible_signers or ("ID",))[0]
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} needs {remaining} more approval{plural} "
-            "before it can be activated (independent_approval_required mode needs an active "
-            "ordinary approver other than the candidate creator); nothing was changed. "
-            f"Eligible signers: {who}. Next: `cruxible proposal approve {proposal_id} "
-            "--signer-id ID --key FILE`; the approval that completes it activates it"
+            f"before it can be activated: {'; '.join(needs)}. Nothing was changed. Next: "
+            f"`cruxible proposal approve {proposal_id} --signer-id {signer} --key FILE`; the "
+            "approval that completes it activates it"
         )
 
 

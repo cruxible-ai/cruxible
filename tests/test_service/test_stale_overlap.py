@@ -309,7 +309,7 @@ def test_activating_an_unapproved_moved_proposal_refuses_and_changes_nothing(
         assert (refused.value.remaining, refused.value.eligible_signers) == (1, ("reviewer",))
         assert refused.value.repair.operation == "cruxible.proposal.approve"
         assert refused.value.repair.arguments == {"proposal_id": source_id}
-        assert "nothing was changed" in str(refused.value)
+        assert "Nothing was changed" in str(refused.value)
 
     assert instance.accepted_coordinate() == head
     assert instance.proposal_evidence().read_withdrawal(source_id) is None
