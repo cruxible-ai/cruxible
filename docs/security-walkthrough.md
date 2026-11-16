@@ -563,11 +563,25 @@ A failed or incomplete read never becomes "not affected". KEV records a
 watched CVE as not listed only when the catalog's records match its stated
 count; an OSV answer that failed or came back incomplete never retires an
 `affected_by` Claim; an EPSS request that fails leaves the run incomplete, and
-a CVE FIRST has not scored yet gets no score. Check a Line's recent runs
-before you read an empty answer as "none":
+a CVE FIRST has not scored yet gets no score. Check the run before you read
+an empty answer as "none". `runbook run` marks a step that needs attention,
+an incomplete one included, with `!`. `get Line:NAME --detail runs` lists a
+Line's runs by status only; the run itself says whether each step was
+complete:
 
-~~~bash
-cruxible get Line:security.osv-query --detail runs
+~~~text
+$ cruxible get Line:security.osv-query --detail runs
+RUN-461b30558b670fdcd085aaa52666e86051386c21335c062979acc0905630c9a2  succeeded  started 2026-11-16T05:11:00.601053+00:00  nodes_done=5  Procedure:security.osv-query
+
+$ cruxible get RUN-461b30558b670fdcd085aaa52666e86051386c21335c062979acc0905630c9a2
+...
+nodes:
+  components read succeeded: 32 rows
+  osv call succeeded: 338 captures CAP-21dd7fccfe8a CAP-fa09735787f4 ...
+  matched call succeeded: 1 capture CAP-1794680ef26b
+  affected extract succeeded: 181 records, complete_when 181/181
+  write claims succeeded: 181 written, 181 subjects created; settled
+...
 ~~~
 
 One gap no run reports: the kit keys vulnerabilities by CVE id, so an OSV
