@@ -398,3 +398,26 @@ def test_linking_one_page_compiles_and_looks_up_only_that_page(
         if item["identity"] == "document:page0"
     ]
     assert page0["lifecycle"]["revision"] == 2
+
+
+def test_an_overlay_made_unreadable_after_admission_keeps_the_receipt(
+    served: _Served, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the daemon admits the proposal, local catalog trouble is a conflict, not a crash."""
+
+    (tmp_path / "guide.md").write_text("# Guide\nText.\n")
+    assert _run("files", "add", "guide.md", "--root", str(tmp_path)).exit_code == 0
+    before = (tmp_path / ".cruxible" / "files.yaml").read_text()
+    propose = _Served.propose_file_bundle
+
+    def break_overlay(self: _Served, *args: Any, **kwargs: Any) -> Any:
+        (tmp_path / ".cruxible" / "files.local.yaml").write_text("entries: [not, a, catalog\n")
+        return propose(self, *args, **kwargs)
+
+    monkeypatch.setattr(_Served, "propose_file_bundle", break_overlay)
+    result = _run("link", "guide.md", "--guides", STATUS, "--json")
+    assert result.exit_code == 1, result.output
+    outcome = json.loads(result.stdout)
+    assert outcome["catalog_conflict"] and not outcome["catalog_written"]
+    assert outcome["proposal"]["outcome"]["status"] == "landed"
+    assert (tmp_path / ".cruxible" / "files.yaml").read_text() == before

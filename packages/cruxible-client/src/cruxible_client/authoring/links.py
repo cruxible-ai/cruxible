@@ -29,6 +29,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client import contracts
+from cruxible_client._error_base import CoreError
 from cruxible_client.authoring.files import (
     _catalog_lock,
     _portable_catalog_path,
@@ -425,21 +426,27 @@ def link_guides(
     # entry is re-read under it and replaced only if nobody changed it since.
     written = conflict = False
     if standing and not dry_run:
-        with _catalog_lock(root):
-            portable = _read_portable(catalog_path)
-            now = [
-                item
-                for item in portable
-                if isinstance(item, FileCatalogEntry) and item.name == entry.name
-            ]
-            if now == [original] and _overlay_entry(root, original.name) is None:
-                _write_portable(
-                    catalog_path,
-                    tuple(revised if item == original else item for item in portable),
-                )
-                written = True
-            else:
-                conflict = True
+        # The daemon admitted the proposal: from here no local catalog trouble
+        # (an unreadable overlay or catalog, a failed write) may lose its
+        # receipt. Any of it is reported as a catalog_conflict to re-run.
+        try:
+            with _catalog_lock(root):
+                portable = _read_portable(catalog_path)
+                now = [
+                    item
+                    for item in portable
+                    if isinstance(item, FileCatalogEntry) and item.name == entry.name
+                ]
+                if now == [original] and _overlay_entry(root, original.name) is None:
+                    _write_portable(
+                        catalog_path,
+                        tuple(revised if item == original else item for item in portable),
+                    )
+                    written = True
+                else:
+                    conflict = True
+        except (CoreError, OSError, ValueError):
+            conflict = True
     assert revised.document_id is not None
     return GuidanceLinkOutcome(
         file=revised.name,
