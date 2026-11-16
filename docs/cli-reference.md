@@ -57,7 +57,9 @@ approval), activate, reject, withdraw and readmit, `capture erase`, `claim
 attest`, `prediction propose` and `settle`, `instance decommission` and
 `rebuild-next`, `provider install`, `retire` and `move`, `kit build`, `add` and
 `remove`, `compiler upgrade` and principal changes (`principal add`, `rotate`,
-`recover`, `revoke`), `procedure measure` and `dispose`, and every run it would start
+`recover`, `revoke`), `procedure measure` and `dispose`, `inbox ack`, `dismiss` and `link`, the block
+declarations and observations `files add`, `block repin` and `block sync`
+record, and every run it would start
 (`procedure run`, `action run`, `line run`, `line evaluate`, `line dispatch`,
 `runbook run`) refuse it with `cruxible.identity.principal_unconfigured` and
 its repair (name a principal). `init`, `line enable` and `line disable`, and

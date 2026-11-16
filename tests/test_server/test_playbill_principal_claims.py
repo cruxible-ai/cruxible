@@ -446,6 +446,7 @@ def _attributed_writes() -> dict[str, dict[str, Callable[[], object]]]:
         ProviderRetireRequest,
     )
     from cruxible_core.runtime import playbill_api as api
+    from cruxible_core.service.discovery.curation import PlaybillBlockObserveRequestV1
     from cruxible_core.service.procedures.procedure_runs import LineRunRequest, ProcedureRunRequest
 
     preview = {"dry_run": True}
@@ -518,6 +519,24 @@ def _attributed_writes() -> dict[str, dict[str, Callable[[], object]]]:
                 request=None,  # type: ignore[arg-type]
             ),
         },
+        "inbox_and_blocks": {
+            "inbox_ack": lambda: api.playbill_inbox_ack(INSTANCE, "INB-absent"),
+            "inbox_dismiss": lambda: api.playbill_inbox_dismiss(
+                INSTANCE, "INB-absent", reason="no"
+            ),
+            "inbox_link": lambda: api.playbill_inbox_link(
+                INSTANCE,
+                "INB-absent",
+                target=None,  # type: ignore[arg-type]
+            ),
+            "block_declare": lambda: api.playbill_block_declare(
+                INSTANCE,
+                None,  # type: ignore[arg-type]
+            ),
+            "block_observe": lambda: api.playbill_block_observe(
+                INSTANCE, request=PlaybillBlockObserveRequestV1.model_construct(dry_run=None)
+            ),
+        },
         "runs": {
             "procedure_run": lambda: api.playbill_procedure_run(
                 INSTANCE, "absent", request=ProcedureRunRequest(input={})
@@ -551,6 +570,7 @@ def _attributed_writes() -> dict[str, dict[str, Callable[[], object]]]:
         "kits",
         "governance_proposals",
         "measurements",
+        "inbox_and_blocks",
         "runs",
     ],
 )

@@ -456,7 +456,8 @@ def _attributed_actor(instance_id: str, act: str = "Cruxible writes") -> Governe
     Proposal acts (approve, activate, reject, withdraw, readmit), Capture
     erasure, attestations, predictions and their settlement, instance
     decommission and next rebuild, provider and kit operations, compiler and
-    principal proposals, measurements and dispositions, and every run a caller
+    principal proposals, measurements and dispositions, inbox dispositions,
+    projection block declarations and observations, and every run a caller
     starts (Procedure, Line, Runbook, internal action) record who did it. An
     auth-off request that names no principal acts as the implicit local
     operator (``operator``), which is not a principal: it is refused with the
@@ -2289,10 +2290,9 @@ def playbill_block_declare(
 
     check_permission("cruxible_block_declare", instance_id=instance_id)
     instance = get_playbill_manager().get(instance_id)
-    _coordinator, actor = _authoring_coordinator(instance_id)
     return service_declare_playbill_block(
         instance,
-        actor_id=actor.actor_id,
+        actor_id=_attributed_actor_id(instance_id),
         stamp=stamp,
         declared_at=cast(str, format_datetime(utc_now())),
     )
@@ -2750,10 +2750,7 @@ def playbill_inbox_get(instance_id: str, item_id: str) -> contracts.InboxItem:
 
 
 def _inbox_actor(instance_id: str) -> GovernedActorContext:
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Inbox dispositions require an authenticated actor identity")
-    return actor
+    return _attributed_actor(instance_id, "An inbox disposition")
 
 
 def playbill_inbox_ack(instance_id: str, item_id: str) -> contracts.InboxDispositionResult:
@@ -3021,7 +3018,7 @@ def playbill_block_observe(
         result = service_observe_playbill_blocks(
             get_playbill_manager().get(instance_id),
             request=parsed,
-            actor_context=_curation_actor(instance_id),
+            actor_context=_attributed_actor(instance_id, "Recording block observations"),
         )
     return contracts.BlockObserveResult.model_validate(result.model_dump(mode="json"))
 

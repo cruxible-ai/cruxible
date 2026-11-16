@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from cruxible_client import AccessProfile, Cruxible, CruxibleClient
 from cruxible_client.contracts.line_inbox import inbox_payload_preview as payload_preview
+from cruxible_client.contracts.principals import PRINCIPAL_ID_HEADER
 from cruxible_client.contracts.read_values import ShownObject, TruncatedText
 from cruxible_client.contracts.shapes import Contract
 from cruxible_client.errors import CoreError as CruxibleError
@@ -103,6 +104,8 @@ def _served_inbox(playbill_http, tmp_path, monkeypatch):  # type: ignore[no-unty
     monkeypatch.setattr(
         manager, "get", lambda key: instance if key == instance_id else original_get(key)
     )
+    # Judging an item records who judged it: act as the world's owner.
+    http.headers[PRINCIPAL_ID_HEADER] = "owner"
     transport = CruxibleClient(base_url="http://testserver")
     transport._client.close()
     transport._client = http
