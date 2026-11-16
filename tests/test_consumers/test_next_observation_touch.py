@@ -45,17 +45,26 @@ def _state(current: int, stale: int) -> sqlite3.Connection:
             f"INSERT INTO claim_facts({','.join(row)}) VALUES({','.join('?' for _ in row)})",
             tuple(row.values()),
         )
-        connection.execute(
-            "INSERT INTO fact_reads VALUES(?,?)",
-            (f"observed:{_KEY[0]}|{_KEY[1]}", f"Claim:c{index}"),
-        )
+        # Only a Claim an observation can change keeps the edge (the facts
+        # writer drops it from supported-and-current ones, review 2b F-007).
+        if index >= current:
+            connection.execute(
+                "INSERT INTO fact_reads VALUES(?,?)",
+                (f"observed:{_KEY[0]}|{_KEY[1]}", f"Claim:c{index}"),
+            )
     return connection
 
 
-@pytest.mark.parametrize("current", [10, 100])
 def test_an_observation_touches_only_the_claims_it_changes(
-    monkeypatch: pytest.MonkeyPatch, current: int
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The stale readers alone, by index: the same SQLite work at 100 and 10,000 current."""
+
+    steps = {current: _touch(monkeypatch, current) for current in (100, 10_000)}
+    assert steps[10_000] <= steps[100] + 64, steps
+
+
+def _touch(monkeypatch: pytest.MonkeyPatch, current: int) -> int:
     from cruxible_core.evidence import claim_reobservations
 
     monkeypatch.setattr(
@@ -78,9 +87,18 @@ def test_an_observation_touches_only_the_claims_it_changes(
     }
     cursors = facts._Cursors(heads="h", reobs=1, **common)  # noqa: SLF001
     heads = facts.ReadHeads(coordinate=None, reobs=2, **common)  # type: ignore[arg-type]
+    counted = [0]
+
+    def count() -> int:
+        counted[0] += 1
+        return 0
+
+    connection.set_progress_handler(count, 1)
     touched = facts._touched(object(), connection, cursors, heads, now=_NOW)  # noqa: SLF001
+    connection.set_progress_handler(None, 1)
     # The two stale Claims are derived again; no current one is, at either size.
     assert touched.claims == {f"Claim:c{current}", f"Claim:c{current + 1}"}
+    return counted[0]
 
 
 def _no_init(self: Any, instance: Any) -> None:

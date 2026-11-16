@@ -100,7 +100,7 @@ if TYPE_CHECKING:
 #: number is part of the schema text, so a new one rebuilds the state (R5).
 #: 17: a current Claim's facts end at its freshness expiry less next's lead, and
 #: a content observation derives only the Claims it changes (built at 16: rebuild).
-FORMAT = 17  # Rows' repairs name their because operand and quoted placeholders
+FORMAT = 18  # Only stale readers keep an observation edge (review 2b F-007)
 #: (<TEXT>, <CLAIM_ID>), and a due dispatch names its Line. A state built at 15 stores
 #: rows with the old commands and ids, so it must rebuild once. (15: subject-end entries
 #: per (end, pair) key; live key-object index.)
@@ -630,14 +630,17 @@ def _claim_facts(
             for item in verdict.freshness_expirations
             if item.expires_at - lead > at
         )
-        # A verdict that read freshness reads every observation of the content
-        # it cites (ruling 1a): one recorded for any Capture of that content
-        # re-derives this Claim. A Claim whose verdict ignores freshness is
-        # never reached by an observation.
-        reads.update(
-            f"observed:{key.contract_digest}|{key.observed_content_digest}"
-            for key in recording.reobservation_keys.get(claim.identity.name, ())
-        )
+        # A verdict that read freshness reads every observation of the keys
+        # it depends on (its contents, its row, its enumeration). Only a Claim
+        # whose stored verdict an observation can change keeps the edge: one
+        # not supported-and-current (a current one is re-derived at its lead
+        # boundary). So an observation reaches exactly the stale readers, by
+        # index, never filtering the current population (review 2b F-007).
+        if verdict.verdict != "supported" or verdict.currency != "current":
+            reads.update(
+                f"observed:{key.contract_digest}|{key.observed_content_digest}"
+                for key in recording.reobservation_keys.get(claim.identity.name, ())
+            )
     lower, upper = (
         invariance_interval(boundaries, evaluation_time=at) if verdict is not None else (None, None)
     )
@@ -1285,20 +1288,19 @@ def _touched(
             cursors.reobs, through=heads.reobs
         )
         claims.update(f"Claim:{claim_id}" for claim_id in lineages)
-        # Keyed by content, and only where the observation changes a stored
-        # fact: a Claim whose freshness read the content and whose stored
-        # verdict is not currently supported-and-current. A current Claim's
-        # stored facts still hold (its verdict only lasts longer); it is
-        # derived again when its stored expiry nears (its facts' upper bound
-        # includes the expiry less next's lead), reading the observation then.
-        # One write per stale period, never one per observation.
+        # Keyed by what the Claims depend on (content, row or enumeration),
+        # and only where the observation changes a stored fact: the facts
+        # writer keeps an ``observed:`` edge only for a Claim whose stored
+        # verdict is not supported-and-current, so this is one index range
+        # over those readers alone. A current Claim's stored facts still hold
+        # (its verdict only lasts longer); it is derived again when its stored
+        # expiry nears (its facts' upper bound includes the expiry less next's
+        # lead), reading the observation then. One write per stale period.
         claims.update(
             str(row[0])
             for row in _rows(
                 connection,
-                "SELECT r.claim_id FROM fact_reads r JOIN claim_facts f "
-                "ON f.claim_id=r.claim_id WHERE r.read_key IN ({marks}) "
-                "AND (f.verdict IS NOT 'supported' OR f.currency IS NOT 'current')",
+                "SELECT claim_id FROM fact_reads WHERE read_key IN ({marks})",
                 tuple(sorted(f"observed:{contract}|{content}" for contract, content in observed)),
             )
         )
