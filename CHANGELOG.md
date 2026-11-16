@@ -436,6 +436,39 @@ quickstart and concepts pages.
   (MCP and SDK: `dry_run=false` and `at`).
 - **`ledger publish` exits 1 when publication ends `behind`,** and prints
   Git's multi-line reason one line at a time.
+- **Proposal acts need a named principal.** A request naming no principal
+  (the auth-off implicit `operator`, such as an MCP server with only
+  `CRUXIBLE_MCP_KEY_DIR`) approved, activated, rejected and withdrew
+  proposals. Approve, activate, reject, withdraw and readmit now refuse it
+  with `cruxible.identity.principal_unconfigured`; readmit by anyone but the
+  author refuses `cruxible.proposal.readmit_not_author`.
+- **Activation waits for approvals.** Activating an unapproved proposal whose
+  base moved landed it at the head; it now refuses
+  `cruxible.approval.requirement_unsatisfied`, naming who may sign, and
+  changes nothing. Acting again on an accepted proposal refuses
+  `cruxible.proposal.already_accepted` instead of calling it stale, and a
+  repeated approval stores nothing.
+- **A landed proposal names its source.** Approval and activation receipts
+  carry `readmits`; acting on the replaced proposal refuses as superseded,
+  naming the replacement. While approvals remain, the approval receipt names
+  `required_signers` and `eligible_signers`, and `proposal approve` prints
+  whose signatures are outstanding.
+- **A reviewer registered after the proposal can approve it.** Its approval
+  lands the proposal at the head first (the signer's eligibility is checked
+  before anything lands), instead of refusing `principal is absent`. A caller
+  without approval rights gets `cruxible.approval.signer_after_base`; the SDK
+  names the landed proposal to review.
+- **The MCP mode cap is enforced by the daemon.** A client may send a ceiling
+  with each request that can only lower its tier; the MCP server sends its
+  `CRUXIBLE_MODE` cap. Activation inside writes, `kit add`, `kit remove` and
+  `provider move` (proposed below `graph_write`) and a Line's later automatic
+  runs respect it. `cruxible_whoami` reports `mode_cap` and
+  `effective_permission_mode`; a tool above the cap refuses
+  `cruxible.mcp.mode_insufficient`.
+- **An unchanged Procedure run stores far less.** Item dependency records cite
+  their terminal's shared set by digest (about 1.2 kB an item instead of up to
+  68 kB), and a Query read's stored result leaves out its evaluation instant,
+  so an identical read stores about 320 bytes.
 
 ## [0.3.2] - 2026-08-06
 
