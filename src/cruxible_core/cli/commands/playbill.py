@@ -3255,24 +3255,30 @@ def approve_proposal(
         if key is None:
             raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        # A signer registered after the proposal's base cannot sign its candidate;
+        # the challenge then lands it at the head and names the landed proposal.
+        challenge = client.prepare_approval(
+            instance_id, resolved_id, signer_id=resolved_signer, include_body=True
+        )
         summary = None
         if shows_summary:
-            page = client.review_proposal(instance_id, resolved_id, groups=False)
+            page = client.review_proposal(instance_id, challenge.proposal_id, groups=False)
             assert isinstance(page, contracts.ProposalReviewSummary)
             summary = page
-        return (
-            resolved_id,
-            client.prepare_approval(
-                instance_id, resolved_id, signer_id=resolved_signer, include_body=True
-            ),
-            key,
-            summary,
-        )
+        return resolved_id, challenge, key, summary
 
     resolved_id, challenge, key, summary = _server_call(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
+    if challenge.proposal_id != resolved_id:
+        if not output_json:
+            click.echo(
+                f"Landed at the head as {challenge.proposal_id}: the same change set "
+                f"(proposed as {resolved_id}, before {resolved_signer} was registered); "
+                "signing it"
+            )
+        resolved_id = challenge.proposal_id
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
     if not output_json:
         if full:

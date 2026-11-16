@@ -160,6 +160,14 @@ def approve_reviewed(
     raw = cx._client.prepare_approval(
         cx._instance_id, proposal_id, signer_id=signer_id, include_body=True
     )
+    if raw.proposal_id != proposal_id:
+        # The signer was registered after the proposal's base: the daemon landed
+        # it at the head, and the reviewed candidate is not the one to sign.
+        raise ApprovalReviewMismatch(
+            f"Proposal {proposal_id} landed at the head as {raw.proposal_id} "
+            f"(its base predates signer {signer_id}); review "
+            f"cx.proposal({raw.proposal_id!r}) and approve that one"
+        )
     try:
         challenge = api.ApprovalChallenge.model_validate(raw.model_dump(mode="json"))
         _checked_review(review, proposal_id)

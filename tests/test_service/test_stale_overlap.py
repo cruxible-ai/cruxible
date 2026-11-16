@@ -420,3 +420,90 @@ def test_an_approval_that_lands_a_moved_proposal_names_its_source(tmp_path: Path
     )
     assert activation.status == "accepted"  # type: ignore[union-attr]
     assert activation.readmits == source_id  # type: ignore[union-attr]
+
+
+def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
+    tmp_path: Path,
+) -> None:
+    """F3 / coldmcp-01: a principal registered after a proposal was admitted is absent
+    at its base, where its signature is checked, so `approve` refused "principal is
+    absent". A caller who may submit approvals now lands the proposal at the head
+    first (as approving a moved proposal does) and signs the landed candidate, whose
+    parent registry holds the signer; one who may not is told why and who readmits."""
+
+    from cruxible_client.contracts.errors import ApprovalSignerAfterBase
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_propose_playbill_principal_change,
+    )
+
+    instance, owner = seed_write_surface(tmp_path, self_approval=False)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "before late joined"))
+    late = generate_client_principal_key(
+        tmp_path / "late-keys",
+        principal_id="late",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=late.principal,
+        actor_id="owner",
+        proposal_name="register-late",
+        timestamp="2026-09-29T12:40:00.000000Z",
+    ).proposal
+    assert registration.candidate is not None
+    for material in (owner, reviewer := client_material(tmp_path, instance)):
+        signed = _sign(
+            material,
+            registration.candidate.candidate_digest,
+            registration.candidate.candidate.parent_semantic_root,
+        )
+        last = service_submit_playbill_approval(
+            instance,
+            proposal_id=registration.admission.proposal_id,
+            attestation=signed.attestation,
+            authenticated_submitter=material.principal.principal_id,
+            activate_when_complete=True,
+            may_activate=True,
+        )
+    assert last.activation is not None and last.activation.status == "accepted"  # type: ignore[union-attr]
+    access = BodyAccessContext(principal_id="late", can_read_body=True)
+
+    with pytest.raises(ApprovalSignerAfterBase) as refused:
+        service_prepare_playbill_approval(
+            instance, proposal_id=source_id, signer_id="late", access=access
+        )
+    assert refused.value.error_code == "cruxible.approval.signer_after_base"
+    assert f"cruxible proposal readmit {source_id}" in str(refused.value)
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None
+
+    landed_by: list[str] = []
+    challenge = service_prepare_playbill_approval(
+        instance,
+        proposal_id=source_id,
+        signer_id="late",
+        access=access,
+        land=lambda: landed_by.append("checked"),
+    )
+    assert landed_by == ["checked"]
+    assert challenge.proposal_id != source_id
+    assert challenge.signer_principal.principal_id == "late"
+    head = instance.accepted_coordinate()
+    assert challenge.statement.signing_semantic_root == head.semantic_root
+    withdrawal = instance.proposal_evidence().read_withdrawal(source_id)
+    assert withdrawal is not None and withdrawal.superseded_by == challenge.proposal_id
+
+    receipt = service_submit_playbill_approval(
+        instance,
+        proposal_id=challenge.proposal_id,
+        attestation=_sign(
+            late, challenge.statement.payload_digest, challenge.statement.signing_semantic_root
+        ).attestation,
+        authenticated_submitter="late",
+        activate_when_complete=True,
+        may_activate=True,
+    )
+    assert receipt.activation is not None and receipt.activation.status == "accepted"  # type: ignore[union-attr]
+    assert receipt.readmits == source_id  # type: ignore[union-attr]
+    assert reviewer.principal.principal_id == "reviewer"

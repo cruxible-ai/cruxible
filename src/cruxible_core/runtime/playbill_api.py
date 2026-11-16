@@ -472,6 +472,10 @@ def _governed_actor_id(instance_id: str) -> str:
     return actor_id
 
 
+def _require_governed_actor(instance_id: str) -> None:
+    _governed_actor_id(instance_id)
+
+
 def _require_writer(instance_id: str) -> None:
     """The write boundary for an instance mutation that records no actor.
 
@@ -1474,6 +1478,13 @@ def playbill_prepare_approval(
         proposal_id=proposal_id,
         signer_id=signer_id,
         access=_access(instance_id, include_body=include_body),
+        # A signer registered after the proposal's base: a caller who may submit
+        # approvals lands it at the head first, as approving a moved proposal does.
+        land=(
+            (lambda: _require_governed_actor(instance_id))
+            if _permits("cruxible_proposal_approve_submit", instance_id=instance_id)
+            else None
+        ),
     )
     from cruxible_core.service.proposals.review import withhold_review_values
 

@@ -635,6 +635,36 @@ class ApprovalIntegrityError(CruxibleError):
     """An approval statement, signer, signature, or required quorum was refused."""
 
 
+class ApprovalSignerAfterBase(ApprovalIntegrityError):
+    """A signer registered after a proposal's base cannot sign its candidate as it stands.
+
+    Signatures are checked against the principal registry of the coordinate
+    they sign at, the candidate's parent, where this principal is absent. An
+    approver whose tier may submit approvals lands the proposal at the head by
+    approving it; otherwise its author readmits it.
+    """
+
+    error_code = "cruxible.approval.signer_after_base"
+
+    def __init__(self, proposal_id: str, *, signer_id: str, author: str) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.signer_id = signer_id
+        self.author = author
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.readmit", arguments={"proposal_id": proposal_id}
+        )
+        super().__init__(
+            f"{self.error_code}: {signer_id} was registered after proposal {proposal_id}'s "
+            "base, so it cannot sign that candidate as it stands. An approver who may "
+            f"submit approvals (graph_write) lands it at the head by approving it "
+            f"(`cruxible proposal approve {proposal_id} --signer-id {signer_id}`); otherwise "
+            f"its author {author!r} runs `cruxible proposal readmit {proposal_id} --commit "
+            "--at OID` and you approve the new proposal"
+        )
+
+
 class ApprovalRequirementUnmet(ApprovalIntegrityError):
     """Activation refused: the candidate's approval requirement is not met yet.
 
@@ -868,6 +898,7 @@ __all__ = [
     "CanonicalEncodingError",
     "ApprovalIntegrityError",
     "ApprovalRequirementUnmet",
+    "ApprovalSignerAfterBase",
     "ClaimNotFoundError",
     "DocumentFormatError",
     "DocumentNotFoundError",

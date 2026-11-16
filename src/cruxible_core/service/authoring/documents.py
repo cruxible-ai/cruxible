@@ -651,6 +651,34 @@ def refuse_accepted(
         )
 
 
+def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
+    """Land a moved proposal at the head for a signer its base predates; the landed id.
+
+    The approval door's own landing (``service_submit_playbill_approval``):
+    stale when what it touches changed since its base (only its author's
+    readmit answers that), otherwise the same change set readmitted at the head
+    under its author, the source closed as superseded by it.
+    """
+
+    from cruxible_client.contracts.errors import ProposalReadmitAlreadyAccepted
+    from cruxible_core.service.proposals.staleness import render_stale_paths, stale_paths_at_head
+
+    proposal, _candidate = _candidate_for_proposal(instance, proposal_id)
+    stale_paths = stale_paths_at_head(instance, proposal)
+    if stale_paths:
+        raise ProposalStale(
+            proposal_id,
+            reason="changed_since_base",
+            detail="changed at the head since its base: " + render_stale_paths(stale_paths),
+        )
+    recompiled = _recompile_for_review(instance, proposal, approver=True)
+    if recompiled is None:
+        raise ProposalStale(proposal_id)
+    if recompiled.proposal_id is None:
+        raise ProposalReadmitAlreadyAccepted(proposal_id)
+    return recompiled.proposal_id
+
+
 def _delegated(proposal: ProposalResult) -> bool:
     """Whether a mandate, not candidate approvals, settles this proposal."""
 

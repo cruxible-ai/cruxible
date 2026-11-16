@@ -628,8 +628,10 @@ def handle_playbill_approve(
         forbidden_roots=mcp_custody_forbidden_roots(),
     )
     attestation = key_signer.sign(statement)
+    # A signer registered after the proposal's base: the challenge landed it at
+    # the head, and the landed proposal is the one this signature is for.
     result = handle_playbill_submit_approval(
-        instance_id, proposal_id, attestation.model_dump(mode="json"), hold=hold
+        instance_id, challenge.proposal_id, attestation.model_dump(mode="json"), hold=hold
     )
     if (
         isinstance(result, contracts.ProposalRecompiled)
