@@ -9,11 +9,13 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.get_reads import GetCoordinate
 from cruxible_client.contracts.write import (
     FileEvidence,
     RetireRequest,
     SetChange,
     SetRequest,
+    WriteOutcome,
     WriteRequest,
 )
 from cruxible_core.errors import DataValidationError
@@ -132,7 +134,7 @@ def test_write_tools_are_default_governed_write_tools_with_declared_parameters(
     assert tools[tool].outputSchema is not None
 
 
-def _capture(monkeypatch: pytest.MonkeyPatch, method: str) -> list[Any]:
+def _capture(monkeypatch: pytest.MonkeyPatch, method: str, *, result: Any = "outcome") -> list[Any]:
     """Record the typed request the handler sends the daemon client's ``method``."""
 
     captured: list[Any] = []
@@ -140,7 +142,7 @@ def _capture(monkeypatch: pytest.MonkeyPatch, method: str) -> list[Any]:
     def call(instance_id: str, *, request: Any) -> Any:
         assert instance_id == "inst_write"
         captured.append(request)
-        return "outcome"
+        return result
 
     stub = getattr(handlers._get_client, "stub", None)
     if stub is None:
@@ -256,7 +258,11 @@ entries:
     )
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     # cruxible_set with file evidence goes through the workspace write too.
-    writes = _capture(monkeypatch, "write")
+    # The workspace write reads the outcome it returns, so the stub answers a real one.
+    accepted = WriteOutcome(
+        status="accepted", coordinate=GetCoordinate(git_oid="a" * 12, generation=1)
+    )
+    writes = _capture(monkeypatch, "write", result=accepted)
     evidence = {"kind": "file", "file": "notes.md#Status: done"}
 
     handlers.handle_playbill_set(
