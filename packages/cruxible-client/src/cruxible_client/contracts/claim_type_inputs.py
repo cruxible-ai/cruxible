@@ -394,18 +394,6 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
 
         return field in self.model_fields_set
 
-    @field_validator("anticipated_source_ids")
-    @classmethod
-    def _anticipated_source_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value:
-            raise ValueError(
-                "anticipated_source_ids is no longer authored: a workspace file or section "
-                "citation needs no rule (it is admitted wherever own words are); for a "
-                "particular kind of source, list its shaped CaptureContract in "
-                "evidence: [<contract name>, ...]"
-            )
-        return value
-
     @field_validator("evidence")
     @classmethod
     def _evidence(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
@@ -450,6 +438,36 @@ def refuse_added_per_file_rules(
         f"{ClaimTypePerFileEvidenceRule.error_code}: ClaimType:{predicate} evidence rule "
         f"{rule_id!r} names CaptureContract:{public_name(name)}; {PER_FILE_EVIDENCE_RULE_REPAIR}"
     )
+
+
+#: The repair a retired source list names: shaped contracts go in ``evidence``.
+SOURCES_RETIRED_REPAIR = (
+    "a workspace file or section citation needs no rule (it is admitted wherever own "
+    "words are); for a particular kind of source, list its shaped CaptureContract in "
+    "evidence: [<contract name>, ...]"
+)
+
+
+class ClaimTypeSourcesRetired(FormatError):
+    """``anticipated_source_ids`` (the SDK's ``sources=``) is no longer authored."""
+
+    error_code = "cruxible.claim_type.sources_retired"
+
+    def __init__(self, spelling: str = "anticipated_source_ids") -> None:
+        from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+
+        #: Carried to every surface: the HTTP envelope renders it as the repair.
+        self.repair = HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=spelling, required_change=f"Drop {spelling}: {SOURCES_RETIRED_REPAIR}"
+            )
+        )
+        super().__init__(f"{self.error_code}: {spelling} is retired: {SOURCES_RETIRED_REPAIR}")
+
+
+def refuse_retired_sources(value: "ClaimTypeInputRecord") -> None:
+    if value.anticipated_source_ids:
+        raise ClaimTypeSourcesRetired()
 
 
 class ClaimTypeFamilyRuleNotAuthored(FormatError):
@@ -607,6 +625,7 @@ def claim_type_input_defaults(
     evidence here so the expanded form shows them.
     """
 
+    refuse_retired_sources(value)
     data = value.model_dump(mode="json")
     stated = value.model_fields_set
     if predecessor is not None:
@@ -939,6 +958,9 @@ __all__ = [
     "default_evidence_policy",
     "refuse_added_per_file_rules",
     "refuse_added_family_rules",
+    "refuse_retired_sources",
+    "ClaimTypeSourcesRetired",
+    "SOURCES_RETIRED_REPAIR",
     "ClaimTypeFamilyRuleNotAuthored",
     "WORKSPACE_FILE_FAMILY",
     "ClaimTypePerFileEvidenceRule",

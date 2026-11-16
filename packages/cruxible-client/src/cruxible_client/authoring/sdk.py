@@ -1524,11 +1524,9 @@ class ChangeSetDraft:
                 default_role, ClaimRole, label="field default role"
             ).value
         if sources:
-            raise ValueError(
-                f"{kind}.{name}: sources= is retired: a workspace file or section citation "
-                "needs no rule (it is admitted wherever own words are); for a particular "
-                "kind of source, pass evidence=[<shaped CaptureContract name>, ...]"
-            )
+            from cruxible_client.contracts.claim_type_inputs import ClaimTypeSourcesRetired
+
+            raise ClaimTypeSourcesRetired(f"{kind}.{name}: sources=")
         if evidence is not None:
             stated["evidence"] = tuple(evidence)
         if canonical_form is not None:
@@ -3485,11 +3483,9 @@ class Cruxible:
         if isinstance(predicate, ClaimTypeRef):
             self._assert_coordinate(predicate.coordinate)
         if sources:
-            raise ValueError(
-                f"{name}: sources= is retired: a workspace file or section citation needs no "
-                "rule (it is admitted wherever own words are); for a particular kind of "
-                "source, pass evidence=[<shaped CaptureContract name>, ...]"
-            )
+            from cruxible_client.contracts.claim_type_inputs import ClaimTypeSourcesRetired
+
+            raise ClaimTypeSourcesRetired(f"{name}: sources=")
         role_values: tuple[ClaimRoleValue, ...] = tuple(role.value for role in roles)
         rules = _short_form_rules(role_values, evidence)
         lifecycle = ArtifactLifecycle()

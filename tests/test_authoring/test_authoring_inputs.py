@@ -278,12 +278,17 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     }
 
     # Retired: a workspace citation needs no rule; shaped sources go in evidence.
-    with pytest.raises(ValidationError, match="evidence: \\[<contract name>"):
-        ClaimTypeInputRecord.model_validate(
-            {
-                **example.model_dump(mode="json"),
-                "anticipated_source_ids": ["repo.work-items"],
-            }
+    from cruxible_client.contracts.claim_type_inputs import ClaimTypeSourcesRetired
+
+    with pytest.raises(ClaimTypeSourcesRetired, match="evidence: \\[<contract name>"):
+        lower_claim_type_input(
+            ClaimTypeInputRecord.model_validate(
+                {
+                    **example.model_dump(mode="json"),
+                    "anticipated_source_ids": ["repo.work-items"],
+                }
+            ),
+            tree=instance.tree_at(instance.accepted_coordinate().git_oid),
         )
 
 
@@ -553,8 +558,6 @@ def test_claim_type_source_intent_proposes_no_per_source_rule(
 
 def test_a_procedure_input_refuses_acquisition_rules_naming_the_line() -> None:
     """Acquisition rules live on the Line only; a Procedure declaring them is refused."""
-
-    from pydantic import ValidationError
 
     from tests.support.procedures import spec_input
 

@@ -22,6 +22,7 @@ from cruxible_client.contracts.claim_type_inputs import (
     ClaimTypeEvidenceRulesRequired,
     ClaimTypeFamilyRuleNotAuthored,
     ClaimTypePerFileEvidenceRule,
+    ClaimTypeSourcesRetired,
 )
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
@@ -144,8 +145,13 @@ def test_evidence_lists_shaped_contracts_for_the_fields_roles() -> None:
 
 
 def test_retired_and_conflicting_short_forms_refuse_naming_evidence() -> None:
-    with pytest.raises(ValueError, match="anticipated_source_ids is no longer authored"):
-        ClaimTypeInputRecord.model_validate({**_RECORD, "anticipated_source_ids": ["quotes"]})
+    retired = ClaimTypeInputRecord.model_validate({**_RECORD, "anticipated_source_ids": ["quotes"]})
+    with pytest.raises(ClaimTypeSourcesRetired) as caught:
+        lower_claim_type_input(retired, tree={})
+    assert caught.value.error_code == "cruxible.claim_type.sources_retired"
+    assert "evidence: [<contract name>, ...]" in str(caught.value)
+    assert caught.value.repair.hand_edit.target == "anticipated_source_ids"
+    assert "evidence: [<contract name>, ...]" in caught.value.repair.hand_edit.required_change
     with pytest.raises(ValueError, match="not both"):
         ClaimTypeInputRecord.model_validate(
             {
