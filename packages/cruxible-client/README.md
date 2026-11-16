@@ -2178,8 +2178,11 @@ Compile and preflight the whole changeset as one intent.
 `program_stamp`, and `source_map` for inspection. `prepare()` performs server
 compilation/preflight; `submit()` compiles and lands in one request when no
 approval is required and the caller may activate. `intent.outcome` reports
-`landed` with the accepted coordinate or `proposed` with the proposal ID,
-typed stop reason and next step. `submit(accept="never")` keeps the proposal.
+`landed` with the accepted coordinate, `proposed` with the proposal ID,
+typed stop reason and next step, or `refused` (`AuthoringRefused`, reason
+`preflight_refused`, no proposal) when the payload failed preflight: running
+preflight again changes nothing, so its next step is a revised payload
+resubmitted to the same intent. `submit(accept="never")` keeps the proposal.
 The daemon preflights once, and a refused intent carries the same `refused` and
 `diagnostics` that `prepare()` reports; the program stamp is structured authoring provenance,
 not retained executable Python source. `ClaimTypeDraft.propose(...)` is a direct
@@ -8003,7 +8006,7 @@ definitions singular.
 
 **`contracts.attestation_evidence`** — [ClaimAttestationEvidenceRequest](src/cruxible_client/contracts/attestation_evidence.py), [ClaimAttestationEvidenceResult](src/cruxible_client/contracts/attestation_evidence.py).
 
-**`contracts.authoring_landing`** — [AuthoringLanded](src/cruxible_client/contracts/authoring_landing.py), [AuthoringProposed](src/cruxible_client/contracts/authoring_landing.py).
+**`contracts.authoring_landing`** — [AuthoringLanded](src/cruxible_client/contracts/authoring_landing.py), [AuthoringProposed](src/cruxible_client/contracts/authoring_landing.py), [AuthoringRefused](src/cruxible_client/contracts/authoring_landing.py).
 
 **`contracts.backlinks`** — [BacklinksRequest](src/cruxible_client/contracts/backlinks.py), [BacklinksResult](src/cruxible_client/contracts/backlinks.py).
 
