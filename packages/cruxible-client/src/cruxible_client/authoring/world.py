@@ -111,6 +111,71 @@ class WorldStructureError(SdkError):
     code = "cruxible.sdk.world_structure_refused"
 
 
+class WorldFieldValueRefused(WorldStructureError):
+    """A field was given as something other than one ``field=value`` keyword.
+
+    A list, tuple or set for one field, or a field passed positionally. Each
+    keyword is one value: a many-valued field takes one more value per
+    ``.add(field=value)``.
+    """
+
+    code = "cruxible.sdk.field_value_refused"
+
+
+class WorldReservedKeyword(WorldStructureError):
+    """A field shares its leaf with a write keyword (``role``, ``evidence``).
+
+    The keyword means the write's Claim role or evidence, so the field is
+    reached by its full predicate name (``**{"kind.role": ...}``) or renamed.
+    """
+
+    code = "cruxible.sdk.reserved_keyword"
+
+
+#: Write keywords a field leaf may collide with, and what the keyword means instead.
+_RESERVED_WRITE_KEYWORDS: dict[str, str] = {
+    "role": "the Claim role (normative, observation or environment_binding)",
+    "evidence": "the evidence the write cites (cx.section(...), cx.evidence(...))",
+}
+
+_COLLECTIONS = (list, tuple, set, frozenset)
+
+
+def _refuse_positional_fields(method: str, positional: tuple[object, ...]) -> None:
+    """A field is a keyword; say how to write the one given positionally."""
+
+    if not positional:
+        return
+    if len(positional) == 2 and isinstance(positional[0], str) and positional[0].isidentifier():
+        spelled = f".{method}({positional[0]}={positional[1]!r})"
+    else:
+        spelled = f".{method}(<field>=<value>)"
+    raise WorldFieldValueRefused(
+        f"{method}() takes each field as a keyword, not positionally: write {spelled}. "
+        "A many-valued field takes one value per .add(<field>=<value>); call .add "
+        "again for each further value"
+    )
+
+
+def _refuse_collection_value(field_name: str, value: object, *, many: bool) -> None:
+    """One keyword is one value; a list is not a value of any field."""
+
+    if not isinstance(value, _COLLECTIONS):
+        return
+    if many:
+        repair = (
+            f"it is many-valued, so add each value with its own .add({field_name}=...), "
+            f"e.g. draft.add({field_name}=a).add({field_name}=b), or "
+            f"subject.add({field_name}=a, because=...) once per value"
+        )
+    else:
+        repair = "it holds one value; pass that value"
+    raise WorldFieldValueRefused(
+        f"{field_name} was given a {type(value).__name__}; each field keyword takes one "
+        f"value, and {repair}"
+    )
+
+
 class Names(tuple[str, ...]):
     """A byte-sorted tuple of names that also answers when called.
 
@@ -451,7 +516,7 @@ class WorldSubject(SubjectRef):
     def set(
         self,
         /,
-        *,
+        *positional: object,
         because: str,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
@@ -474,13 +539,15 @@ class WorldSubject(SubjectRef):
         Next: ``outcome.next`` for what is still needed; ``cx.get(subject)`` reads it back.
         """
 
+        _refuse_positional_fields("set", positional)
+
         edit = self.edit().set(evidence=evidence, role=role, contend=contend, **fields)
         return edit.write(because=because, dry_run=dry_run, accept=accept)
 
     def add(
         self,
         /,
-        *,
+        *positional: object,
         because: str,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
@@ -496,6 +563,8 @@ class WorldSubject(SubjectRef):
 
         Next: ``outcome.next`` for what is still needed.
         """
+
+        _refuse_positional_fields("add", positional)
 
         edit = self.edit().add(evidence=evidence, role=role, expect_absent=expect_absent, **fields)
         return edit.write(because=because, dry_run=dry_run, accept=accept)
@@ -640,7 +709,7 @@ class WorldNewSubject(WorldWritable):
     def set(
         self,
         /,
-        *,
+        *positional: object,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         **fields: object,
@@ -650,6 +719,8 @@ class WorldNewSubject(WorldWritable):
         Next: ``.write(because=...)`` authors the section and creates this Subject.
         """
 
+        _refuse_positional_fields("set", positional)
+
         changes = self._world._field_changes(
             self.subject_kind, "set", fields, evidence=evidence, role=role
         )
@@ -658,12 +729,14 @@ class WorldNewSubject(WorldWritable):
     def add(
         self,
         /,
-        *,
+        *positional: object,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         **fields: object,
     ) -> WorldNewSubject:
         """This draft with one more value in many-valued fields. Next: ``.write(because=...)``."""
+
+        _refuse_positional_fields("add", positional)
 
         changes = self._world._field_changes(
             self.subject_kind, "add", fields, evidence=evidence, role=role
@@ -700,7 +773,7 @@ class WorldSubjectEdit(WorldWritable):
     def set(
         self,
         /,
-        *,
+        *positional: object,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
@@ -711,6 +784,8 @@ class WorldSubjectEdit(WorldWritable):
         Next: ``.write(because=...)``, then inspect ``outcome.docs`` for file conflicts.
         """
 
+        _refuse_positional_fields("set", positional)
+
         kind = self.address.split("/", 1)[0]
         changes = self._world._field_changes(
             kind, "set", fields, evidence=evidence, role=role, contend=contend
@@ -720,13 +795,15 @@ class WorldSubjectEdit(WorldWritable):
     def add(
         self,
         /,
-        *,
+        *positional: object,
         evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
         **fields: object,
     ) -> WorldSubjectEdit:
         """This edit with one more value in many-valued fields, as ``WorldSubject.add``."""
+
+        _refuse_positional_fields("add", positional)
 
         kind = self.address.split("/", 1)[0]
         changes = self._world._field_changes(
@@ -1149,8 +1226,17 @@ class World:
         self._playbill._assert_coordinate(self._coordinate)
 
     def _write_field(self, subject_kind: str, keyword_or_leaf: str) -> str:
-        """The full predicate one write keyword names for a kind, checked here."""
+        """The full predicate one write keyword names for a kind, checked here.
 
+        A full predicate name admitted for the kind is taken as it is
+        (``**{"oncall.shift.role": ...}``): it is how a leaf that is ambiguous, or
+        that a write keyword already claims, is written.
+        """
+
+        if "." in keyword_or_leaf:
+            leaf = keyword_or_leaf.rsplit(".", 1)[-1]
+            if keyword_or_leaf in self._leaf_map(subject_kind).get(leaf, ()):
+                return keyword_or_leaf
         # The keyword escape (`class_`, `self_`) adds exactly one underscore to a
         # leaf that could not be a keyword as it stands; no other leaf ends in one.
         leaf = keyword_or_leaf[:-1] if keyword_or_leaf.endswith("_") else keyword_or_leaf
@@ -1328,6 +1414,8 @@ class World:
 
         from cruxible_client.contracts.write import CreateKeyPart
 
+        self._refuse_reserved_keywords(kind, "define", role=role, evidence=evidence)
+
         sent: SubjectKeyValue | tuple[CreateKeyPart, ...] | None = None
         if identity.rule == "minted":
             if key or create_new:
@@ -1377,6 +1465,7 @@ class World:
             predicate = self._write_field(kind, name)
             node = self._node_at(predicate)
             assert node is not None and node.structure is not None
+            _refuse_collection_value(name, raw, many=node.structure.cardinality == "many")
             changes.append(
                 _FieldChange(
                     op="add" if node.structure.cardinality == "many" else "set",
@@ -1411,20 +1500,71 @@ class World:
         """One change per field keyword, each name checked against this World."""
 
         self._assert_current()
+        self._refuse_reserved_keywords(kind, op, role=role, evidence=evidence)
         if not fields:
             raise TypeError("a write needs at least one field=value")
-        return tuple(
-            _FieldChange(
-                op=op,
-                field=self._write_field(kind, name),
-                value=value,
-                evidence=evidence,
-                role=role,
-                contend=contend,
-                expect_absent=expect_absent,
+        changes: list[_FieldChange] = []
+        for name, value in fields.items():
+            predicate = self._write_field(kind, name)
+            if isinstance(value, _COLLECTIONS):
+                node = self._node_at(predicate)
+                structure = None if node is None else node.structure
+                many = structure is not None and structure.cardinality == "many"
+                _refuse_collection_value(name, value, many=many)
+            changes.append(
+                _FieldChange(
+                    op=op,
+                    field=predicate,
+                    value=value,
+                    evidence=evidence,
+                    role=role,
+                    contend=contend,
+                    expect_absent=expect_absent,
+                )
             )
-            for name, value in fields.items()
-        )
+        return tuple(changes)
+
+    def _refuse_reserved_keywords(
+        self,
+        kind: str,
+        method: str,
+        *,
+        role: object,
+        evidence: object,
+    ) -> None:
+        """Refuse a field value given through a write keyword that shares its leaf.
+
+        Only a value the keyword itself cannot take is read as a field, so the
+        check costs nothing on a well-formed call.
+        """
+
+        from typing import get_args
+
+        from cruxible_client.contracts.write import WriteRole
+
+        misused: list[tuple[str, object]] = []
+        if role is not None and role not in get_args(WriteRole):
+            misused.append(("role", role))
+        if isinstance(evidence, (str, int, float, bool, SubjectRef, LiteralValue)):
+            misused.append(("evidence", evidence))
+        for keyword_name, given in misused:
+            meaning = _RESERVED_WRITE_KEYWORDS[keyword_name]
+            fields = self._leaf_map(kind).get(keyword_name, ())
+            if not fields:
+                if keyword_name == "role":
+                    raise WorldReservedKeyword(
+                        f"{method}(role={given!r}): role= is {meaning}, and {given!r} is "
+                        "none of those"
+                    )
+                continue
+            full = sorted(fields)[0]
+            raise WorldReservedKeyword(
+                f"{method}({keyword_name}={given!r}): {keyword_name}= is reserved for "
+                f"{meaning}, so {kind}'s field {full} cannot be passed as {keyword_name}=. "
+                f"Pass it by its full name, {method}(**{{{full!r}: {given!r}}}), or name "
+                "the field differently (a ClaimType succession: cruxible vocabulary export, "
+                "edit, plan, apply)"
+            )
 
     def _write(
         self,

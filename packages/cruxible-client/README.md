@@ -3110,7 +3110,14 @@ new Subjects' drafts.
 New Subjects come from `world.<kind>.define(...)`, typed per kind by its
 SubjectKind: a one-key kind takes its key positionally or by its leaf, a
 composite kind each key part by its leaf, a minted kind none; every other
-keyword is a field (set when it holds one value, added when it holds many).
+keyword is a field with one value: set when the field holds one value, added
+when it holds many. A list is not a value: give a many-valued field each
+further value with its own `.add(field=value)`
+(`cruxible.sdk.field_value_refused` otherwise). A field whose leaf is a write
+keyword (`role`, `evidence`) is written by its full predicate name,
+`define(**{"oncall.shift.role": "primary"})`; `role=` itself is the Claim role
+(`cruxible.sdk.reserved_keyword` when it is given a field value). A full
+predicate name also writes a leaf two predicates share.
 A key one live Subject already holds lands on that Subject and creates nothing
 (the outcome's `resolved: existing`, so a seed run twice answers as done);
 `expect_new=True` refuses `cruxible.write.subject_exists`, and `create_new=True`
