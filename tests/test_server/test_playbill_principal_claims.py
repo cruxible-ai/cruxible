@@ -118,7 +118,7 @@ def test_an_unregistered_claim_reads_but_is_refused_every_write(
         assert refused.status_code == 403  # type: ignore[attr-defined]
         body = refused.json()  # type: ignore[attr-defined]
         assert body["error_code"] == "cruxible.identity.principal_absent"
-        assert "cruxible principal add mallory --key-dir DIR" in body["message"]
+        assert "an owner adds principal mallory with a new key directory" in body["message"]
         assert body["repair"] == {
             "operation": "cruxible.principal.add",
             "arguments": {"principal_id": "mallory"},
@@ -337,7 +337,7 @@ def test_authoring_create_refuses_a_non_principal_before_any_work(
         )
 
     assert refused.value.error_code == "cruxible.identity.principal_absent"
-    assert "cruxible principal add mallory --key-dir DIR" in str(refused.value)
+    assert "an owner adds principal mallory with a new key directory" in str(refused.value)
 
 
 _OPERATIONAL_SECTIONS = (

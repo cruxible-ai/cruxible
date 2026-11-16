@@ -78,8 +78,8 @@ def _resolve(store: LineInboxStore, selector: str) -> str:
         detail = "names more than one item" if exc.ambiguous else "names no item"
         raise InboxItemNotFoundError(
             f"{InboxItemNotFoundError.code}: inbox selector {selector!r} {detail}; name an "
-            f"item id or a unique prefix ({INBOX_ITEM_SELECTOR_PATTERN}); run "
-            "`cruxible inbox list`"
+            f"item id or a unique prefix ({INBOX_ITEM_SELECTOR_PATTERN}) from the inbox list "
+            "(an entry's item.item_id)"
         ) from exc
 
 

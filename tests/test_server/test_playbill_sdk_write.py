@@ -233,6 +233,10 @@ def test_world_writes_keep_references_valid_after_their_own_write(
     assert (
         item.add(governs=world.project.work_item["wi-2"], because="Linked.").changes[0].already_live
     )
+    # A World pins its own basis, so a preview's next step takes no ``at`` (gapb-26).
+    preview = item.retire("title", because="Untitled.", dry_run=True)
+    assert preview.status == "would_accept"
+    assert preview.next == "Call it again with dry_run=False"
     assert item.retire("title", because="Untitled.").status == "accepted"
     # A name the World does not know refuses before the wire.
     with pytest.raises(AttributeError, match="stauts"):

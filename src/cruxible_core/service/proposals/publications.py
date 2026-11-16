@@ -167,7 +167,7 @@ def _depublish(
         )
     raise FormatError(
         f"cruxible.block.not_registered: this instance registers no block "
-        f"{source_id}#{block_id}; repair: read the registered blocks with `cruxible next` "
+        f"{source_id}#{block_id}; repair: read the registered blocks (next names each) "
         "before releasing one"
     )
 

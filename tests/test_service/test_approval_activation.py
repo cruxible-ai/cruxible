@@ -227,7 +227,10 @@ def test_activating_an_unsigned_lifecycle_change_names_its_proposer(tmp_path: Pa
     assert "owner must sign (a principal change needs its proposer's own signature)" in str(
         refused.value
     )
-    assert "--signer-id owner" in str(refused.value)
+    assert refused.value.repair.arguments == {
+        "proposal_id": refused.value.proposal_id,
+        "signer_id": "owner",
+    }
 
 
 def test_a_compiler_upgrades_one_signature_may_be_its_authors() -> None:
@@ -297,7 +300,7 @@ def test_a_provider_move_below_graph_write_proposes_and_does_not_activate(
     else:
         assert (status, approval) == ("proposed", False)
         assert detail is not None
-        assert f"someone who can runs cruxible proposal activate {proposal_id}" in detail
+        assert f"someone at graph_write activates proposal {proposal_id}" in detail
         assert instance.accepted_coordinate() == head
 
 

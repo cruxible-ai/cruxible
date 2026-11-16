@@ -398,7 +398,9 @@ def test_an_accepted_proposal_cannot_be_withdrawn(tmp_path: Path) -> None:
     activate(instance, owner, accepted)
     proposal_id = accepted.proposal.proposal.admission.proposal_id
 
-    with pytest.raises(ProposalAdmissionError, match="only an open or stale proposal"):
+    with pytest.raises(
+        ProposalAdmissionError, match="already_accepted: .* nothing left to withdraw"
+    ):
         service_withdraw_playbill_proposal(
             instance,
             proposal_id=proposal_id,

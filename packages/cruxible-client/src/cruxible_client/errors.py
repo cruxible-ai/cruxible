@@ -17,7 +17,8 @@ from cruxible_client.contracts.errors import (
     ReadRefusalError,
     SinceRequestInvalid,
 )
-from cruxible_client.contracts.repairs import ServedRepair
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
 
 _MAX_DISPLAY_ERRORS = 10
 
@@ -326,4 +327,9 @@ def response_to_error(status: int, body: ErrorResponse) -> CoreError:
     if body.error_code is not None:
         setattr(exc, "error_code", body.error_code)
     setattr(exc, "repair", body.repair)
+    if isinstance(body.repair, RepairOperation) and "Repair:" not in body.message:
+        # The SDK's spelling of the served repair, shown under the traceback.
+        # The CLI and MCP render the same repair in their own spelling from
+        # ``exc.repair``; a note never enters ``str(exc)``.
+        exc.add_note(f"Repair: {render_repair(body.repair, surface='sdk')}")
     return exc

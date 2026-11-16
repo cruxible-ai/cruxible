@@ -116,7 +116,7 @@ def test_a_reverse_follow_along_a_wrong_predicate_refuses_with_the_incoming_ones
     assert error.context["field_path"] == "follow[0].field"
     assert set(error.candidates) <= {DELIVERS, GOVERNS, PARENT}
     assert error.candidates
-    assert error.repair_line and "orient kind=project.work_item" in error.repair_line
+    assert error.repair_line and "orient with kind project.work_item" in error.repair_line
     if field == "delivrs":
         assert error.candidates[0] == DELIVERS
 

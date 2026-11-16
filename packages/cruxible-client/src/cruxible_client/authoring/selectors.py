@@ -70,9 +70,15 @@ def _offsets(content: bytes, needle: bytes) -> tuple[int, ...]:
 def _unique_window(content: bytes, anchor: str) -> tuple[int, int]:
     encoded = anchor.encode("utf-8")
     found = _offsets(content, encoded)
-    if len(found) != 1:
+    if not found:
         raise SourceSelectionError(
-            f"anchor resolved to {len(found)} occurrences at byte offsets {list(found)}"
+            f"anchor {anchor!r} does not occur in the file; repair: copy one line of the "
+            "file as it reads now (after the #) as the anchor"
+        )
+    if len(found) > 1:
+        raise SourceSelectionError(
+            f"anchor {anchor!r} occurs {len(found)} times (byte offsets {list(found)}); "
+            "repair: quote more of the line, so the anchor occurs once"
         )
     return found[0], found[0] + len(encoded)
 

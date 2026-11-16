@@ -500,8 +500,11 @@ def test_a_refused_line_recompile_names_the_lines_next_run_not_readmit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cruxible_client.contracts.errors import ProposalReadmitRefused
+    from cruxible_client.contracts.repair_spelling import render_repair
+    from cruxible_client.errors import response_to_error
     from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
     from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
+    from cruxible_core.server.errors import error_to_response
     from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
     from tests.core_support._support import every_moved_base_overlaps
 
@@ -530,9 +533,17 @@ def test_a_refused_line_recompile_names_the_lines_next_run_not_readmit(
         {"line": line.identity.name},
     )
     message = str(error)
-    assert f"cruxible line run {line.identity.name}" in message
-    assert f"cruxible proposal withdraw {stale}" in message
+    assert f"Run Line {line.identity.name} again" in message
+    assert f"withdraw {stale} with a reason" in message
     assert "proposal readmit" not in message
+    # The runnable exit is the structured repair, spelled by each client from the wire.
+    status, body = error_to_response(error)
+    assert body.repair == error.repair
+    served = response_to_error(status, body).repair
+    name = line.identity.name
+    assert render_repair(served, surface="cli") == f"cruxible line run {name}"
+    assert render_repair(served, surface="mcp") == f'cruxible_line_run(line="{name}")'
+    assert render_repair(served, surface="sdk") == f'cx.line("{name}").run()'
     # Nothing is dropped: the proposal still awaits its author.
     assert service_playbill_proposal_status(instance, proposal_id=stale).status == (
         "awaiting_readmit"

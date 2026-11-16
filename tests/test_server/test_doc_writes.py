@@ -86,6 +86,8 @@ def test_replace_cas_dry_run_docs_only_and_document_followup(playbill_http, tmp_
     source = created.docs[0].source_id
     history = cx.get(f"file:{source}", detail="history").value
     assert history.revisions[0].digest == digest
+    # Each revision's next step is the SDK's own call (gapb-11).
+    assert history.revisions[0].next == (f'cx.get("file:{source}@1", detail="body")',)
     client, instance_id, _ = playbill_http
     assert (
         history.revisions[0].actor == client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]

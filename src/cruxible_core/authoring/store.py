@@ -112,7 +112,7 @@ def intent_not_found(detail: str) -> AuthoringIntentRefused:
 
     return AuthoringIntentRefused(
         "cruxible.authoring.intent_not_found",
-        f"{detail}; run `cruxible authoring list` for the intents in progress",
+        f"{detail}; the authoring list names the intents in progress",
         http_status=404,
         repair=RepairOperation(operation="cruxible.authoring.list"),
     )
@@ -122,7 +122,7 @@ def intent_other_actor() -> AuthoringIntentRefused:
     return AuthoringIntentRefused(
         "cruxible.authoring.intent_other_actor",
         "this AuthoringIntent belongs to another actor; only its author reads or "
-        "revises it. Run `cruxible authoring list` for your own intents",
+        "revises it. The authoring list names your own intents",
         http_status=403,
         repair=RepairOperation(operation="cruxible.authoring.list"),
     )

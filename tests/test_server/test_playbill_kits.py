@@ -855,7 +855,7 @@ def test_a_kept_definition_stays_held_when_a_release_narrows_its_prefix(
     assert refusal.owning_prefix is None
     assert refusal.identity == f"ClaimType:{flag}"
     assert refusal.owning_kit_id == "acme"
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
     assert consumer.claim_type(flag).value.max_len == 256
 
     # The holder still removes it, as an unedited definition it installed.
@@ -975,7 +975,7 @@ def test_overlapping_ownership_is_refused(
     assert refusal.owning_prefix == "acme."
     assert refusal.identity is None
     assert refusal.owning_kit_id == "acme"
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
     assert "release that does not own the overlapping prefix" in refusal.repair
     assert consumer.tree() == before
 
@@ -1024,7 +1024,7 @@ def test_reusing_an_installed_kit_id_with_disjoint_prefixes_is_refused(
     assert refusal.owning_kit_id == "acme"
     assert refusal.our_prefixes == ("beta.",)
     assert refusal.installed_prefixes == ("acme.",)
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
     assert consumer.tree() == before
     assert result.plan == ()
 
@@ -1528,7 +1528,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     assert refusal.owning_prefix == "acme."
     assert refusal.identity == "CaptureContract:acme.orders-v1"
     assert refusal.owning_kit_id == "acme"
-    assert "cruxible kit remove acme" in refusal.repair
+    assert "Remove the" in refusal.repair and "kit acme first (kit remove)" in refusal.repair
 
     removed = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="beta")
@@ -2633,7 +2633,75 @@ def test_a_kit_commit_below_graph_write_proposes_and_does_not_activate(
     assert capped.status == "proposed", capped.detail
     assert capped.proposal_id is not None
     assert capped.detail is not None
-    assert f"someone who can runs cruxible proposal activate {capped.proposal_id}" in capped.detail
+    assert f"someone at graph_write activates proposal {capped.proposal_id}" in capped.detail
     assert consumer.tree() == before
     activated = playbill_api.playbill_activate(consumer.instance_id, capped.proposal_id)
     assert activated.status == "accepted"  # type: ignore[union-attr]
+
+
+def test_a_late_reviewer_is_refused_a_kit_change_before_anything_is_published(
+    strict_worlds: tuple[_World, _World], tmp_path: Path
+) -> None:
+    """A kit change was planned against the instance as it was (ownership,
+    requirements, provider pins, local edits); its old bytes at a later head are not
+    the act a fresh `kit add` is, so a late reviewer's challenge does not land it. It
+    refuses before anything is evaluated or published, naming the author's command."""
+
+    from cruxible_client.contracts.principals import PRINCIPAL_ID_HEADER
+    from tests.test_server.test_late_signer_landing import register_late
+
+    publisher, consumer = strict_worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    proposed = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=False)
+    )
+    assert proposed.status == "proposed" and proposed.approval_required, proposed
+    assert proposed.proposal_id is not None
+    register_late(
+        consumer.http,
+        consumer.instance_id,
+        tmp_path,
+        consumer.reviewer_key,
+        tmp_path / "consumer-operator-custody" / "operator.ed25519",
+    )
+    evidence = get_playbill_manager().get(consumer.instance_id).proposal_evidence()
+    admissions = evidence.list_admissions()
+    before = consumer.tree()
+
+    refused = consumer.http.post(
+        f"/api/v1/{consumer.instance_id}/proposals/{proposed.proposal_id}/approval-challenge",
+        json={"signer_id": "late"},
+        headers={PRINCIPAL_ID_HEADER: "late"},
+    )
+
+    assert refused.status_code == 400, refused.text
+    body = refused.json()
+    assert body["error_code"] == "cruxible.proposal.readmit_requires_resubmission"
+    assert "kit change planned against an earlier state" in body["message"]
+    assert "commits kit acme again at the current head (kit add" in body["message"]
+    assert body["repair"]["operation"] == "cruxible.kit.add"
+    assert "migration" not in body["message"]
+    assert evidence.list_admissions() == admissions
+    assert evidence.read_withdrawal(proposed.proposal_id) is None
+    assert consumer.tree() == before
+    # As on rc, a kit change holding ClaimTypes is never rebased by its bytes, so an
+    # approval by a reviewer present at its base refuses too, saying it is a kit change.
+    base = f"/api/v1/{consumer.instance_id}/proposals/{proposed.proposal_id}"
+    challenge = consumer.http.post(f"{base}/approval-challenge", json={"signer_id": "reviewer"})
+    assert challenge.status_code == 200, challenge.text
+    attestation = LocalEd25519ApprovalSigner.open(
+        signer_id="reviewer",
+        private_key_path=consumer.reviewer_key,
+        expected_public_key=challenge.json()["signer_principal"]["public_key"],
+        forbidden_roots=(),
+    ).sign(ApprovalStatement.model_validate(challenge.json()["statement"]))
+    approved = consumer.http.post(
+        f"{base}/approvals", json={"attestation": attestation.model_dump(mode="json")}
+    )
+    assert approved.status_code == 400, approved.text
+    assert approved.json()["error_code"] == "cruxible.proposal.readmit_requires_resubmission"
+    assert "kit change planned against an earlier state" in approved.json()["message"]
+    assert evidence.list_admissions() == admissions
+    assert evidence.read_withdrawal(proposed.proposal_id) is None
+    assert consumer.tree() == before

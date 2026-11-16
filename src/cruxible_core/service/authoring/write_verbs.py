@@ -116,6 +116,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.get_reads import ReadSurface
 from cruxible_client.contracts.notes import note_id, note_path, parse_note
+from cruxible_client.contracts.placeholders import placeholder
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.read_values import (
@@ -350,6 +351,57 @@ def _render_get(surface: ReadSurface, ref: str) -> str:
     return f"cruxible_get(ref={json.dumps(ref)})"
 
 
+def _option(surface: ReadSurface, name: str, value: object = True) -> str:
+    """A write option as the caller spells it: ``--contend``, ``contend=True`` or MCP JSON."""
+
+    if surface == "cli":
+        flag = "--" + name.replace("_", "-")
+        if value is True:
+            return flag
+        return f"{flag} {shlex.quote(value if isinstance(value, str) else json.dumps(value))}"
+    if surface == "sdk":
+        return f"{name}={value!r}"
+    return f"{name}: {json.dumps(value)}"
+
+
+#: Operands a suggested write leaves for the caller; each is refused if sent
+#: unchanged (``cruxible_client.contracts.placeholders``).
+_TEXT = placeholder("TEXT")
+_ID = placeholder("ID")
+_CAP = placeholder("CAP")
+
+
+def _render_rebind_citation(surface: ReadSurface, claim_id: str, capture: str | None) -> str:
+    """One Claim's re-bind naming its citation onto ``capture``; the caller fills the rest."""
+
+    fresh = _CAP if capture is None else capture
+    if surface == "cli":
+        return (
+            f"cruxible rebind {claim_id} --capture {shlex.quote(fresh)} "
+            f"--citation {shlex.quote(_ID)} --because {shlex.quote(_TEXT)}"
+        )
+    if surface == "sdk":
+        return (
+            f"cx.rebind({json.dumps(claim_id)}, capture={json.dumps(fresh)}, "
+            f"citation={json.dumps(_ID)}, because={json.dumps(_TEXT)})"
+        )
+    change = {
+        "op": "rebind",
+        "target": claim_id,
+        "citation": _ID,
+        "evidence": {"kind": "capture", "capture": fresh},
+    }
+    return f"cruxible_write(changes=[{json.dumps(change)}], because={json.dumps(_TEXT)})"
+
+
+def _render_orient_kind(surface: ReadSurface, kind: str) -> str:
+    if surface == "cli":
+        return f"cruxible orient --kind {shlex.quote(kind)}"
+    if surface == "sdk":
+        return f"cx.orient(kind={json.dumps(kind)})"
+    return f"cruxible_orient(kind={json.dumps(kind)})"
+
+
 def _sdk_create_repair(kind: str, keys: Sequence[str], named: str) -> str:
     """How the SDK creates a Subject of ``kind`` in the same write batch."""
 
@@ -363,12 +415,22 @@ def _sdk_create_repair(kind: str, keys: Sequence[str], named: str) -> str:
     )
 
 
-def _render_commit(surface: ReadSurface, git_oid: str) -> str:
+def _render_commit(surface: ReadSurface, git_oid: str, *, accept: str = "if_allowed") -> str:
+    """The commit of exactly this preview, repeating what the caller asked for.
+
+    A preview asked to only propose (``accept="never"``) says so again, so the
+    commit it names does not land what the caller meant to leave for review.
+    """
+
+    never = accept == "never"
     if surface == "cli":
-        return f"Run the same command without --dry-run, adding --at {git_oid}"
+        kept = " and keeping --no-accept" if never else ""
+        return f"Run the same command without --dry-run{kept}, adding --at {git_oid}"
     if surface == "sdk":
-        return f"Call it again with dry_run=False, at={json.dumps(git_oid)}"
-    return f'Call it again with dry_run=false and at="{git_oid}"'
+        kept = ', accept="never"' if never else ""
+        return f"Call it again with dry_run=False{kept}, at={json.dumps(git_oid)}"
+    kept = ', accept="never"' if never else ""
+    return f'Call it again with dry_run=false{kept} and at="{git_oid}"'
 
 
 def requires_captured_evidence(claim_type: ClaimType) -> bool:
@@ -749,6 +811,7 @@ class _Planner:
         subject_path_value: str,
         predicate: str,
         live: tuple[_SlotClaim, ...],
+        verb: Literal["set", "retire"] = "set",
     ) -> None:
         """Refuse when the slot moved after the writer's read coordinate (decision a, Q05)."""
 
@@ -780,7 +843,26 @@ class _Planner:
             ),
             change=index,
             candidates=tuple(item.claim_id for item in live),
-            repair="Re-set it to replace it, or set it with contend: true to contest it",
+            repair=self._slot_changed_repair(verb, subject),
+        )
+
+    def _slot_changed_repair(self, verb: Literal["set", "retire"], subject: str) -> str:
+        """Read the slot again and repeat the change at the new head; a set may contest."""
+
+        surface = self.request.surface
+        again = (
+            "run it again without --at"
+            if surface == "cli"
+            else "cx.refresh(), then call it again"
+            if surface == "sdk"
+            else "call it again without at"
+        )
+        read = _render_get(surface, subject)
+        if verb == "retire":
+            return f"Read it again ({read}); if it should still end, {again}"
+        return (
+            f"Read it again ({read}); to replace what it holds now, {again}, or set it "
+            f"with {_option(surface, 'contend')} to contest it"
         )
 
     def expected_keys(
@@ -822,7 +904,10 @@ class _Planner:
                     "cruxible.write.value_type_mismatch",
                     f"{field_name} takes {taken}, so expect {item!r} can never match it",
                     change=index,
-                    repair=f"Pass expect as {taken}",
+                    repair=(
+                        f"Pass {_option(self.request.surface, 'expect', placeholder('VALUE'))} "
+                        f"as {taken}"
+                    ),
                     field_path=path,
                 )
             found[_value_key(shown)] = shown
@@ -1577,7 +1662,10 @@ class _Planner:
             message,
             change=index,
             candidates=nearest(name, (*shown, *applicable[kind])),
-            repair=f"Use a field of {kind}; orient kind={kind} lists them",
+            repair=(
+                f"Use a field of {kind}; {_render_orient_kind(self.request.surface, kind)} "
+                "lists them"
+            ),
             field_path=path,
         )
 
@@ -2419,7 +2507,10 @@ class _Planner:
                 "cruxible.write.field_is_single",
                 f"{name} holds one value, so add would contend with it",
                 change=index,
-                repair="Use set to replace the value (contend: true to contest it)",
+                repair=(
+                    "Use set to replace the value "
+                    f"({_option(self.request.surface, 'contend')} to contest it)"
+                ),
                 field_path=f"{prefix}.op",
             )
         role = self.role(claim_type, change.role, index=index, field_name=name)
@@ -2517,7 +2608,7 @@ class _Planner:
                         candidates=tuple(item.claim_id for item in remaining),
                         repair=(
                             "Retire all but one of them in the same write, or set with "
-                            "contend: true to add one more"
+                            f"{_option(self.request.surface, 'contend')} to add one more"
                         ),
                     )
                 if remaining:
@@ -2544,7 +2635,11 @@ class _Planner:
                     f"{present.claim_id}, and the add expected it absent",
                     change=index,
                     candidates=(present.claim_id,),
-                    repair="Leave it out, or drop expect_absent to accept it as already done",
+                    repair=(
+                        "Leave it out, or drop "
+                        f"{_option(self.request.surface, 'expect_absent')} to accept it as "
+                        "already done"
+                    ),
                     field_path=f"changes[{index}].expect_absent",
                 )
             if present is not None:
@@ -3000,13 +3095,22 @@ class _Planner:
             if fresh is not None
             else f"of {file_source}"
         )
+        name_citation = (
+            # A re-bind expanded from from_capture names no citation of its own:
+            # this Claim is re-bound by its ID, naming the citation there.
+            "Re-bind this Claim by its ID, naming one of the listed citations: "
+            + _render_rebind_citation(self.request.surface, claim_id, fresh)
+            if replacing is not None
+            else "Name one of the listed citations with "
+            + _option(self.request.surface, "citation", _ID)
+        )
         if not named:
             raise _refuse(
                 "cruxible.write.citation_not_held",
                 f"{claim_id} holds no citation " + what,
                 change=index,
                 candidates=shown,
-                repair="Name one of the listed citations with citation (--citation)",
+                repair=name_citation,
                 field_path=f"{prefix}.citation",
             )
         if len(named) > 1:
@@ -3015,7 +3119,7 @@ class _Planner:
                 f"{claim_id} holds {len(named)} citations " + what,
                 change=index,
                 candidates=tuple(item.citation_id.partition(":")[2][:12] for item in named),
-                repair="Name one of the listed citations with citation (--citation)",
+                repair=name_citation,
                 field_path=f"{prefix}.citation",
             )
         (replaced,) = named
@@ -3046,7 +3150,10 @@ class _Planner:
                     f"{replaced.citation_id.partition(':')[2][:12]} is not a Capture citation "
                     "of evidence, so a Capture cannot replace it",
                     change=index,
-                    repair="Name the Claim's evidence citation with citation (--citation)",
+                    repair=(
+                        "Name the Claim's evidence citation with "
+                        + _option(self.request.surface, "citation", _ID)
+                    ),
                     field_path=f"{prefix}.citation",
                 )
             source = ExistingCaptureCitationSource(capture_digest=fresh)
@@ -3505,6 +3612,7 @@ class _Planner:
                 subject_path_value=path,
                 predicate=info.predicate,
                 live=live,
+                verb="retire",
             )
             if not live:
                 raise _refuse(
@@ -4367,29 +4475,47 @@ def _names_subject(change: RetireChange) -> bool:
 
 
 def _render_write_call(surface: ReadSurface, verb: Literal["set", "retire"], *operands: str) -> str:
-    """One set or retire on the caller's surface; ``because`` is the operand left to add."""
+    """One set or retire on the caller's surface; ``because`` is the caller's to say."""
 
     if surface == "cli":
-        return " ".join(("cruxible", verb, *(shlex.quote(item) for item in operands)))
+        return " ".join(
+            (
+                "cruxible",
+                verb,
+                *(shlex.quote(item) for item in operands),
+                "--because",
+                shlex.quote(_TEXT),
+            )
+        )
     if surface == "sdk":
-        return f"cx.{verb}({', '.join(json.dumps(item) for item in operands)})"
+        shown = ", ".join(json.dumps(item) for item in operands)
+        return f"cx.{verb}({shown}, because={json.dumps(_TEXT)})"
     if verb == "retire":
-        return f"cruxible_retire(target={json.dumps(operands[0])})"
+        return f"cruxible_retire(target={json.dumps(operands[0])}, because={json.dumps(_TEXT)})"
     subject, field_name, value = operands
     return (
         f"cruxible_set(subject={json.dumps(subject)}, field={json.dumps(field_name)}, "
-        f"value={json.dumps(value)})"
+        f"value={json.dumps(value)}, because={json.dumps(_TEXT)})"
     )
 
 
 def _render_subject_retire(surface: ReadSurface, subject: str) -> str:
-    """The Subject's retirement with its Claims; the reason and ``because`` are the caller's."""
+    """The Subject's retirement with its Claims; ``because`` is the caller's to say."""
 
     if surface == "cli":
-        return f"cruxible retire {shlex.quote(subject)} --with-claims --reason superseded"
+        return (
+            f"cruxible retire {shlex.quote(subject)} --with-claims --reason superseded "
+            f"--because {shlex.quote(_TEXT)}"
+        )
     if surface == "sdk":
-        return f'cx.retire({json.dumps(subject)}, with_claims=True, reason="superseded")'
-    return f'cruxible_retire(target={json.dumps(subject)}, with_claims=true, reason="superseded")'
+        return (
+            f'cx.retire({json.dumps(subject)}, with_claims=True, reason="superseded", '
+            f"because={json.dumps(_TEXT)})"
+        )
+    return (
+        f'cruxible_retire(target={json.dumps(subject)}, with_claims=true, reason="superseded", '
+        f"because={json.dumps(_TEXT)})"
+    )
 
 
 def _refusal(error: WriteRefusalError | ReadRefusalError) -> WriteRefusal:
@@ -5139,7 +5265,7 @@ def _dry_run(
     reason = _approval_reason(
         requires_approval=requires_approval, caller=caller, accept=request.accept
     )
-    commit = _render_commit(request.surface, compact.git_oid)
+    commit = _render_commit(request.surface, compact.git_oid, accept=request.accept)
     if reason is None:
         return WriteOutcome(
             status="would_accept",

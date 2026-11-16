@@ -5,6 +5,7 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repairs import RepairOperation
 
 AuthoringAccept: TypeAlias = Literal["if_allowed", "never"]
 
@@ -39,7 +40,13 @@ class AuthoringProposed(BaseModel):
         "head_moved",
     ]
     message: str
+    #: The next step, spelled for the client that shows it (the daemon spells it
+    #: for the CLI; ``landing_for_surface`` respells it from ``next_repair``).
     next: str | None = None
+    #: The served operation ``next`` spells, with its arguments.
+    next_repair: RepairOperation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     def __str__(self) -> str:
         """Why it stopped and what to run; ``repr()`` stays the full model."""
@@ -63,6 +70,9 @@ class AuthoringRefused(BaseModel):
     reason: Literal["preflight_refused"] = "preflight_refused"
     message: str
     next: str | None = None
+    next_repair: RepairOperation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     def __str__(self) -> str:
         """Why it refused and what to run; ``repr()`` stays the full model."""
@@ -75,3 +85,21 @@ class AuthoringRefused(BaseModel):
 AuthoringLanding: TypeAlias = Annotated[
     AuthoringLanded | AuthoringProposed | AuthoringRefused, Field(discriminator="status")
 ]
+
+#: A next step this caller cannot take itself, handed to whoever can.
+DELEGATED_PREFIX = "someone who can runs "
+
+
+def landing_for_surface(
+    outcome: AuthoringLanded | AuthoringProposed | AuthoringRefused | None,
+    surface: Literal["cli", "mcp", "sdk"],
+) -> AuthoringLanded | AuthoringProposed | AuthoringRefused | None:
+    """The outcome with ``next`` spelled for ``surface`` from its structured repair."""
+
+    from cruxible_client.contracts.repair_spelling import render_repair
+
+    if isinstance(outcome, AuthoringLanded) or outcome is None or outcome.next_repair is None:
+        return outcome
+    delegated = (outcome.next or "").startswith(DELEGATED_PREFIX)
+    line = render_repair(outcome.next_repair, surface=surface)
+    return outcome.model_copy(update={"next": f"{DELEGATED_PREFIX}{line}" if delegated else line})

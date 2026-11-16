@@ -89,6 +89,10 @@ def test_the_generated_secret_is_written_owner_only_and_never_printed(
         assert path.read_text().strip() == secret
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert f"bootstrap secret written to {held}" in captured.err
+    # The order that works (gapa-11): allocate the host with the secret, then claim.
+    err = " ".join(captured.err.split())
+    assert err.index("cruxible host create") < err.index("credential claim-bootstrap")
+    assert err.index("credential claim-bootstrap") < err.index("cruxible init")
     for log in (state_root / "daemon" / "logs").glob("*"):
         assert secret not in log.read_text()
 

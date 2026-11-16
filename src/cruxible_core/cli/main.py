@@ -6,6 +6,7 @@ import dataclasses
 import functools
 import importlib
 import os
+import shlex
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,11 +19,8 @@ from cruxible_client.authoring.context import (
     ContextResolutionError,
     resolve_context,
 )
-from cruxible_client.contracts.repairs import (
-    HandEditRepair,
-    RepairOperation,
-    render_served_repair,
-)
+from cruxible_client.contracts.repair_spelling import render_repair, repair_spelling
+from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_client.contracts.workspace_root import WorkspaceBoundaryRefused
 from cruxible_core.cli.context import (
@@ -193,6 +191,103 @@ def _raise_held_workspace_refusal(
     raise click.UsageError(str(refusal))
 
 
+#: The change control a re-run sets afresh: its own dry run, pin and consent.
+_RERUN_RESET_PARAMS = frozenset({"dry_run", "at", "yes"})
+
+
+def cli_repair_line(repair: RepairOperation) -> str:
+    """A served repair as the ``cruxible ...`` command that performs it.
+
+    A repair that runs the refused command again (a preview to take afresh,
+    or the same change once more) is the caller's own command line with its
+    change control reset, so every operand it named is kept; any other repair
+    is spelled by the shared renderer.
+    """
+
+    ctx = click.get_current_context(silent=True)
+    rerun = None if ctx is None else _rerun_line(ctx, repair)
+    return rerun or render_repair(repair, surface="cli")
+
+
+def _rerun_line(ctx: click.Context, repair: RepairOperation) -> str | None:
+    spelling = repair_spelling(repair.operation)
+    path = _command_path(ctx)
+    if spelling is None or spelling.cli != " ".join(path):
+        return None
+    if not set(repair.arguments) <= {"dry_run"}:
+        return None
+    # Every level's own parameters, root first: the target and identity
+    # selectors the caller typed (--server-url, --instance-id, --principal-id)
+    # are part of what the command meant.
+    chain: list[click.Context] = []
+    current: click.Context | None = ctx
+    while current is not None:
+        chain.append(current)
+        current = current.parent
+    parts = ["cruxible"]
+    for level in reversed(chain):
+        if level.parent is not None and level.command.name:
+            parts.append(level.command.name)
+        rendered = _typed_parameters(level, leaf=level is ctx)
+        if rendered is None:
+            return None
+        parts.extend(rendered)
+    dry_run = repair.arguments.get("dry_run")
+    switch = spelling.cli_flags.get("dry_run", "")
+    if dry_run is True and switch:
+        parts.append("--dry-run")
+    elif dry_run is False and "/" in switch:
+        parts.append("--commit")
+    return " ".join(parts)
+
+
+def _secret_parameter(name: str) -> bool:
+    """A parameter whose value is a credential itself (never a path to one)."""
+
+    return name in {"token", "secret", "password"} or name.endswith(("_token", "_secret"))
+
+
+def _typed_parameters(level: click.Context, *, leaf: bool) -> list[str] | None:
+    """The parameters the caller typed at one command level, as it typed them.
+
+    Only values given on the command line are repeated: remembered context and
+    the environment supply the rest again on their own. A credential value is
+    never repeated; a path to one the caller typed is. None when a value cannot
+    be spelled back (a stream, say).
+    """
+
+    parts: list[str] = []
+    for param in level.command.params:
+        name = param.name
+        if name is None or (leaf and name in _RERUN_RESET_PARAMS) or _secret_parameter(name):
+            continue
+        if isinstance(param, click.Option) and param.is_eager:
+            continue
+        if level.get_parameter_source(name) != click.core.ParameterSource.COMMANDLINE:
+            continue
+        value = level.params.get(name)
+        values = list(value) if isinstance(value, list | tuple) else [value]
+        if any(
+            item is not None and not isinstance(item, str | int | float | Path) for item in values
+        ):
+            return None
+        if isinstance(param, click.Argument):
+            parts.extend(shlex.quote(str(item)) for item in values if item is not None)
+            continue
+        if not isinstance(param, click.Option) or value in (None, ()):
+            continue
+        flag = next((opt for opt in param.opts if opt.startswith("--")), param.opts[0])
+        if param.is_flag:
+            if value is True:
+                parts.append(flag)
+            elif param.secondary_opts:
+                parts.append(param.secondary_opts[0])
+            continue
+        for item in values:
+            parts.extend([flag, shlex.quote(str(item))])
+    return parts
+
+
 def _command_path(ctx: click.Context) -> tuple[str, ...]:
     """Return the registered command path below the root CLI group."""
     names: list[str] = []
@@ -353,11 +448,23 @@ def handle_errors(f: Any) -> Any:
                     message = message.removesuffix(f" {repair_line}")
                 else:
                     repair_line = None
+                served_line = getattr(exc, "repair_line", None)
+                if (
+                    isinstance(served, RepairOperation)
+                    and not repairs
+                    and isinstance(served_line, str)
+                    and served_line
+                    and message.endswith(f" {served_line}")
+                ):
+                    # A read refusal's prose repair is spelled for the surface
+                    # the daemon assumed; the Repair line below spells the same
+                    # operation as a command this CLI runs.
+                    message = message.removesuffix(f" {served_line}")
                 click.secho(f"Error: {prefix}{message}", fg="red", err=True)
                 for repair in repairs:
                     click.secho(f"Repair: {repair}", fg="red", err=True)
                 if not repairs and isinstance(served, RepairOperation):
-                    click.secho(f"Repair: {render_served_repair(served)}", fg="red", err=True)
+                    click.secho(f"Repair: {cli_repair_line(served)}", fg="red", err=True)
                 if repair_line is not None:
                     click.secho(f"Repair: {repair_line}", fg="red", err=True)
                 sys.exit(1)

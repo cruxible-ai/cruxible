@@ -146,6 +146,7 @@ from cruxible_client.contracts.kits import (
     kit_version_key,
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import (
     ProcedureHaltTerminal,
@@ -160,7 +161,8 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.public_names import public_name as _public_name
 from cruxible_client.contracts.read_values import shown_plain
-from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
 from cruxible_client.contracts.temporal import (
     format_datetime,
@@ -2251,16 +2253,19 @@ def _echo_automation_template(
 
     if path is None:
         return
+    name = Path(path).name
     if on_disk is not None:
+        # The kit's own copy is the release's, kept as shipped: the adopter
+        # tailors a copy in the workspace and submits that.
         click.echo(
-            f"automation template: {on_disk} (never installed: tailor it, then "
-            f"cruxible authoring submit {on_disk})"
+            f"automation template: {on_disk} (never installed: copy it into your "
+            f"workspace, tailor the copy, then cruxible authoring submit {shlex.quote(name)})"
         )
     else:
         click.echo(
             f"automation template: {path} (never installed: cruxible kit pull {reference} "
-            f"--out DIR writes it, and --json output carries its content; tailor it, then "
-            f"cruxible authoring submit DIR/{path})"
+            f"--out DIR writes it, and --json output carries its content; copy it into your "
+            f"workspace, tailor the copy, then cruxible authoring submit {shlex.quote(name)})"
         )
 
 
@@ -3275,12 +3280,7 @@ def approve_proposal(
         )
     configured = _root_ctx_obj().get("principal_id")
     if signer_id is None:
-        if configured is None:
-            raise click.UsageError(
-                "proposal approve needs the signing principal; repair: pass --signer-id ID "
-                "or set CRUXIBLE_PRINCIPAL_ID"
-            )
-        signer_id = str(configured)
+        signer_id = str(configured) if configured is not None else _signer_from_daemon()
     resolved_signer: str = signer_id
 
     # The prompt shows the reviewer's view `proposal review` prints (its first page).
@@ -3403,6 +3403,57 @@ def _replaces_line(proposal_id: str, source_id: str) -> str:
     """A readmission's receipt names the proposal it replaces, which is the one reviewed."""
 
     return f"{proposal_id} replaces {source_id} (readmitted at the head); act on {proposal_id}"
+
+
+def _signer_from_daemon() -> str:
+    """The signer when this process configures none: the principal the daemon says acts.
+
+    A bearer credential bound to a principal names it. A process acting as no
+    principal is refused exactly as every other proposal act refuses it (the
+    daemon's ``authoring_refusal``: ``principal_unconfigured`` or
+    ``credential_unbound``), with ``--principal-id ID --key FILE`` added to the
+    repair: the submitter must be a principal too, so ``--signer-id`` alone
+    would still refuse.
+    """
+
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.errors import PrincipalRefusedError
+
+    identity = _server_call(
+        lambda client, instance_id: client.whoami(instance_id),
+        command_name="cruxible proposal approve",
+    )
+    if identity.can_author and identity.actor_id is not None:
+        return identity.actor_id
+    refusal = identity.authoring_refusal
+    if refusal is None or refusal.code not in {
+        "cruxible.identity.principal_unconfigured",
+        "cruxible.identity.credential_unbound",
+    }:
+        if identity.actor_id is not None and identity.actor_id_source != "local_operator":
+            return identity.actor_id
+        raise click.UsageError(
+            "proposal approve needs the signing principal; repair: pass --signer-id ID "
+            "or set CRUXIBLE_PRINCIPAL_ID"
+        )
+    repair = refusal.repair
+    if isinstance(repair, RepairOperation):
+        repair = repair.model_copy(
+            update={"arguments": {**repair.arguments, "or_pass": "--principal-id ID --key FILE"}}
+        )
+    code: Literal[
+        "cruxible.identity.principal_unconfigured", "cruxible.identity.credential_unbound"
+    ] = (
+        "cruxible.identity.principal_unconfigured"
+        if refusal.code == "cruxible.identity.principal_unconfigured"
+        else "cruxible.identity.credential_unbound"
+    )
+    raise PrincipalRefusedError(
+        code,
+        f"{refusal.detail}; to approve, pass --principal-id ID --key FILE (it signs as that "
+        "principal; --signer-id names a different signer, whose approval it submits)",
+        repair=repair,
+    )
 
 
 def _landed_same_change_set(result: contracts.ProposalApprovalResult) -> str | None:
@@ -7044,13 +7095,13 @@ def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
     """
 
     if not isinstance(repair, RepairOperation):
-        return render_served_repair(repair)
+        return render_repair(repair, surface="cli")
     values = repair.arguments
     operation = normalize_code(repair.operation)
     if operation == "cruxible.block.repin":
         file, block = path or values.get("source_id"), values.get("block_id")
         if not isinstance(file, str) or not isinstance(block, str):
-            return render_served_repair(repair)
+            return render_repair(repair, surface="cli")
         parts = ["cruxible block repin", shlex.quote(file), shlex.quote(block)]
         claims = values.get("claim")
         for claim in claims if isinstance(claims, list) else ():
@@ -7059,9 +7110,9 @@ def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
             parts.append("--clear-claims")
         candidates = values.get("backing_candidates")
         if isinstance(candidates, list) and candidates:
-            parts.append("--backing DIGEST")
+            parts.append("--backing '<DIGEST>'")
             line = " ".join(parts)
-            return f"{line}  (DIGEST: one of {', '.join(map(str, candidates))})"
+            return f"{line}  (<DIGEST>: one of {', '.join(map(str, candidates))})"
         return " ".join(parts)
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return "cruxible block sync --all"
@@ -7069,11 +7120,11 @@ def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
         file, block = values.get("source_id"), values.get("block_id")
         if isinstance(file, str) and isinstance(block, str):
             return f"cruxible block depublish {shlex.quote(file)} {shlex.quote(block)}"
-        return render_served_repair(repair)
+        return render_repair(repair, surface="cli")
     paths = values.get("paths")
     if operation == "cruxible.block.detach" and isinstance(paths, list) and paths:
         return " ".join(["cruxible block detach", *(shlex.quote(str(path)) for path in paths)])
-    return render_served_repair(repair)
+    return render_repair(repair, surface="cli")
 
 
 def _echo_list_continuation(next_cursor: str | None) -> None:
@@ -7752,27 +7803,10 @@ def procedure_group() -> None:
     """Run and measure accepted Procedures; read one with cruxible get Procedure:<name>."""
 
 
-#: Repair arguments a CLI leaf takes as its positional operand.
-_POSITIONAL_REPAIR_ARGUMENTS = frozenset(
-    {"line", "name", "example", "claim_id", "proposal_id", "prediction_id", "run_id"}
-)
-
-
 def _cli_repair(repair: Any) -> str:
     """Render a served repair as the CLI command that performs it."""
 
-    operation = normalize_code(repair.operation) if isinstance(repair, RepairOperation) else ""
-    if not isinstance(repair, RepairOperation) or not operation.startswith("cruxible."):
-        return render_served_repair(repair)
-    parts = ["cruxible", *operation.removeprefix("cruxible.").split(".")]
-    for key, value in repair.arguments.items():
-        if key in _POSITIONAL_REPAIR_ARGUMENTS:
-            parts.append(shlex.quote(str(value)))
-        elif value is True:
-            parts.append("--" + key.replace("_", "-"))
-        elif value not in (None, False):
-            parts.extend(["--" + key.replace("_", "-"), shlex.quote(str(value))])
-    return " ".join(parts)
+    return render_repair(repair, surface="cli")
 
 
 def _inbox_counts_text(counts: Any) -> str:
@@ -9176,7 +9210,19 @@ def _echo_curation_action(result: contracts.CurationActionResult, done: str) -> 
         click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
         echo_preview_next(result.status, result.coordinate)
         return
-    click.echo(f"Curation item {result.item['item_id']}: {done}")
+    item_id = str(result.item["item_id"])
+    latest = result.item.get("latest_event_digest")
+    click.echo(f"Curation item {item_id}: {done}")
+    if isinstance(latest, str):
+        # The next ruling on this item names this digest; a suppressed item
+        # leaves `curation list`, so this line is where it can be read.
+        click.echo(f"latest_event_digest: {latest}")
+        if done.startswith("suppressed"):
+            click.echo(
+                "Undo: cruxible curation unsuppress "
+                f"{shlex.quote(item_id)} --expected-latest-event-digest {latest} "
+                "--reason '<TEXT>'"
+            )
 
 
 def _curation_item_line(item: Mapping[str, Any]) -> str:
@@ -9584,7 +9630,22 @@ def audit(
     if not result.rows:
         click.echo("No Claims in the visible audit scope.")
     if result.next_cursor is not None:
-        click.echo(f"More: {result.next_cursor.cursor_digest}")
+        scope = [
+            *(item for value in claim_types for item in ("--claim-type", value)),
+            *(item for value in subject_kinds for item in ("--subject-kind", value)),
+        ]
+        click.echo(
+            "More: "
+            + _cursor_page_line(
+                [
+                    "audit",
+                    *map(shlex.quote, scope),
+                    *_page_bounds(max_rows, max_bytes),
+                    *_profile_flag(access_profile_path),
+                ],
+                result.next_cursor.model_dump(mode="json"),
+            )
+        )
 
 
 @playbill_group.command("since")
@@ -9649,7 +9710,40 @@ def since(
         name = row.member_path.split("/", 1)[-1].removesuffix(".json")
         click.echo(f"{lead}  {row.artifact_kind} {_public_name(name)}")
     if result.next_cursor is not None:
-        click.echo(f"More: {result.next_cursor.cursor_digest}")
+        click.echo(
+            "More: "
+            + _cursor_page_line(
+                [
+                    "since",
+                    str(generation),
+                    *_page_bounds(max_rows, max_bytes),
+                    *_profile_flag(access_profile_path),
+                ],
+                result.next_cursor.model_dump(mode="json"),
+            )
+        )
+
+
+def _page_bounds(max_rows: int, max_bytes: int) -> list[str]:
+    """The page bounds a continuation repeats: a cursor continues the page it was cut from."""
+
+    return ["--max-rows", str(max_rows), "--max-bytes", str(max_bytes)]
+
+
+def _profile_flag(access_profile_path: str | None) -> list[str]:
+    """The access profile a continuation repeats (the cursor binds it), when named by path."""
+
+    if access_profile_path is None or access_profile_path == "-":
+        return []
+    return ["--access-profile", shlex.quote(access_profile_path)]
+
+
+def _cursor_page_line(command: list[str], cursor: Mapping[str, Any]) -> str:
+    """The next page as one command: the cursor travels on stdin, so no file is needed."""
+
+    return " ".join(
+        ["cruxible", *command, "--cursor", "-", "<<<", shlex.quote(canonical_json(cursor))]
+    )
 
 
 #: The orient text is the client's, so ``print(cx.orient())`` reads the same.

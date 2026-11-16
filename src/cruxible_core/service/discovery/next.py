@@ -102,7 +102,13 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
-from cruxible_client.contracts.repairs import REPAIR_COMMAND_PATHS
+from cruxible_client.contracts.repair_spelling import (
+    _mcp_call,
+    _sdk_example,
+)
+from cruxible_client.contracts.repair_spelling import (
+    next_repair_command as _repair_command,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
@@ -848,59 +854,10 @@ class PlaybillNextResultV2(_StrictNextModel):
         return self.delta_since is None and len(self.items) == self.total_items
 
 
-_REPAIR_COMMAND_PATHS: Mapping[str, str] = REPAIR_COMMAND_PATHS
-
-# Each of these needs a local file. The queue knows the path only if the row
-# carried it, so the placeholder is filled from the arguments when they name it
-# and dropped -- with the flag that introduces it -- when they do not. A bare
-# `PAYLOAD_FILE` left in the line is not a hint, it is an unrunnable command
-# presented as a runnable one, which is the one thing `command` must never be.
-_REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
-    "cruxible.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
-}
-_REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
-    "PAYLOAD_FILE": "payload_file",
-}
 _ATTESTATION_REPAIR_EXAMPLES: Mapping[str, str] = {
     "cite_supporting_evidence": "claim-cite-supporting-evidence",
     "adjudicate_unreviewed_evidence": "claim-adjudicate-unreviewed-evidence",
 }
-
-
-def _revision_name(source: str) -> str:
-    """The proposal name a modified-Document repair suggests for its source."""
-
-    return f"revise-{source}"
-
-
-def _repair_paths(values: Mapping[str, object]) -> list[str]:
-    """The workspace pages a page-scoped repair names, or none."""
-
-    paths = values.get("paths")
-    if not isinstance(paths, (list, tuple)):
-        return []
-    return [path for path in paths if isinstance(path, str) and path]
-
-
-def _repair_operands(operation: NextRepairOperation, values: Mapping[str, object]) -> list[str]:
-    """Render one operation's file operands, filling or dropping each placeholder."""
-
-    rendered: list[str] = []
-    pending_flag: str | None = None
-    for operand in _REPAIR_COMMAND_OPERANDS[operation]:
-        key = _REPAIR_COMMAND_PLACEHOLDERS.get(operand)
-        if key is None:
-            pending_flag = operand
-            continue
-        supplied = values.get(key)
-        if not isinstance(supplied, str) or not supplied:
-            pending_flag = None
-            continue
-        if pending_flag is not None:
-            rendered.append(pending_flag)
-            pending_flag = None
-        rendered.append(shlex.quote(supplied))
-    return rendered
 
 
 NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
@@ -960,91 +917,6 @@ def _tool_rung(tool: str) -> int:
 
 #: The most contenders a contest row offers a keep-one option for.
 _MAX_CONTEST_OPTIONS = 8
-
-
-def _restated_set(values: Mapping[str, object]) -> dict[str, object] | None:
-    """The set call a `cruxible.set` repair names, from its arguments, or None."""
-
-    subject, field, value = values.get("subject"), values.get("field"), values.get("value")
-    if not isinstance(subject, str) or not isinstance(field, str):
-        return None
-    if not isinstance(value, str | int | bool):
-        return None
-    restated: dict[str, object] = {"subject": subject, "field": field, "value": value}
-    role = values.get("role")
-    if isinstance(role, str):
-        restated["role"] = role
-    capture = values.get("capture_digest")
-    contract = values.get("evidence_contract")
-    if isinstance(capture, str):
-        restated["evidence"] = {"kind": "capture", "capture": capture}
-    elif isinstance(contract, str):
-        restated["evidence"] = {"kind": "contract", "contract": contract}
-    return restated
-
-
-def _write_changes(values: Mapping[str, object]) -> list[dict[str, object]]:
-    changes = values.get("changes")
-    if not isinstance(changes, list | tuple):
-        return []
-    return [dict(item) for item in changes if isinstance(item, Mapping)]
-
-
-def _submitted_payload(values: Mapping[str, object]) -> Mapping[str, object] | None:
-    """The authoring input a `cruxible.authoring.submit` repair carries in full, or None."""
-
-    payload = values.get("payload")
-    if not isinstance(payload, Mapping) or not isinstance(payload.get("kind"), str):
-        return None
-    return payload
-
-
-#: SDK `ChangeSetDraft.line` keywords for a Line input's fields, with each default.
-_SDK_LINE_KEYWORDS: tuple[tuple[str, str, object], ...] = (
-    ("name", "name", None),
-    ("procedure_name", "procedure", None),
-    ("bindings", "bindings", {}),
-    ("acquisition", "acquisition", {}),
-    ("max_authority", "max_authority", None),
-    ("trigger_input", "trigger_input", None),
-    ("parameters", "parameters", {}),
-    ("budgets", "budgets", None),
-    ("occurrence_epoch", "occurrence_epoch", 1),
-    ("retire", "retire", False),
-)
-
-
-def _rebind_section(values: Mapping[str, object]) -> str | None:
-    """A section citation's ``FILE#Heading/Path``, when the repair names it."""
-
-    file, section = values.get("section_file"), values.get("section")
-    if not isinstance(file, str) or not file or not isinstance(section, list | tuple):
-        return None
-    if not all(isinstance(item, str) for item in section):
-        return None
-    return f"{file}#{'/'.join(section)}"
-
-
-def _rebind_change(values: Mapping[str, object]) -> dict[str, object] | None:
-    """The typed ``rebind`` change a re-bind repair names, as far as the row knows it."""
-
-    claim_id = values.get("claim_id")
-    if not isinstance(claim_id, str) or not claim_id:
-        return None
-    change: dict[str, object] = {"op": "rebind", "target": claim_id}
-    citation = values.get("citation")
-    if isinstance(citation, str) and citation:
-        change["citation"] = citation
-    file, section = values.get("section_file"), values.get("section")
-    if isinstance(file, str) and isinstance(section, list | tuple):
-        change["evidence"] = {"kind": "section", "file": file, "section": list(section)}
-    return change
-
-
-def _cli_scalar(value: object) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
 
 
 def _claim_set_arguments(
@@ -1127,6 +999,7 @@ def _restating_repair(
         )
     return PlaybillNextRepairV1(
         operation="cruxible.set",
+        operands_to_add=("because",),
         target=target,
         required_change=required_change,
         arguments={**arguments, **set_arguments},
@@ -1267,6 +1140,7 @@ def _evidence_repair(
         options = [
             PlaybillNextRepairV1(
                 operation="cruxible.set",
+                operands_to_add=("because",),
                 target=target,
                 required_change=required_change,
                 arguments={"claim_id": claim_id, **set_arguments, "evidence_contract": contract},
@@ -1305,6 +1179,7 @@ def _contradicting_capture_repair(
         alternatives.append(
             PlaybillNextRepairV1(
                 operation="cruxible.set",
+                operands_to_add=("because",),
                 target=target,
                 required_change="restate_claim",
                 arguments={"claim_id": claim_id, **set_arguments},
@@ -1318,461 +1193,6 @@ def _contradicting_capture_repair(
         arguments={"claim_id": claim_id, "ref": f"Capture:{capture_digest}"},
         alternatives=tuple(alternatives),
     )
-
-
-#: What each operand the caller adds reads as in a command, for it to replace.
-_OPERAND_PLACEHOLDERS: Mapping[NextRepairOperand, str] = {
-    "because": "TEXT",
-    "file": "FILE#ANCHOR",
-    "capture": "CAP",
-}
-
-
-def _because(operands: tuple[NextRepairOperand, ...]) -> dict[str, object]:
-    return {"because": _OPERAND_PLACEHOLDERS["because"]} if "because" in operands else {}
-
-
-def _mcp_call(tool: str, **arguments: object) -> str:
-    rendered = ", ".join(f"{key}={json.dumps(value)}" for key, value in arguments.items())
-    return f"{tool}({rendered})"
-
-
-def _mcp_repair_call(
-    operation: NextRepairOperation,
-    *,
-    arguments: object,
-    operands: tuple[NextRepairOperand, ...] = (),
-) -> str | None:
-    """Render one repair as the MCP tool call that performs it, or None.
-
-    A repair whose operands are local files or structured bases the queue does
-    not hold renders no call rather than a call that cannot be made.
-    """
-
-    values = arguments if isinstance(arguments, Mapping) else {}
-
-    def text(key: str) -> str | None:
-        value = values.get(key)
-        return value if isinstance(value, str) and value else None
-
-    if operation == "cruxible.compiler.upgrade":
-        return _mcp_call("cruxible_compiler_upgrade")
-    if operation == "cruxible.line.enable" and text("line"):
-        return _mcp_call("cruxible_line_enable", line=text("line"))
-    if operation == "cruxible.line.evaluate" and text("line") and text("since") and text("until"):
-        return _mcp_call(
-            "cruxible_line_evaluate",
-            line=text("line"),
-            request={"since": text("since"), "until": text("until")},
-        )
-    if operation == "cruxible.line.dispatch" and text("line"):
-        limit = values.get("limit")
-        request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
-        return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
-    if operation == "cruxible.inbox.list" and text("line"):
-        return _mcp_call("cruxible_inbox_list", line=text("line"), status="unread")
-    if operation == "cruxible.kit.add" and text("reference"):
-        return _mcp_call("cruxible_kit_add", reference=text("reference"))
-    if operation == "cruxible.prediction.settle" and text("prediction_id"):
-        # The observation is the settler's to choose: its Claim ID is the one
-        # argument left to add.
-        return _mcp_call("cruxible_prediction_settle", prediction_id=text("prediction_id"))
-    if operation == "cruxible.authoring.example" and text("example"):
-        return _mcp_call("cruxible_authoring_example", name=text("example"))
-    if operation == "cruxible.authoring.submit" and (payload := _submitted_payload(values)):
-        return _mcp_call("cruxible_authoring_submit", payload=dict(payload))
-    if operation == "cruxible.proposal.readmit" and text("proposal_id"):
-        return _mcp_call("cruxible_proposal_readmit", proposal_id=text("proposal_id"))
-    if operation == "cruxible.proposal.activate" and text("proposal_id"):
-        return _mcp_call("cruxible_proposal_activate", proposal_id=text("proposal_id"))
-    if operation == "cruxible.proposal.approve" and text("proposal_id") and text("signer_id"):
-        return _mcp_call(
-            "cruxible_proposal_approve",
-            proposal_id=text("proposal_id"),
-            signer_id=text("signer_id"),
-        )
-    if operation == "cruxible.block.depublish" and text("source_id") and text("block_id"):
-        return _mcp_call(
-            "cruxible_block_depublish",
-            file_id=text("source_id"),
-            block_id=text("block_id"),
-        )
-    if operation == "cruxible.block.repin" and text("source_id") and text("block_id"):
-        return _mcp_call("cruxible_block_repin", file=text("source_id"), block=text("block_id"))
-    if operation == "cruxible.block.sync" and values.get("all") is True:
-        return _mcp_call("cruxible_block_sync", all_files=True)
-    if operation == "cruxible.block.detach" and _repair_paths(values):
-        return _mcp_call("cruxible_block_detach", files=_repair_paths(values))
-    if operation == "cruxible.floor.export":
-        return _mcp_call("cruxible_floor_export", mode="write")
-    if operation == "cruxible.vocabulary.export":
-        if values.get("force") is True:
-            return _mcp_call("cruxible_vocabulary_export", force=True)
-        return _mcp_call("cruxible_vocabulary_export")
-    if operation == "cruxible.files.propose" and (source := text("source_id")):
-        return _mcp_call(
-            "cruxible_files_propose", file=source, proposal_name=_revision_name(source)
-        )
-    if operation == "cruxible.claim.retire" and text("claim_id"):
-        # Why it ends is the retirer's to say: `because` is the argument left to add.
-        return _mcp_call("cruxible_retire", target=text("claim_id"), **_because(operands))
-    if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
-        # `because` (and the file evidence a recapture needs) is the caller's to add.
-        return _mcp_call("cruxible_set", **restated)
-    if operation == "cruxible.write" and (changes := _write_changes(values)):
-        return _mcp_call("cruxible_write", changes=changes)
-    if operation == "cruxible.get" and text("ref"):
-        return _mcp_call("cruxible_get", ref=text("ref"))
-    if operation == "cruxible.rebind" and (change := _rebind_change(values)) is not None:
-        # A re-bind is one change of the typed write; `because` (and a file
-        # citation's new text, or a fresh Capture) is the caller's to add.
-        if "file" in operands:
-            change["evidence"] = {"kind": "file", "file": _OPERAND_PLACEHOLDERS["file"]}
-        elif "capture" in operands:
-            change["evidence"] = {"kind": "capture", "capture": _OPERAND_PLACEHOLDERS["capture"]}
-        return _mcp_call("cruxible_write", changes=[change], **_because(operands))
-    return None
-
-
-def _python_literal(value: object) -> str:
-    """Render a str, bool, None, int, or list/dict of those as Python source.
-
-    A JSON string literal is a valid Python one (every JSON escape is a Python
-    escape), so strings keep their double quotes; JSON's `true`, `false` and
-    `null` are not Python, so they are rendered here.
-    """
-
-    if value is None or isinstance(value, bool):
-        return repr(value)
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, str):
-        return json.dumps(value)
-    if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_python_literal(item) for item in value) + "]"
-    if isinstance(value, Mapping):
-        return (
-            "{"
-            + ", ".join(
-                f"{_python_literal(key)}: {_python_literal(item)}" for key, item in value.items()
-            )
-            + "}"
-        )
-    raise TypeError(f"no Python literal for an SDK repair operand of type {type(value).__name__}")
-
-
-def _sdk_call(target: str, *positional: object, **keywords: object) -> str:
-    rendered = [_python_literal(value) for value in positional]
-    rendered.extend(f"{key}={_python_literal(value)}" for key, value in keywords.items())
-    return f"{target}({', '.join(rendered)})"
-
-
-def _sdk_repair_call(
-    operation: NextRepairOperation,
-    *,
-    arguments: object,
-    operands: tuple[NextRepairOperand, ...] = (),
-) -> str | None:
-    """Render one repair as the `Cruxible` SDK call that performs it, or None.
-
-    Like the CLI and MCP renderings, an operand only the caller holds -- the
-    signer, the observation, the retirement reason -- is left for it to add. A
-    repair the SDK facade has no method for, or whose operands are local files,
-    renders no call rather than another surface's command.
-    """
-
-    values = arguments if isinstance(arguments, Mapping) else {}
-
-    def text(key: str) -> str | None:
-        value = values.get(key)
-        return value if isinstance(value, str) and value else None
-
-    if operation == "cruxible.line.enable" and (line := text("line")):
-        return _sdk_call("cx.line", line) + ".enable()"
-    if operation == "cruxible.vocabulary.export":
-        return (
-            _sdk_call("cx.vocabulary.export", force=True)
-            if values.get("force") is True
-            else ("cx.vocabulary.export()")
-        )
-    if operation == "cruxible.line.evaluate" and (line := text("line")):
-        since, until = text("since"), text("until")
-        if since is None or until is None:
-            return None
-        return _sdk_call("cx.line", line) + _sdk_call(".evaluate", since=since, until=until)
-    if operation == "cruxible.line.dispatch" and (line := text("line")):
-        limit = values.get("limit")
-        if isinstance(limit, int) and limit > 1:
-            return _sdk_call("cx.line", line) + _sdk_call(".dispatch", limit=limit)
-        return _sdk_call("cx.line", line) + ".dispatch()"
-    if operation == "cruxible.inbox.list" and (line := text("line")):
-        return "cx.inbox()" + _sdk_call(".list", line=line, status="unread")
-    if operation == "cruxible.prediction.settle" and (prediction := text("prediction_id")):
-        return _sdk_call("cx.settle", prediction)
-    if operation == "cruxible.authoring.example":
-        example = text("example")
-        return None if example is None else _sdk_call("authoring_example", example)
-    if operation == "cruxible.authoring.submit":
-        # The facade authors a Line as a changeset member; other kinds have
-        # their own builders, which no repair names yet.
-        payload = _submitted_payload(values)
-        if payload is None or payload.get("kind") != "line":
-            return None
-        keywords = {
-            keyword: payload[field]
-            for field, keyword, default in _SDK_LINE_KEYWORDS
-            if field in payload and payload[field] != default
-        }
-        return _sdk_call("cx.changes().line", **keywords) + ".submit()"
-    if operation == "cruxible.proposal.activate" and (proposal := text("proposal_id")):
-        return _sdk_call("cx.activate", proposal)
-    if operation == "cruxible.proposal.approve" and (proposal := text("proposal_id")):
-        handle = _sdk_call("cx.proposal", proposal)
-        return f"{handle}.approve(reviewed={handle}.review())"
-    if operation == "cruxible.claim.retire" and (claim := text("claim_id")):
-        return _sdk_call("cx.retire", claim, **_because(operands))
-    if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
-        subject, field, value = (restated.pop(key) for key in ("subject", "field", "value"))
-        return _sdk_call("cx.set", subject, field, value, **restated)
-    if operation == "cruxible.write":
-        changes = _write_changes(values)
-        if len(changes) == 1 and changes[0].get("op") == "retire":
-            return _sdk_call("cx.retire", changes[0]["target"])
-        return None
-    if operation == "cruxible.get" and (ref := text("ref")):
-        return _sdk_call("cx.get", ref)
-    if operation == "cruxible.rebind" and (claim := text("claim_id")):
-        options: dict[str, object] = {}
-        if citation := text("citation"):
-            options["citation"] = citation
-        if (section := _rebind_section(values)) is not None:
-            options["section"] = section
-        for operand in ("file", "capture"):
-            if operand in operands:
-                options[operand] = _OPERAND_PLACEHOLDERS[operand]
-        return _sdk_call("cx.rebind", claim, **options, **_because(operands))
-    if operation == "cruxible.block.repin" and (source := text("source_id")):
-        block = text("block_id")
-        if block is None:
-            return None
-        listed = values.get("claim")
-        named = [values.get("claim_id"), *(listed if isinstance(listed, (list, tuple)) else ())]
-        claims = [
-            value.removeprefix("Claim:") for value in named if isinstance(value, str) and value
-        ]
-        if claims:
-            return _sdk_call("cx.block.repin", source, block, claims=claims)
-        return _sdk_call("cx.block.repin", source, block)
-    if operation == "cruxible.block.sync" and values.get("all") is True:
-        return _sdk_call("cx.block.sync", all=True)
-    if operation == "cruxible.block.detach" and _repair_paths(values):
-        return _sdk_call("cx.block.detach", *_repair_paths(values))
-    if operation == "cruxible.block.depublish" and (source := text("source_id")):
-        block = text("block_id")
-        return (
-            None
-            if block is None
-            else _sdk_call("cx.block.depublish", file_id=source, block_id=block)
-        )
-    return None
-
-
-def _repair_command(
-    operation: NextRepairOperation,
-    *,
-    arguments: object,
-    surface: NextCallerSurface | None = None,
-    operands: tuple[NextRepairOperand, ...] = (),
-) -> str | None:
-    """Compose the invocation for one repair operation on this surface.
-
-    ``operands`` the caller must add render as their placeholders
-    (``_OPERAND_PLACEHOLDERS``), so the command shows every required operand.
-    """
-
-    if operation == "hand_edit":
-        return None
-    if surface == "mcp":
-        return _mcp_repair_call(operation, arguments=arguments, operands=operands)
-    if surface == "sdk":
-        return _sdk_repair_call(operation, arguments=arguments, operands=operands)
-    parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
-    values = arguments if isinstance(arguments, Mapping) else {}
-    if operation == "cruxible.block.repin":
-        source_id = values.get("source_id")
-        block_id = values.get("block_id")
-        if isinstance(source_id, str) and isinstance(block_id, str):
-            parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
-        else:
-            return None
-        claim_id = values.get("claim_id")
-        if isinstance(claim_id, str) and claim_id:
-            parts.extend(["--claim", shlex.quote(claim_id)])
-        claims = values.get("claim")
-        if isinstance(claims, (list, tuple)):
-            for value in claims:
-                if isinstance(value, str) and value:
-                    parts.extend(["--claim", shlex.quote(value.removeprefix("Claim:"))])
-    elif operation == "cruxible.block.depublish":
-        source_id = values.get("source_id")
-        block_id = values.get("block_id")
-        if isinstance(source_id, str) and isinstance(block_id, str):
-            parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
-        else:
-            return None
-    elif operation == "cruxible.block.sync":
-        if values.get("all") is True:
-            parts.append("--all")
-        else:
-            return None
-    elif operation == "cruxible.block.detach":
-        paths = _repair_paths(values)
-        if not paths:
-            return None
-        parts.extend(shlex.quote(path) for path in paths)
-    elif operation == "cruxible.authoring.example":
-        # The runnable step is the template that starts the payload; with no
-        # example named, a bare `authoring example` lists every name.
-        example = values.get("example")
-        if isinstance(example, str) and example:
-            parts.append(shlex.quote(example))
-    elif operation == "cruxible.authoring.submit":
-        # The payload is complete, so the command carries it on stdin rather
-        # than naming a file the caller would have to write first.
-        payload = _submitted_payload(values)
-        if payload is None:
-            return None
-        parts.extend(["-", "<<<", shlex.quote(canonical_json(payload))])
-    elif operation == "cruxible.compiler.upgrade":
-        # No operands: the command targets the compiler the daemon runs, which
-        # is the one this repair names in its facet's detail.
-        pass
-    elif operation == "cruxible.vocabulary.export":
-        # It writes the workspace's own vocabulary file; --force replaces a file
-        # whose header cannot establish what it meant.
-        if values.get("force") is True:
-            parts.append("--force")
-    elif operation == "cruxible.line.evaluate":
-        line, since, until = values.get("line"), values.get("since"), values.get("until")
-        if not all(isinstance(value, str) and value for value in (line, since, until)):
-            return None
-        parts.extend(
-            [
-                shlex.quote(str(line)),
-                "--since",
-                shlex.quote(str(since)),
-                "--until",
-                shlex.quote(str(until)),
-                # One command: evaluate the gap, then dispatch what it enqueued.
-                "--dispatch",
-            ]
-        )
-    elif operation in {"cruxible.line.enable", "cruxible.line.dispatch"}:
-        line = values.get("line")
-        limit = values.get("limit")
-        if not isinstance(line, str) or not line:
-            return None
-        parts.append(shlex.quote(line))
-        if operation == "cruxible.line.dispatch" and isinstance(limit, int) and limit > 1:
-            parts.extend(["--limit", str(limit)])
-    elif operation == "cruxible.inbox.list":
-        line = values.get("line")
-        if not isinstance(line, str) or not line:
-            return None
-        parts.extend(["--line", shlex.quote(line), "--status", "unread"])
-    elif operation == "cruxible.kit.add":
-        # A preview by default: it shows what the add would do at the head now.
-        reference = values.get("reference")
-        if not isinstance(reference, str) or not reference:
-            return None
-        parts.append(shlex.quote(reference))
-    elif operation == "cruxible.prediction.settle":
-        # The daemon resolves the exact contract and window from the bound
-        # window id; the observation is the settler's to choose, so its Claim
-        # ID is the one operand left to add (`--observation CLM-...`).
-        prediction_id = values.get("prediction_id")
-        if not isinstance(prediction_id, str) or not prediction_id:
-            return None
-        parts.append(shlex.quote(prediction_id))
-    elif operation in {"cruxible.proposal.readmit", "cruxible.proposal.activate"}:
-        proposal_id = values.get("proposal_id")
-        if not isinstance(proposal_id, str):
-            return None
-        parts.append(shlex.quote(proposal_id))
-    elif operation == "cruxible.proposal.approve":
-        # The signing key stays in the signer's client custody; the daemon
-        # never learns its path, so `--key` is the one operand left to add.
-        proposal_id = values.get("proposal_id")
-        signer_id = values.get("signer_id")
-        if not isinstance(proposal_id, str) or not isinstance(signer_id, str):
-            return None
-        parts.extend([shlex.quote(proposal_id), "--signer-id", shlex.quote(signer_id)])
-    elif operation == "cruxible.set":
-        restated = _restated_set(values)
-        if restated is None:
-            return None
-        parts.extend(
-            shlex.quote(_cli_scalar(restated[key])) for key in ("subject", "field", "value")
-        )
-        role = restated.get("role")
-        if isinstance(role, str):
-            parts.extend(["--role", shlex.quote(role)])
-        evidence = restated.get("evidence")
-        if isinstance(evidence, Mapping) and isinstance(evidence.get("capture"), str):
-            parts.extend(["--capture", shlex.quote(str(evidence["capture"]))])
-        elif isinstance(evidence, Mapping) and isinstance(evidence.get("contract"), str):
-            parts.extend(["--evidence-contract", shlex.quote(str(evidence["contract"]))])
-    elif operation == "cruxible.write":
-        changes = _write_changes(values)
-        if not changes or any(item.get("op") != "retire" for item in changes):
-            return None
-        if len(changes) == 1:
-            return f"cruxible retire {shlex.quote(str(changes[0]['target']))}"
-        # Several retirements are one change set; `--because` is the operand left.
-        return "cruxible write - <<< " + shlex.quote(canonical_json({"changes": changes}))
-    elif operation == "cruxible.get":
-        ref = values.get("ref")
-        if not isinstance(ref, str) or not ref:
-            return None
-        parts.append(shlex.quote(ref))
-    elif operation == "cruxible.rebind":
-        # The new text is the re-binder's to choose: a file citation leaves
-        # `--file FILE#ANCHOR` to add (as retire leaves `--because`); a section
-        # citation names its section, which locates the text on its own.
-        claim_id = values.get("claim_id")
-        if not isinstance(claim_id, str) or not claim_id:
-            return None
-        parts.append(shlex.quote(claim_id))
-        citation = values.get("citation")
-        if isinstance(citation, str) and citation:
-            parts.extend(["--citation", shlex.quote(citation)])
-        section = _rebind_section(values)
-        if section is not None:
-            parts.extend(["--section", shlex.quote(section)])
-        if "file" in operands:
-            parts.extend(["--file", _OPERAND_PLACEHOLDERS["file"]])
-        if "capture" in operands:
-            parts.extend(["--capture", _OPERAND_PLACEHOLDERS["capture"]])
-        if "because" in operands:
-            parts.extend(["--because", _OPERAND_PLACEHOLDERS["because"]])
-    elif operation == "cruxible.files.propose":
-        # Without a named file the operator adds --file and --name.
-        source = values.get("source_id")
-        if isinstance(source, str) and source:
-            parts.extend(
-                ["--file", shlex.quote(source), "--name", shlex.quote(_revision_name(source))]
-            )
-    elif operation == "cruxible.claim.retire":
-        # Why it ends is the retirer's to say: `--because` is the operand left to add.
-        claim_id = values.get("claim_id")
-        if not isinstance(claim_id, str) or not claim_id:
-            return None
-        parts.append(shlex.quote(claim_id))
-        if "because" in operands:
-            parts.extend(["--because", _OPERAND_PLACEHOLDERS["because"]])
-    elif operation in _REPAIR_COMMAND_OPERANDS:
-        parts.extend(_repair_operands(operation, values))
-    return " ".join(parts)
 
 
 def playbill_next_item_id(item: PlaybillNextItemV1) -> str:
@@ -1828,9 +1248,7 @@ def _item(
                 capture_digest=capture_digest,
             )
         elif isinstance(claim_id, str) and isinstance(capture_digest, str) and surface == "sdk":
-            command = _sdk_call(
-                "authoring_example", example, claim_id=claim_id, capture_digest=capture_digest
-            )
+            command = _sdk_example(example, claim_id=claim_id, capture_digest=capture_digest)
         elif isinstance(claim_id, str) and isinstance(capture_digest, str):
             command = " ".join(
                 (
@@ -3254,6 +2672,7 @@ def _contest_repair(
             if len(others) == 1
             else PlaybillNextRepairV1(
                 operation="cruxible.write",
+                operands_to_add=("because",),
                 target=keep,
                 required_change="choose_contender",
                 arguments={"changes": [{"op": "retire", "target": other} for other in others]},
@@ -5750,12 +5169,15 @@ def _line_dispatch_health(
             "FROM pending WHERE disposition='pending' GROUP BY line_id ORDER BY line_id",
             (format_datetime(evaluation_time),) * 2,
         ).fetchall()
+    live: dict[str, str] = {}
     if rows:
         with instance.bind_accepted_projection(coordinate) as projection:
+            # Each live Line's name, so the repair names the Line as people
+            # type it rather than by its identity digest.
             live = {
-                row[0]
+                str(row[0]): str(row[1]).removeprefix("Line:")
                 for row in projection.typed.connection.execute(
-                    "SELECT identity_digest FROM lines "
+                    "SELECT identity_digest,identity FROM lines "
                     "WHERE lifecycle='live' AND identity_digest IN ("
                     + ",".join("?" for _ in rows)
                     + ")",
@@ -5787,7 +5209,7 @@ def _line_dispatch_health(
         operation="cruxible.line.dispatch",
         target=line_id,
         required_change="dispatch_the_due_line_occurrences",
-        arguments={"line": line_id, "limit": min(due, _LINE_DISPATCH_LIMIT)},
+        arguments={"line": live.get(line_id) or line_id, "limit": min(due, _LINE_DISPATCH_LIMIT)},
     )
     return PlaybillNextHealthV1(
         state="due",

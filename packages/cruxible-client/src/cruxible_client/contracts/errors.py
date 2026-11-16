@@ -288,9 +288,8 @@ class ProposalWithdrawnError(ProposalAdmissionError):
             )
             super().__init__(
                 f"{self.error_code}: proposal {proposal_id} was superseded by {superseded_by} "
-                f"at {withdrawn_at} ({reason}); act on {superseded_by} instead: "
-                f"`cruxible proposal activate {superseded_by}` once its approvals are in "
-                f"(`cruxible proposal approve {superseded_by}` while they are not)."
+                f"at {withdrawn_at} ({reason}); act on {superseded_by} instead: activate it "
+                "once its approvals are in, approve it while they are not."
             )
             return
         super().__init__(
@@ -413,9 +412,11 @@ class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
         )
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} is not stale work: {how}, so "
-            "its change is in accepted state; run `cruxible next` for what "
-            "still needs you"
+            "its change is in accepted state; next lists what still needs you"
         )
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.repair = RepairOperation(operation="cruxible.next")
 
 
 class ProposalReadmitNotAuthor(ProposalAdmissionError):
@@ -438,8 +439,7 @@ class ProposalReadmitNotAuthor(ProposalAdmissionError):
         )
         super().__init__(
             f"{self.error_code}: only its author {author!r} may readmit proposal "
-            f"{proposal_id}; ask them to, or reject it with `cruxible proposal reject "
-            f"{proposal_id} --reason TEXT` so they learn why"
+            f"{proposal_id}; ask them to, or reject it with a reason so they learn why"
         )
 
 
@@ -453,7 +453,14 @@ class ProposalAlreadyAccepted(ProposalAdmissionError):
 
     error_code = "cruxible.proposal.already_accepted"
 
-    def __init__(self, proposal_id: str, *, git_oid: str, generation: int) -> None:
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        git_oid: str,
+        generation: int,
+        acts: str = "approve or activate",
+    ) -> None:
         from cruxible_client.contracts.repairs import RepairOperation
 
         self.proposal_id = proposal_id
@@ -462,8 +469,8 @@ class ProposalAlreadyAccepted(ProposalAdmissionError):
         self.repair = RepairOperation(operation="cruxible.get", arguments={"ref": proposal_id})
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} is already accepted at "
-            f"{git_oid} (generation {generation}); there is nothing left to approve or "
-            f"activate. Read it with `cruxible get {proposal_id}`"
+            f"{git_oid} (generation {generation}); there is nothing left to {acts}. "
+            "Read it by its id"
         )
 
 
@@ -554,31 +561,28 @@ class ProposalReadmitRefused(ProposalStale):
         self.origin_name = origin_name
         said = (detail or "").strip().rstrip(".").strip()
         why = f"{reason}: {said}" if said and said != reason else reason
-        withdraw = f"`cruxible proposal withdraw {proposal_id} --reason TEXT`"
+        withdraw = f"withdraw {proposal_id} with a reason"
         if approver:
             self.repair = RepairOperation(
                 operation="cruxible.proposal.reject", arguments={"proposal_id": proposal_id}
             )
             exit_ = (
                 "Only its author can make the change again; reject it with "
-                f"`cruxible proposal reject {proposal_id} --reason TEXT` so the author learns why."
+                "a reason so the author learns why."
             )
         elif origin == "line" and origin_name is not None:
             self.repair = RepairOperation(
                 operation="cruxible.line.run", arguments={"line": origin_name}
             )
             exit_ = (
-                f"Run `cruxible line run {origin_name}`: its next run proposes the change at the "
-                f"head and supersedes this one. Or {withdraw}."
+                f"Run Line {origin_name} again: its next run proposes the change at the head "
+                f"and supersedes this one. Or {withdraw}."
             )
         elif origin in {"line", "procedure"} and origin_name is not None:
             self.repair = RepairOperation(
                 operation="cruxible.procedure.run", arguments={"procedure": origin_name}
             )
-            exit_ = (
-                f"Run `cruxible procedure run {origin_name} INPUT` again at the head, "
-                f"or {withdraw}."
-            )
+            exit_ = f"Run Procedure {origin_name} again at the head, or {withdraw}."
         elif origin == "write":
             self.repair = RepairOperation(operation="cruxible.write")
             exit_ = f"Make the write again at the current head, or {withdraw}."
@@ -599,14 +603,16 @@ class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
 
     error_code = "cruxible.proposal.readmit_requires_resubmission"
 
-    def __init__(self, reason: str | None = None) -> None:
+    def __init__(self, reason: str | None = None, *, repair: object | None = None) -> None:
+        #: The author's command that remakes the change at the head, when known.
+        self.repair = repair
         super().__init__(
             f"{self.error_code}: "
             + (
                 reason
                 or "this stale proposal is a generated dependency-closure "
-                "migration; rerun claim-type migration preflight/submit at current head so "
-                "the dependent inventory and pins are rebuilt"
+                "migration; its author migrates the ClaimType again (preflight, then submit) "
+                "at the current head so the dependent inventory and pins are rebuilt"
             )
         )
 
@@ -658,10 +664,9 @@ class ApprovalSignerAfterBase(ApprovalIntegrityError):
         super().__init__(
             f"{self.error_code}: {signer_id} was registered after proposal {proposal_id}'s "
             "base, so it cannot sign that candidate as it stands. An approver who may "
-            f"submit approvals (graph_write) lands it at the head by approving it "
-            f"(`cruxible proposal approve {proposal_id} --signer-id {signer_id}`); otherwise "
-            f"its author {author!r} runs `cruxible proposal readmit {proposal_id} --commit "
-            "--at OID` and you approve the new proposal"
+            "submit approvals (graph_write) lands it at the head by approving it as "
+            f"{signer_id}; otherwise its author {author!r} readmits it and you approve "
+            "the new proposal"
         )
 
 
@@ -692,8 +697,10 @@ class ApprovalRequirementUnmet(ApprovalIntegrityError):
         self.required_signers = required_signers
         self.eligible_signers = eligible_signers
         self.independent = independent
+        named = (*required_signers, *eligible_signers)
         self.repair = RepairOperation(
-            operation="cruxible.proposal.approve", arguments={"proposal_id": proposal_id}
+            operation="cruxible.proposal.approve",
+            arguments={"proposal_id": proposal_id, **({"signer_id": named[0]} if named else {})},
         )
         plural = "s" if remaining != 1 else ""
         needs = []
@@ -712,12 +719,10 @@ class ApprovalRequirementUnmet(ApprovalIntegrityError):
                 else "any active ordinary principal (a compiler upgrade needs one signature)"
             )
             needs.append(f"{others} from {rule}: {who}")
-        signer = (required_signers or eligible_signers or ("ID",))[0]
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} needs {remaining} more approval{plural} "
             f"before it can be activated: {'; '.join(needs)}. Nothing was changed. Next: "
-            f"`cruxible proposal approve {proposal_id} --signer-id {signer} --key FILE`; the "
-            "approval that completes it activates it"
+            "approve it as one of them; the approval that completes it activates it"
         )
 
 

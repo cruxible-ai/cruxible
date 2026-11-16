@@ -368,7 +368,8 @@ reviews and approves it.
 
 First register the reviewer, a second principal with its own key. (A
 reviewer registered after the author writes also works: its approval lands
-the proposal at the head first, then signs it.)
+the proposal at the head first, then signs it. A kit change does not land
+that way; its author commits the kit again.)
 
 ~~~text
 $ cruxible principal add reviewer --key-dir ../reviewer-keys --signer-key OWNER_KEY

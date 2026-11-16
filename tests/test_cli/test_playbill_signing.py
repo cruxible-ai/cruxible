@@ -587,3 +587,69 @@ def test_a_principal_change_proposal_names_its_proposers_approval_next(capsys) -
         "(a principal change needs its proposer's own signature)"
     ) in principal
     assert f"next: cruxible get {proposal_id}" in ordinary
+
+
+def test_approve_with_no_principal_refuses_as_every_proposal_act_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no principal configured, approve answered a client-side usage error (exit
+    2) while activate, reject, withdraw and readmit answer the daemon's
+    `cruxible.identity.principal_unconfigured`; approve now refuses the same way,
+    with the signer hint (`--principal-id ID --key FILE`) kept in its repair."""
+
+    from cruxible_client.contracts.principals import AuthoringRefusal
+    from cruxible_client.contracts.repairs import RepairOperation
+
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID", raising=False)
+    coordinate = contracts.AcceptedCoordinate(
+        git_oid="f" * 40,
+        semantic_root="sha256:" + "1" * 64,
+        generation_root="sha256:" + "2" * 64,
+        compiler_digest="sha256:" + "3" * 64,
+    )
+    detail = (
+        "this process names no principal, and the local operator identity 'operator' is "
+        "not a registered principal on inst_cli; repair: set CRUXIBLE_PRINCIPAL_ID"
+    )
+
+    class StubClient:
+        def whoami(self, instance_id: str) -> contracts.WhoAmI:
+            return contracts.WhoAmI(
+                actor_id="operator",
+                credential_label=None,
+                actor_id_source="local_operator",
+                authenticated=False,
+                credential_permission_mode="admin",
+                principal_registration_status="absent",
+                active_principal_ids=["owner", "reviewer"],
+                coordinate=coordinate,
+                can_author=False,
+                authoring_refusal=AuthoringRefusal(
+                    code="cruxible.identity.principal_unconfigured",
+                    detail=detail,
+                    repair=RepairOperation(
+                        operation="cruxible.orient",
+                        arguments={"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "proposal",
+            "approve",
+            "sha256:" + "a" * 64,
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "cruxible.identity.principal_unconfigured" in result.output
+    assert "to approve, pass --principal-id ID --key FILE" in result.output
+    assert '"or_pass":"--principal-id ID --key FILE"' in result.output

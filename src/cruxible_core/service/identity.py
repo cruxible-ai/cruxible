@@ -69,9 +69,9 @@ def principal_refusal(
             "cruxible.identity.principal_unconfigured",
             "this process names no principal, and the local operator identity "
             f"'{LOCAL_OPERATOR_ACTOR_ID}' is not a registered principal on {instance_id}; "
-            "repair: run `cruxible init` in the project folder (an MCP server or CLI "
-            "started there acts as its owner), or set CRUXIBLE_PRINCIPAL_ID (or pass "
-            f"--principal-id) to your registered principal ID (active principals: {named})",
+            "repair: initialize in the project folder (an MCP server or CLI started there "
+            "acts as its owner), or set CRUXIBLE_PRINCIPAL_ID (the CLI's --principal-id) to "
+            f"your registered principal ID (active principals: {named})",
             repair=RepairOperation(
                 operation="cruxible.orient",
                 arguments={"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
@@ -81,7 +81,7 @@ def principal_refusal(
         return PrincipalRefusedError(
             "cruxible.identity.principal_revoked",
             f"principal {principal_id!r} was revoked on {instance_id}; repair: act as an "
-            "active principal (`cruxible orient --section principals`)",
+            "active principal (orient lists them in its principals section)",
             repair=RepairOperation(
                 operation="cruxible.orient",
                 arguments={"section": "principals", "revoked_principal_id": principal_id},
@@ -90,8 +90,8 @@ def principal_refusal(
     return PrincipalRefusedError(
         "cruxible.identity.principal_absent",
         f"principal {principal_id!r} is not registered on {instance_id}; repair: an "
-        f"owner runs `cruxible principal add {principal_id} --key-dir DIR`, "
-        "then this process acts with the settings it writes",
+        f"owner adds principal {principal_id} with a new key directory, then this process "
+        "acts with the settings it writes",
         repair=RepairOperation(
             operation="cruxible.principal.add",
             arguments={"principal_id": principal_id},
@@ -108,9 +108,8 @@ def credential_unbound_refusal(
     return PrincipalRefusedError(
         "cruxible.identity.credential_unbound",
         f"this {who} acts as no principal, so it cannot "
-        "author or attribute governed work; repair: mint one bound to your principal with "
-        "its key: `cruxible credential mint --principal-id ID --key-dir DIR --mode "
-        "governed_write`, then revoke this one",
+        "author or attribute governed work; repair: mint one bound to your principal, "
+        "signed with its key, then revoke this one",
         repair=RepairOperation(
             operation="credential.mint",
             arguments=({} if credential_id is None else {"unbound_credential_id": credential_id}),

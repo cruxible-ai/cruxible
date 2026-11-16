@@ -754,6 +754,9 @@ def test_kit_add_returns_a_kit_directorys_automation_template_and_names_its_file
     assert text.exit_code == 0, text.output
     on_disk = kit_dir / "automation.json"
     assert f"automation template: {on_disk} (never installed" in text.output
+    # Tailor a workspace copy, never the kit's own (coldcli-03).
+    assert "copy it into your workspace, tailor the copy" in text.output
+    assert f"authoring submit {on_disk}" not in text.output
     assert TEMPLATE.strip() not in text.output
     # The text came from the adapter's copy: kit add never sends inert files.
     assert [request.dry_run for request in client.sent] == [None, False, None]

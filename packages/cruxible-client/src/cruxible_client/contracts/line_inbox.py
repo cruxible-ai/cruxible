@@ -39,6 +39,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
 )
 from cruxible_client.contracts.capture_reads import BodyRestricted
+from cruxible_client.contracts.placeholders import NotPlaceholder
 from cruxible_client.contracts.read_values import (
     GET_SUMMARY_TEXT_MAX_CHARS,
     ShownValue,
@@ -289,7 +290,7 @@ class InboxItem(_StrictInboxModel):
 
 class InboxDismissRequest(_StrictInboxModel):
     tag: Literal["cruxible-inbox-dismiss-request-v1"] = "cruxible-inbox-dismiss-request-v1"
-    reason: str = Field(min_length=1, max_length=INBOX_REASON_MAX_CHARS)
+    reason: Annotated[str, NotPlaceholder] = Field(min_length=1, max_length=INBOX_REASON_MAX_CHARS)
 
 
 class InboxLinkRequest(_StrictInboxModel):

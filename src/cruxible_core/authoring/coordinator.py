@@ -109,8 +109,8 @@ def _intent_submitted(current: AuthoringIntent) -> AuthoringIntentRefused:
     proposal = (
         ""
         if status.proposal_id is None
-        else f" as proposal {status.proposal_id} (withdraw it with "
-        f"`cruxible proposal withdraw {status.proposal_id}` if the revision replaces it)"
+        else f" as proposal {status.proposal_id} (withdraw it with a reason if the "
+        "revision replaces it)"
     )
     return AuthoringIntentRefused(
         "cruxible.authoring.intent_submitted",
@@ -1571,11 +1571,17 @@ class AuthoringIntentCoordinator:
                     satisfied=actor_binding_satisfied,
                 )
             )
+        # The caller activates: a submit lands it only when policy and the
+        # caller's tier allow, and nothing activates it on its own afterwards.
         conditions.append(
             AcceptanceCondition(
                 condition="activation",
-                owner="daemon",
-                action="Activate the candidate through the existing settlement path.",
+                owner="writer",
+                action=(
+                    f"Activate {proposal_id} once its approvals are in: proposal activate "
+                    "(CLI), cruxible_proposal_activate (MCP) or cx.activate (SDK), by its "
+                    "author or anyone at graph_write."
+                ),
                 satisfied=False,
             )
         )

@@ -60,6 +60,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.file_catalog import refuse_legacy_file_catalogs
+from cruxible_client.contracts.placeholders import refuse_placeholder_operands
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.results import QueryResultRow
 from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
@@ -900,6 +901,8 @@ def sync_projection_blocks(
     detection. Without it the call writes nothing.
     """
 
+    refuse_placeholder_operands(tuple(paths), tuple(detach_paths))
+
     root = ensure_workspace_directory(Path(workspace).expanduser().resolve())
     try:
         binding = _workspace_binding(root)
@@ -1459,6 +1462,8 @@ def repin_projection_block(
     here no longer matches it, rather than silently overwriting the edit with
     what the stale proof found.
     """
+
+    refuse_placeholder_operands(file, block_id, tuple(claims or ()))
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ProjectionRepinError("projection repin requires an absolute evaluation time")

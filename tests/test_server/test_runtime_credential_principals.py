@@ -62,8 +62,8 @@ def test_an_admin_token_alone_cannot_mint_in_another_principals_name(
         body = refused.json()  # type: ignore[attr-defined]
         assert body["error_code"] == "runtime_credential.principal_authority_required"
         assert (
-            "cruxible credential mint --principal-id reviewer --key-dir DIR --mode governed_write"
-            in body["message"]
+            "cruxible credential mint --principal-id reviewer --key-dir '<DIR>' "
+            "--mode governed_write" in body["message"]
         )
         assert body["repair"]["operation"] == "credential.mint"
 
@@ -212,7 +212,7 @@ def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
     assert who["principal_registration_status"] is None
     assert refused.status_code == 403, refused.text
     assert refused.json()["error_code"] == "cruxible.identity.credential_unbound"
-    assert "cruxible credential mint --principal-id ID --key-dir DIR" in refused.json()["message"]
+    assert "mint one bound to your principal, signed with its key" in refused.json()["message"]
 
 
 def _accept_principal_change(
@@ -464,6 +464,16 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
             == "runtime_credential.principal_authority_required"
         )
         assert "token" not in refused.text or refused.json().get("token") is None  # type: ignore[attr-defined]
+        # Repaired by signing this rotation, never by minting a second credential
+        # beside the one being rotated (gapa-13).
+        assert refused.json()["repair"] == {  # type: ignore[attr-defined]
+            "operation": "credential.rotate",
+            "arguments": {"credential_id": reviewer.record.credential_id, "key_dir": "<DIR>"},
+        }
+        assert (
+            f"credential rotate {reviewer.record.credential_id} --key-dir '<DIR>'"
+            in refused.json()["message"]  # type: ignore[attr-defined]
+        )
     current = store.get(reviewer.record.credential_id)
     assert current is not None and current.revoked_at is None
 
@@ -513,6 +523,15 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
     )
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["status"] == "revoked"
+    # The revoked token is refused with a code and the way back (gapa-14).
+    stale = client.get(
+        f"/api/v1/{instance_id}/whoami",
+        headers={"Authorization": f"Bearer {rotated['token']}"},
+    )
+    assert stale.status_code == 401, stale.text
+    assert stale.json()["error_code"] == "cruxible.auth.credential_unrecognized"
+    assert "credential rotate" in stale.json()["message"]
+    assert stale.json()["repair"]["operation"] == "credential.mint"
 
 
 _UNGUARDED_WRITES = (
@@ -601,7 +620,7 @@ def test_an_unbound_credential_gets_the_typed_refusal_at_every_actor_door(
         "arguments": {"unbound_credential_id": unbound.record.credential_id},
     }
     # MCP tool errors carry the message: the code and the runnable repair.
-    assert "cruxible credential mint --principal-id ID --key-dir DIR" in answer["message"]
+    assert "mint one bound to your principal, signed with its key" in answer["message"]
     # The SDK reads the same envelope back as a coded error, not an auth failure.
     from cruxible_client.errors import AuthenticationError as ClientAuthenticationError
     from cruxible_client.errors import ErrorResponse, response_to_error

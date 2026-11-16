@@ -219,3 +219,9 @@ def test_http_curation_maps_both_operational_store_statuses(
 
     assert response.status_code == status, response.text
     assert response.json()["error_code"] == code
+    if code == "cruxible.curation.concurrent_change":
+        # The item moved: read it again (gape-04).
+        assert response.json()["repair"] == {
+            "operation": "cruxible.curation.list",
+            "arguments": {},
+        }

@@ -606,7 +606,7 @@ the vocabulary, and a write to it is refused, as here for a retired
 $ cruxible set catalog.part/bp-1142 price_cents 4200 --because "…"
 refused (generation 25, b2bab12aeb51)
 cruxible.write.unknown_field (change 0): catalog.part has no field 'price_cents'
-  repair: Use a field of catalog.part; orient kind=catalog.part lists them
+  repair: Use a field of catalog.part; cruxible orient --kind catalog.part lists them
 ~~~
 
 To keep the field with a tighter shape instead, lower its `max_len` in the

@@ -1566,8 +1566,8 @@ def _ownership_refusal(
         owning_prefix=owning_prefix,
         identity=identity,
         detail=detail,
-        repair=f"Remove the owning kit first: cruxible kit remove {owner}; or install "
-        "a release that does not own the overlapping prefix or replace the held definition.",
+        repair=f"Remove the owning kit {owner} first (kit remove); or install a release "
+        "that does not own the overlapping prefix or replace the held definition.",
     )
 
 
@@ -2226,9 +2226,9 @@ def _required_receipts(
             raise RequestRefusedError(
                 KIT_REQUIRES_MISSING,
                 requires_missing_message(manifest.kit_id, manifest.version, requirement, version),
-                repair=RepairOperation(
-                    operation="cruxible.kit.add", arguments={"kit": requirement.kit_id}
-                ),
+                # The kit id alone names no release a registry is known to hold;
+                # the reference or build path is the caller's to name (KIT).
+                repair=RepairOperation(operation="cruxible.kit.add"),
             )
     return {item.kit_id: installed[item.kit_id] for item in manifest.requires}
 
@@ -2584,8 +2584,8 @@ def _add_kit(
             installed_prefixes=receipt.owns,
             detail=f"kit id {manifest.kit_id} is installed with prefixes {receipt.owns}; "
             f"release prefixes {manifest.owns} share no prefix with that kit",
-            repair=f"Remove the installed kit first: cruxible kit remove {receipt.kit_id}; "
-            "then add this release.",
+            repair=f"Remove the installed kit {receipt.kit_id} first (kit remove), then add "
+            "this release.",
         )
         return KitChangeResult(
             kit_id=manifest.kit_id,
@@ -3230,9 +3230,7 @@ def _refuse_unmet_requires(
                 raise RequestRefusedError(
                     KIT_REQUIRES_MISSING,
                     requires_missing_message(kit_id, receipt.version, requirement, version),
-                    repair=RepairOperation(
-                        operation="cruxible.kit.add", arguments={"kit": requirement.kit_id}
-                    ),
+                    repair=RepairOperation(operation="cruxible.kit.add"),
                 )
 
 

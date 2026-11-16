@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -31,13 +31,16 @@ from cruxible_client.contracts.procedures.node_summary import (
     SummaryCount,
 )
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
     ProposalHeadMovedError,
+    ProposalPreview,
     ProposalResult,
     ProposalWithdrawalRecord,
 )
@@ -47,7 +50,12 @@ from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
     ProposalInspection,
 )
-from cruxible_core.service.change_preview import ChangeMode, change_scope, refusing_moved_head
+from cruxible_core.service.change_preview import (
+    ChangeMode,
+    change_scope,
+    preview_guards,
+    refusing_moved_head,
+)
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
     decode_list_cursor,
@@ -1301,14 +1309,11 @@ def _readmit(
             ),
             reobservations_refused=recompiled.reobservations_refused,
         )
-    if (
-        source.candidate is not None
-        and len(source.candidate.members) > 1
-        and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
-    ):
-        raise ProposalReadmitRequiresResubmission()
+    if exact_bytes_cannot_rebase(source):
+        raise requires_resubmission(source)
     if landing and not mode.previewing:
         landed = land_exact_bytes(instance, source, mode=mode)
+        assert isinstance(landed, ProposalResult)
         link = landed.admission.readmits
         assert link is not None
         return PlaybillProposalReadmitResultV1(
@@ -1319,6 +1324,101 @@ def _readmit(
     return _readmit_exact_bytes(instance, mode, source, proposal_id=proposal_id, actor_id=actor_id)
 
 
+def holds_claim_type_closure(source: ProposalResult) -> bool:
+    """A change set of several members holding a ClaimType: a closure built at its base."""
+
+    return (
+        source.candidate is not None
+        and len(source.candidate.members) > 1
+        and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
+    )
+
+
+def _target_leaf(source: ProposalResult) -> str:
+    """The proposal's ref leaf within its author's namespace (``refs/proposals/ACTOR/``)."""
+
+    namespace = f"refs/proposals/{source.admission.actor_id}/"
+    ref = source.admission.target_ref
+    return ref[len(namespace) :] if ref.startswith(namespace) else ""
+
+
+def cannot_rebase(source: ProposalResult, *, late_signer: bool = False) -> tuple[str, str] | None:
+    """Why this change set may not be readmitted or landed by its own bytes, and the
+    author's command that remakes it at the head; None when it may.
+
+    The rule rc has always applied: a change set of several members holding a
+    ClaimType carries a dependency closure built at its base and is never
+    rebased by its bytes (one with retained authoring input recompiles at the
+    head instead, and never gets here). The wording says which: a generated
+    claim-type migration (its submitter's ``claim-type-migration-`` leaf in
+    the author's namespace), a kit change (``kit-``), or another such change
+    set. A signer registered after the base (``late_signer``) lands no kit
+    change at all: a kit change was planned against the instance as it was
+    then (ownership, requirements, provider pins, local edits), and only its
+    author's fresh ``kit add`` or ``kit remove`` commit remakes it.
+    """
+
+    leaf = _target_leaf(source)
+    kit_id = leaf.removeprefix("kit-").rpartition("-")[0] or "KIT"
+    kit = (
+        "is a kit change planned against an earlier state (kit ownership, "
+        "requirements, provider pins, local edits)",
+        f"commits kit {kit_id} again at the current head (kit add, or kit remove for a removal)",
+    )
+    if holds_claim_type_closure(source):
+        if leaf.startswith("claim-type-migration-"):
+            return (
+                "is a generated dependency-closure migration with no retained input",
+                "migrates the ClaimType again (preflight, then submit) at the current head",
+            )
+        if leaf.startswith("kit-"):
+            return kit
+        return (
+            "holds a ClaimType among other members, a dependency closure built at its "
+            "base, and has no retained input to rebuild it",
+            "makes the change again at the current head",
+        )
+    if late_signer and leaf.startswith("kit-"):
+        return kit
+    return None
+
+
+def exact_bytes_cannot_rebase(source: ProposalResult) -> bool:
+    return cannot_rebase(source) is not None
+
+
+def requires_resubmission(source: ProposalResult) -> ProposalReadmitRequiresResubmission:
+    """The refusal for a change set that cannot be rebased by its bytes, by kind."""
+
+    reason = cannot_rebase(source)
+    assert reason is not None
+    why, command = reason
+    if why.startswith("is a generated"):
+        return ProposalReadmitRequiresResubmission(repair=author_repair(source))
+    return ProposalReadmitRequiresResubmission(
+        f"proposal {source.admission.proposal_id} {why}, so it is not readmitted or "
+        f"landed by its old bytes; its author {source.admission.actor_id!r} {command}",
+        repair=author_repair(source),
+    )
+
+
+def author_repair(source: ProposalResult) -> RepairOperation:
+    """The author's command that remakes a change set its bytes cannot carry to the head.
+
+    A kit change is the kit's add again (a removal is the kit's remove, which the
+    refusal names in words); a migration, or another closure, is authored again.
+    """
+
+    leaf = _target_leaf(source)
+    if leaf.startswith("kit-"):
+        # Which release or build to add is the author's (a bare id names no
+        # release a registry is known to hold): the line leaves KIT to name.
+        return RepairOperation(operation="cruxible.kit.add")
+    if leaf.startswith("claim-type-migration-"):
+        return RepairOperation(operation="cruxible.claim-type.migrate")
+    return RepairOperation(operation="cruxible.authoring.list")
+
+
 def _readmit_exact_bytes(
     instance: PlaybillInstance,
     mode: ChangeMode,
@@ -1326,8 +1426,14 @@ def _readmit_exact_bytes(
     *,
     proposal_id: str,
     actor_id: str,
+    authorize: Callable[[AcceptedProjectionCoordinate, Mapping[str, bytes]], None] | None = None,
+    expected_candidate: tuple[str, str] | None = None,
 ) -> PlaybillProposalReadmitResultV1:
-    """Readmit an origin that does not lower by its own exact bytes, rebased at the head."""
+    """Readmit an origin that does not lower by its own exact bytes, rebased at the head.
+
+    ``authorize`` and ``expected_candidate`` bind a commit to the head and
+    candidate an earlier preview of the same readmission checked.
+    """
 
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     link = ProposalReadmissionLink(source_proposal_id=proposal_id, coordinate=coordinate)
@@ -1400,6 +1506,8 @@ def _readmit_exact_bytes(
                 readmits=link,
                 originating_line=source.admission.originating_line,
                 confirm_head=mode.confirm_head,
+                authorize=authorize,
+                expected_candidate=expected_candidate,
             )
     return PlaybillProposalReadmitResultV1(
         source_proposal_id=proposal_id,
@@ -1419,8 +1527,12 @@ LANDED_REASON = (
 
 
 def land_exact_bytes(
-    instance: PlaybillInstance, source: ProposalResult, *, mode: ChangeMode | None = None
-) -> ProposalResult:
+    instance: PlaybillInstance,
+    source: ProposalResult,
+    *,
+    mode: ChangeMode | None = None,
+    check_first: bool = False,
+) -> ProposalResult | ProposalPreview:
     """Land a moved proposal whose origin does not lower at the head, by its own bytes.
 
     Only for a proposal nothing it touches changed since its base
@@ -1430,6 +1542,11 @@ def land_exact_bytes(
     the head it lands at), and the source closes as superseded by it. The
     author is not asked. Serialized with withdrawal and rejection of the source.
     A readmission the head refuses is returned as it is, and closes nothing.
+
+    ``check_first`` (an approval's or activation's landing) evaluates the
+    readmission first and publishes nothing when the head refuses it: the
+    refused preview is returned instead. The commit is then bound to the head
+    and candidate that preview checked.
     """
 
     from cruxible_core.service.proposals.recompile import recompiled_successor
@@ -1440,12 +1557,37 @@ def land_exact_bytes(
         if carried.admission.proposal_id != source_id:
             return carried
         instance.proposal_evidence().refuse_closed(source_id)
-        if (
-            source.candidate is not None
-            and len(source.candidate.members) > 1
-            and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
-        ):
-            raise ProposalReadmitRequiresResubmission()
+        if exact_bytes_cannot_rebase(source):
+            raise requires_resubmission(source)
+        binding: dict[str, Any] = {}
+        if check_first:
+            with preview_guards(True):
+                checked = _readmit_exact_bytes(
+                    instance,
+                    ChangeMode(instance, previewing=True),
+                    source,
+                    proposal_id=source_id,
+                    actor_id=source.admission.actor_id,
+                )
+            assert checked.proposal is not None
+            preview = checked.proposal.proposal
+            if preview.candidate is None:
+                return preview  # refused at the head: nothing was published
+            checked_at = preview.evaluation.evaluated_base_oid
+            assert checked_at is not None
+
+            def at_checked_head(
+                current: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
+            ) -> None:
+                if current.git_oid != checked_at:
+                    raise ProposalHeadMovedError(
+                        "accepted main moved after the landing was checked"
+                    )
+
+            binding = {
+                "authorize": at_checked_head,
+                "expected_candidate": (checked_at, preview.candidate.candidate_digest),
+            }
         try:
             readmitted = _readmit_exact_bytes(
                 instance,
@@ -1453,6 +1595,7 @@ def land_exact_bytes(
                 source,
                 proposal_id=source_id,
                 actor_id=source.admission.actor_id,
+                **binding,
             )
         except ProposalHeadMovedError as exc:
             # An internal landing (no caller's readmit to repair): the source
@@ -1764,6 +1907,16 @@ def _close_once(
     if entry is None:  # pragma: no cover - a read admission always lists
         raise ProposalNotFoundError(record.proposal_id)
     verb = "withdrawn" if record.kind == "withdrawn" else "rejected"
+    if entry.terminal_reason == "accepted":
+        # Typed as approve and activate refuse it: settled, nothing to close.
+        from cruxible_core.service.authoring.documents import refuse_accepted
+
+        refuse_accepted(
+            instance,
+            record.proposal_id,
+            entry.candidate_digest,
+            acts="withdraw" if record.kind == "withdrawn" else "reject",
+        )
     if entry.status not in _UNSETTLED_STATUSES:
         raise ProposalAdmissionError(
             f"only an open or stale proposal may be {verb}; this one is {entry.terminal_reason}"

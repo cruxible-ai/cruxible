@@ -238,7 +238,8 @@ def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
     }
     assert commands["cruxible.line.enable"] == 'cx.line("hourly").enable()'
     assert commands["cruxible.proposal.approve"] == (
-        'cx.proposal("PRP-0001").approve(reviewed=cx.proposal("PRP-0001").review())'
+        'cx.proposal("PRP-0001").approve(signer=SIGNER, reviewed=cx.proposal("PRP-0001").review())'
+        "  # SIGNER: reviewer's ApprovalSigner"
     )
     for command in commands.values():
         assert command is None or not command.startswith("cruxible ")
@@ -529,7 +530,10 @@ def test_every_sdk_rendered_repair_is_python() -> None:
 
     assert all(command is not None for command in commands), commands
     for command in commands:
-        ast.parse(str(command), mode="eval")
+        # A line may import what it calls (authoring_example), then make the call.
+        *setup, last = ast.parse(str(command), mode="exec").body
+        assert all(isinstance(statement, ast.ImportFrom) for statement in setup), command
+        assert isinstance(last, ast.Expr) and isinstance(last.value, ast.Call), command
 
 
 def test_the_sdk_block_sync_repair_runs_as_written() -> None:

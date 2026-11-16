@@ -308,7 +308,10 @@ def test_activating_an_unapproved_moved_proposal_refuses_and_changes_nothing(
         assert refused.value.error_code == "cruxible.approval.requirement_unsatisfied"
         assert (refused.value.remaining, refused.value.eligible_signers) == (1, ("reviewer",))
         assert refused.value.repair.operation == "cruxible.proposal.approve"
-        assert refused.value.repair.arguments == {"proposal_id": source_id}
+        assert refused.value.repair.arguments == {
+            "proposal_id": source_id,
+            "signer_id": "reviewer",
+        }
         assert "Nothing was changed" in str(refused.value)
 
     assert instance.accepted_coordinate() == head
@@ -410,7 +413,7 @@ def test_an_approval_that_lands_a_moved_proposal_names_its_source(tmp_path: Path
     with pytest.raises(ProposalWithdrawnError) as refused:
         service_activate_playbill_proposal(instance, proposal_id=source_id, activated_by="owner")
     assert refused.value.superseded_by == landed.proposal_id
-    assert f"cruxible proposal activate {landed.proposal_id}" in str(refused.value)
+    assert f"act on {landed.proposal_id} instead: activate it" in str(refused.value)
     assert "author the change again" not in str(refused.value)
     assert refused.value.repair.operation == "cruxible.proposal.activate"
     assert refused.value.repair.arguments == {"proposal_id": landed.proposal_id}
@@ -475,7 +478,8 @@ def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
             instance, proposal_id=source_id, signer_id="late", access=access
         )
     assert refused.value.error_code == "cruxible.approval.signer_after_base"
-    assert f"cruxible proposal readmit {source_id}" in str(refused.value)
+    assert "otherwise its author 'owner' readmits it" in str(refused.value)
+    assert refused.value.repair.arguments == {"proposal_id": source_id}
     assert instance.proposal_evidence().read_withdrawal(source_id) is None
 
     landed_by: list[str] = []
@@ -569,3 +573,48 @@ def test_an_ineligible_late_signer_is_refused_before_anything_lands(tmp_path: Pa
     assert instance.proposal_evidence().list_admissions() == admissions
     assert instance.accepted_coordinate() == head
     assert _entry(instance, source_id).status == "open"
+
+
+def test_withdrawing_or_rejecting_an_accepted_proposal_says_accepted(tmp_path: Path) -> None:
+    """Withdraw and reject answered "only an open or stale proposal may be withdrawn;
+    this one is accepted" with no code or repair; typed as approve and activate are."""
+
+    from cruxible_core.service.proposals.proposals import (
+        service_reject_playbill_proposal,
+        service_withdraw_playbill_proposal,
+    )
+
+    instance, reviewer = _world(tmp_path)
+    proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "accepted once"))
+    receipt = _approve(instance, reviewer, proposal_id)
+    assert receipt.activation is not None and receipt.activation.accepted_coordinate is not None
+    accepted_at = receipt.activation.accepted_coordinate.git_oid
+
+    for verb, act in (
+        (
+            "withdraw",
+            lambda: service_withdraw_playbill_proposal(
+                instance,
+                proposal_id=proposal_id,
+                actor_id="owner",
+                reason="no",
+                withdrawn_at="2026-11-16T12:00:00.000000Z",
+            ),
+        ),
+        (
+            "reject",
+            lambda: service_reject_playbill_proposal(
+                instance,
+                proposal_id=proposal_id,
+                actor_id="reviewer",
+                reason="no",
+                rejected_at="2026-11-16T12:00:00.000000Z",
+            ),
+        ),
+    ):
+        with pytest.raises(ProposalAlreadyAccepted) as refused:
+            act()
+        assert refused.value.git_oid == accepted_at
+        assert f"nothing left to {verb}" in str(refused.value)
+        assert refused.value.repair.operation == "cruxible.get"
+    assert instance.proposal_evidence().read_withdrawal(proposal_id) is None

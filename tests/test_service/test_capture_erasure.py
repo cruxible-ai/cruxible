@@ -177,14 +177,14 @@ def test_a_contract_that_does_not_authorize_erasure_refuses_with_the_repair(
 
     error = refused.value
     assert error.error_code == "cruxible.capture.erasure_prohibited"
-    # Public names only: the contract and the helper that opts a new one in, never
-    # an internal field path or the rule's pin identifier.
+    # Public names only: the contract and the served input that opts a new one in,
+    # never an internal field path or the rule's pin identifier.
     text = str(error)
-    assert world.contract.identity.qualified in text and "authorize_erasure" in text
+    assert world.contract.identity.qualified in text and "erasable: true" in text
     assert "retention_erasure_policy" not in text and "playbill." not in text
     assert isinstance(error.repair, HandEditRepair)
     assert error.repair.hand_edit.target == world.contract.identity.qualified
-    assert "authorize_erasure" in error.repair.hand_edit.required_change
+    assert "capture-contract propose" in error.repair.hand_edit.required_change
     status, body = error_to_response(error)
     assert status == 409 and body.error_code == "cruxible.capture.erasure_prohibited"
     assert body.repair == error.repair

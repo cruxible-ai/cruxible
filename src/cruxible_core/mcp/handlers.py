@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
@@ -58,7 +58,12 @@ from cruxible_client.compatibility import check_daemon_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult, BlockSyncResult
-from cruxible_client.contracts.authoring_landing import AuthoringAccept
+from cruxible_client.contracts.authoring_landing import (
+    AuthoringAccept,
+    AuthoringProposed,
+    AuthoringRefused,
+    landing_for_surface,
+)
 from cruxible_client.contracts.backlinks import BacklinksResult
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
@@ -283,6 +288,21 @@ def _mcp_identity() -> McpIdentity:
     return _identity_and_client()[0]
 
 
+def _mcp_landing(result: ResultT) -> ResultT:
+    """A result whose landing outcome names its next step: spelled as this tool's call.
+
+    The daemon spells a submit's or propose's ``outcome.next`` for the CLI; the
+    structured ``next_repair`` beside it is what this server respells.
+    """
+
+    outcome = getattr(result, "outcome", None)
+    if not isinstance(outcome, AuthoringProposed | AuthoringRefused) or not isinstance(
+        result, BaseModel
+    ):
+        return result
+    return result.model_copy(update={"outcome": landing_for_surface(outcome, "mcp")})
+
+
 def _daemon_call(
     remote_call: Callable[[CruxibleClient], ResultT],
     *,
@@ -297,7 +317,7 @@ def _daemon_call(
             raise
         except ConfigError as exc:
             raise ConfigError(f"{exc} Required by {operation_name}.") from exc
-        return remote_call(client)
+        return _mcp_landing(remote_call(client))
     except ServerUnreachableError as exc:
         configured = configured_daemon_target()
         if configured is not None:
@@ -2406,7 +2426,9 @@ def handle_playbill_vocabulary_export(
 
     root = mcp_workspace_root()
     return _daemon_call(
-        lambda client: vocabulary_export_for(client, instance_id, workspace=root, force=force),
+        lambda client: vocabulary_export_for(
+            client, instance_id, workspace=root, force=force, surface="mcp"
+        ),
         operation_name="cruxible_vocabulary_export",
     )
 
@@ -2417,7 +2439,9 @@ def handle_playbill_vocabulary_plan(instance_id: str, *, file: str | None = None
     root = mcp_workspace_root()
     path = None if file is None else resolve_workspace_path(file, root=root, kind="file")
     return _daemon_call(
-        lambda client: vocabulary_plan_for(client, instance_id, workspace=root, path=path),
+        lambda client: vocabulary_plan_for(
+            client, instance_id, workspace=root, path=path, surface="mcp"
+        ),
         operation_name="cruxible_vocabulary_plan",
     )
 

@@ -720,7 +720,10 @@ def test_next_reads_one_exact_evidence_head(
     # every profile, with the Capture as evidence.
     assert rows[0].repair.operation == "cruxible.set"
     assert rows[0].repair.arguments["claim_id"] == claim_id
-    assert rows[0].repair.command.endswith(f"--capture {capture.capture_digest}")
+    # A write repair also asks for its reason: the caller fills `--because`.
+    assert f" --capture {capture.capture_digest} " in rows[0].repair.command
+    assert rows[0].repair.command.endswith(" --because '<TEXT>'")
+    assert rows[0].repair.operands_to_add == ("because",)
 
 
 def _assert_successor_resolves_attestation_membership(
