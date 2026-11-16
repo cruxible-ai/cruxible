@@ -519,6 +519,39 @@ def _attributed_writes() -> dict[str, dict[str, Callable[[], object]]]:
                 request=None,  # type: ignore[arg-type]
             ),
         },
+        "proposal_doors": {
+            "document": lambda: api.playbill_propose_document(
+                INSTANCE,
+                shell=None,
+                proposal_name="p",
+                dry_run=False,  # type: ignore[arg-type]
+            ),
+            "file_bundle": lambda: api.playbill_propose_file_bundle(
+                INSTANCE,
+                bundle=None,
+                file="f.md",
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "builtin_claim_type": lambda: api.playbill_propose_builtin_claim_type(
+                INSTANCE,
+                builtin="semantic.alias",
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "capture_contract": lambda: api.playbill_propose_capture_contract(
+                INSTANCE,
+                input=None,
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "claim_type_input": lambda: api.playbill_propose_claim_type_input(
+                INSTANCE,
+                input=None,
+                proposal_name="p",  # type: ignore[arg-type]
+            ),
+            "claim_type_migration": lambda: api.playbill_migrate_claim_type(
+                INSTANCE,
+                request=None,  # type: ignore[arg-type]
+            ),
+        },
         "inbox_and_blocks": {
             "inbox_ack": lambda: api.playbill_inbox_ack(INSTANCE, "INB-absent"),
             "inbox_dismiss": lambda: api.playbill_inbox_dismiss(
@@ -570,6 +603,7 @@ def _attributed_writes() -> dict[str, dict[str, Callable[[], object]]]:
         "kits",
         "governance_proposals",
         "measurements",
+        "proposal_doors",
         "inbox_and_blocks",
         "runs",
     ],

@@ -1133,7 +1133,7 @@ def playbill_propose_document(
             lambda: service_propose_playbill_document(
                 instance,
                 shell=shell,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 source_compilation_digest=source_compilation_digest,
@@ -1617,7 +1617,7 @@ def playbill_propose_file_bundle(
                 instance,
                 bundle=bundle,
                 file=file,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 dry_run=dry_run,
@@ -1640,7 +1640,7 @@ def _land_direct(
     return land_direct_proposal(
         instance,
         inspection,
-        actor_id=_actor_id(instance_id),
+        actor_id=_attributed_actor_id(instance_id),
         accept=accept,
         may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
     )
@@ -1668,7 +1668,7 @@ def playbill_propose_builtin_claim_type(
             lambda: service_propose_playbill_builtin_claim_type(
                 instance,
                 builtin=builtin,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 base=base,
@@ -1701,7 +1701,7 @@ def playbill_propose_capture_contract(
                 instance,
                 input=input,
                 base=base,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 dry_run=dry_run,
@@ -1732,7 +1732,7 @@ def playbill_propose_claim_type_input(
                 instance,
                 input=input,
                 base=base,
-                actor_id=_actor_id(instance_id),
+                actor_id=_attributed_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 dry_run=dry_run,
@@ -1755,7 +1755,7 @@ def playbill_migrate_claim_type(
     result = service_migrate_claim_type(
         instance,
         request=request,
-        actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
+        actor=AuthenticatedActor(actor_id=_attributed_actor_id(instance_id)),
     )
     if isinstance(result, ClaimTypeMigrationResult):
         # Lands like a change set or a propose route when policy allows.
@@ -1783,7 +1783,7 @@ def _write_outcome(instance_id: str, request: WriteRequest) -> WriteOutcome:
     # principal claim opens the instance, and a cold open may repair on disk.
     with change_entry(request.dry_run, "direct"):
         caller = WriteCaller(
-            actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
+            actor=AuthenticatedActor(actor_id=_attributed_actor_id(instance_id)),
             may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
             may_approve=_permits("cruxible_proposal_approve", instance_id=instance_id),
         )
@@ -1844,7 +1844,7 @@ def playbill_append_claim_attestation(
 def _authoring_coordinator(
     instance_id: str,
 ) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
-    actor = AuthenticatedActor(actor_id=_actor_id(instance_id))
+    actor = AuthenticatedActor(actor_id=_attributed_actor_id(instance_id))
     instance = get_playbill_manager().get(instance_id)
     return AuthoringIntentCoordinator.for_instance(instance), actor
 
