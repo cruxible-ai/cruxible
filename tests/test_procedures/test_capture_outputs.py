@@ -55,6 +55,7 @@ def _paired_world(
     returned: tuple[str, ...] = ("left", "note"),
     halt_after_call: bool = False,
     note_type: str = "string",
+    query_parameter: bool = False,
 ) -> Any:
     from cruxible_client.authoring.inputs import LineInput
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
@@ -159,6 +160,7 @@ def _paired_world(
             reference_text=True,
             procedure="test.paired",
             input={},
+            **({"params": {"query": "string"}} if query_parameter else {}),
             output={name: result.fields[name].spelling for name in returned},
             slots={"pair": {"capability": "demo.pair@1"}},
             steps=[
@@ -166,7 +168,7 @@ def _paired_world(
                     call="doc",
                     captures={"left": "test.events-v1", "right": "test.other-v1"},
                     slot="pair",
-                    input={"query": "orders"},
+                    input={"query": "$params.query" if query_parameter else "orders"},
                 ),
                 *(
                     [
@@ -201,7 +203,7 @@ def _paired_world(
         "kind": "line",
         "name": LINE_NAME,
         "procedure_name": "test.paired",
-        "parameters": {},
+        "parameters": {"query": "orders"} if query_parameter else {},
     }
     if trigger_input is not None:
         line["trigger_input"] = trigger_input
@@ -752,3 +754,44 @@ def test_a_consumption_cites_one_run_free_body_and_v1_still_reads() -> None:
     # Records written before the body still read; an unversioned one is unknown.
     assert consumed_captures({"v": 1, "captures": captures}, store.__getitem__) == captures
     assert consumed_captures({"captures": captures}, store.__getitem__) is None
+
+
+def test_a_singleton_capture_is_reused_only_for_the_exact_request_it_answered(
+    tmp_path: Path,
+) -> None:
+    """F-006 (ruling 1c): the same bytes, coordinate and selector under another
+    resolved request are a new Capture; the same request again reuses it.
+
+    The fixture's coordinates name no request digest, so only the executed
+    request tells the two fetches apart.
+    """
+
+    from datetime import timedelta
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.support.operation_world import NOW, Operator, actor
+    from tests.test_procedures.test_b2_operations import Clock
+
+    instance = _paired_world(tmp_path, returned=("left", "right"), query_parameter=True)
+
+    def fetch(query: str | None, minute: int) -> Any:
+        state = service_run_playbill_line(
+            instance,
+            path_identity_digest=LINE_NAME,
+            request=LineRunRequest(
+                line=LINE_NAME, parameters=None if query is None else {"query": query}
+            ),
+            actor_context=actor(),
+            caller_rung=2,
+            daemon_clock=Clock(NOW + timedelta(minutes=minute)),
+            provider_runtime_operator=Operator(Invoker(output=_paired_output())),  # type: ignore[arg-type]
+        )
+        assert state.status == "succeeded", state.terminal
+        return state.result["left"]
+
+    first = fetch(None, 0)
+    assert fetch("refunds", 1) != first
+    assert fetch(None, 2) == first

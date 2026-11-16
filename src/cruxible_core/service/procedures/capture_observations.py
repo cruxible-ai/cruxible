@@ -62,6 +62,13 @@ class InstanceCaptureObservations:
             return None
         return digest, envelope
 
+    def remember(self, content_key: str, capture_digest: str) -> None:
+        """Name the new Capture these contents' next identical re-fetch reuses."""
+
+        self.instance.body_store().capture_envelopes.remember_content_key(
+            content_key, capture_digest
+        )
+
     def observe(
         self,
         contents: tuple[tuple[str, str, str], ...],

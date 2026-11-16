@@ -1346,6 +1346,9 @@ class CaptureObservationsProtocol(Protocol):
     def held_capture(self, content_key: str, *, commitment_digest: str) -> tuple[str, Any] | None:
         """The held Capture (digest, envelope) of these contents, when it may be reused."""
 
+    def remember(self, content_key: str, capture_digest: str) -> None:
+        """Name the new Capture these contents' next identical re-fetch reuses."""
+
     def observe(
         self,
         contents: tuple[tuple[str, str, str], ...],
@@ -4983,6 +4986,15 @@ class ProcedureExecutor:
         # is known to be new: an identical re-fetch reuses the held Capture.
         deferred = _DeferredEnvelopeStore(reserved_store)
         building = reserved_store if self.capture_observations is None else deferred
+        # The exact request this call executed, run-free: what a reused Capture's
+        # producing run must also have executed (ruling 1c). A list member's own
+        # request is in its coordinate besides.
+        request_identity = run_value_digest(
+            "source-request",
+            resolved_request
+            if workspace_request is None
+            else workspace_request.model_dump(mode="json"),
+        )
         built: dict[str, Any] = {}
         reused: set[str] = set()
         bodies: dict[str, bytes] = {}
@@ -5022,7 +5034,9 @@ class ProcedureExecutor:
                     derivation=derivation if field in derived_fields else None,
                 )
                 if self.capture_observations is not None:
-                    built[field] = self._held_or_new(built[field], deferred, reserved_store)
+                    built[field] = self._held_or_new(
+                        built[field], deferred, reserved_store, request=request_identity
+                    )
                     if built[field].capture_digest in deferred.reused:
                         reused.add(field)
                 # D-R37 f1: fetched the moment its builder returns, before
@@ -5291,18 +5305,20 @@ class ProcedureExecutor:
         item: Any,
         deferred: _DeferredEnvelopeStore,
         reserved_store: ReservedCaptureStore,
+        *,
+        request: str,
     ) -> Any:
         """The held Capture an identical re-fetch reproduces, else this new one, stored.
 
-        The key is the built envelope less its run-bound fields (ruling 1c). A
-        held Capture whose envelope or body is gone, damaged or erased is never
-        reused (the port refuses it); the new envelope is then stored, and is
-        what the next identical re-fetch reuses.
+        The key is the built envelope less its run-bound fields, with the
+        executed request (ruling 1c). A held Capture whose envelope or body is
+        gone, damaged or erased is never reused (the port refuses it); the new
+        envelope is then stored, and is what the next identical re-fetch reuses.
         """
 
         assert self.capture_observations is not None
         content = deferred.envelopes.pop(item.capture_digest)
-        key = capture_content_key(json.loads(content))
+        key = capture_content_key(json.loads(content), request=request)
         held = (
             None
             if key is None
@@ -5313,6 +5329,8 @@ class ProcedureExecutor:
         if held is None or held[0] == item.capture_digest:
             if reserved_store.store(content).digest != item.capture_digest:
                 raise ExecutionError("Capture envelope CAS digest did not reproduce")
+            if key is not None:
+                self.capture_observations.remember(key, item.capture_digest)
             return item
         digest, envelope = held
         deferred.reused.add(digest)

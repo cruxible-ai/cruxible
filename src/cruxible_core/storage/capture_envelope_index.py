@@ -69,14 +69,17 @@ _RUN_BOUND_FIELDS = frozenset(
 _REUSABLE_TAG = "playbill-capture-envelope-v2"
 
 
-def capture_content_key(envelope: object) -> str | None:
+def capture_content_key(envelope: object, *, request: str) -> str | None:
     """What an identical re-fetch reproduces: the envelope less its run-bound fields.
 
     The same contract, source (identity, coordinate, selector, replayability),
     exact bytes, producer and producer binding, derivation inputs and source
-    effective time (ruling 1c). None for anything but a v2 envelope. A digest
-    over the remaining canonical fields: the stored envelope bytes are never
-    changed, so a key is a lookup, never a new format.
+    effective time, and the exact resolved request the call executed
+    (``request``, a run-free digest of it: no envelope field carries it, and a
+    singleton output's coordinate need not name it) (ruling 1c). None for
+    anything but a v2 envelope. A digest over the remaining canonical fields:
+    the stored envelope bytes are never changed, so a key is a lookup, never a
+    new format.
     """
 
     from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -85,11 +88,14 @@ def capture_content_key(envelope: object) -> str | None:
         return None
     return typed_digest(
         Sha256Value,
-        "playbill-capture-content-key-v1",
+        "playbill-capture-content-key-v2",
         {
-            key: value
-            for key, value in envelope.items()
-            if key not in _RUN_BOUND_FIELDS and key != "tag"
+            "envelope": {
+                key: value
+                for key, value in envelope.items()
+                if key not in _RUN_BOUND_FIELDS and key != "tag"
+            },
+            "request": request,
         },
     ).tagged
 
@@ -106,15 +112,6 @@ def envelope_contract(head: bytes) -> str | None:
     ):
         return None
     return named.decode("ascii")
-
-
-def _content_key_of(content: bytes) -> str | None:
-    import json
-
-    try:
-        return capture_content_key(json.loads(content))
-    except ValueError:
-        return None
 
 
 class CaptureEnvelopeIndex:
@@ -151,21 +148,29 @@ class CaptureEnvelopeIndex:
         if contract is None:
             return
         inputs = self._derivation_inputs(content) if _DERIVED_MARK in content else None
-        content_key = _content_key_of(content)
         with self._connection() as connection:
             connection.execute("INSERT OR IGNORE INTO envelopes VALUES (?,?)", (contract, digest))
-            if content_key is not None:
-                # The latest stored Capture of these contents is the one a re-fetch
-                # reuses: a new one is stored only when none held was usable.
-                connection.execute(
-                    "INSERT OR REPLACE INTO content_keys VALUES (?,?)", (content_key, digest)
-                )
             if inputs is not None:
                 connection.executemany(
                     "INSERT OR IGNORE INTO derivation_inputs VALUES (?,?)",
                     [(digest, item) for item in inputs],
                 )
                 connection.execute("INSERT OR IGNORE INTO derivations VALUES (?)", (digest,))
+
+    def remember_content_key(self, content_key: str, capture_digest: str) -> None:
+        """Name the Capture an identical re-fetch reuses (``capture_content_key``).
+
+        The executor names each Capture it stores new: the key covers the
+        executed request, which the envelope bytes do not carry. The latest one
+        stored wins (a new one is stored only when none held was usable). Not
+        rebuilt from the store's bytes: a lost row costs one new Capture, never
+        a wrong reuse.
+        """
+
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO content_keys VALUES (?,?)", (content_key, capture_digest)
+            )
 
     def capture_for_content_key(self, content_key: str) -> str | None:
         """The held Capture an identical re-fetch reproduces, if one was stored (a candidate)."""
