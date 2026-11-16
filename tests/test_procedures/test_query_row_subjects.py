@@ -73,6 +73,8 @@ def _served(subject: str | None, **bindings: str | None) -> dict[str, Any]:
 
 
 def test_a_read_rows_fan_out_offers_each_rows_subject_and_bindings() -> None:
+    from cruxible_core.procedures.execution import _resolve_reference
+
     view = _read_view(
         [{"status": "ready"}, {"status": "done", "subject": "a column"}],
         [
@@ -81,25 +83,37 @@ def test_a_read_rows_fan_out_offers_each_rows_subject_and_bindings() -> None:
         ],
     )
 
-    items = query_row_items("$steps.work.rows", {"work": view}, view["rows"])
+    first, second = query_row_items("$steps.work.rows", {"work": view}, view["rows"]) or ()
 
-    assert items == [
-        {
-            "subject": "project.work_item/wi-42",
-            # An optional binding that bound nothing is left out.
-            "bindings": {"item": "project.work_item/wi-42"},
-            "status": "ready",
-        },
-        {
-            # A declared column of the same name wins.
-            "subject": "a column",
-            "bindings": {"item": "project.work_item/wi-43"},
-            "status": "done",
-        },
-    ]
+    def read(reference: str, item: Any) -> object:
+        return _resolve_reference(reference, input_payload={}, parameters={}, outputs={}, item=item)
+
+    assert read("$item.subject", first) == "project.work_item/wi-42"
+    # An optional binding that bound nothing is left out.
+    assert read("$item.bindings", first) == {"item": "project.work_item/wi-42"}
+    assert read("$item.status", first) == "ready"
+    # A column present in the row wins.
+    assert read("$item.subject", second) == "a column"
     # Only exactly a Query read's rows gain them.
     assert query_row_items("$steps.work.result.rows", {"work": view}, view["rows"]) is None
     assert query_row_items("$steps.other.rows", {"other": {"rows": []}}, []) is None
+
+
+def test_a_whole_row_is_exactly_the_row_it_was(tmp_path: Path) -> None:
+    """``$item`` and every whole-row use see the projected columns only, as before."""
+
+    from cruxible_client.contracts.canonical import normalize_canonical
+    from cruxible_core.procedures.execution import _resolve_template
+
+    view = _read_view([{"status": "ready"}], [_served("project.work_item/wi-42", item=None)])
+    (row,) = query_row_items("$steps.work.rows", {"work": view}, view["rows"]) or ()
+
+    assert row == {"status": "ready"}
+    whole = _resolve_template(
+        {"payload": "$item"}, input_payload={}, parameters={}, outputs={}, item=row
+    )
+    assert whole == {"payload": {"status": "ready"}}
+    assert type(normalize_canonical(row)) is dict
 
 
 def _query(row: Any) -> Any:
@@ -190,6 +204,7 @@ def _row_world(
     *,
     narrowing: tuple[Any, ...] = (),
     for_each: str = "$steps.work.rows",
+    item_fields: dict[str, Any] | None = None,
 ) -> Any:
     instance, _owner = seed_claims(tmp_path)
     row = validate_contract(
@@ -199,7 +214,8 @@ def _row_world(
         {
             "name": ITEM,
             "version": 1,
-            "fields": {
+            "fields": item_fields
+            or {
                 "item": f"subject<{SUBJECT_KIND}>",
                 "bound": f"subject<{SUBJECT_KIND}>",
                 "status": "string",
@@ -229,7 +245,7 @@ def _row_world(
                     inbox=f"{ITEM}@1",
                     for_each=ref(for_each),
                     fields=fields,
-                    dedupe_key=("item",),
+                    dedupe_key=tuple(item_fields or ("item",))[:1],
                     id="post",
                 ),
             ],
@@ -262,7 +278,7 @@ def _posted(instance: Any) -> list[dict[str, Any]]:
     entries, _cursor = store.page(line=None, status=None, limit=50, cursor=None)
     return sorted(
         (store.get(entry.envelope.item_id).payload for entry in entries),
-        key=lambda payload: payload["item"],
+        key=lambda payload: str(sorted(payload.items())),
     )
 
 
@@ -327,6 +343,28 @@ def test_filter_and_dedupe_over_the_rows_keep_each_rows_subject_and_bindings(
     assert _posted(instance) == [
         {"item": f"{SUBJECT_KIND}/wi-42", "bound": f"{SUBJECT_KIND}/wi-42", "status": "ready"}
     ]
+
+
+def _nested_row() -> Any:
+    row = validate_contract(
+        {"name": ROW, "version": 1, "fields": {"item_id": "string", "status": "string"}}
+    )
+    pin = {"name": ROW, "version": 1, "digest": contract_digest(row).tagged}
+    return {"type": {"kind": "contract", "contract": pin}}
+
+
+def test_a_whole_row_posted_through_a_filter_is_exactly_its_columns(tmp_path: Path) -> None:
+    """A Contract typed by the Query's closed row Contract still takes the whole row."""
+
+    instance = _row_world(
+        tmp_path,
+        {"payload": ref("$item")},
+        narrowing=(_narrowing("filter", "ready", "$steps.work.rows", READY),),
+        for_each="$steps.ready.rows",
+        item_fields={"payload": _nested_row()},
+    )
+
+    assert _posted(instance) == [{"payload": {"item_id": "wi-42", "status": "ready"}}]
 
 
 def test_a_step_that_rebuilds_the_rows_refuses_naming_it() -> None:

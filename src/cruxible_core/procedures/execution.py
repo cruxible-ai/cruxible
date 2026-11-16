@@ -316,7 +316,11 @@ from cruxible_core.procedures.ports import (
     AcquisitionRules,
     bound_operation,
 )
-from cruxible_core.procedures.query_rows import ROW_PRESERVING_TRANSFORMS, query_row_items
+from cruxible_core.procedures.query_rows import (
+    ROW_PRESERVING_TRANSFORMS,
+    offered_value,
+    query_row_items,
+)
 from cruxible_core.procedures.reference_binding import (
     ProcedureExecutionPlan,
     execution_plan,
@@ -2510,6 +2514,8 @@ class _RunState:
     parameters: CanonicalValue
     provenance: dict[str, AliasProvenanceV1] = dataclass_field(default_factory=dict)
     facts: dict[str, DependencyEvidenceFactsV1] = dataclass_field(default_factory=dict)
+    #: The rows each filter/dedupe alias was given, so a Query row's offers follow it.
+    row_inputs: dict[str, object] = dataclass_field(default_factory=dict)
     outcomes: dict[str, AcquisitionInputOutcomeV1] = dataclass_field(default_factory=dict)
     control: frozenset[DependencyToken] = frozenset()
     return_tokens: frozenset[DependencyToken] = frozenset()
@@ -5379,11 +5385,6 @@ class ProcedureExecutor:
             )
             if rows_in is not None and id(reference) in record_inputs:
                 rows_in.append(row_count(resolved))
-            if kind in ROW_PRESERVING_TRANSFORMS and isinstance(resolved, list):
-                # Filter and dedupe keep a Query read's rows whole (query_rows).
-                offered = query_row_items(reference, outputs, resolved)
-                if offered is not None:
-                    return offered
             return resolved
 
         try:
@@ -5421,6 +5422,8 @@ class ProcedureExecutor:
         )
         aliases = _referenced_aliases(node.spec)
         state.outputs[node.as_] = value
+        if node.transform_kind in ROW_PRESERVING_TRANSFORMS:
+            state.row_inputs[node.as_] = getattr(node.spec, "input", None)
         record_summary(
             state.node_summaries,
             node.node_id,
@@ -8351,9 +8354,9 @@ def _fan_out_list(
         )
     values = [normalize_canonical(item) for item in resolved]
     # A Query read's rows also offer each row's Subject and bindings (query_rows).
-    offered = query_row_items(template, state.outputs, values)
+    offered = query_row_items(template, state.outputs, values, getattr(state, "row_inputs", None))
     if offered is not None:
-        values = [normalize_canonical(item) for item in offered]
+        values = cast(list[CanonicalValue], offered)
     alias = _template_alias(template)
     provenance = None if alias is None else state.provenance.get(alias)
     if provenance is None:
@@ -8747,7 +8750,9 @@ def _resolve_reference(
     if value.startswith("$item."):
         if item is None:
             raise ExecutionError("$item is unavailable outside item transforms")
-        return _resolve_path(item, tuple(value[6:].split(".")), reference=value)
+        path = tuple(value[6:].split("."))
+        offered, root = offered_value(item, path)
+        return _resolve_path(root if offered else item, path, reference=value)
     return value
 
 

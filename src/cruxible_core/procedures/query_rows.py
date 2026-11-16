@@ -10,8 +10,10 @@ is exactly that list (an inbox step, a claims step) also reads, per row:
   (left out when an optional binding bound nothing).
 
 They come from the read's whole result (``$steps.<read>.result``), row by row,
-so the retained read material and its digests are unchanged. A declared column
-of the same name wins. Anything else a row does not offer refuses at authoring
+and are read only by those references: the row's own value (``$item``, the
+read material, a filter's records) is unchanged. A filter or dedupe over the
+rows keeps them, followed back by record locator. A declared column of the
+same name wins, present or not. Anything else a row does not offer refuses at authoring
 (:func:`validate_row_references`), listing what the row offers.
 """
 
@@ -22,7 +24,6 @@ from typing import Any
 
 from cruxible_client.contracts.shapes import SubjectType
 
-_ROWS_SUFFIX = ".rows"
 _STEPS = "$steps."
 _SUBJECT_PREFIX = "Subject:"
 ITEM_REFERENCE_UNRESOLVED = "cruxible.procedure.item_reference_unresolved"
@@ -45,41 +46,99 @@ def _reference(identity: object) -> str | None:
     return identity[len(_SUBJECT_PREFIX) :]
 
 
-def query_row_items(
-    for_each: object, outputs: Mapping[str, object], rows: Sequence[object]
-) -> list[object] | None:
-    """``rows`` with each row's ``subject`` and ``bindings``, or ``None`` when not a Query read.
+class RowItem(dict[str, Any]):
+    """One row exactly as the step's list holds it, and what else it offers by reference.
 
-    Only a ``for_each`` that is exactly a Query read's ``rows`` gains them; the
-    read's view keeps its whole result beside ``rows`` in the same order.
+    The row's own value -- what ``$item``, a whole-row use and every Contract
+    check see -- is unchanged. ``offered`` (``subject``, ``bindings``) is read
+    only by an ``$item.subject`` or ``$item.bindings.<name>`` reference.
+    """
+
+    __slots__ = ("offered",)
+
+    def __init__(self, row: Mapping[str, Any], offered: Mapping[str, object]) -> None:
+        super().__init__(row)
+        self.offered = dict(offered)
+
+
+def _offer(whole: Mapping[str, Any]) -> dict[str, object]:
+    """What one served row offers."""
+
+    offered: dict[str, object] = {}
+    subject = _reference(whole.get("result_subject_identity"))
+    if subject is not None:
+        offered["subject"] = subject
+    offered["bindings"] = {
+        str(binding["binding"]): reference
+        for binding in whole.get("bindings") or ()
+        if isinstance(binding, Mapping)
+        and (reference := _reference(binding.get("subject_identity"))) is not None
+    }
+    return offered
+
+
+def _locator_index(record: object) -> int | None:
+    locator = record.get("record") if isinstance(record, Mapping) else None
+    if isinstance(locator, str) and locator.startswith("/") and locator[1:].isdigit():
+        return int(locator[1:])
+    return None
+
+
+def row_offers(
+    for_each: object, outputs: Mapping[str, object], row_inputs: Mapping[str, object]
+) -> list[dict[str, object] | None] | None:
+    """Per element of ``for_each``, what its Query row offers; ``None`` when not Query rows.
+
+    ``$steps.<read>.rows`` of a Query read: each served row's. Of a filter or
+    dedupe (``row_inputs`` names the rows it was given): each kept record's
+    locator (``/<i>``) is its position in those rows, followed back.
     """
 
     alias = rows_alias(for_each)
     view = None if alias is None else outputs.get(alias)
-    if not isinstance(view, Mapping) or "definition_digest" not in view:
+    if alias is None or not isinstance(view, Mapping):
         return None
-    result = view.get("result")
-    served = result.get("rows") if isinstance(result, Mapping) else None
-    if not isinstance(served, list) or len(served) != len(rows):
+    if "definition_digest" in view:
+        result = view.get("result")
+        served = result.get("rows") if isinstance(result, Mapping) else None
+        if not isinstance(served, list):
+            return None
+        return [_offer(whole) if isinstance(whole, Mapping) else None for whole in served]
+    source = row_inputs.get(alias)
+    records = view.get("records")
+    upstream = None if source is None else row_offers(source, outputs, row_inputs)
+    if upstream is None or not isinstance(records, list):
         return None
-    items: list[object] = []
-    for row, whole in zip(rows, served, strict=True):
-        if not isinstance(row, Mapping) or not isinstance(whole, Mapping):
-            items.append(row)
-            continue
-        offered: dict[str, object] = {}
-        subject = _reference(whole.get("result_subject_identity"))
-        if subject is not None:
-            offered["subject"] = subject
-        bound = {
-            str(binding["binding"]): reference
-            for binding in whole.get("bindings") or ()
-            if isinstance(binding, Mapping)
-            and (reference := _reference(binding.get("subject_identity"))) is not None
-        }
-        offered["bindings"] = bound
-        items.append({**offered, **row})
-    return items
+    offers: list[dict[str, object] | None] = []
+    for record in records:
+        index = _locator_index(record)
+        offers.append(upstream[index] if index is not None and index < len(upstream) else None)
+    return offers
+
+
+def query_row_items(
+    for_each: object,
+    outputs: Mapping[str, object],
+    rows: Sequence[object],
+    row_inputs: Mapping[str, object] | None = None,
+) -> list[object] | None:
+    """``rows`` as :class:`RowItem` values with their offers; ``None`` when not Query rows."""
+
+    offers = row_offers(for_each, outputs, row_inputs or {})
+    if offers is None or len(offers) != len(rows):
+        return None
+    return [
+        RowItem(row, offer) if offer is not None and isinstance(row, Mapping) else row
+        for row, offer in zip(rows, offers, strict=True)
+    ]
+
+
+def offered_value(item: object, path: Sequence[str]) -> tuple[bool, object]:
+    """``(True, root)`` when ``path`` starts at what a :class:`RowItem` offers, not its row."""
+
+    if isinstance(item, RowItem) and path and path[0] not in item and path[0] in item.offered:
+        return True, item.offered
+    return False, None
 
 
 # -- authoring ---------------------------------------------------------------
@@ -283,6 +342,9 @@ __all__ = [
     "ITEM_REFERENCE_UNRESOLVED",
     "ROW_PRESERVING_TRANSFORMS",
     "ItemReferenceUnresolved",
+    "RowItem",
+    "offered_value",
+    "row_offers",
     "binding_subject_kinds",
     "query_row_items",
     "row_reference_type",
