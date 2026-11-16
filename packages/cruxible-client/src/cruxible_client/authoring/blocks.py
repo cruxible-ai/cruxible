@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, TypeAlias, cast
 
 from cruxible_client.authoring.context import WorkspaceBinding
 from cruxible_client.authoring.page_writes import (
@@ -825,23 +825,35 @@ def record_declared_blocks(
     return len(observed)
 
 
-def _rendered_from_its_query(
+#: What a block's bytes prove about its body: its one query's rendering, prose
+#: an author wrote, or nothing, because the query could not be evaluated where
+#: the stamp says it was rendered.
+_BlockRendering: TypeAlias = Literal["rendered", "prose", "unproven"]
+
+
+def _block_rendering(
     client: CruxibleClient, instance_id: str, block: ParsedProjectionBlock
-) -> bool:
-    """Whether this block's body is its one query's rendering at the stamp it carries.
+) -> tuple[_BlockRendering, str | None]:
+    """Whether this block's body is its query's rendering at the stamp it carries.
 
     A rendered block (`block repin --render`) is a projection of state, so a
-    sync may re-render it; prose an author wrote is theirs to re-declare. The
-    bytes decide: the stamp's query, evaluated again at the stamp's own
-    coordinate and evaluation time, must render exactly the stamped body.
+    sync or a repin renders it again; prose an author wrote is theirs to
+    re-declare. The bytes decide: the stamp's one query backing (beside any
+    Claim or artifact backings, which a render may also carry), evaluated
+    again at the stamp's own coordinate and evaluation time, must render
+    exactly the stamped body. A body edited since its stamp, or a stamp with no
+    single query backing, is prose without asking. A proof that cannot be
+    taken is ``unproven`` with the reason, never prose: reading it as prose
+    would let a repin stamp an old rendering current.
     """
 
     stamp = block.stamp
-    if stamp is None or block.body_digest != stamp.body_digest or len(stamp.backing) != 1:
-        return False
-    (backing,) = stamp.backing
-    if not isinstance(backing, ProjectionQueryBacking):
-        return False
+    if stamp is None or block.body_digest != stamp.body_digest:
+        return "prose", None
+    queries = [item for item in stamp.backing if isinstance(item, ProjectionQueryBacking)]
+    if len(queries) != 1:
+        return "prose", None
+    (backing,) = queries
     try:
         _declared, rows = _evaluated_query_backing(
             client,
@@ -851,14 +863,13 @@ def _rendered_from_its_query(
             coordinate=stamp.declared_coordinate,
             evaluation_time=backing.declared_evaluation_time,
         )
-    except (CoreError, ValueError):
-        # The stamp's coordinate no longer answers the query: nothing proves
-        # the body was rendered, so it stays the author's.
-        return False
-    return stamp.body_digest in {
+    except (CoreError, ValueError) as exc:
+        return "unproven", str(exc) or type(exc).__name__
+    rendered = stamp.body_digest in {
         _digest(render_query_block_body(rows)),
         _digest(_render_query_block_body_v1(rows)),
     }
+    return ("rendered" if rendered else "prose"), None
 
 
 def sync_projection_blocks(
@@ -1343,7 +1354,9 @@ def _converge(
     """Re-render each stale block whose body is its query's rendering, in place in ``items``."""
 
     for index, source_id, block in stale:
-        if not _rendered_from_its_query(client, instance_id, block):
+        # Prose, or a rendering the query cannot be re-checked for: reported
+        # stale and left as it is (the repin it names refuses until it can).
+        if _block_rendering(client, instance_id, block)[0] != "rendered":
             continue
         found = items[index]
         try:
@@ -1495,15 +1508,30 @@ def repin_projection_block(
         raise ProjectionRepinError("--backing cannot be combined with replacement backing refs")
     if not claim_refs and not query_refs and not artifact_refs:
         raise ProjectionRepinError("a block declaration requires at least one explicit backing")
-    if not render and body is None and _rendered_from_its_query(client, instance_id, block):
+    rendering: _BlockRendering = "prose"
+    unproven: str | None = None
+    if not render and body is None:
+        rendering, unproven = _block_rendering(client, instance_id, block)
+    if rendering == "unproven":
+        # Nothing proves the body is prose, and keeping a rendering would stamp
+        # an old table current: refuse before any write.
+        raise ProjectionRepinError(
+            f"block {block_id!r} in file {source_id!r} may be its query's rendering, and "
+            f"its query could not be re-checked where the stamp rendered it ({unproven}); "
+            "nothing was written. Retry once the query answers, repin with --render to "
+            "render it from its query now, or edit its body on the page first (an edited "
+            "body is prose and is kept as written)"
+        )
+    if rendering == "rendered":
         # The bytes prove this body is its query's rendering, a projection of
         # state (the rule a converging sync follows). Keeping it would stamp an
-        # old rendering current, so the repin renders it again from the
-        # query; anything that cannot be rendered refuses.
-        if backing_digest is not None or len(query_refs) != 1 or claim_refs or artifact_refs:
+        # old rendering current, so the repin renders it again from the query,
+        # beside any Claim or artifact backings, as --render does; a repin that
+        # cannot render it refuses.
+        if backing_digest is not None or len(query_refs) != 1:
             raise ProjectionRepinError(
                 f"block {block_id!r} in file {source_id!r} is its query's rendering, which "
-                "this repin would stamp current unchanged; repin it onto one query backing "
+                "this repin would stamp current unchanged; keep exactly one query backing "
                 "(it is rendered again), or edit its body on the page first (an edited "
                 "body is prose and is kept as written)"
             )
