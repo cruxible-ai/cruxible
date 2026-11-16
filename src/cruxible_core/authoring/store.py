@@ -45,6 +45,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.storage import fsync_directory as _fsync_directory
 from cruxible_core.storage.preview_fence import is_previewing
@@ -77,6 +78,54 @@ def _intent_is_pending(intent: AuthoringIntent) -> bool:
 
 class AuthoringIntentStoreError(CruxibleError):
     """Durable AuthoringIntent state is missing, corrupt, or concurrently changed."""
+
+
+class AuthoringIntentRefused(AuthoringIntentStoreError):
+    """A caller fault naming an intent: a coded refusal with its repair, never a 500.
+
+    Still an ``AuthoringIntentStoreError``, so a caller that treats a missing
+    intent as nothing to do (closing a withdrawn proposal's intent, recompiling
+    a stale one) keeps doing so.
+    """
+
+    def __init__(
+        self,
+        error_code: Literal[
+            "cruxible.authoring.intent_not_found",
+            "cruxible.authoring.intent_other_actor",
+            "cruxible.authoring.intent_submitted",
+            "cruxible.authoring.intent_kind_changed",
+        ],
+        message: str,
+        *,
+        http_status: int,
+        repair: RepairOperation,
+    ) -> None:
+        self.error_code = error_code
+        self.http_status = http_status
+        self.repair = repair
+        super().__init__(f"{error_code}: {message}")
+
+
+def intent_not_found(detail: str) -> AuthoringIntentRefused:
+    """No intent under that id here; listing them is the repair."""
+
+    return AuthoringIntentRefused(
+        "cruxible.authoring.intent_not_found",
+        f"{detail}; run `cruxible authoring list` for the intents in progress",
+        http_status=404,
+        repair=RepairOperation(operation="cruxible.authoring.list"),
+    )
+
+
+def intent_other_actor() -> AuthoringIntentRefused:
+    return AuthoringIntentRefused(
+        "cruxible.authoring.intent_other_actor",
+        "this AuthoringIntent belongs to another actor; only its author reads or "
+        "revises it. Run `cruxible authoring list` for your own intents",
+        http_status=403,
+        repair=RepairOperation(operation="cruxible.authoring.list"),
+    )
 
 
 class _StrictStoreModel(BaseModel):
@@ -519,7 +568,7 @@ class AuthoringIntentStore:
                 receipt if receipt is not None else self._validated_events(directory)[-1].intent
             )
             if intent.actor_id != actor_id:
-                raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
+                raise intent_other_actor()
             return intent.model_copy(deep=True)
 
     @property
@@ -597,7 +646,7 @@ class AuthoringIntentStore:
             events = self._validated_events(self.root / intent_id)
             latest = events[-1]
             if latest.intent.actor_id != actor_id:
-                raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
+                raise intent_other_actor()
             predecessor = None if len(events) == 1 else events[-2].intent.model_copy(deep=True)
             return predecessor, latest.model_copy(deep=True)
 
@@ -683,7 +732,7 @@ class AuthoringIntentStore:
                 return event.intent.model_copy(deep=True)
         current = events[-1].intent
         if current.actor_id != actor_id:
-            raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
+            raise intent_other_actor()
         updated = transform(current.model_copy(deep=True))
         self._validate_transition(current, updated, allow_rebase=allow_rebase)
         event = build_authoring_intent_event(
@@ -852,14 +901,18 @@ class AuthoringIntentStore:
         )
 
     def _event_paths(self, directory: Path) -> tuple[Path, ...]:
-        if directory.is_symlink() or not directory.is_dir():
+        if (
+            not AUTHORING_INTENT_ID_RE.fullmatch(directory.name)
+            or directory.is_symlink()
+            or not directory.is_dir()
+        ):
             if self._retention == "off":
-                raise AuthoringIntentStoreError(
-                    "AuthoringIntent does not exist; this instance keeps an intent only "
-                    "while it is in progress, so read a finished write's result from "
-                    "accepted state"
+                raise intent_not_found(
+                    f"AuthoringIntent {directory.name!r} does not exist; this instance keeps "
+                    "an intent only while it is in progress, so read a finished write's "
+                    "result from accepted state"
                 )
-            raise AuthoringIntentStoreError("AuthoringIntent does not exist")
+            raise intent_not_found(f"AuthoringIntent {directory.name!r} does not exist")
         events_directory = directory / "events"
         if events_directory.is_symlink() or not events_directory.is_dir():
             raise AuthoringIntentStoreError("AuthoringIntent event directory is invalid")

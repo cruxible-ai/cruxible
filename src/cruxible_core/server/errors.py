@@ -37,6 +37,7 @@ from cruxible_client.contracts.repairs import (
     hand_edit_repair,
 )
 from cruxible_client.errors import ErrorResponse, response_to_error
+from cruxible_core.authoring.store import AuthoringIntentRefused
 from cruxible_core.curation.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
@@ -193,7 +194,7 @@ def _status_for_error(exc: CoreError) -> int:
         # The daemon's environment cannot serve Provider work; the repair is
         # the operator's, not the caller's request.
         return exc.http_status
-    if isinstance(exc, ChangeRefusedError):
+    if isinstance(exc, ChangeRefusedError | AuthoringIntentRefused):
         return exc.http_status
     if isinstance(exc, AuthenticationError):
         return 401
