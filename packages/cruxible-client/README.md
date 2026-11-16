@@ -2224,7 +2224,20 @@ binding, obtains current governance/challenge data, signs locally, and submits
 public approval; the approval that completes the candidate also activates it
 unless `hold=True`. A stale candidate recompiles: approval returns an
 `ActivationReceipt` directly when no approval is needed and the caller may
-activate, or `ProposalRecompiled` for the replacement proposal. The review token's
+activate, or `ProposalRecompiled` for the replacement proposal. Activation
+refuses `cruxible.approval.requirement_unsatisfied` until the approvals are
+in, also when the base moved, and changes nothing; acting again on an accepted
+proposal refuses `cruxible.proposal.already_accepted`. Approval and activation
+receipts name the proposal a landed one replaces in `readmits`, and while
+approvals remain the approval receipt names `required_signers` and
+`eligible_signers`. A signer registered after the proposal's base cannot sign
+the reviewed candidate: the daemon lands the proposal at the head, and
+`approve` raises `ApprovalReviewMismatch` naming the landed proposal to review
+and approve instead (a caller without approval rights gets
+`ApprovalSignerAfterBase`, `cruxible.approval.signer_after_base`, whose repair
+is the author's readmit). Approve, activate, readmit, and the transport's
+reject and withdraw need a named principal: a connection that names none
+refuses `cruxible.identity.principal_unconfigured`. The review token's
 `.details` returns a fresh copy. The token is not proof a
 human read it. A new process must review again. Wait methods return the last
 observed status at timeout; they do not throw a synthetic failure or retry writes.
@@ -2592,7 +2605,10 @@ approve(
 Sign this exact review with caller-configured custody. The approval that
 completes the candidate activates it in the same call (`receipt.activation`)
 when the caller may activate; `hold=True` signs only. `receipt.not_activated`
-says why nothing activated.
+says why nothing activated, and while approvals remain `receipt.required_signers`
+and `receipt.eligible_signers` say whose. A signer registered after the
+proposal's base raises `ApprovalReviewMismatch` naming the proposal the daemon
+landed at the head; review and approve that one.
 
 <a id="api-prediction"></a>
 
