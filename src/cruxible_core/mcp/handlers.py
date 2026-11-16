@@ -57,7 +57,7 @@ from cruxible_client.authoring.workspace import (
 from cruxible_client.compatibility import check_daemon_compatibility
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
-from cruxible_client.contracts.authoring.models import BlockDetachResult
+from cruxible_client.contracts.authoring.models import BlockDetachResult, BlockSyncResult
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.backlinks import BacklinksResult
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
@@ -103,6 +103,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.runbooks import RunbookPreview, RunbookRunResult
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
@@ -1314,13 +1315,13 @@ def handle_playbill_block_repin(
 ) -> BlockRepinResult:
     """Repin one projection block adapter-side: this process computes the stamp (Q17).
 
-    The block is named by its file catalog entry. The SDK reads the page and
-    its backings, rewrites the marker and declares the block.
+    The page is named by its workspace path or its file catalog entry. The SDK
+    reads the page and its backings, rewrites the marker and declares the block.
     """
 
     root = mcp_workspace_root()
     sources = WorkspaceFiles(root)
-    source_id = file
+    source_id = sources.file_name(file)
     path = sources.path_for_file(source_id)
     stamp = _daemon_call(
         lambda client: repin_projection_block(
@@ -1352,6 +1353,45 @@ def handle_playbill_block_repin(
     )
 
 
+#: Each block repair's wire arguments renamed to the MCP tool's own parameters,
+#: so a repair is a call an agent makes as written. A wire argument the tool has
+#: no parameter for is left out (a successor ambiguity's candidates stay in the
+#: row's detail, where the caller picks the one ``backing_digest`` names).
+_MCP_BLOCK_REPAIR_ARGUMENTS: Mapping[str, Mapping[str, str]] = {
+    "cruxible.block.repin": {"source_id": "file", "block_id": "block", "claim": "claims"},
+    "cruxible.block.depublish": {"source_id": "file_id", "block_id": "block_id"},
+    "cruxible.block.sync": {"all": "all_files", "paths": "files"},
+    "cruxible.block.detach": {"paths": "files"},
+}
+
+
+def _mcp_block_repair(repair: object) -> object:
+    if not isinstance(repair, RepairOperation):
+        return repair
+    names = _MCP_BLOCK_REPAIR_ARGUMENTS.get(repair.operation)
+    if names is None:
+        return repair
+    arguments = {names[key]: value for key, value in repair.arguments.items() if key in names}
+    if repair.operation == "cruxible.block.repin" and repair.arguments.get("clear_claims"):
+        arguments["claims"] = []
+    return repair.model_copy(update={"arguments": arguments})
+
+
+def _mcp_block_sync_result(result: BlockSyncResult) -> BlockSyncResult:
+    """The sync rows with each repair spelled in this surface's tool arguments."""
+
+    return result.model_copy(
+        update={
+            "items": tuple(
+                item
+                if item.repair is None
+                else item.model_copy(update={"repair": _mcp_block_repair(item.repair)})
+                for item in result.items
+            )
+        }
+    )
+
+
 def handle_playbill_block_sync(
     instance_id: str,
     *,
@@ -1366,11 +1406,13 @@ def handle_playbill_block_sync(
 
     root = mcp_workspace_root()
     paths = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
-    return _daemon_call(
-        lambda client: sync_projection_blocks(
-            client, instance_id, workspace=root, paths=paths, all_files=all_files
-        ),
-        operation_name="cruxible_block_sync",
+    return _mcp_block_sync_result(
+        _daemon_call(
+            lambda client: sync_projection_blocks(
+                client, instance_id, workspace=root, paths=paths, all_files=all_files
+            ),
+            operation_name="cruxible_block_sync",
+        )
     )
 
 
@@ -1394,12 +1436,13 @@ def handle_playbill_block_detach(
         raise DataValidationError("name at least one page to detach retired blocks from")
     root = mcp_workspace_root()
     pages = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
-    return _daemon_call(
+    detached = _daemon_call(
         lambda client: detach_projection_pages(
             client, instance_id, root=root, pages=pages, dry_run=dry_run, at=at
         ),
         operation_name="cruxible_block_detach",
     )
+    return detached.model_copy(update={"sync": _mcp_block_sync_result(detached.sync)})
 
 
 def handle_playbill_block_depublish(

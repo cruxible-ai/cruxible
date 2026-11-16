@@ -321,6 +321,29 @@ class WorkspaceFiles:
     def path_for_file(self, file: str) -> Path:
         return self._resolved_path(self.entry_for_file(file))
 
+    def file_name(self, file: str | Path) -> str:
+        """The catalog name of ``file``: a catalog name, or the page's path.
+
+        People read and type workspace paths; the catalog name is the handle a
+        block's stamp records. A name in the catalog wins; otherwise ``file``
+        is a path (relative to the workspace, or absolute) that exactly one
+        catalogued file locates. A dict lookup, then at most one path lookup.
+        """
+
+        text = str(file)
+        if text in self._by_name:
+            return text
+        path = Path(text)
+        resolved = (path if path.is_absolute() else self.workspace / path).expanduser().resolve()
+        matches = self.entries_for_path(resolved)
+        if len(matches) == 1:
+            return matches[0].name
+        known = ", ".join(entry.name for entry in self.file_entries) or "none"
+        raise SourceSelectionError(
+            f"{text!r} is neither a catalogued file name nor the path of one catalogued "
+            f"file ({len(matches)} catalogued files locate it; catalogued files: {known})"
+        )
+
     def coverage_bindings(self) -> dict[str, str]:
         """Each catalogued workspace file, relative to the workspace, to its source.
 

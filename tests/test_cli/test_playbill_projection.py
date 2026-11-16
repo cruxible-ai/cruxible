@@ -278,6 +278,10 @@ def test_block_sync_repair_lines_are_cli_commands_in_the_files_vocabulary() -> N
         "  (DIGEST: one of sha256:aa, sha256:bb)"
     )
     assert "source_id" not in _block_repair_line(repin)
+    # A sync row knows the page: the line names its path, which repin takes.
+    assert _block_repair_line(repin, path="corpus/runbook.md") == (
+        "cruxible block repin corpus/runbook.md summary --claim CLM-1"
+    )
     sweep = RepairOperation(operation="cruxible.block.sync", arguments={"all": True})
     assert _block_repair_line(sweep) == "cruxible block sync --all"
     detach = RepairOperation(

@@ -1156,7 +1156,9 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         block: Annotated[str, Field(description="The block id in its marker.")],
-        file: Annotated[str, Field(description="The page's file catalog name.")],
+        file: Annotated[
+            str, Field(description="The page: its workspace path or its file catalog name.")
+        ],
         claims: Annotated[
             list[str] | None, Field(description="Claim backings; omitted keeps the block's.")
         ] = None,

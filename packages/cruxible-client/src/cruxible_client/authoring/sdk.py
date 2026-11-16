@@ -5674,7 +5674,8 @@ class ProjectionBlocks:
 
         Compact markers are the default: digest references with local manifests. Subsequent
         repins preserve that format. ``render`` writes the body as a table or list from
-        the block's one query backing instead of ``body``. ``dry_run`` returns the stamp
+        the block's one query backing instead of ``body``; a body that is still its
+        query's rendering is rendered again without it. ``dry_run`` returns the stamp
         it would write and writes nothing.
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().

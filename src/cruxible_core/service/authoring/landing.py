@@ -7,6 +7,7 @@ from cruxible_client.contracts.authoring_landing import (
     AuthoringLanded,
     AuthoringLanding,
     AuthoringProposed,
+    AuthoringRefused,
 )
 from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalResult
@@ -41,12 +42,23 @@ def service_land_authoring_submit(
         item.condition == "external-approval" for item in status.path_to_acceptance
     ):
         outcome = _stopped(proposal_id, reason="independent_approval_required")
+    elif status.state == "preflight_refused":
+        # Preflight already re-checked the intent at the head, so a rerun
+        # changes nothing: the diagnostics name payload faults to revise.
+        outcome = AuthoringRefused(
+            message=(
+                "refused: the payload failed preflight and nothing was proposed; revise it "
+                "as the diagnostics say and submit it again to this intent"
+            ),
+            next=(
+                "cruxible authoring submit REVISED_PAYLOAD --intent-id "
+                f"{submitted.intent.intent_id}"
+            ),
+        )
     elif status.state != "ready_to_activate" or proposal_id is None:
         outcome = AuthoringProposed(
             proposal_id=proposal_id,
-            reason="preflight_refused"
-            if status.state == "preflight_refused"
-            else "not_ready_to_activate",
+            reason="not_ready_to_activate",
             message=f"not activated: the candidate is {status.state}, not ready_to_activate",
             next=f"cruxible authoring preflight {submitted.intent.intent_id}",
         )

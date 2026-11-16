@@ -743,7 +743,9 @@ def attach_workspace(
     this one (an initialized host included, as long as a Git worktree is in its
     ledger's Git object format); a host registered to this folder gets the
     client config, and its ledger mirror is rebound: after `git init` in a plain
-    folder, attaching again turns the mirror on.
+    folder, attaching again turns the mirror on. An uninitialized host attaches
+    the same way; `cruxible init` in the folder then creates its ledger and the
+    world stub.
     """
 
     resolution = _local_workspace_root(required="cruxible workspace attach")
@@ -765,6 +767,7 @@ def attach_workspace(
     )
     assert isinstance(registration, contracts.HostWorkspaceRegistration)
     registered = registration.workspace_path
+    attached: contracts.HostWorkspaceAttachResult | None = None
     if registration.status != "registered" or (
         registered is not None and Path(registered).resolve(strict=False) == workspace
     ):
@@ -796,6 +799,9 @@ def attach_workspace(
             requested_workspace=str(workspace),
             registered_workspace=registered,
         )
+    # Every road that reaches here attached the folder (a host registered to
+    # another folder refused above).
+    assert attached is not None
     if dry_run:
         click.echo(f"{workspace} is already attached to Cruxible host {selected}; nothing changes")
         return
@@ -818,7 +824,10 @@ def attach_workspace(
         allow_local=False,
         command_name="cruxible workspace attach",
     )
-    _write_world_stub(workspace, selected)
+    # An uninitialized host has no accepted world to stub yet; `cruxible init`
+    # in this folder creates its ledger and writes the stub.
+    if attached.initialized:
+        _write_world_stub(workspace, selected)
     acting = _acting_principal_key_dir()
     identity_path = (
         None
@@ -853,6 +862,8 @@ def attach_workspace(
         click.echo(f"Folder identity: {identity_path} (agents started here act as {acting[0]})")
     if mirror is not None:
         click.echo(mirror)
+    if not attached.initialized:
+        click.echo(f"Host {selected} is not initialized yet; next: cruxible init")
 
 
 @workspace_group.command("detach")
@@ -5479,32 +5490,37 @@ def submit_authoring_intent(
 
     submitted = _server_call(call, command_name="cruxible authoring submit")
     outcome = submitted.outcome
-    refused = (
-        not isinstance(outcome, contracts.AuthoringLanded) and outcome.reason == "preflight_refused"
-    )
+    refused = isinstance(outcome, contracts.AuthoringRefused)
     if output_brief or (refused and not output_json):
         if isinstance(outcome, contracts.AuthoringLanded):
-            landed = True
-            coordinate = outcome.accepted_coordinate.git_oid
+            headline = "accepted"
+            coordinate: str | None = outcome.accepted_coordinate.git_oid
             reason = None
             next_command = _landed_line_next(submitted.members)
         else:
-            landed = False
+            headline = (
+                f"refused ({outcome.reason})"
+                if isinstance(outcome, contracts.AuthoringRefused)
+                else f"submitted ({submitted.status.state})"
+            )
             coordinate = None
             reason = outcome.message
             next_command = outcome.next
         _emit_brief(
-            outcome="accepted" if landed else f"submitted ({submitted.status.state})",
+            outcome=headline,
             ids={
                 "intent": str(submitted.intent.get("intent_id")),
-                "proposal": outcome.proposal_id,
+                "proposal": getattr(outcome, "proposal_id", None),
                 "coordinate": coordinate,
             },
             reason=_submit_refusal_reason(submitted) or reason,
             next_command=next_command,
         )
-        return
-    _emit_json(submitted.model_dump(mode="json"))
+    else:
+        _emit_json(submitted.model_dump(mode="json"))
+    if refused:
+        # Nothing was proposed: a script reading the exit code must not see success.
+        raise click.exceptions.Exit(1)
 
 
 def _landed_line_next(members: Sequence[Mapping[str, Any]]) -> str | None:
@@ -6722,11 +6738,13 @@ def repin_projection(
 ) -> None:
     """Stamp one block's marker from its backings and declare it to the instance.
 
-    The client reads the backings and computes the stamp, rewrites the opening
-    marker and then declares the block, creating its registration the first
-    time. The authored body is kept as written, unless ``--render`` writes it
-    from the block's one query backing (a table, or a list when the query
-    projects no fields).
+    FILE is the page: its workspace path or its file catalog name. The client
+    reads the backings and computes the stamp, rewrites the opening marker and
+    then declares the block, creating its registration the first time. The
+    authored body is kept as written, unless ``--render`` writes it from the
+    block's one query backing (a table, or a list when the query projects no
+    fields). A body that is still its query's rendering is rendered again, so
+    a repin never stamps an old table current.
     """
 
     if (clear_claims and claims) or (clear_queries and queries) or (clear_artifacts and artifacts):
@@ -6914,14 +6932,15 @@ def _echo_block_sync(result: BlockSyncResult, *, output_json: bool) -> None:
         suffix = "" if item.reason is None else f":{item.reason}"
         click.echo(f"{target}: {item.outcome}{suffix}")
         if item.repair is not None:
-            click.echo(f"  repair: {_block_repair_line(item.repair)}")
+            click.echo(f"  repair: {_block_repair_line(item.repair, path=item.path)}")
 
 
-def _block_repair_line(repair: Any) -> str:
+def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
     """A block repair as the command that performs it, in the files vocabulary.
 
     The served arguments keep their wire names (``source_id`` is the catalog
-    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``.
+    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``, naming
+    the page by ``path`` (the workspace path people read and type) when known.
     """
 
     if not isinstance(repair, RepairOperation):
@@ -6929,7 +6948,7 @@ def _block_repair_line(repair: Any) -> str:
     values = repair.arguments
     operation = normalize_code(repair.operation)
     if operation == "cruxible.block.repin":
-        file, block = values.get("source_id"), values.get("block_id")
+        file, block = path or values.get("source_id"), values.get("block_id")
         if not isinstance(file, str) or not isinstance(block, str):
             return render_served_repair(repair)
         parts = ["cruxible block repin", shlex.quote(file), shlex.quote(block)]

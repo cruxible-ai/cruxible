@@ -56,6 +56,7 @@ from cruxible_client.contracts.errors import (
     CruxibleError,
     ProposalIntegrityError,
 )
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.authoring.lowering import LoweredAuthoring, canonical_authored_claims
 from cruxible_core.authoring.preflight import (
@@ -63,7 +64,11 @@ from cruxible_core.authoring.preflight import (
     authoring_operation,
     compute_preflight,
 )
-from cruxible_core.authoring.store import AuthoringIntentStore, AuthoringIntentStoreError
+from cruxible_core.authoring.store import (
+    AuthoringIntentRefused,
+    AuthoringIntentStore,
+    AuthoringIntentStoreError,
+)
 from cruxible_core.compiler.projection_artifacts import projected_revision
 from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 from cruxible_core.indexes.history.history_index import detached_history_reads
@@ -91,6 +96,39 @@ class AuthoringProgramStampError(CruxibleError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         super().__init__(f"{code}: {message}")
+
+
+#: Revising an intent that cannot take the revision: the revision starts a new intent.
+_NEW_INTENT_REPAIR = RepairOperation(operation="cruxible.authoring.compile")
+
+
+def _intent_submitted(current: AuthoringIntent) -> AuthoringIntentRefused:
+    """A submitted intent keeps its payload: its proposal was checked against it."""
+
+    status = current.candidate_status
+    proposal = (
+        ""
+        if status.proposal_id is None
+        else f" as proposal {status.proposal_id} (withdraw it with "
+        f"`cruxible proposal withdraw {status.proposal_id}` if the revision replaces it)"
+    )
+    return AuthoringIntentRefused(
+        "cruxible.authoring.intent_submitted",
+        f"AuthoringIntent {current.intent_id} is {status.state}: it was submitted{proposal}, "
+        "and a submitted payload does not change. Compile the revised payload without an "
+        "intent id (SDK: prepare the draft) to start a new intent",
+        http_status=409,
+        repair=_NEW_INTENT_REPAIR,
+    )
+
+
+def _intent_kind_changed(message: str) -> AuthoringIntentRefused:
+    return AuthoringIntentRefused(
+        "cruxible.authoring.intent_kind_changed",
+        f"{message}. Compile this payload without an intent id to start a new intent",
+        http_status=400,
+        repair=_NEW_INTENT_REPAIR,
+    )
 
 
 def _validate_program_stamp(program_stamp: AuthoringProgramStamp) -> None:
@@ -1145,22 +1183,24 @@ class AuthoringIntentCoordinator:
                 "preflight_refused",
                 "ready_to_submit",
             }:
-                raise ValueError("submitted AuthoringIntent payload is immutable")
+                raise _intent_submitted(current)
             if isinstance(current.payload, ClaimAuthoringPayload) != isinstance(
                 payload, ClaimAuthoringPayload
             ):
-                raise ValueError("AuthoringIntent payload kind cannot change")
+                raise _intent_kind_changed("AuthoringIntent payload kind cannot change")
             if isinstance(current.payload, ChangeSetAuthoringPayload) or isinstance(
                 payload, ChangeSetAuthoringPayload
             ):
                 if not isinstance(current.payload, ChangeSetAuthoringPayload) or not isinstance(
                     payload, ChangeSetAuthoringPayload
                 ):
-                    raise ValueError("AuthoringIntent payload kind cannot change")
+                    raise _intent_kind_changed("AuthoringIntent payload kind cannot change")
                 if authoring_change_set_membership(
                     current.payload.members
                 ) != authoring_change_set_membership(payload.members):
-                    raise ValueError("change-set replacement cannot change member identity")
+                    raise _intent_kind_changed(
+                        "change-set replacement cannot change member identity"
+                    )
             elif not isinstance(payload, ClaimAuthoringPayload):
                 current_family = (
                     "Procedure"
@@ -1176,7 +1216,7 @@ class AuthoringIntentCoordinator:
                     else type(payload).__name__
                 )
                 if current_family != payload_family:
-                    raise ValueError("AuthoringIntent payload kind cannot change")
+                    raise _intent_kind_changed("AuthoringIntent payload kind cannot change")
             semantic_identity = (
                 current.semantic_identity
                 if isinstance(payload, ClaimAuthoringPayload)

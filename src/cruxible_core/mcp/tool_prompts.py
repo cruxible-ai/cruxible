@@ -192,10 +192,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
     "cruxible_block_repin": (
-        "Use to stamp a new projection block or refresh one: name the catalogued file "
-        "and the block; this adapter reads the backings, rewrites the opening marker and "
-        "registers the block. The marker grammar is in docs/cli-reference.md, Projection "
-        "block markers."
+        "Use to stamp a new projection block or refresh one: name the page (its path or "
+        "catalog name) and the block; this adapter reads the backings, rewrites the "
+        "opening marker and registers the block. The marker grammar is in "
+        "docs/cli-reference.md, Projection block markers."
     ),
     "cruxible_block_sync": (
         "Use to check whether page blocks still match their backings; each stale block names "
