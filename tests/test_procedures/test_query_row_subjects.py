@@ -99,6 +99,25 @@ def test_a_read_rows_fan_out_offers_each_rows_subject_and_bindings() -> None:
     assert query_row_items("$steps.other.rows", {"other": {"rows": []}}, []) is None
 
 
+def test_a_declared_column_withholds_the_offer_even_when_absent() -> None:
+    from cruxible_core.procedures.execution import ExecutionError, _resolve_reference
+
+    served = {
+        **_served("project.work_item/wi-42", item="project.work_item/wi-42"),
+        "fields": [
+            {"name": "subject", "state": "absent", "value": None},
+            {"name": "bindings", "state": "conflict", "value": None},
+        ],
+    }
+    view = _read_view([{}], [served])
+    (row,) = query_row_items("$steps.work.rows", {"work": view}, view["rows"]) or ()
+
+    for reference in ("$item.subject", "$item.bindings.item"):
+        # The column is declared but has no value: never the row's Subject instead.
+        with pytest.raises(ExecutionError, match="does not resolve"):
+            _resolve_reference(reference, input_payload={}, parameters={}, outputs={}, item=row)
+
+
 def test_a_whole_row_is_exactly_the_row_it_was(tmp_path: Path) -> None:
     """``$item`` and every whole-row use see the projected columns only, as before."""
 

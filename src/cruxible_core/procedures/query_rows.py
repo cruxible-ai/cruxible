@@ -62,18 +62,26 @@ class RowItem(dict[str, Any]):
 
 
 def _offer(whole: Mapping[str, Any]) -> dict[str, object]:
-    """What one served row offers."""
+    """What one served row offers; a declared column of the same name withholds it.
 
+    A column is declared whether its value is present, absent or conflicted:
+    the served row lists every projected field with its state.
+    """
+
+    declared = {
+        field.get("name") for field in whole.get("fields") or () if isinstance(field, Mapping)
+    }
     offered: dict[str, object] = {}
     subject = _reference(whole.get("result_subject_identity"))
-    if subject is not None:
+    if subject is not None and "subject" not in declared:
         offered["subject"] = subject
-    offered["bindings"] = {
-        str(binding["binding"]): reference
-        for binding in whole.get("bindings") or ()
-        if isinstance(binding, Mapping)
-        and (reference := _reference(binding.get("subject_identity"))) is not None
-    }
+    if "bindings" not in declared:
+        offered["bindings"] = {
+            str(binding["binding"]): reference
+            for binding in whole.get("bindings") or ()
+            if isinstance(binding, Mapping)
+            and (reference := _reference(binding.get("subject_identity"))) is not None
+        }
     return offered
 
 
