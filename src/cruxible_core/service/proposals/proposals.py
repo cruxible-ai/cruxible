@@ -1341,50 +1341,56 @@ def _target_leaf(source: ProposalResult) -> str:
     return ref[len(namespace) :] if ref.startswith(namespace) else ""
 
 
-def cannot_rebase(source: ProposalResult, *, landing: bool = False) -> tuple[str, str] | None:
-    """Why this change set may not be readmitted (or, with ``landing``, landed by an
-    approval, an activation or a late signer) by its own bytes, and the author's
-    command that remakes it at the head; None when it may.
+def cannot_rebase(source: ProposalResult, *, late_signer: bool = False) -> tuple[str, str] | None:
+    """Why this change set may not be readmitted or landed by its own bytes, and the
+    author's command that remakes it at the head; None when it may.
 
-    A generated claim-type migration (its submitter's ``claim-type-migration-``
-    leaf) carries a dependent inventory and pins only rerunning the migration
-    rebuilds. A kit change (its ``kit-`` leaf) was planned against the instance
-    as it was then (ownership, requirements, provider pins, local edits), so its
-    old bytes at a later head are not the act a fresh ``kit add`` or ``kit
-    remove`` commit is; only that commit remakes it, so no one lands it without
-    its author (the author's own readmit keeps its exact-byte path). Any other
-    change set rebases by its bytes and is evaluated again at the head (a
-    Document); one with retained authoring input recompiles there instead and
-    never gets here.
+    The rule rc has always applied: a change set of several members holding a
+    ClaimType carries a dependency closure built at its base and is never
+    rebased by its bytes (one with retained authoring input recompiles at the
+    head instead, and never gets here). The wording says which: a generated
+    claim-type migration (its submitter's ``claim-type-migration-`` leaf in
+    the author's namespace), a kit change (``kit-``), or another such change
+    set. A signer registered after the base (``late_signer``) lands no kit
+    change at all: a kit change was planned against the instance as it was
+    then (ownership, requirements, provider pins, local edits), and only its
+    author's fresh ``kit add`` or ``kit remove`` commit remakes it.
     """
 
     leaf = _target_leaf(source)
-    if leaf.startswith("claim-type-migration-") and holds_claim_type_closure(source):
+    kit_id = leaf.removeprefix("kit-").rpartition("-")[0] or "KIT"
+    kit = (
+        "is a kit change planned against an earlier state (kit ownership, "
+        "requirements, provider pins, local edits)",
+        f"runs `cruxible kit add {kit_id} --commit --at OID` again (or `cruxible kit "
+        f"remove {kit_id} --commit --at OID` for a removal) at the current head",
+    )
+    if holds_claim_type_closure(source):
+        if leaf.startswith("claim-type-migration-"):
+            return (
+                "is a generated dependency-closure migration with no retained input",
+                "reruns `cruxible claim-type migrate` preflight/submit at the current head",
+            )
+        if leaf.startswith("kit-"):
+            return kit
         return (
-            "is a generated dependency-closure migration with no retained input",
-            "reruns `cruxible claim-type migrate` preflight/submit at the current head",
+            "holds a ClaimType among other members, a dependency closure built at its "
+            "base, and has no retained input to rebuild it",
+            "makes the change again at the current head",
         )
-    if landing and leaf.startswith("kit-"):
-        kit_id = leaf.removeprefix("kit-").rpartition("-")[0] or "KIT"
-        return (
-            "is a kit change planned against an earlier state (kit ownership, "
-            "requirements, provider pins, local edits)",
-            f"runs `cruxible kit add {kit_id} --commit --at OID` again (or `cruxible kit "
-            f"remove {kit_id} --commit --at OID` for a removal) at the current head",
-        )
+    if late_signer and leaf.startswith("kit-"):
+        return kit
     return None
 
 
-def exact_bytes_cannot_rebase(source: ProposalResult, *, landing: bool = False) -> bool:
-    return cannot_rebase(source, landing=landing) is not None
+def exact_bytes_cannot_rebase(source: ProposalResult) -> bool:
+    return cannot_rebase(source) is not None
 
 
-def requires_resubmission(
-    source: ProposalResult, *, landing: bool = False
-) -> ProposalReadmitRequiresResubmission:
+def requires_resubmission(source: ProposalResult) -> ProposalReadmitRequiresResubmission:
     """The refusal for a change set that cannot be rebased by its bytes, by kind."""
 
-    reason = cannot_rebase(source, landing=landing)
+    reason = cannot_rebase(source)
     assert reason is not None
     why, command = reason
     if why.startswith("is a generated"):
@@ -1533,8 +1539,8 @@ def land_exact_bytes(
         if carried.admission.proposal_id != source_id:
             return carried
         instance.proposal_evidence().refuse_closed(source_id)
-        if exact_bytes_cannot_rebase(source, landing=check_first):
-            raise requires_resubmission(source, landing=check_first)
+        if exact_bytes_cannot_rebase(source):
+            raise requires_resubmission(source)
         binding: dict[str, Any] = {}
         if check_first:
             with preview_guards(True):

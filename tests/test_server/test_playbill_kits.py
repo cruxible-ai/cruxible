@@ -2684,7 +2684,8 @@ def test_a_late_reviewer_is_refused_a_kit_change_before_anything_is_published(
     assert evidence.list_admissions() == admissions
     assert evidence.read_withdrawal(proposed.proposal_id) is None
     assert consumer.tree() == before
-    # An approval by a reviewer present at its base does not land it either.
+    # As on rc, a kit change holding ClaimTypes is never rebased by its bytes, so an
+    # approval by a reviewer present at its base refuses too, saying it is a kit change.
     base = f"/api/v1/{consumer.instance_id}/proposals/{proposed.proposal_id}"
     challenge = consumer.http.post(f"{base}/approval-challenge", json={"signer_id": "reviewer"})
     assert challenge.status_code == 200, challenge.text
@@ -2699,6 +2700,7 @@ def test_a_late_reviewer_is_refused_a_kit_change_before_anything_is_published(
     )
     assert approved.status_code == 400, approved.text
     assert approved.json()["error_code"] == "cruxible.proposal.readmit_requires_resubmission"
+    assert "kit change planned against an earlier state" in approved.json()["message"]
     assert evidence.list_admissions() == admissions
     assert evidence.read_withdrawal(proposed.proposal_id) is None
     assert consumer.tree() == before

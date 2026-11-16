@@ -694,8 +694,15 @@ def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
             detail="changed at the head since its base: " + render_stale_paths(stale_paths),
         )
     from cruxible_core.service.proposals.proposals import cannot_rebase
+    from cruxible_core.service.proposals.recompile import lowering_origin
 
-    reason = cannot_rebase(proposal, landing=True)
+    try:
+        origin = lowering_origin(instance, proposal)
+    except ProposalStale:
+        origin = None
+    # Retained authoring input recompiles at the head; anything else would land
+    # by its bytes, which a late signer may not do for a kit change or a closure.
+    reason = None if origin is not None else cannot_rebase(proposal, late_signer=True)
     if reason is not None:
         # Refused before anything is evaluated or published at the head.
         why, command = reason

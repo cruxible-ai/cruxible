@@ -227,6 +227,9 @@ def test_migration_detection_reads_the_leaf_in_the_authors_namespace() -> None:
     ordinary = proposal("claim-type-migration-owner", "intent-0123456789abcdef")
     migration = proposal("owner", "claim-type-migration-0123456789abcdef")
 
-    assert exact_bytes_cannot_rebase(ordinary) is False  # type: ignore[arg-type]
-    assert cannot_rebase(ordinary) is None  # type: ignore[arg-type]
+    ordinary_reason = cannot_rebase(ordinary)  # type: ignore[arg-type]
+    migration_reason = cannot_rebase(migration)  # type: ignore[arg-type]
+    # Both hold a ClaimType closure with no retained input; only one is a migration.
+    assert ordinary_reason is not None and "migration" not in ordinary_reason[0]
+    assert migration_reason is not None and "migration" in migration_reason[0]
     assert exact_bytes_cannot_rebase(migration) is True  # type: ignore[arg-type]
