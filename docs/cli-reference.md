@@ -50,6 +50,13 @@ credential decides who acts, and a principal ID that disagrees with it is refuse
 (`cruxible.identity.principal_claim_mismatch`). Approvals are unaffected either
 way: they are signed with the principal's private key.
 
+A request that names no principal acts as the implicit local operator
+(`operator`), which is not a principal. It may not settle or close a proposal:
+approve (submitting an approval), activate, reject, withdraw and readmit refuse
+it with `cruxible.identity.principal_unconfigured` and its repair (name a
+principal). A principal registered under the name `operator` acts like any
+other.
+
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
 daemon that has accepted a request. An SDK `Cruxible.connect()` reads only the
 current head when it opens a session; it does not orient over the whole
@@ -275,7 +282,15 @@ cruxible server stop [--timeout SECONDS] [--state-root DIR] [--json]
 server start is the long-running daemon process and does not connect to an
 existing server. `--capability-ceiling` (default `CRUXIBLE_MODE`, else
 `admin`) fixes the highest tier any request may reach on this daemon; no
-bearer credential can exceed it.
+bearer credential can exceed it. A client may also send its own ceiling with a
+request (the `X-Cruxible-Effective-Permission-Mode` header; the MCP server
+sends its `CRUXIBLE_MODE` cap this way): the daemon serves the request at the
+lower of that ceiling and the request's own authority (the credential's tier,
+or the daemon's ceiling on an auth-off request), so it can only lower a
+request, never raise it; a malformed value refuses. Every tier check applies
+the lowered tier, including activation inside a write, `kit add`, `kit remove`
+and `provider move` (which stay proposed below `graph_write`), and a Line
+enabled under a client ceiling keeps that ceiling for its later automatic runs.
 
 Auth depends on the transport. A Unix-socket daemon defaults to auth off and
 prints one line saying so when it starts: every process that can reach its
@@ -1347,8 +1362,11 @@ the installed one unless `--allow-downgrade`, and the preview names the transiti
 (install, upgrade, downgrade, reinstall).
 
 `add` and `remove` land at once when the instance's approval policy requires no
-approval, like provider install and value writes; otherwise they stop at
-proposed for the ordinary `cruxible proposal approve`, which activates them. `add`
+approval and the request's tier may activate (`graph_write`), like value
+writes; otherwise they stop at proposed for the ordinary `cruxible proposal
+approve`, which activates them. Below `graph_write` (a capped MCP server, say)
+the result's detail says `Not activated: ... Next: someone who can runs
+cruxible proposal activate ID`. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
 release digest, installed digest and content digest, and the bundled packages.
 
@@ -1401,7 +1419,8 @@ reports nor retires them.
 
 `provider move NAME --to newest|BUILD` previews by default and moves Lines
 and their dependents as one governed change. `--only Line:NAME` narrows the Lines moved.
-Its preview names re-pins, disabled Line carries, propose-only Mandates and retirements; `--commit --at OID` submits it.
+Its preview names re-pins, disabled Line carries, propose-only Mandates and retirements; `--commit --at OID` submits it,
+and like `kit add` it activates only when the request's tier may (`graph_write`).
 It requires **GOVERNED_WRITE**. `provider retire NAME/BUILD` requires **ADMIN**,
 previews by default, refuses while live definitions pin it, and keeps its runtime
 environment. Retired builds are hidden from new authoring. No command here collects
@@ -4936,9 +4955,30 @@ since its base (`stale_paths`, above). Otherwise `proposal approve` and
 readmitted there under its author (the admission's `readmits` link names the
 source, proposed at its base, and the head it landed at), the source closes as
 superseded, and the result is the typed `cruxible-proposal-recompiled-v1` with
-`members_identical: true`. An approval signs exactly one candidate, so
+`members_identical: true`. Activation counts approvals first: an unapproved
+proposal refuses `cruxible.approval.requirement_unsatisfied` (naming the
+eligible signers, repair `proposal approve`) before anything is landed,
+readmitted or withdrawn, whether its base moved or not. An approval signs
+exactly one candidate, so
 `proposal approve` (CLI and MCP) then signs the landed candidate in the same
-command; the SDK returns the result for a fresh review. A Line's or Procedure's
+command; the SDK returns the result for a fresh review. The approval and
+activation receipts name the source in `readmits`, and the CLI prints `NEW
+replaces SOURCE (readmitted at the head); act on NEW`. Acting on the source
+afterwards refuses as superseded, naming the proposal that replaced it, with
+the repair `cruxible proposal activate NEW`. Approving, activating or
+approve-submitting a proposal that is already accepted refuses
+`cruxible.proposal.already_accepted`, naming the accepted git oid and
+generation (repair `cruxible get`), and stores nothing.
+
+A signer registered after a proposal's base is absent at that base, where its
+signature would be checked. `proposal approve` by such a signer, active at the
+head, first lands the proposal at the head as above (the CLI says `Landed at
+the head as NEW ... before SIGNER was registered`) and signs the landed
+candidate; the signer's eligibility is checked first, so a refused signer
+changes nothing. Only a caller who may submit approvals triggers the landing;
+any other refuses `cruxible.approval.signer_after_base` with the author's
+`proposal readmit` as the repair. The SDK refuses too and names the landed
+proposal to review, since its approval is bound to the candidate it reviewed. A Line's or Procedure's
 proposal re-decides at the head instead, as below. Approving a stale proposal
 refuses `cruxible.proposal.stale` (reason `changed_since_base`, naming the
 paths): only its author's readmit answers it.
@@ -4973,7 +5013,11 @@ the same command activates it and reports both: the JSON receipt carries
 leaving activation timing to someone else. Otherwise the receipt's
 `not_activated` says why: `approvals_remaining` (with the count in
 `approvals_remaining`), `held`, `activation_not_permitted`, or `stale` (readmit
-it first). `proposal activate` remains for a held approval, a candidate that
+it first). While approvals remain, the receipt names whose:
+`required_signers` (a signature that must come from a named principal, such as
+a principal change's proposer) and `eligible_signers` (who else may sign), and
+the CLI prints them (`Awaiting N more approvals (owner must sign; 1 from:
+ops2)`) with one `proposal approve` next line per outstanding signer. `proposal activate` remains for a held approval, a candidate that
 needs no approval, and activation by someone other than the last signer. The
 SDK (`proposal.approve(..., hold=)`), HTTP (`hold` in the approval body) and
 MCP (`hold` on `cruxible_proposal_approve` and `_submit`) behave the same.
@@ -4983,7 +5027,9 @@ links the fresh proposal to its source and records a superseded withdrawal on
 the source, preserving its immutable admission and evaluation. It refuses `cruxible.proposal.readmit_already_accepted` when
 the change is in accepted state -- the proposal itself was accepted, or its
 readmission was (`context.accepted_as`) -- and `cruxible.proposal.readmit_not_stale`
-for a proposal on the head or a refused one. Readmitting an open proposal behind
+for a proposal on the head or a refused one. Only the proposal's author may
+readmit it; anyone else refuses `cruxible.proposal.readmit_not_author` (the
+repair is to reject it with a reason). Readmitting an open proposal behind
 the head lands it there, as approval would. A stale ClaimType migration is not
 byte-rebased because its dependent inventory may have changed; run
 `cruxible claim-type migrate` again at the current head instead.

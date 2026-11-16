@@ -579,7 +579,9 @@ only what, and every caller's power is bounded. Two different things answer
   hosts, principal changes, compiler upgrades and provider installs). An agent
   with `governed_write` can propose and author but never approve or accept, so
   its work always waits for a person. Credentials are minted, rotated and
-  revoked with `cruxible credential`.
+  revoked with `cruxible credential`. A client can lower its own tier for a
+  request, never raise it: an MCP server capped by `CRUXIBLE_MODE` sends its
+  cap, and the daemon enforces it.
 
 A Unix-socket daemon runs with auth off by default: every process of your OS
 user is equally trusted, there are no bearer tokens, and the principal ID a

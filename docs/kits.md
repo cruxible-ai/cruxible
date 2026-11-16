@@ -545,7 +545,10 @@ its preview was pinned to and submits only what passes, and the command exits
 1; if the head moved since the preview, it refuses `cruxible.preview.state_moved`
 before checking. A blocked preview is still an answer and exits 0. Like `kit add`, a removal
 that passes lands at once when the approval policy requires no approval and
-otherwise stops at a proposal.
+the request's tier may activate (`graph_write`), and otherwise stops at a
+proposal. Below `graph_write` (an MCP server capped by `CRUXIBLE_MODE`, say),
+`kit add` and `kit remove` stay proposed and the result says who can activate
+them.
 
 A removed kit cannot be added back: its retired definitions cannot be revived,
 so a later `kit add` of it refuses with a `revival_refused` code (for example

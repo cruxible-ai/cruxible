@@ -366,8 +366,9 @@ and `set` either its `justification` (not affected, with a VEX reason) or its
 `verdict` `affected`. It is written with `accept: never`, and a different agent
 reviews and approves it.
 
-First register the reviewer, a second principal with its own key. Do this
-before the author writes, so the reviewer exists at the proposal's base:
+First register the reviewer, a second principal with its own key. (A
+reviewer registered after the author writes also works: its approval lands
+the proposal at the head first, then signs it.)
 
 ~~~text
 $ cruxible principal add reviewer --key-dir ../reviewer-keys --signer-key OWNER_KEY

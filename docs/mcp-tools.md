@@ -173,6 +173,11 @@ server's environment; no tool argument can name a key path. The tool signs as
 `signer_id`, or as the directory's only key when `signer_id` is omitted, and
 passing the reviewed `candidate_digest` makes it refuse a candidate that
 changed since review. Unset, the tool refuses and says how to configure it.
+Set `CRUXIBLE_PRINCIPAL_ID` beside it: the key directory makes the
+environment the identity source, so with no principal ID the server's
+requests name no principal, and submitting the approval refuses
+`cruxible.identity.principal_unconfigured` (as do activate, reject, withdraw
+and readmit).
 Only the public attestation leaves the process; key bytes never appear in a
 result or a log line.
 
@@ -207,7 +212,7 @@ that starts reaching one more operation moves the pin.
 | `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
 | `cruxible_init` | Make the workspace folder an instance over the local daemon socket, as `cruxible init`: create the host attached to the folder, the binding, the owner principal (`principal_id`, default your OS username) and its key in the default key directory outside the folder, and the folder identity record; this session then authors as the owner. An initialized folder reports its instance and changes nothing. Returns the instance, principal, key directory and approval policy, never key material | `ADMIN` |
 | `cruxible_console` | Open the read-only console for the instance in the user's browser: the same loopback listener `cruxible console` serves, run on a background thread of this MCP server (one per instance; it ends with the server, or `stop=true` stops it). The tool opens the one-time sign-in link itself and returns only the address `http://127.0.0.1:<port>/i/<instance>`; the link is never returned. When no browser can be opened (`browser_opened: false`), a listener the call started is stopped (`status: no_browser`) and `message` tells the user to run `cruxible console` in their own terminal, which prints the link to them only. A second call reuses the running listener and opens a fresh link | `READ_ONLY` |
-| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), and the adapter and daemon versions | `READ_ONLY` |
+| `cruxible_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, whether it can author (and the repair when not), the server's `mode_cap` and `effective_permission_mode`, and the adapter and daemon versions | `READ_ONLY` |
 
 ## Host and providers
 
@@ -561,7 +566,20 @@ Principal changes, compiler upgrades and provider installs require admin.
 
 `CRUXIBLE_MODE` (`read_only`, `governed_write`, `graph_write`, or `admin`, the
 default) fixes the MCP server's own tier: tools above it are not advertised,
-and every call is capped at it.
+and every call is capped at it. The cap is enforced by the daemon: below
+`admin` the server sends it with every request as a ceiling, and the daemon
+serves the request at the lower of that ceiling and the request's own
+authority, so under a cap below `graph_write` a `cruxible_set` or `cruxible_write` stays a
+proposal it cannot activate, and `cruxible_kit_add`, `cruxible_kit_remove`
+and `cruxible_provider_move` stay proposed below `graph_write`. A Line enabled
+through a capped server keeps the cap for its later automatic runs. A call to
+a tool above the cap refuses `cruxible.mcp.mode_insufficient`, naming the tier
+it needs and the repair (raise `CRUXIBLE_MODE` and restart the server, or ask
+someone whose server serves it). `cruxible_whoami` reports `mode_cap` and
+`effective_permission_mode` (the lower of the credential's tier and the cap);
+below `governed_write` it says the session cannot author
+(`cruxible.identity.permission_insufficient`, repair: raise
+`CRUXIBLE_MODE`).
 
 The daemon capability ceiling and bearer credential tier both apply. A
 Cruxible principal signature is an additional governance condition, not a
@@ -577,7 +595,7 @@ and input contracts declared in accepted state, which the daemon validates. A `p
 value may be `null`, which binds an optional parameter explicitly; omitting it takes the
 parameter's default.
 
-Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. `changed_members` lists up to 50 sorted paths marked added, replaced, or removed; `changed_members_truncated` marks a longer list. Review it normally; no approval carries. Providers are not run again.
+Approve and activate on a proposal whose base moved behave as `cruxible proposal approve` and `activate` do ([proposal](cli-reference.md#proposal)): activation refuses `cruxible.approval.requirement_unsatisfied` until the approvals are in; a moved or late-signer proposal lands at the head first and receipts name its source in `readmits`; an already-accepted proposal refuses `cruxible.proposal.already_accepted`; while approvals remain, the approval receipt names `required_signers` and `eligible_signers`. Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. `changed_members` lists up to 50 sorted paths marked added, replaced, or removed; `changed_members_truncated` marks a longer list. Review it normally; no approval carries. Providers are not run again.
 
 CaptureContract input uses the closed shapes `http_response`, `procedure_output`,
 `foreign_span`, `database_snapshot`. Defaults: `grade: observed`, `replay: attested`
