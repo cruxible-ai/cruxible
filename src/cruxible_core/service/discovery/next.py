@@ -104,7 +104,6 @@ from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.repair_spelling import (
     _mcp_call,
-    _sdk_call,
     _sdk_example,
 )
 from cruxible_client.contracts.repair_spelling import (
