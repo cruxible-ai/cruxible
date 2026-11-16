@@ -3179,7 +3179,8 @@ nothing. Rule of thumb: propose when the automation can state the belief, post
 when it cannot.
 
 An inbox or claims step whose `for_each` is a Query read's `rows`
-(`$steps.<read>.rows`) reads each row as:
+(`$steps.<read>.rows`, or the `rows` of a filter or dedupe over them) reads
+each row as:
 
 | Reference | Value |
 |---|---|

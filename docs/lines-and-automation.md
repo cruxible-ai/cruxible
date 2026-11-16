@@ -742,8 +742,9 @@ A column with the same name as `subject` or `bindings` takes its place. Any
 other `$item` reference is refused when the Procedure is authored
 (`item_reference_unresolved`), and the refusal lists what the row offers. To
 read another value, such as a Claim of the row's Subject, declare it as a
-column of the Query. A claims step whose `for_each` is a read's `rows` reads
-rows the same way.
+column of the Query. A filter or dedupe step over the rows keeps them whole, so
+its `rows` offer the same. A claims step whose `for_each` is a read's `rows`
+reads rows the same way.
 
 ## Recovering missed work
 

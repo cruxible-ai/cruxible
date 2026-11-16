@@ -316,7 +316,7 @@ from cruxible_core.procedures.ports import (
     AcquisitionRules,
     bound_operation,
 )
-from cruxible_core.procedures.query_rows import query_row_items
+from cruxible_core.procedures.query_rows import ROW_PRESERVING_TRANSFORMS, query_row_items
 from cruxible_core.procedures.reference_binding import (
     ProcedureExecutionPlan,
     execution_plan,
@@ -5379,6 +5379,11 @@ class ProcedureExecutor:
             )
             if rows_in is not None and id(reference) in record_inputs:
                 rows_in.append(row_count(resolved))
+            if kind in ROW_PRESERVING_TRANSFORMS and isinstance(resolved, list):
+                # Filter and dedupe keep a Query read's rows whole (query_rows).
+                offered = query_row_items(reference, outputs, resolved)
+                if offered is not None:
+                    return offered
             return resolved
 
         try:

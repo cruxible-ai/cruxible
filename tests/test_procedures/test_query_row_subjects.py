@@ -184,7 +184,13 @@ class _Clock:
         return time.monotonic_ns()
 
 
-def _row_world(tmp_path: Path, fields: dict[str, Any]) -> Any:
+def _row_world(
+    tmp_path: Path,
+    fields: dict[str, Any],
+    *,
+    narrowing: tuple[Any, ...] = (),
+    for_each: str = "$steps.work.rows",
+) -> Any:
     instance, _owner = seed_claims(tmp_path)
     row = validate_contract(
         {"name": ROW, "version": 1, "fields": {"item_id": "string", "status": "string"}}
@@ -218,9 +224,10 @@ def _row_world(tmp_path: Path, fields: dict[str, Any]) -> Any:
             output={},
             steps=[
                 ReadStep(read="work", query=QUERY),
+                *narrowing,
                 InboxStep(
                     inbox=f"{ITEM}@1",
-                    for_each=ref("$steps.work.rows"),
+                    for_each=ref(for_each),
                     fields=fields,
                     dedupe_key=("item",),
                     id="post",
@@ -232,22 +239,15 @@ def _row_world(tmp_path: Path, fields: dict[str, Any]) -> Any:
     return instance
 
 
-def test_a_line_posts_one_inbox_item_per_row_naming_the_rows_subject(tmp_path: Path) -> None:
+def _posted(instance: Any) -> list[dict[str, Any]]:
+    """Run the observe Line over the Procedure once; the inbox payloads, by item."""
+
     from cruxible_core.service.procedures.procedure_runs import (
         LineRunRequest,
         service_run_playbill_line,
     )
 
-    instance = _row_world(
-        tmp_path,
-        {
-            "item": ref("$item.subject"),
-            "bound": ref("$item.bindings.item"),
-            "status": ref("$item.status"),
-        },
-    )
     author_line(instance, name="test.row-inbox-line", procedure="test.row-inbox", parameters={})
-
     state = service_run_playbill_line(
         instance,
         path_identity_digest="test.row-inbox-line",
@@ -257,14 +257,25 @@ def test_a_line_posts_one_inbox_item_per_row_naming_the_rows_subject(tmp_path: P
         daemon_clock=_Clock(NOW),
         provider_runtime_operator=Operator(Invoker()),
     )
-
     assert state.status == "succeeded", state.terminal
     store = LineInboxStore(instance)
     entries, _cursor = store.page(line=None, status=None, limit=50, cursor=None)
-    payloads = sorted(
+    return sorted(
         (store.get(entry.envelope.item_id).payload for entry in entries),
         key=lambda payload: payload["item"],
     )
+
+
+def test_a_line_posts_one_inbox_item_per_row_naming_the_rows_subject(tmp_path: Path) -> None:
+    instance = _row_world(
+        tmp_path,
+        {
+            "item": ref("$item.subject"),
+            "bound": ref("$item.bindings.item"),
+            "status": ref("$item.status"),
+        },
+    )
+    payloads = _posted(instance)
     assert payloads == [
         {
             "item": f"{SUBJECT_KIND}/wi-42",
@@ -277,6 +288,94 @@ def test_a_line_posts_one_inbox_item_per_row_naming_the_rows_subject(tmp_path: P
             "status": "blocked",
         },
     ]
+
+
+def _narrowing(kind: str, alias: str, source: str, spec: dict[str, Any]) -> Any:
+    from cruxible_client.contracts.procedures.authored import TransformStep
+
+    return TransformStep.model_validate(
+        {"transform": alias, "kind": kind, "spec": {"input": ref(source), **spec}}
+    )
+
+
+READY = {
+    "where": {
+        "op": "eq",
+        "left": {"$ref": "item", "path": ["fields", "status"]},
+        "right": {"literal": "ready"},
+    }
+}
+
+
+def test_filter_and_dedupe_over_the_rows_keep_each_rows_subject_and_bindings(
+    tmp_path: Path,
+) -> None:
+    instance = _row_world(
+        tmp_path,
+        {
+            "item": ref("$item.subject"),
+            "bound": ref("$item.bindings.item"),
+            "status": ref("$item.status"),
+        },
+        narrowing=(
+            _narrowing("filter", "ready", "$steps.work.rows", READY),
+            _narrowing("dedupe", "unique", "$steps.ready.rows", {"keys": ["item_id"]}),
+        ),
+        for_each="$steps.unique.rows",
+    )
+
+    assert _posted(instance) == [
+        {"item": f"{SUBJECT_KIND}/wi-42", "bound": f"{SUBJECT_KIND}/wi-42", "status": "ready"}
+    ]
+
+
+def test_a_step_that_rebuilds_the_rows_refuses_naming_it() -> None:
+    spec = procedure_spec(
+        "test.row-inbox",
+        input={},
+        output={},
+        steps=[
+            ReadStep(read="work", query=QUERY),
+            _narrowing(
+                "shape",
+                "shaped",
+                "$steps.work.rows",
+                {"fields": {"status": {"from": ref("$item.fields.status")}}},
+            ),
+            InboxStep(
+                inbox=f"{ITEM}@1",
+                for_each=ref("$steps.shaped.rows"),
+                fields={"item": ref("$item.subject"), "status": ref("$item.status")},
+                id="post",
+            ),
+        ],
+    )
+    definition = procedure_definition(**lower_procedure_spec(spec).definition)
+
+    with pytest.raises(ItemReferenceUnresolved) as refused:
+        validate_row_references(definition, _lookup)
+
+    message = str(refused.value)
+    assert "'shaped'" in message and "only filter and dedupe keep them" in message
+    assert refused.value.element == "fields.item"
+    # A column the rebuilt rows still carry is left to the run.
+    validate_row_references(
+        procedure_definition(
+            **lower_procedure_spec(
+                spec.model_copy(
+                    update={
+                        "steps": (
+                            *spec.steps[:2],
+                            spec.steps[2].model_copy(
+                                update={"fields": {"status": ref("$item.status")}}
+                            ),
+                        )
+                    }
+                )
+            ).definition
+        ),
+        _lookup,
+    )
 
 
 def test_authoring_refuses_a_row_reference_the_row_does_not_offer(tmp_path: Path) -> None:

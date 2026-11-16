@@ -26,6 +26,8 @@ _ROWS_SUFFIX = ".rows"
 _STEPS = "$steps."
 _SUBJECT_PREFIX = "Subject:"
 ITEM_REFERENCE_UNRESOLVED = "cruxible.procedure.item_reference_unresolved"
+#: Closed transforms that keep the records they are given whole.
+ROW_PRESERVING_TRANSFORMS = frozenset({"filter", "dedupe"})
 
 
 def rows_alias(for_each: object) -> str | None:
@@ -181,35 +183,88 @@ def _offer_text(query: Any) -> str:
     return "; ".join(parts)
 
 
+def _row_source(for_each: object, producers: Mapping[object, object]) -> tuple[Any, str | None]:
+    """The Query read whose rows ``for_each`` reaches, and the step that dropped them.
+
+    ``$steps.<a>.rows`` of a read is its rows; of a filter or dedupe, the rows
+    it was given (followed back). Through any other transform the rows are
+    rebuilt, so the read is returned with that step's id: it does not carry a
+    row's Subject and bindings. ``(None, None)`` when no Query read is reached.
+    """
+
+    from cruxible_client.contracts.procedures.models import ReadNode, TransformNode
+
+    seen: set[str] = set()
+    reference = for_each
+    while (alias := rows_alias(reference)) is not None and alias not in seen:
+        seen.add(alias)
+        producer = producers.get(alias)
+        if isinstance(producer, ReadNode):
+            return (producer, None) if producer.query is not None else (None, None)
+        if not isinstance(producer, TransformNode):
+            return None, None
+        spec = producer.spec
+        if producer.transform_kind in ROW_PRESERVING_TRANSFORMS:
+            reference = getattr(spec, "input", None)
+            continue
+        inputs = getattr(spec, "inputs", None) or (getattr(spec, "input", None),)
+        for member in inputs:
+            read, _lost = _row_source(member, producers)
+            if read is not None:
+                return read, producer.node_id
+        return None, None
+    return None, None
+
+
 def validate_row_references(definition: Any, lookup: Callable[[Any], Any]) -> None:
     """Refuse an inbox or claims step reading ``$item...`` its Query row does not offer.
 
-    Only this Procedure's nodes and the QueryDefinitions they read are
-    consulted; a read whose Query is not resolvable is left to the other laws.
+    ``for_each`` reaches the read's rows directly or through filter/dedupe.
+    Through any other transform a row's ``subject`` and ``bindings`` are gone,
+    and a reference to them refuses naming that step. Only this Procedure's
+    nodes and the QueryDefinitions they read are consulted; a read whose Query
+    is not resolvable is left to the other laws.
     """
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.procedures.claims import ClaimsNode
     from cruxible_client.contracts.procedures.graph import reference_templates
-    from cruxible_client.contracts.procedures.models import InboxEgressNode, ReadNode
+    from cruxible_client.contracts.procedures.models import InboxEgressNode
 
-    producers = {getattr(node, "as_", None): node for node in definition.nodes}
+    producers: dict[object, object] = {
+        getattr(node, "as_", None): node for node in definition.nodes
+    }
     for node in definition.nodes:
         if not isinstance(node, InboxEgressNode | ClaimsNode):
             continue
-        alias = rows_alias(node.for_each)
-        producer = None if alias is None else producers.get(alias)
-        if not isinstance(producer, ReadNode) or producer.query is None:
+        read, lost = _row_source(node.for_each, producers)
+        if read is None:
             continue
-        query = lookup(ArtifactIdentity(kind="QueryDefinition", name=producer.query.target.name))
+        query = lookup(ArtifactIdentity(kind="QueryDefinition", name=read.query.target.name))
         if query is None or not hasattr(query, "row_bindings"):
             continue
+        name = query.identity.name
+        rebuilt = None if lost is None else producers.get(rows_alias(node.for_each))
+        declared = set(getattr(getattr(rebuilt, "spec", None), "fields", None) or ())
         for element, template in _elements(reference_templates(node)):
             for reference in _item_strings(template):
                 path = reference.split(".")[1:]
+                if lost is not None:
+                    if path and path[0] in ("subject", "bindings") and path[0] not in declared:
+                        raise ItemReferenceUnresolved(
+                            f"{reference} does not resolve: for_each {node.for_each} reaches "
+                            f"the rows of Query {name} through step {lost!r}, which rebuilds "
+                            "them, so its rows no longer carry each row's subject and bindings "
+                            "(only filter and dedupe keep them)",
+                            node_id=node.node_id,
+                            element=element,
+                            repair=f"Iterate the read's rows directly or through filter/dedupe "
+                            f"only, or declare the value as a column of Query {name} and carry "
+                            f"it through step {lost!r}.",
+                        )
+                    continue
                 if _offers(query, path):
                     continue
-                name = query.identity.name
                 raise ItemReferenceUnresolved(
                     f"{reference} does not resolve: a row of Query {name} (for_each "
                     f"{node.for_each}) offers {_offer_text(query)}",
@@ -222,6 +277,7 @@ def validate_row_references(definition: Any, lookup: Callable[[Any], Any]) -> No
 
 __all__ = [
     "ITEM_REFERENCE_UNRESOLVED",
+    "ROW_PRESERVING_TRANSFORMS",
     "ItemReferenceUnresolved",
     "binding_subject_kinds",
     "query_row_items",
