@@ -145,3 +145,88 @@ def test_a_late_reviewer_lands_and_approves_a_change_set_and_a_document(
         # The landed proposal is the author's, signed afresh by the late reviewer.
         successor = service_inspect_playbill_proposal(instance, proposal_id=str(landed))
         assert successor.proposal.admission.actor_id == "operator"  # type: ignore[union-attr]
+
+
+def test_a_byte_landing_the_head_refuses_publishes_nothing(
+    independent: tuple[TestClient, str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A landing by bytes (a Document) used to submit straight away, and a submission
+    publishes even a refused evaluation: a refused challenge left a new proposal
+    behind. It now previews first and publishes nothing when the head refuses."""
+
+    from cruxible_client.contracts.proposal_models import (
+        ProposalPreview,
+        ProposalPreviewEvaluation,
+    )
+    from cruxible_core.proposals.proposals import ProposalService
+
+    http, instance_id, reviewer_key = independent
+    instance = get_playbill_manager().get(instance_id)
+    body = service_store_playbill_body(instance, content=b"# Refused at the head\n").digest
+    document = service_propose_playbill_document(
+        instance,
+        shell=_shell(body),
+        actor_id="operator",
+        proposal_name="refused-at-head",
+        timestamp="2026-11-16T12:00:00.000000Z",
+    ).proposal.admission.proposal_id
+    register_late(
+        http, instance_id, tmp_path, reviewer_key, tmp_path / "owner-custody" / "operator.ed25519"
+    )
+    admissions = instance.proposal_evidence().list_admissions()
+    head = instance.accepted_coordinate()
+
+    def refused_preview(self, **_options):  # type: ignore[no-untyped-def]
+        return ProposalPreview(
+            evaluation=ProposalPreviewEvaluation(
+                verdict="refused", evaluated_base_oid=head.git_oid, rebased=True
+            )
+        )
+
+    def no_submit(self, **_options):  # type: ignore[no-untyped-def]
+        raise AssertionError("a refused landing must not be submitted")
+
+    monkeypatch.setattr(ProposalService, "preview", refused_preview)
+    monkeypatch.setattr(ProposalService, "submit", no_submit)
+    refused = http.post(
+        f"/api/v1/{instance_id}/proposals/{document}/approval-challenge",
+        json={"signer_id": "late"},
+        headers=LATE,
+    )
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["context"]["recompile_reason"] == "evaluation_refused"
+    assert instance.proposal_evidence().list_admissions() == admissions
+    assert instance.proposal_evidence().read_withdrawal(document) is None
+    assert instance.accepted_coordinate() == head
+
+
+def test_migration_detection_reads_the_leaf_in_the_authors_namespace() -> None:
+    """A principal named `claim-type-migration-owner` made every ordinary ref of theirs
+    read as a generated migration; only the submitter's migration leaf does."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.proposals.proposals import cannot_rebase, exact_bytes_cannot_rebase
+
+    members = (
+        SimpleNamespace(artifact_kind="claim-type"),
+        SimpleNamespace(artifact_kind="subject-kind"),
+    )
+
+    def proposal(actor: str, leaf: str):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(
+            admission=SimpleNamespace(
+                actor_id=actor,
+                proposal_id="sha256:" + "a" * 64,
+                target_ref=f"refs/proposals/{actor}/{leaf}",
+            ),
+            candidate=SimpleNamespace(members=members),
+        )
+
+    ordinary = proposal("claim-type-migration-owner", "intent-0123456789abcdef")
+    migration = proposal("owner", "claim-type-migration-0123456789abcdef")
+
+    assert exact_bytes_cannot_rebase(ordinary) is False  # type: ignore[arg-type]
+    assert cannot_rebase(ordinary) is None  # type: ignore[arg-type]
+    assert exact_bytes_cannot_rebase(migration) is True  # type: ignore[arg-type]

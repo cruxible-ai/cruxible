@@ -693,16 +693,18 @@ def land_for_signer(instance: PlaybillInstance, proposal_id: str) -> str:
             reason="changed_since_base",
             detail="changed at the head since its base: " + render_stale_paths(stale_paths),
         )
-    try:
-        recompiled = _recompile_for_review(instance, proposal, approver=True)
-    except ProposalReadmitRequiresResubmission as exc:
-        author = proposal.admission.actor_id
+    from cruxible_core.service.proposals.proposals import cannot_rebase
+
+    reason = cannot_rebase(proposal, landing=True)
+    if reason is not None:
+        # Refused before anything is evaluated or published at the head.
+        why, command = reason
         raise ProposalReadmitRequiresResubmission(
-            f"proposal {proposal_id} is a generated dependency-closure migration with no "
-            "retained input, so it cannot be landed at the head for a signer registered "
-            f"after its base; its author {author!r} reruns `cruxible claim-type migrate` "
-            "preflight/submit at the current head, and you approve the new proposal"
-        ) from exc
+            f"proposal {proposal_id} {why}, so it cannot be landed at the head for a signer "
+            f"registered after its base; its author {proposal.admission.actor_id!r} "
+            f"{command}, and you approve the new proposal"
+        )
+    recompiled = _recompile_for_review(instance, proposal, approver=True)
     if recompiled is None:
         raise ProposalStale(proposal_id)
     if recompiled.proposal_id is None:
@@ -1162,13 +1164,15 @@ def _land_exact_bytes_for_review(
         return None
     if candidate_accepted(instance, source.candidate.candidate_digest):
         return None  # accepted itself: nothing is left to land
-    successor = land_exact_bytes(instance, source)
+    # Checked first: a landing the head refuses publishes nothing.
+    successor = land_exact_bytes(instance, source, check_first=True)
     if successor.candidate is None:
         raise ProposalStale(
             source.admission.proposal_id,
             reason="evaluation_refused",
             detail="; ".join(item.code for item in successor.evaluation.diagnostics),
         )
+    assert isinstance(successor, ProposalResult)
     before = {member.path: member.candidate_artifact_digest for member in source.candidate.members}
     after = {
         member.path: member.candidate_artifact_digest for member in successor.candidate.members
