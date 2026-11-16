@@ -933,10 +933,30 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         cli="authoring submit",
         composed_first=True,
         cli_args=("payload",),
-        cli_flags={"dry_run": "--dry-run"},
+        cli_flags={"intent_id": "--intent-id", "dry_run": "--dry-run"},
         mcp="cruxible_authoring_submit",
-        mcp_args={"payload": "payload"},
+        mcp_args={"payload": "payload", "intent_id": "intent_id"},
         required=("payload",),
+    ),
+    "cruxible.authoring.preflight": RepairSpelling(
+        cli="authoring preflight",
+        cli_args=("intent_id",),
+        mcp="cruxible_authoring_preflight",
+        mcp_args={"intent_id": "intent_id"},
+        sdk=lambda values: (
+            _sdk_call("cx.resume_intent", _operand(values, "intent_id")) + ".status()"
+        ),
+        required=("intent_id",),
+    ),
+    "cruxible.vocabulary.plan": RepairSpelling(
+        cli="vocabulary plan",
+        mcp="cruxible_vocabulary_plan",
+        sdk=lambda _values: "cx.vocabulary.plan()",
+    ),
+    "cruxible.vocabulary.apply": RepairSpelling(
+        cli="vocabulary apply",
+        mcp="cruxible_vocabulary_apply",
+        sdk=lambda _values: "cx.vocabulary.apply()",
     ),
     "cruxible.claim-type.migrate": RepairSpelling(
         cli="claim-type migrate",

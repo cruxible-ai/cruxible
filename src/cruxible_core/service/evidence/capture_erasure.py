@@ -54,6 +54,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.repairs import (
     HandEditInstruction,
     HandEditRepair,
@@ -105,8 +106,8 @@ def _refuse(
 
 _PROHIBITED_REPAIR = (
     "A contract's erasure policy is fixed for its identity, so this body stays. For sources "
-    "that may capture secrets, author a successor contract under a new name built with "
-    "authorize_erasure(contract) (cruxible_client.contracts.captures), and capture under it"
+    "that may capture secrets, propose a contract under a new name whose input sets "
+    "erasable: true (capture-contract propose), and capture under it"
 )
 
 
@@ -286,12 +287,13 @@ def _checked(
         if _erasure_rule(contract) is None:
             raise _refuse(
                 "cruxible.capture.erasure_prohibited",
-                f"{contract.identity.qualified} does not authorize erasing its Captures",
+                f"{public_name(contract.identity.qualified)} does not authorize erasing its "
+                "Captures",
                 repair_line=_PROHIBITED_REPAIR,
                 digest=digest,
                 repair=HandEditRepair(
                     hand_edit=HandEditInstruction(
-                        target=contract.identity.qualified,
+                        target=public_name(contract.identity.qualified),
                         required_change=_PROHIBITED_REPAIR,
                     )
                 ),

@@ -139,6 +139,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
     authoring_program_digest,
 )
+from cruxible_client.contracts.authoring_landing import landing_for_surface
 from cruxible_client.contracts.backlinks import BacklinksRequest, BacklinksResult
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -2338,7 +2339,8 @@ class Intent:
         self._raw = dict(raw)
         self._preflight = preflight
         self._candidate_status = candidate_status
-        self.outcome = outcome
+        # The daemon spells ``outcome.next`` for the CLI; an Intent shows the SDK call.
+        self.outcome = landing_for_surface(outcome, "sdk")
 
     @classmethod
     def from_preflight(
@@ -2559,7 +2561,7 @@ class Intent:
         self._playbill._observe_authoring_submit(result)
         self._raw = result.intent
         self._candidate_status = result.status
-        self.outcome = result.outcome
+        self.outcome = landing_for_surface(result.outcome, "sdk")
         return self
 
     def status(self) -> api.CandidateStatusRecord:

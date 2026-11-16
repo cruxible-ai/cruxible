@@ -271,7 +271,7 @@ def test_export_keeps_a_file_whose_header_does_not_match_and_reads_no_claim(
     monkeypatch.setattr(cx._client, "query", query)
     with pytest.raises(VocabularyExportRefused, match="header does not match") as refused:
         cx.vocabulary.export()
-    assert "pass --force" in str(refused.value)
+    assert "cx.vocabulary.export(force=True)" in str(refused.value)
     assert claim_reads == []
     assert _file(workspace).read_bytes() == before
     assert cx.vocabulary.export(force=True).status == "written"
@@ -307,7 +307,7 @@ def test_apply_adds_and_edits_and_never_retires_what_the_file_leaves_out(world) 
 
     applied = cx.vocabulary.apply(rationale="Owners and longer titles.")
     assert applied.status == "landed", applied
-    assert applied.next == "cruxible vocabulary export"
+    assert applied.next == "cx.vocabulary.export()"
     cx.refresh()
     assert _accepted(cx, "dev.item.title").description == before_title.description
     assert _accepted(cx, "dev.item.title").value == StringType(min_len=1, max_len=200)

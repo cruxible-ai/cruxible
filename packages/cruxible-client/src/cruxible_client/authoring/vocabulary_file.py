@@ -33,6 +33,7 @@ from cruxible_client.authoring.floor_apply import write_workspace_file
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.authoring.inputs import ChangeSetInput, lower_authoring_input
 from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
+from cruxible_client.contracts.authoring_landing import landing_for_surface
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_type_inputs import (
     ClaimTypeInputRecord,
@@ -56,6 +57,8 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.get_reads import GET_BATCH_MAX_REFS, GetBatchRequest
 from cruxible_client.contracts.identity_normalizers import NoneNormalizer
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.shapes import (
     EnumType,
     SubjectType,
@@ -593,7 +596,9 @@ def render_vocabulary_file(accepted: AcceptedVocabulary, *, instance_id: str) ->
     return rendered
 
 
-def export_vocabulary(cx: Cruxible, *, force: bool = False) -> VocabularyExportResult:
+def export_vocabulary(
+    cx: Cruxible, *, force: bool = False, surface: VocabularySurface = "sdk"
+) -> VocabularyExportResult:
     """Write the accepted vocabulary to ``.cruxible/vocabulary.yaml``.
 
     Replaces an existing file only when nothing in it would be lost: it
@@ -620,12 +625,12 @@ def export_vocabulary(cx: Cruxible, *, force: bool = False) -> VocabularyExportR
     except FileNotFoundError:
         existing = None
     if existing is not None and existing != rendered and not force:
-        pending = _pending_edits(cx, existing, accepted)
+        pending = _pending_edits(cx, existing, accepted, surface=surface)
         if pending:
             raise VocabularyExportRefused(
                 f"{VOCABULARY_FILE_PATH} holds changes not in accepted state "
-                f"({', '.join(pending)}): apply them (`cruxible vocabulary apply`), or pass "
-                "--force to replace the file"
+                f"({', '.join(pending)}): apply them ({_call(surface, 'apply')}), or run "
+                f"{_call(surface, 'export', force=True)} to replace the file"
             )
     written = write_workspace_file(ensure_workspace_directory(root), VOCABULARY_FILE_PATH, rendered)
     kinds = {predicate.rpartition(".")[0] for predicate in accepted.claim_types} | set(
@@ -1179,7 +1184,9 @@ def _plan_members(
     return planned
 
 
-def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> list[str]:
+def _pending_edits(
+    cx: Cruxible, content: bytes, head: AcceptedVocabulary, *, surface: VocabularySurface
+) -> list[str]:
     """The changes a vocabulary file states that accepted state does not hold.
 
     Each entry means what it means against the file's own export: an edit is
@@ -1214,8 +1221,8 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
         raise VocabularyExportRefused(
             f"{VOCABULARY_FILE_PATH}: its based_on header does not match the export it names "
             f"(at {file.based_on.git_oid[:12]}), so what its entries mean cannot be "
-            "established and its edits would be lost; restore the header, or pass --force to "
-            "replace the file with accepted state"
+            "established and its edits would be lost; restore the header, or run "
+            f"{_call(surface, 'export', force=True)} to replace the file with accepted state"
         )
     pending: list[str] = []
     for kind in sorted(file.kinds, key=lambda item: item.encode("utf-8")):
@@ -1255,14 +1262,16 @@ def _pending_edits(cx: Cruxible, content: bytes, head: AcceptedVocabulary) -> li
     return pending
 
 
-def _read_file(root: Path, path: str | Path | None) -> tuple[str, bytes]:
+def _read_file(
+    root: Path, path: str | Path | None, *, surface: VocabularySurface
+) -> tuple[str, bytes]:
     target = Path(path) if path is not None else Path(VOCABULARY_FILE_PATH)
     absolute = target if target.is_absolute() else root / target
     try:
         content = read_regular_file(absolute)
     except FileNotFoundError as exc:
         raise VocabularyFileError(
-            f"{target} does not exist; `cruxible vocabulary export` writes it",
+            f"{target} does not exist; {_call(surface, 'export')} writes it",
             code="cruxible.vocabulary.file_missing",
         ) from exc
     try:
@@ -1286,9 +1295,10 @@ def _plan(
     *,
     rationale: str | None = None,
     preview: bool = True,
+    surface: VocabularySurface = "sdk",
 ) -> _PlannedFile:
     root = cx._workspace_root
-    shown, content = _read_file(root, path)
+    shown, content = _read_file(root, path, surface=surface)
     file = load_vocabulary_file(content)
     if file.instance != cx._instance_id:
         raise VocabularyBaselineError(
@@ -1303,7 +1313,7 @@ def _plan(
     except CoreError as exc:
         raise VocabularyBaselineError(
             f"{shown} names an export at {coordinate.git_oid[:12]} this instance cannot read "
-            f"({exc}); re-export with `cruxible vocabulary export` and merge your edits"
+            f"({exc}); re-export with {_call(surface, 'export')} and merge your edits"
         ) from exc
     if accepted.digest != file.based_on.vocabulary_digest:
         raise VocabularyBaselineError(
@@ -1360,10 +1370,12 @@ def _plan(
     )
 
 
-def plan_vocabulary(cx: Cruxible, path: str | Path | None = None) -> VocabularyPlan:
+def plan_vocabulary(
+    cx: Cruxible, path: str | Path | None = None, *, surface: VocabularySurface = "sdk"
+) -> VocabularyPlan:
     """What applying the file would change; writes nothing."""
 
-    return _plan(cx, path).plan
+    return _plan(cx, path, surface=surface).plan
 
 
 #: Preflight refusals that mean a definition the file edits moved since its export.
@@ -1413,27 +1425,24 @@ def _moved_since_export(cx: Cruxible, planned: _PlannedFile) -> tuple[str, ...]:
     return tuple(moved)
 
 
+def _call(
+    surface: VocabularySurface, verb: Literal["export", "plan", "apply"], *, force: bool = False
+) -> str:
+    """One vocabulary verb in the surface's own spelling (the shared repair renderer)."""
+
+    return render_repair(
+        RepairOperation(
+            operation=f"cruxible.vocabulary.{verb}", arguments={"force": True} if force else {}
+        ),
+        surface=surface,
+    )
+
+
 def _moved_repair(surface: VocabularySurface) -> str:
     """Re-export over the moved definitions, keeping the edit, in the surface's own calls."""
 
-    if surface == "cli":
-        export, plan, apply = (
-            "cruxible vocabulary export --force",
-            "cruxible vocabulary plan",
-            "cruxible vocabulary apply",
-        )
-    elif surface == "mcp":
-        export, plan, apply = (
-            "cruxible_vocabulary_export(force=true)",
-            "cruxible_vocabulary_plan()",
-            "cruxible_vocabulary_apply()",
-        )
-    else:
-        export, plan, apply = (
-            "cx.vocabulary.export(force=True)",
-            "cx.vocabulary.plan()",
-            "cx.vocabulary.apply()",
-        )
+    export = _call(surface, "export", force=True)
+    plan, apply = _call(surface, "plan"), _call(surface, "apply")
     return (
         f"Save your edits to {VOCABULARY_FILE_PATH} elsewhere, run {export} to read the "
         f"definitions as they are now, redo your edits, check them with {plan}, then {apply}"
@@ -1456,7 +1465,7 @@ def apply_vocabulary(
     ``next`` says how to redo the edit over the current definitions.
     """
 
-    planned = _plan(cx, path, rationale=rationale, preview=False)
+    planned = _plan(cx, path, rationale=rationale, preview=False, surface=surface)
     if planned.change_set is None:
         return VocabularyApplyResult(status="unchanged", plan=planned.plan)
     pinned = cx.at(planned.file.based_on.coordinate)
@@ -1490,7 +1499,8 @@ def apply_vocabulary(
             moved=moved,
             next=_moved_repair(surface) if moved else None,
         )
-    outcome = intent.outcome
+    # Spelled for the surface that applies it (an Intent spells it for the SDK).
+    outcome = landing_for_surface(intent.outcome, surface)
     status: Literal["landed", "proposed"] = (
         "landed" if outcome is not None and outcome.status == "landed" else "proposed"
     )
@@ -1498,7 +1508,7 @@ def apply_vocabulary(
         status=status,
         plan=plan,
         outcome=outcome,
-        next="cruxible vocabulary export" if status == "landed" else None,
+        next=_call(surface, "export") if status == "landed" else None,
     )
 
 
@@ -1590,11 +1600,18 @@ def _connected(client: CruxibleClient, instance_id: str, workspace: str | Path) 
 
 
 def vocabulary_export_for(
-    client: CruxibleClient, instance_id: str, *, workspace: str | Path, force: bool = False
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    workspace: str | Path,
+    force: bool = False,
+    surface: VocabularySurface = "cli",
 ) -> VocabularyExportResult:
     """``export`` over an open client: the CLI's and MCP server's entry point."""
 
-    return export_vocabulary(_connected(client, instance_id, workspace), force=force)
+    return export_vocabulary(
+        _connected(client, instance_id, workspace), force=force, surface=surface
+    )
 
 
 def vocabulary_plan_for(
@@ -1603,10 +1620,11 @@ def vocabulary_plan_for(
     *,
     workspace: str | Path,
     path: str | Path | None = None,
+    surface: VocabularySurface = "cli",
 ) -> VocabularyPlan:
     """``plan`` over an open client: the CLI's and MCP server's entry point."""
 
-    return plan_vocabulary(_connected(client, instance_id, workspace), path)
+    return plan_vocabulary(_connected(client, instance_id, workspace), path, surface=surface)
 
 
 def vocabulary_apply_for(
