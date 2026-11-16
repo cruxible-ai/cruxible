@@ -136,16 +136,23 @@ def test_changed_extract_spec_reobserves_equal_values_and_revises_only_changed_v
         assert store.history(claim.identity.name) == ()
     journal = store._journal(create=False)
     assert journal is not None
-    tags = [
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    observed = [
         parse_journal_payload(
-            instance.body_store().read(
-                stored.record.payload_digest,
-                access=BodyAccessContext(principal_id="test", can_read_body=True),
-            )
-        )["tag"]
+            instance.body_store().read(stored.record.payload_digest, access=access)
+        )
         for stored in journal.select_records(store.stream, partition_id="reobservations")
     ]
-    assert tags == ["cruxible-content-observation-v1"] * 2
+    assert [item["tag"] for item in observed] == ["cruxible-content-observation-v1"] * 2
+    # D-R14: the same bytes under the revised Procedure record its new lineage.
+    import json
+
+    lineages = [
+        json.loads(instance.body_store().read(item["set_digest"], access=access))["lineage"]
+        for item in observed
+    ]
+    assert lineages[0]["procedure_artifact_digest"] != lineages[1]["procedure_artifact_digest"]
+    assert observed[0]["set_digest"] != observed[1]["set_digest"]
     claim = original_claims[0]
     original = parse_capture_envelope(
         instance.body_store().read(

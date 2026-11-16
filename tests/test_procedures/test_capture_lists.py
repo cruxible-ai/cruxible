@@ -889,3 +889,30 @@ def test_a_finalize_record_does_not_grow_with_the_captures_a_call_fetched(
         sizes[count] = len(canonical_bytes(final["source_capture_association_groups"]))
     # The same bytes but the count's digits: nothing per Capture is inline.
     assert abs(sizes[20] - sizes[2]) <= 2
+
+
+def test_an_unchanged_procedures_observation_set_is_one_body_across_runs(tmp_path: Path) -> None:
+    """D-R14 lineage rides in the run-free set body: the same Procedure reproduces it."""
+
+    from datetime import timedelta
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.exhaust.records import parse_journal_payload
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.support.operation_world import NOW
+
+    instance = pages_world(tmp_path)
+    members = [page(body, index) for index, body in enumerate(bodies(3))]
+    run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+    _run_at(instance, members, NOW + timedelta(hours=1))
+    store = ClaimReobservationStore(instance)
+    journal_ = store._journal(create=False)  # noqa: SLF001
+    assert journal_ is not None
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    sets = [
+        parse_journal_payload(
+            instance.body_store().read(item.record.payload_digest, access=access)
+        )["set_digest"]
+        for item in journal_.select_records(store.stream, partition_id="reobservations")
+    ]
+    assert len(sets) == 2 and sets[0] == sets[1]

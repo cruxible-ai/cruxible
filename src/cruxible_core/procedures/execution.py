@@ -1354,6 +1354,7 @@ class CaptureObservationsProtocol(Protocol):
         run_id: str,
         node_id: str,
         actor_id: str,
+        lineage: dict[str, str] | None = None,
     ) -> None:
         """Record one call's observation of (contract, content, Capture) contents."""
 
@@ -5138,6 +5139,11 @@ class ProcedureExecutor:
                     run_id=admission.run_id,
                     node_id=node.node_id,
                     actor_id=admission.actor_context.actor_id,
+                    # D-R14: the Procedure whose call observed it, run-free.
+                    lineage={
+                        "procedure": admission.procedure_identity.qualified,
+                        "procedure_artifact_digest": admission.procedure_artifact_digest,
+                    },
                 )
         for field in fields:
             if decisions[field].disposition == "refused":

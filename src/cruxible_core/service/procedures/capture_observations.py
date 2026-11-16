@@ -71,6 +71,7 @@ class InstanceCaptureObservations:
         run_id: str,
         node_id: str,
         actor_id: str,
+        lineage: dict[str, str] | None = None,
     ) -> None:
         ClaimReobservationStore(self.instance).observe(
             [ObservedContent(*item) for item in contents],
@@ -79,6 +80,7 @@ class InstanceCaptureObservations:
             run_id=run_id,
             node_id=node_id,
             actor_id=actor_id,
+            lineage=lineage,
         )
 
 

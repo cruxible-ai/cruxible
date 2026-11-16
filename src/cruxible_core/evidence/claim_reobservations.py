@@ -905,8 +905,14 @@ class ClaimReobservationStore:
         run_id: str,
         node_id: str,
         actor_id: str,
+        lineage: Mapping[str, str] | None = None,
     ) -> int | None:
         """Record one acquiring call's observation of every content it fetched (ruling 1a).
+
+        ``lineage`` names the Procedure (identity and artifact digest) whose
+        call observed it (D-R14): it is part of the run-free set body, so an
+        unchanged Procedure reproduces the body and a changed one (a new
+        extract spec over the same bytes) records its new lineage.
 
         One journal record per call, keyed by content: the set of (contract,
         content, Capture) is a run-free body, so a call that fetched the same
@@ -930,6 +936,7 @@ class ClaimReobservationStore:
         body = canonical_bytes(
             {
                 "tag": OBSERVED_CONTENTS_BODY,
+                **({} if lineage is None else {"lineage": dict(lineage)}),
                 "contents": [
                     [contract, content, capture]
                     for (contract, content), capture in sorted(unique.items())
