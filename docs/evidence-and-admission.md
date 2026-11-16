@@ -35,15 +35,15 @@ counts. Here, a fitment the shop checked and wrote up, and a fitment cited from
 the supplier's catalog:
 
 ~~~text
-$ cruxible get CLM-bd067d59… --detail evidence
+$ cruxible get CLM-25f7a8f4… --detail evidence
 value: catalog.vehicle/honda-civic-2019
-capture CAP-61bb48f9b6a5  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=doc-docs-fitment.md  ...  own words in doc-docs-fitment.md (104 bytes): admitted
+capture CAP-14a1f5f34e57  CaptureContract:cruxible.coordinator-self-source-v1 v1  source=docs/fitment.md  ...  own words in docs/fitment.md (91 bytes): admitted
 rationale: Fitment check at the shop.
 
-$ cruxible get CLM-9482bb3b… --detail evidence
-value: catalog.vehicle/honda-civic-2019
-capture CAP-18a94f6104cb  CaptureContract:cruxible.foreign-source.catalog v1  source=catalog  ...  evidence: admitted
-rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
+$ cruxible get CLM-bbf833c5… --detail evidence
+value: catalog.vehicle/honda-civic-2020
+capture CAP-9226692cedaa  CaptureContract:cruxible.foreign-source.catalog v1  source=supplier/acme-2026.txt  ...  evidence: admitted
+rationale: Acme's 2026 catalog lists bp-2210 for the 2020 Civic.
 ~~~
 
 Each line ends with how the verdict reads it. A copy is labeled by where it
