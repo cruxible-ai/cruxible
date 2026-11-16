@@ -93,6 +93,25 @@ def _diagnostic_codes(value: Any) -> set[str]:
     return found
 
 
+def _first_diagnostic(value: Any, code: str) -> dict[str, Any]:
+    """The first diagnostic with this code, wherever the result nests it."""
+
+    if isinstance(value, dict):
+        if value.get("code") == code and "message" in value:
+            return value
+        children: Any = value.values()
+    elif isinstance(value, list):
+        children = value
+    else:
+        children = ()
+    for item in children:
+        try:
+            return _first_diagnostic(item, code)
+        except LookupError:
+            continue
+    raise LookupError(code)
+
+
 def _example(name: str) -> Any:
     if name.startswith("claim-adjudicate") or name == "claim-cite-supporting-evidence":
         return authoring_example(
@@ -166,6 +185,72 @@ def test_the_procedure_line_trigger_and_mandate_examples_are_accepted_together(
 ) -> None:
     http, instance_id, _ = playbill_http
     transport = _transport(http)
+    _land_procedure_prerequisites(transport, instance_id)
+
+    automation = ChangeSetInput(
+        kind="change_set",
+        members=(
+            procedure_example(),
+            line_example(),
+            trigger_example(),
+            procedure_mandate_example(),
+        ),
+        rationale="The example Procedure, its Line, Trigger and mandate.",
+    )
+    result = transport.compile_authoring_input(
+        instance_id, input=automation.model_dump(mode="json")
+    )
+    assert _diagnostic_codes(result.model_dump(mode="json")) == set()
+    assert result.verdict == "passed"
+
+
+def test_revising_a_procedure_a_line_runs_names_the_line_to_include(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """coldkit-10: the refusal says, in words, to bring the Line's successor along."""
+
+    http, instance_id, _ = playbill_http
+    transport = _transport(http)
+    _land_procedure_prerequisites(transport, instance_id)
+    _landed(
+        transport,
+        instance_id,
+        ChangeSetInput(
+            kind="change_set",
+            members=(procedure_example(), line_example()),
+            rationale="The example Procedure and its Line.",
+        ).model_dump(mode="json"),
+    )
+    revised = procedure_example().model_dump(mode="json")
+    revised["spec"]["description"] = "Read the work-item file and state its statuses, again."
+
+    alone = transport.compile_authoring_input(instance_id, input=revised)
+    dumped = alone.model_dump(mode="json")
+    assert _diagnostic_codes(dumped) == {"cruxible.change_set.incomplete_closure"}
+    diagnostic = _first_diagnostic(dumped, "cruxible.change_set.incomplete_closure")
+    message = diagnostic["message"]
+    assert message.startswith("1 live definition(s) outside this change set pin")
+    assert "Line replace-me pins Procedure replace-me" in message
+    assert "include each dependent's successor in this same change set" in message
+    assert "{" not in message  # no closure record JSON
+    (repair,) = diagnostic["repairs"]
+    assert repair["kind"] == "include_dependents"
+    assert repair["replacement"] == {"dependents": ["lines/replace-me.json"]}
+
+    together = transport.compile_authoring_input(
+        instance_id,
+        input=ChangeSetInput.model_validate(
+            {
+                "kind": "change_set",
+                "rationale": "Revise the Procedure and carry its Line.",
+                "members": [revised, line_example().model_dump(mode="json")],
+            }
+        ).model_dump(mode="json"),
+    )
+    assert _diagnostic_codes(together.model_dump(mode="json")) == set()
+
+
+def _land_procedure_prerequisites(transport: CruxibleClient, instance_id: str) -> None:
     # The prerequisites the Procedure example names: how work items are named,
     # its row Contract, then the kind whose layout reads the file, then the
     # ClaimType whose evidence rule names that kind.
@@ -222,19 +307,3 @@ def test_the_procedure_line_trigger_and_mandate_examples_are_accepted_together(
             rationale="A work item's status, as its file states it.",
         ).model_dump(mode="json"),
     )
-
-    automation = ChangeSetInput(
-        kind="change_set",
-        members=(
-            procedure_example(),
-            line_example(),
-            trigger_example(),
-            procedure_mandate_example(),
-        ),
-        rationale="The example Procedure, its Line, Trigger and mandate.",
-    )
-    result = transport.compile_authoring_input(
-        instance_id, input=automation.model_dump(mode="json")
-    )
-    assert _diagnostic_codes(result.model_dump(mode="json")) == set()
-    assert result.verdict == "passed"
