@@ -1154,14 +1154,11 @@ def test_removing_a_kit_retires_its_queries_with_the_kinds_they_walk(
     assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
 
 
-def test_a_removal_that_would_strand_claims_says_how_many_and_records_nothing(
-    worlds: tuple[_World, _World],
-) -> None:
-    publisher, consumer = worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}))
-    consumer.add(publisher.build("1.0.0"))
-    draft = consumer.pb.changes(rationale="Record Acme's seats.")
-    created = _create_by_slug(consumer, draft, "acme.account", "acme")
+def _record_seats(world: _World, slug: str) -> None:
+    """Accept one Claim of the kit's SEATS about a consumer-declared account."""
+
+    draft = world.pb.changes(rationale="Record the account's seats.")
+    created = _create_by_slug(world, draft, "acme.account", slug)
     draft.claim(
         subject=created,
         predicate=SEATS,
@@ -1183,7 +1180,25 @@ def test_a_removal_that_would_strand_claims_says_how_many_and_records_nothing(
     submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
-    consumer.approve(submitted._candidate_status.proposal_id)
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+
+
+def _kit_proposals(world: _World, kit_id: str) -> list[str]:
+    return [
+        entry.proposal_id
+        for entry in playbill_api.playbill_list_proposals(world.instance_id).entries
+        if f"/kit-{kit_id}-" in (entry.target_ref or "")
+    ]
+
+
+def test_a_removal_that_would_strand_claims_says_how_many_and_records_nothing(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    _record_seats(consumer, "acme")
     head = get_playbill_manager().get(consumer.instance_id).accepted_coordinate().git_oid
 
     preview = playbill_api.playbill_kit_remove(
@@ -1212,6 +1227,44 @@ def test_a_removal_that_would_strand_claims_says_how_many_and_records_nothing(
     # Blocked at the head its preview saw: nothing is recorded.
     assert playbill_api.playbill_list_proposals(consumer.instance_id).entries == before
     assert get_playbill_manager().get(consumer.instance_id).accepted_coordinate().git_oid == head
+
+
+def test_a_removal_whose_head_moves_after_its_check_refuses_and_records_nothing(
+    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Checked clean at one head, a Claim on the retiring ClaimType lands before submit.
+
+    The submission is bound to the head its check saw: it refuses state_moved
+    before evaluating, so the refusal the new head would give is never published.
+    """
+
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.proposals.proposals import ProposalService
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    before = _kit_proposals(consumer, "acme")
+    original = ProposalService.submit
+    moved: list[str] = []
+
+    def submit(self: ProposalService, **kwargs: typing.Any) -> typing.Any:
+        if not moved and "/kit-acme-" in kwargs["request"].target_ref:
+            moved.append(kwargs["request"].proposed_base_oid)
+            _record_seats(consumer, "acme")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(ProposalService, "submit", submit)
+    with pytest.raises(ChangeRefusedError) as refused:
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+
+    assert refused.value.error_code == "cruxible.preview.state_moved"
+    head = get_playbill_manager().get(consumer.instance_id).accepted_coordinate().git_oid
+    assert moved and moved[0] != head
+    assert _kit_proposals(consumer, "acme") == before
+    assert consumer.claim_type(SEATS).lifecycle.state == "live"
 
 
 def test_removing_a_kit_that_is_not_installed_is_refused_naming_the_installed_ones(

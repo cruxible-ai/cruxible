@@ -39,7 +39,7 @@ the recovery repairs an open would write are refused
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -420,8 +420,18 @@ def admit_change_set(
     candidate_tree: Mapping[str, bytes],
     timestamp: str,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
+    authorize: Callable[
+        [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
+    ]
+    | None = None,
+    expected_candidate: tuple[str, str] | None = None,
 ) -> AdmittedChangeSet:
-    """Submit one candidate tree, or (previewing) evaluate it on submit's own path."""
+    """Submit one candidate tree, or (previewing) evaluate it on submit's own path.
+
+    ``authorize`` and ``expected_candidate`` bind a commit to what the caller
+    already evaluated (``ProposalService.submit``): a head check run before
+    evaluation and held through publication, and the candidate it must reproduce.
+    """
 
     service = instance.proposal_service()
     actor = AuthenticatedActor(actor_id=actor_id, capabilities=capabilities)
@@ -444,6 +454,8 @@ def admit_change_set(
             candidate_tree=candidate_tree,
             timestamp=timestamp,
             confirm_head=mode.confirm_head,
+            authorize=authorize,
+            expected_candidate=expected_candidate,
         )
     return AdmittedChangeSet(
         previewed=False,

@@ -130,10 +130,10 @@ from cruxible_core.claims.claim_type_migrations import (
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
 from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
-from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.ledger.bootstrap import genesis_seed_files
-from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+from cruxible_core.proposals.proposals import ProposalAdmissionRequest, ProposalHeadMovedError
 from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
 from cruxible_core.providers.build_moves import (
     Mover,
@@ -1838,17 +1838,30 @@ def _submit(
     request = ProposalAdmissionRequest(
         target_ref=target, proposed_base_oid=base.git_oid, rationale=rationale
     )
+    binding: dict[str, Any] = {}
     if removal and not mode.previewing:
-        # A removal is blocked at its pinned head exactly when its preview was,
-        # and a blocked kit change records nothing (like an edited path or an
-        # unmet requirement): evaluate on submit's own path first, and submit
-        # only what passes. The second evaluation is the removal's own size.
+        # A blocked kit change records nothing (like an edited path or an unmet
+        # requirement), so a removal evaluates on submit's own path first, at the
+        # head its candidate was built on, and submits only what passed there.
+        # The submission is bound to that head and that candidate: a head that
+        # moved in between refuses state_moved before anything is evaluated or
+        # published, and the same head reproduces the same candidate, so a
+        # refused removal is never published. The second evaluation is the
+        # removal's own size.
         with preview_guards(True):
             checked = instance.proposal_service().preview(
                 actor=AuthenticatedActor(actor_id=actor_id, capabilities=("propose",)),
                 request=request,
                 candidate_tree=candidate,
                 timestamp=timestamp,
+            )
+        evaluated_at = checked.evaluation.evaluated_base_oid
+        if evaluated_at != base.git_oid:
+            # Accepted state moved after the candidate was built: refuse as a
+            # moved head (a pinned commit as at entry), whatever the verdict.
+            mode.refuse_moved_head(evaluated_at)
+            raise ProposalHeadMovedError(
+                "accepted main moved after the removal was planned; preview it again"
             )
         if checked.candidate is None:
             return KitChangeResult(
@@ -1862,6 +1875,19 @@ def _submit(
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
             )
+
+        def at_planned_head(
+            current: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
+        ) -> None:
+            if current.git_oid != base.git_oid:
+                raise ProposalHeadMovedError(
+                    "accepted main moved after the removal was checked; preview it again"
+                )
+
+        binding = {
+            "authorize": at_planned_head,
+            "expected_candidate": (base.git_oid, checked.candidate.candidate_digest),
+        }
     admitted = admit_change_set(
         instance,
         mode,
@@ -1869,6 +1895,7 @@ def _submit(
         request=request,
         candidate_tree=candidate,
         timestamp=timestamp,
+        **binding,
     )
     status: Literal[
         "unchanged", "proposed", "accepted", "blocked", "would_propose", "would_block"
