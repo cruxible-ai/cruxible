@@ -498,3 +498,7 @@ def test_cli_approval_prompt_shows_the_reviewers_view_before_asking(
     ) in lines
     assert any(line.startswith("Required approvals: ") for line in lines)
     assert lines.index("Sign this exact candidate? [y/N]: n") > lines.index("Definitions (1):")
+    # Declining prints a plain line, without the unnamed-error framing.
+    assert lines[-1] == "Not approved."
+    assert result.exit_code == 1
+    assert "Error" not in result.output and "Abort" not in result.output

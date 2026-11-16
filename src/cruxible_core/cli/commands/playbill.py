@@ -3289,7 +3289,9 @@ def approve_proposal(
     if key.source != "option":
         click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?", err=True):
-        raise click.Abort()
+        # Declining is an answer, not an error: say so and sign nothing.
+        click.echo("Not approved.", err=True)
+        raise SystemExit(1)
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(
         signer_id=resolved_signer,
