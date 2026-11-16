@@ -599,6 +599,14 @@ Then enable each Line you want running on its schedule (`cruxible line enable
 NAME`). The kit's README says which Lines settle what and why
 ([Lines and automation](lines-and-automation.md#earning-settle)).
 
+A Line in a kit's template that posts to the inbox follows the inbox rule
+([Lines and automation](lines-and-automation.md#the-inbox-findings-a-line-cant-decide)):
+an item is a call for attention, not storage. A list that is already a Query
+or a Capture gets one summary item (the count, a short sample, the Query or
+Capture to read) deduped by a digest of the set, so an unchanged set is seen
+again and a changed set is a new item; one item per element only when each
+needs its own decision recorded nowhere else.
+
 ## Build a kit
 
 A kit is exported from an instance where its definitions are accepted. You

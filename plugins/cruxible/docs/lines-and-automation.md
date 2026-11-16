@@ -645,6 +645,15 @@ unread  INB-877f3d1e627e  Line:catalog.acme-notices  -  2026-11-16T03:18:10.5130
   {"notice": "2026-10-20 Recall: bp-2210 ceramic pads, batch 4471, may delaminate under heavy braking."}
 ~~~
 
+An inbox item is a call for attention, not storage. When the list already
+exists as state (a Query answers it) or as evidence (a Capture holds it), post
+one summary item that points at it: the count, a short sample, and the Query or
+Capture to read. Give the summary a field that identifies the set, a digest of
+it (a Capture's digest when the list is one Capture), and name that field in
+the inbox step's `dedupe_key`, so an unchanged set posted again is counted as
+seen again and a changed set is a new item. Post one item per element only
+when each element needs its own decision, recorded nowhere else.
+
 `inbox get ITEM` shows the whole item and the run and Capture behind it. The
 inbox is never accepted state. Judge each item and record what you decided:
 write what you concluded and `link` the item to it, `dismiss` it with a reason,
