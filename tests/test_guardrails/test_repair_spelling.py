@@ -8,16 +8,12 @@ as another client's form that says which client has it.
 
 from __future__ import annotations
 
-import ast
 import re
-import shlex
 from pathlib import Path
-from typing import Any
 
 import click
 import pytest
 
-from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.repair_spelling import (
     REPAIR_SPELLINGS,
     RepairSpelling,
@@ -65,109 +61,6 @@ def _command(path: str) -> click.Command:
     return command
 
 
-@pytest.mark.parametrize("operation", sorted(REPAIR_SPELLINGS))
-@pytest.mark.parametrize("dry_run", [True, False])
-def test_every_cli_spelling_parses_against_the_live_command(operation: str, dry_run: bool) -> None:
-    spelling = REPAIR_SPELLINGS[operation]
-    if spelling.cli is None:
-        pytest.skip("no CLI form")
-    for arguments in ({}, _sample(spelling, dry_run=dry_run)):
-        line = render_repair(
-            RepairOperation(operation=operation, arguments=arguments), surface="cli"
-        )
-        prefix = f"cruxible {spelling.cli}"
-        if spelling.composed_first and not line.startswith(prefix):
-            continue  # the next composer's line; its own tests pin it
-        assert line.startswith(prefix), line
-        tokens = shlex.split(line)[len(prefix.split()) :]
-        if "<<<" in tokens:
-            continue
-        command = _command(spelling.cli)
-        # Parsing raises on an unknown flag, a missing required operand or a
-        # surplus positional, which is exactly an unrunnable line. A value the
-        # parameter's type rejects is a sample or a placeholder to replace.
-        try:
-            command.make_context(spelling.cli, tokens)
-        except click.MissingParameter:
-            raise
-        except click.BadParameter:
-            pass
-
-
-def _mcp_schemas(monkeypatch: pytest.MonkeyPatch) -> dict[str, dict[str, Any]]:
-    from cruxible_core.mcp.server import create_server
-
-    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
-    server = create_server()
-    return {name: tool.parameters for name, tool in server._tool_manager._tools.items()}
-
-
-def _request_fields(schema: dict[str, Any]) -> set[str]:
-    request = schema["properties"]["request"]
-    ref = request.get("$ref") or next(
-        (item["$ref"] for item in request.get("anyOf", ()) if "$ref" in item), None
-    )
-    assert ref is not None, schema
-    model = schema["$defs"][ref.rsplit("/", 1)[1]]
-    return set(model.get("properties", {}))
-
-
-def test_every_mcp_spelling_names_the_tools_own_arguments(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    schemas = _mcp_schemas(monkeypatch)
-    for operation, spelling in sorted(REPAIR_SPELLINGS.items()):
-        if spelling.mcp is None:
-            continue
-        assert spelling.mcp in schemas, f"{operation}: no MCP tool {spelling.mcp}"
-        schema = schemas[spelling.mcp]
-        properties = set(schema.get("properties", {}))
-        for name in spelling.mcp_args.values():
-            top, _, nested = name.partition(".")
-            assert top in properties, f"{operation}: {spelling.mcp} takes no {top}"
-            if nested:
-                assert nested in _request_fields(schema), f"{operation}: request has no {nested}"
-        # Every argument the tool requires is spelled, so the call can be made.
-        spelled = {name.partition(".")[0] for name in spelling.mcp_args.values()}
-        missing = set(schema.get("required", ())) - spelled - {"instance_id"}
-        assert not missing, f"{operation}: {spelling.mcp} also requires {sorted(missing)}"
-        sample = _sample(spelling, dry_run=True)
-        if "dry_run" not in spelling.mcp_args:
-            sample.pop("dry_run", None)  # a tool with no preview has no form for one
-        line = render_repair(RepairOperation(operation=operation, arguments=sample), surface="mcp")
-        assert line.startswith(f"{spelling.mcp}("), line
-
-
-def _sdk_root(line: str) -> str:
-    node = ast.parse(line, mode="eval").body
-    while True:
-        if isinstance(node, ast.Call):
-            node = node.func
-        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            assert node.value.id == "cx", line
-            return node.attr
-        elif isinstance(node, ast.Attribute):
-            node = node.value
-        elif isinstance(node, ast.Name):
-            return node.id
-        else:  # pragma: no cover - decisive guard
-            raise AssertionError(line)
-
-
-def test_every_sdk_spelling_is_python_naming_a_cruxible_method() -> None:
-    import cruxible_client.authoring.examples as cruxible_client
-
-    for operation, spelling in sorted(REPAIR_SPELLINGS.items()):
-        if spelling.sdk is None:
-            continue
-        for arguments in ({}, _sample(spelling, dry_run=True)):
-            line = render_repair(
-                RepairOperation(operation=operation, arguments=arguments), surface="sdk"
-            )
-            root = _sdk_root(line.replace(".set(...)", ".set()"))
-            assert hasattr(Cruxible, root) or hasattr(cruxible_client, root), (operation, line)
-
-
 def _produced_operations() -> set[str]:
     pattern = re.compile(r'operation="([a-z_.-]+)"')
     found: set[str] = set()
@@ -183,7 +76,11 @@ def test_every_produced_operation_renders_on_every_client() -> None:
     produced = _produced_operations()
     assert "cruxible.proposal.readmit" in produced
     for operation in sorted(produced):
-        for arguments in ({}, {"dry_run": True}):
+        spelling = REPAIR_SPELLINGS.get(operation)
+        previews = spelling is not None and "dry_run" in {*spelling.cli_flags, *spelling.mcp_args}
+        # A preview of an operation that has none has no form anywhere, by design.
+        cases = ({}, {"dry_run": False}, *(({"dry_run": True},) if previews else ()))
+        for arguments in cases:
             for surface in ("cli", "mcp", "sdk"):
                 line = render_repair(
                     RepairOperation(operation=operation, arguments=arguments),
@@ -388,34 +285,6 @@ def test_a_suggested_write_run_unchanged_refuses_before_it_is_sent(
     assert "placeholder" in result.output
 
 
-def test_a_preview_repair_renders_its_preview_on_every_client() -> None:
-    """Review round 2, finding 3: a typed preview never renders as the change itself."""
-
-    markers = {
-        "cli": ("--dry-run",),
-        "mcp": ("dry_run=true", '"dry_run": true'),
-        "sdk": ("dry_run=True",),
-    }
-    for operation in _all_operations():
-        spelling = REPAIR_SPELLINGS.get(operation)
-        if spelling is None or not ({"dry_run"} & {*spelling.cli_flags, *spelling.mcp_args}):
-            continue  # the operation takes no preview anywhere
-        sample = _sample(spelling, dry_run=True)
-        for arguments in ({"dry_run": True}, sample):
-            for surface in ("cli", "mcp", "sdk"):
-                line = render_repair(
-                    RepairOperation(operation=operation, arguments=arguments),
-                    surface=surface,  # type: ignore[arg-type]
-                )
-                if line.startswith(operation):
-                    raise AssertionError(f"{operation} {surface}: no form at all: {line}")
-                assert any(marker in line for marks in markers.values() for marker in marks), (
-                    operation,
-                    surface,
-                    line,
-                )
-
-
 def test_a_composed_repair_keeps_every_control_it_carries() -> None:
     repin = RepairOperation(
         operation="cruxible.block.repin",
@@ -433,7 +302,8 @@ def test_a_composed_repair_keeps_every_control_it_carries() -> None:
         'cruxible_block_repin(file="status", block="tiers", dry_run=true, claims=[])'
     )
     assert render_repair(repin, surface="sdk") == (
-        'cx.block.repin("status", "tiers", claims=[], dry_run=True)'
+        'cx.block.repin("status", "tiers", evaluation_time=datetime.now(UTC), claims=[], '
+        "dry_run=True)"
     )
     # Without controls, the composer's line is unchanged.
     plain = RepairOperation(

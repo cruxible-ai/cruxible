@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeVar
+from urllib.parse import unquote
 
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -53,6 +54,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
+from cruxible_client.contracts.placeholders import PlaceholderRefused, is_placeholder
 from cruxible_client.contracts.principals import (
     EFFECTIVE_PERMISSION_MODE_HEADER,
     PRINCIPAL_ID_ENV,
@@ -145,12 +147,39 @@ def _default_timeout() -> httpx.Timeout:
     return httpx.Timeout(connect=5.0, read=budget, write=budget, pool=5.0)
 
 
+def refuse_placeholders(url: object, body: object) -> None:
+    """Refuse a request whose path segment or any JSON string is exactly a placeholder.
+
+    Reads the request it is given, nothing else: the work is the request's size.
+    """
+
+    if isinstance(url, str):
+        for segment in url.split("?", 1)[0].split("/"):
+            decoded = unquote(segment)
+            if is_placeholder(decoded):
+                raise PlaceholderRefused(decoded.strip())
+    pending = [body]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            if is_placeholder(value):
+                raise PlaceholderRefused(value.strip())
+        elif isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple)):
+            pending.extend(value)
+
+
 class _TransportGuard:
     def __init__(self, client: httpx.Client, target: str) -> None:
         self._client = client
         self._target = target
 
     def _guard(self, method: str, *args: Any, **kwargs: Any) -> httpx.Response:
+        # A suggested command's placeholder (<TEXT>, <PROPOSAL_ID>) never leaves
+        # this client as a value, on any surface: the line run unchanged refuses.
+        refuse_placeholders(args[0] if args else kwargs.get("url"), kwargs.get("json"))
         try:
             response: httpx.Response = getattr(self._client, method)(*args, **kwargs)
         except (httpx.ReadTimeout, httpx.WriteTimeout) as exc:

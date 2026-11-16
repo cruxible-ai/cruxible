@@ -115,7 +115,7 @@ class StoreBodyRequest(_StrictPlaybillRequest):
 
 class ProposeDocumentRequest(_StrictPlaybillRequest):
     shell: DocumentShell
-    proposal_name: str
+    proposal_name: CallerText
     source_compilation_digest: str | None = None
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
@@ -131,14 +131,14 @@ class CompilerUpgradeRequest(_StrictPlaybillRequest):
     #: Omitted: the current accepted coordinate.
     base: AcceptedCoordinate | None = None
     #: Omitted: ``upgrade-to-<revision label>``.
-    proposal_name: str | None = None
+    proposal_name: CallerText | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
 
 
 class ProposePrincipalRequest(_StrictPlaybillRequest):
     principal: PrincipalRecord
-    proposal_name: str
+    proposal_name: CallerText
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -182,7 +182,7 @@ class FileBundleRequest(_StrictPlaybillRequest):
 
 class FileProposeRequest(FileBundleRequest):
     file: str
-    proposal_name: str
+    proposal_name: CallerText
     dry_run: DryRun = None
     at: PreviewAt = None
     #: if_allowed: land the change when policy and the caller allow it;
@@ -195,7 +195,7 @@ class ProposeBuiltinClaimTypeRequest(_StrictPlaybillRequest):
         "cruxible-builtin-claim-type-propose-request-v1"
     )
     builtin: BuiltinClaimTypeName
-    proposal_name: str
+    proposal_name: CallerText
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -206,7 +206,7 @@ class ProposeBuiltinClaimTypeRequest(_StrictPlaybillRequest):
 
 class ProposeCaptureContractRequest(_StrictPlaybillRequest):
     input: CaptureContractInputRecord
-    proposal_name: str
+    proposal_name: CallerText
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -218,7 +218,7 @@ class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
         "playbill-claim-type-input-propose-request-v1"
     )
     input: ClaimTypeInputRecord
-    proposal_name: str
+    proposal_name: CallerText
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
