@@ -43,9 +43,14 @@ helps resolve grain, identifiers and joins without requiring a profiling
 project for every input.
 
 Kinds and fields use the vocabulary file; other definitions use authoring;
-values use `set`, `retire` or `write`. File passages, sections, Captures,
-contracts and the writer's own words provide evidence through the supported
-write surface. Evidence belongs to each Claim: a decision and the values that
+values use `set`, `retire` or `write`. A `write` (SDK `cx.changes(because=...)`)
+can create the Subjects it is about in the same change set: a `create` change
+whose `key` is the kind's one key value or `{field: value}` (SDK
+`batch.create(kind, key=...)` or a `cx.new_subject(...)` draft, usable as
+`subject=` and as a value). File passages, sections, Captures, contracts and
+the writer's own words provide evidence through the supported write surface.
+A workspace file is cited by its path; a file the catalog does not name yet is
+catalogued by the write that cites it. Evidence belongs to each Claim: a decision and the values that
 rest on its reasoning (its date included) cite the section written in the
 same change. Preserve verdict flags instead of treating every stored value as
 supported.

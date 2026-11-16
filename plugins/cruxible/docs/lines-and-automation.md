@@ -301,6 +301,30 @@ outcome: accepted
 ...
 ~~~
 
+When the change set waits for review (`--no-accept`, or a policy that needs an
+approval), `proposal review` shows each definition as it would stand:
+
+~~~text
+$ cruxible proposal review sha256:6ccb2eec…
+...
+Definitions (3):
+  Line catalog.acme-discontinued: created
+    procedure    catalog.acme-discontinued
+    authority    propose
+    binding      read -> cruxible-builtin#workspace.file
+    parameter    path = supplier/acme-discontinued.csv
+    acquisition  listing.capture: (no origins)
+    budget       max_capture_bytes=1048576  max_items=5000  max_provider_calls=100  max_wall_clock_microseconds=60000000
+  ProcedureMandate catalog.acme-discontinued-propose: created
+    line       catalog.acme-discontinued
+    grants     propose
+    valid      2026-11-15T00:00:00Z .. 2027-02-13T00:00:00Z
+    namespace  claims
+  Trigger catalog.acme-discontinued-daily: created
+    schedule  on cron 0 6 * * * (UTC)
+    target    Line:catalog.acme-discontinued
+~~~
+
 The Line's `parameters` are the Procedure's `params`: a Line run's input is
 empty, so a value a Line supplies is declared as a param, never as `input`
 (`line_parameters_refused` otherwise). Accepting the Line binds its slot: core
@@ -319,16 +343,16 @@ authoring example line`, `trigger` and `procedure-mandate` print templates.
 
 ~~~text
 $ cruxible line run catalog.acme-discontinued
-RUN-18882aff…: succeeded
+RUN-9048e6f5…: succeeded
 Counts: written 2 (settled 0, proposed 2); unchanged 0; refused 0; inbox 0
 Result: {}
 Next: done
 Read listing.capture: supplier/acme-discontinued.csv (57 bytes, sha256:f0905f48…)
-Capture listing.capture: sha256:ab0fac03…
-Node listing call succeeded: 1 capture CAP-ab0fac03a37d
+Capture listing.capture: sha256:ca56e703…
+Node listing call succeeded: 1 capture CAP-ca56e7030e1b
 Node parts extract succeeded: 2 records
 Node step_3 claims succeeded: 2 written; proposed
-Proposal step_3: sha256:dd16f9be… candidate sha256:34c20e4b… (settle fell back: cruxible.settle.authority_capped_by_line_max_authority)
+Proposal step_3: sha256:053ebd7f… candidate sha256:c854a7ba… (settle fell back: cruxible.settle.authority_capped_by_line_max_authority)
   2 items: 2 changed
   ...
 ~~~
@@ -336,29 +360,37 @@ Proposal step_3: sha256:dd16f9be… candidate sha256:34c20e4b… (settle fell ba
 Its Line is capped at `propose`, so the claims step proposed. `line run
 --parameters FILE` runs it once on other parameter values (another file, say):
 that run is not the one the Line's mandate covers, so it proposes and never
-settles. The proposal reads like anyone's, with the run that made it and each
-item's reason:
+settles. The proposal reads like anyone's, with the Line and run that made it,
+the Capture each value cites, and each item's reason:
 
 ~~~text
-$ cruxible proposal review sha256:dd16f9be…
-...
-Originating Line: Line:catalog.acme-discontinued sha256:8d28a0ac…
-Why: Proposed by Procedure catalog.acme-discontinued run RUN-18882aff… terminal step_3
-...
-Item reasons: 2 (bounded preview; --detail to page)
-  Reason: {"path":"claims/c5/CLM-c520c897….json","reason":"Listed in Acme's discontinued-parts file."}
-  Reason: {"path":"claims/8b/CLM-8bda31cf….json","reason":"Listed in Acme's discontinued-parts file."}
+$ cruxible proposal review sha256:053ebd7f…
+Proposal: sha256:053ebd7f8525fa1af27b30eeca14a2058bcc461f2c8fd232c27f758829653d8c
+Candidate: sha256:c854a7ba01e5818f9a977953ee228dd8f62cc571da0d3955c6aed98f56a97fbc
+Originating Line: Line:catalog.acme-discontinued sha256:601063582b390f0e76f4d128554c1f4846c1183aa26f467816a91c1dcf0e7661
+Why: Proposed by Procedure catalog.acme-discontinued run RUN-9048e6f5… terminal step_3 ...
+Required tier: governed_write; activation: snapshot
 Changes: 2 created / 0 revised / 0 retired
-...
+  catalog.part: 2 created / 0 revised / 0 retired
+Values (2):
+  set catalog.part/af-208 discontinued: true  [CLM-9d923df7aa076880971efd6febf5ecd1; verdict supported; role observation]
+    cites CAP-ca56e7030e1b acme.discontinued
+      | part,reason
+      | af-208,Replaced by af-210
+      | wb-330,End of line
+    because: Listed in Acme's discontinued-parts file.
+  set catalog.part/wb-330 discontinued: true  [CLM-a813f34986846c072ab44b4508b6f2c4; verdict supported; role observation]
+    ...
+Item reasons: 2 (--detail to page them)
 ~~~
 
 Once approved, each Claim cites what the run read, not the file as it is
 now:
 
 ~~~text
-$ cruxible get CLM-8bda31cf… --detail evidence
+$ cruxible get CLM-a813f349… --detail evidence
 value: true
-capture CAP-ab0fac03a37d  CaptureContract:catalog.acme-discontinued v1  source=acme.discontinued  observed=2026-11-15T20:22:16.260809+00:00  evidence: admitted
+capture CAP-ca56e7030e1b  CaptureContract:catalog.acme-discontinued v1  source=acme.discontinued  observed=2026-11-16T00:37:11.126840+00:00  evidence: admitted
 rationale: Listed in Acme's discontinued-parts file.
 ~~~
 
@@ -393,12 +425,15 @@ never chosen again silently.
 | `cruxible.line.binding_undeclared` | The operation you named does not serve the slot's capability. | Name an operation that does. |
 | `cruxible.line.binding_builtin_mismatch` | You named core's built-in for a capability it does not serve; it serves only `workspace.file` and `workspace.files`. | Name a provider operation. |
 
-With no web provider installed, a Procedure whose slot names `web.fetch@1`
-refuses to run:
+Each of these messages ends with its repair, which the CLI also prints on its
+own `Repair:` line (`binding_unavailable`, for a build that is not live or a
+capability name written where a provider belongs, likewise). With no web
+provider installed, a Procedure whose slot names `web.fetch@1` refuses to run:
 
 ~~~text
 $ cruxible procedure run catalog.acme-notices-fetch input.json
-Error: cruxible.line.slot_unfilled: No live operation serves slot `fetch` (web.fetch@1, external_read).
+Error: cruxible.line.slot_unfilled: No live operation serves slot `fetch` (web.fetch@1, external_read). Install a provider that serves web.fetch (`cruxible provider install PACKAGE`, or `cruxible kit add KIT` for a kit that bundles one).
+...
 ~~~
 
 Growing a kind that a provider produces needs that provider too. A derived

@@ -61,7 +61,7 @@ car-parts 1.0.0: accepted (install)
 ...
 
 $ cruxible kit status
-car-parts 1.0.0 sha256:3d992c39…; …
+car-parts 1.0.0 content sha256:3d992c39…; …
   source: ghcr.io/cruxible-ai/kits/car-parts@sha256:<car-parts 1.0.0 digest>
   built by … (claimed)
 ~~~
@@ -190,7 +190,7 @@ Approval policy: self_approval_allowed
 Base kit: base 1.0.0 installed
 ...
 $ cruxible kit status
-base 1.0.0 sha256:0bd64225…; up to date
+base 1.0.0 content sha256:433a7768…; up to date
   source: bundled
 ~~~
 
@@ -206,11 +206,13 @@ base 1.0.0 sha256:0bd64225…; up to date
   approval alone: `init` stops it at a proposal and prints the approve
   command for a second principal (`Base kit: base 1.0.0 awaits approval,
   proposal sha256:… (cruxible proposal approve sha256:… --signer-id ID --key
-  FILE, as a second principal)`). Until it is approved, `kit status` lists no
-  kits and the capabilities are absent.
+  FILE, as a second principal)`). Until it is approved, the capabilities are
+  absent, and `kit status` lists the pending add with its proposal and the
+  approve command.
 - **Upgrading.** The base kit changes only with a Cruxible release. A newer
   release may bundle a newer version; `kit status` compares the installed one
-  with the bundled one (no registry is asked), and `cruxible kit add base`
+  with the bundled one (no registry is asked), and says when the installed
+  content differs from the bundled release of the same version; and `cruxible kit add base`
   previews and proposes the upgrade, with the usual keep rules. Nothing
   upgrades by itself.
 - **Yours to extend.** Its definitions are ordinary instance state: add a
@@ -236,7 +238,7 @@ the bundle and records the base kit at the version installed where you build:
 
 ~~~text
 $ cruxible kit build --id catalog --version 1.0.0 --owns catalog. --out ./catalog-1.0.0
-catalog 1.0.0: 27 artifacts, 0 provider package(s), sha256:ee5571b5…
+catalog 1.0.0: 27 artifacts, 0 provider package(s), content sha256:ee5571b5…
   requires: base >= 1.0.0
 ~~~
 
@@ -257,8 +259,11 @@ $ cruxible kit remove base
 Error: cruxible.kit.remove_required: Kit base cannot be removed: kit catalog requires it.
 ~~~
 
-`kit status` shows each requirement and whether it is met (`requires base >=
-1.0.0: met (installed 1.0.0)`), and the kit's receipt records it as installed.
+The base kit itself is never removed (see [Remove](#remove)).
+
+`kit status` and the `kit add` preview show each requirement and whether it
+is met (`requires base >= 1.0.0: met (installed 1.0.0)`, or `not met (not
+installed)`), and the kit's receipt records it as installed.
 Carrying a copy still works for a definition that belongs to no installed
 kit.
 
@@ -346,8 +351,10 @@ The preview lists the plan grouped by kind (what each definition does and
 how many dependents it has), each provider package and what happens to it
 (already installed, `satisfied` when operations installed here already serve
 and fit every slot the kit's Procedures declare, or to be installed), the
-kits it requires, and who built the release, from
-which instance and at which coordinate. That build
+kits it requires and whether each is met, and who built the release, from
+which instance and at which coordinate. For a kit that bundles providers, it
+says a commit installs those providers first, then proposes the definitions,
+which are checked against the installed providers. That build
 record is claimed by the builder, not proven. The preview ends with the
 command that commits exactly what you saw:
 
@@ -423,13 +430,17 @@ Procedure and parameters.
 cruxible kit status
 ~~~
 
-`kit status` lists each installed kit with its version, the definitions
-edited here since install, the ones kept on purpose, its provider packages
+`kit status` lists each installed kit with its version and content digest
+(the one `kit add` pins, labelled `content sha256:`), the definitions edited
+here since install, the ones kept on purpose, its provider packages
 with their delivery and state (`installed`, `differs`, `satisfied` or
 `missing`),
 and, for a kit installed from a registry, the newest release available (it
-lists the repository's tags; `--offline` skips that). A kit installed from a
-directory or layout reports a local source.
+lists the repository's tags; `--offline` skips that). An installed release
+whose content differs from the available one of the same version says so,
+rather than `up to date`. A kit installed from a directory or layout reports
+a local source. A kit add waiting on its proposal is listed with the command
+that approves it.
 
 Installing a newer release is the same `kit add` with the new version. An
 upgrade always proposes, and the release's version wins by default. The
@@ -519,10 +530,13 @@ retire, or while an installed kit requires the kit
 (`cruxible.kit.remove_required`). Like `kit add`, it lands at once when the
 approval policy requires no approval and otherwise stops at a proposal.
 
-Removing the base kit retires only its CaptureKind, `web.search-results`:
-capability and Contract versions are immutable and stay accepted. Adding it
-back is refused today (`cruxible.capture_contract.revival_refused`, since its
-retired CaptureKind cannot be revived), so keep the base kit installed.
+The base kit cannot be removed:
+
+~~~text
+$ cruxible kit remove base
+Error: cruxible.kit.base_required: the base kit stays installed: it holds the capabilities and Contracts that workspace reads and web fetches name, and a definition it retired could not be added back.
+Repair: Leave the base kit installed; to stop using one of its definitions, retire that definition in an authored change (cruxible authoring submit).
+~~~
 
 ## Automation that comes with a kit
 
@@ -549,8 +563,9 @@ The standard start:
    the proposal under your approval policy. A Runbook may name Lines the same
    change set adds, and a Trigger may aim at a Runbook it adds.
 3. **Preview** the start: `cruxible runbook preview security.start` shows, per
-   step, what it reads and writes, what its mandates settle and what would go
-   to review, and any step that reads what only a later step writes.
+   step, what it reads and writes, each call's provider build
+   (`Provider:NAME/<12 hex>`) and the capability its slot names, what its
+   mandates settle and what would go to review, and any step that reads what only a later step writes.
 4. **Run** it: `cruxible runbook run security.start`. Steps run in order; a step
    whose writes go to review stops the run, so approve that proposal and run it
    again.
