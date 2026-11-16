@@ -43,10 +43,12 @@ Counted on the measuring thread only:
   counts once), whenever the connection was opened;
 - ``fsyncs`` and ``file_opens``: whole-settle observations. ``non_acceptance_fsyncs`` excludes the
   acceptance batch and ledger Git-object flushes (reported separately);
-- ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``: the complete
-  terminal item group, including its reservations and CAS publication. The
-  group has no fsyncs, one file open per new body, and one journal append
-  regardless of the number of items. How many distinct CAS shards a group's
+- ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``,
+  ``journal_records`` and ``journal_items``: the complete terminal item group
+  (its run-free bodies and its one ``item_dependencies`` record), including
+  its reservation and CAS publication. The group has no fsyncs, one file open
+  per new body, and one journal append of one record regardless of the number
+  of items (``journal_items`` is how many it covers). How many distinct CAS shards a group's
   bodies land in is chance (content-addressed names collide), so the shards
   the group's own payloads require are derived from their digests
   (``journal_required_shards``): the first open of each is counted in
@@ -274,7 +276,6 @@ def _journal_counted() -> Iterator[None]:
 
     original = ProcedureExecutor._record_terminal_items
     build = execution_module.build_terminal_items
-    append_one = LocalJournalBackend.append
     append = LocalJournalBackend.append_many
     flush = activation.flush_acceptance
     read = JournalIndex.read_row
@@ -301,6 +302,7 @@ def _journal_counted() -> Iterator[None]:
             finally:
                 _COUNTS.thread = thread
             _COUNTS.counts["journal_required_shards"] += len(required)
+            _COUNTS.counts["journal_items"] += int(built.payload["count"])
             _COUNTS.required_shards = required
         return built
 
@@ -315,12 +317,6 @@ def _journal_counted() -> Iterator[None]:
         finally:
             _COUNTS.in_item_group = False
 
-    def appended(self: Any, *args: Any, **kwargs: Any) -> Any:
-        if _COUNTS.measuring() and _COUNTS.in_item_group:
-            _COUNTS.counts["journal_appends"] += 1
-            _COUNTS.counts["journal_records"] += 1
-        return append_one(self, *args, **kwargs)
-
     def append_many(self: Any, drafts: Any, **kwargs: Any) -> Any:
         if _COUNTS.measuring() and _COUNTS.in_item_group and drafts:
             _COUNTS.counts["journal_appends"] += 1
@@ -330,7 +326,6 @@ def _journal_counted() -> Iterator[None]:
     activation.flush_acceptance = barrier
     ProcedureExecutor._record_terminal_items = group
     execution_module.build_terminal_items = building
-    LocalJournalBackend.append = appended
     LocalJournalBackend.append_many = append_many
     JournalIndex.read_row = read_row
     try:
@@ -339,7 +334,6 @@ def _journal_counted() -> Iterator[None]:
         activation.flush_acceptance = flush
         ProcedureExecutor._record_terminal_items = original
         execution_module.build_terminal_items = build
-        LocalJournalBackend.append = append_one
         LocalJournalBackend.append_many = append
         JournalIndex.read_row = read
 
@@ -666,8 +660,11 @@ def test_a_settles_work_per_item_stays_at_its_floor(
         tmp_path, monkeypatch, revise=revise, count=N, many=many
     )
 
-    assert small["journal_records"] == N
-    assert large["journal_records"] == 2 * N
+    # One grouped record covers the terminal's items: one append, one record,
+    # whatever the item count (a single append goes through append_many).
+    assert small["journal_items"] == N
+    assert large["journal_items"] == 2 * N
+    assert small["journal_records"] == large["journal_records"] == 1
     assert small["journal_appends"] == large["journal_appends"] == 1
     _assert_shards_as_required(small, large, after_large)
     slope = {name: (large[name] - small[name]) / N for name in PER_ITEM}
@@ -718,8 +715,9 @@ def test_settle_cost_per_claim_is_flat_at_12_and_48(
                 tmp_path / case / str(count), monkeypatch, revise=revise, count=count
             )
             slopes[case][count] = {name: (large[name] - small[name]) / count for name in counters}
-            assert small["journal_records"] == count
-            assert large["journal_records"] == 2 * count
+            assert small["journal_items"] == count
+            assert large["journal_items"] == 2 * count
+            assert small["journal_records"] == large["journal_records"] == 1
             assert small["journal_appends"] == large["journal_appends"] == 1
             _assert_shards_as_required(small, large, after)
             for name, ceiling in PER_ITEM.items():
@@ -948,22 +946,29 @@ def _assert_shards_as_required(*windows: Counter[str]) -> None:
 def test_added_per_item_shard_work_exceeds_the_journal_open_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: str
 ) -> None:
-    """The guard's own check: one more shard open per stored body fails the ceiling."""
+    """The guard's own check: shard opens added per logical item fail the ceiling.
 
-    from cruxible_core.storage.cas import ContentAddressedBodyStore
+    Item bodies are run-free and deduplicated (an absence terminal's items
+    share one body), so work added per stored body need not grow with items;
+    the injected work is added per item of the terminal's group instead: two
+    opens per item, of a shard the group requires (opened again) or of one it
+    does not require.
+    """
 
-    store_many = ContentAddressedBodyStore.store_many
+    import cruxible_core.procedures.execution as execution_module
 
-    def opening_more(self: Any, contents: Any, *, journal_payload: bool = False) -> Any:
-        stored = store_many(self, contents, journal_payload=journal_payload)
-        if journal_payload:
-            for item in stored:
-                value = item.digest.removeprefix("sha256:")
-                shard = value[:2] if extra == "own_shard_again" else f"{int(value[:2], 16) ^ 1:02x}"
-                os.close(self._shard(shard, create=True))
-        return stored
+    original = execution_module.ProcedureExecutor._record_terminal_items
 
-    monkeypatch.setattr(ContentAddressedBodyStore, "store_many", opening_more)
+    def opening_more(self: Any, *args: Any, **kwargs: Any) -> Any:
+        bound = original(self, *args, **kwargs)
+        required = sorted(_COUNTS.required_shards) or ["00"]
+        shard = required[0] if extra == "own_shard_again" else f"{int(required[0], 16) ^ 1:02x}"
+        for _child in bound.children:
+            for _ in range(2):
+                os.close(self.bodies._shard(shard, create=True))  # noqa: SLF001
+        return bound
+
+    monkeypatch.setattr(execution_module.ProcedureExecutor, "_record_terminal_items", opening_more)
     small = _measure_absence_work(tmp_path / "small", monkeypatch, policy="mirror", count=N)
     large = _measure_absence_work(tmp_path / "large", monkeypatch, policy="mirror", count=2 * N)
     slope = (large["journal_file_opens"] - small["journal_file_opens"]) / N

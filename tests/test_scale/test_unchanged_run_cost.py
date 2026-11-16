@@ -85,24 +85,19 @@ def _rows(root: Path) -> int:
 
 @contextmanager
 def _appends_counted() -> Iterator[Counter[str]]:
-    counts: Counter[str] = Counter()
-    append = LocalJournalBackend.append
-    append_many = LocalJournalBackend.append_many
+    """Journal records appended: a single append goes through append_many, counted once."""
 
-    def one(self: Any, *args: Any, **kwargs: Any) -> Any:
-        counts["journal_appends"] += 1
-        return append(self, *args, **kwargs)
+    counts: Counter[str] = Counter()
+    append_many = LocalJournalBackend.append_many
 
     def many(self: Any, drafts: Any, **kwargs: Any) -> Any:
         counts["journal_appends"] += len(drafts)
         return append_many(self, drafts, **kwargs)
 
-    LocalJournalBackend.append = one  # type: ignore[method-assign]
     LocalJournalBackend.append_many = many  # type: ignore[method-assign]
     try:
         yield counts
     finally:
-        LocalJournalBackend.append = append  # type: ignore[method-assign]
         LocalJournalBackend.append_many = append_many  # type: ignore[method-assign]
 
 
