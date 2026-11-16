@@ -492,6 +492,23 @@ entries:
     assert evidence.observation is not None
     assert evidence.observation.source_id == "repo.notes"
     assert "would" in result.output
+    # The catalog name cites the same file as its path.
+    named = _run(
+        "set",
+        WI1,
+        "title",
+        "Tidy the CLI",
+        "--because",
+        "The notes name it.",
+        "--evidence-file",
+        "repo.notes#Title: Tidy the CLI",
+        "--workspace-root",
+        str(workspace),
+        "--dry-run",
+    )
+    assert named.exit_code == 0, named.output
+    by_name = served.requests[-1].changes[0].evidence
+    assert by_name.observation == evidence.observation
     # An uncatalogued workspace file is catalogued by set, as by write.
     (workspace / "todo.txt").write_text("Title: Tidy the CLI now\n", encoding="utf-8")
     catalogued = _run(

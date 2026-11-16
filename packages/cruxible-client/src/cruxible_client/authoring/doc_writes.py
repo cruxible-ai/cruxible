@@ -24,6 +24,7 @@ from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import (
     FileSelector,
     catalog_file_paths,
+    catalogued_path,
     source_content_for_observation,
     workspace_files,
 )
@@ -345,7 +346,8 @@ def _write_workspace(
     def load(
         file: str, *, name: str | None = None, editing: bool = False, citing: bool = False
     ) -> _File:
-        path = _path(workspace, file)
+        # A path or a catalog name, as every citation names a file.
+        path = _path(workspace, catalogued_path(workspace, file))
         if path in files:
             return files[path]
         matches = () if catalog is None else catalog.entries_for_path(path)

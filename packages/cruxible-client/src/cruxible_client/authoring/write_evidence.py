@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from cruxible_client.authoring.selectors import workspace_files
+from cruxible_client.authoring.selectors import catalogued_path, workspace_files
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.workspace_layout import workspace_path
 from cruxible_client.contracts.write import (
@@ -32,7 +32,9 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
 
     if not isinstance(evidence, FileEvidence | SectionEvidence) or evidence.observation is not None:
         return evidence
-    cited = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
+    named = evidence.file if isinstance(evidence, SectionEvidence) else evidence.path
+    # A path or a catalog name: one resolver for every citation.
+    cited = catalogued_path(workspace, named)
     path = Path(cited) if Path(cited).is_absolute() else workspace / cited
     catalogs = (workspace_path(workspace, "files.yaml"), workspace / "files.yaml")
     catalogued = any(item.is_file() for item in catalogs)
@@ -47,7 +49,7 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
         )
     files = workspace_files(workspace)
     if isinstance(evidence, SectionEvidence):
-        selection = files.select(evidence.file).section(*evidence.section)
+        selection = files.select(cited).section(*evidence.section)
         return evidence.model_copy(
             update={
                 "observation": selection.observation(),
@@ -55,7 +57,7 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
                 "own_words": evidence.own_words or False,
             }
         )
-    selection = files.select(evidence.path).anchor(evidence.anchor)
+    selection = files.select(cited).anchor(evidence.anchor)
     return evidence.model_copy(update={"observation": selection.observation()})
 
 
@@ -72,17 +74,6 @@ def observe_changes(changes: Sequence[Change], *, workspace: Path) -> tuple[Chan
             )
         observed.append(change)
     return tuple(observed)
-
-
-def _catalogued_path(workspace: Path, file: str) -> str:
-    """A workspace file by its path, or by its file-catalog name (as ``next`` names it)."""
-
-    if Path(file).is_absolute() or (workspace / file).exists():
-        return file
-    try:
-        return str(workspace_files(workspace).path_for_file(file))
-    except (ValueError, OSError):
-        return file
 
 
 def rebind_evidence(
@@ -115,7 +106,7 @@ def rebind_evidence(
             if file is not None
             else "section takes FILE#Heading/Path (FILE# for the preamble)"
         )
-    located = _catalogued_path(workspace, path)
+    located = catalogued_path(workspace, path)
     if file is not None:
         return FileEvidence(file=f"{located}#{rest}")
     return SectionEvidence(file=located, section=tuple(item for item in rest.split("/") if item))
