@@ -512,11 +512,12 @@ def test_cli_display_cuts_offer_runnable_evidence_even_below_the_summary_limit(
         result = CliRunner().invoke(cli, [*PREFIX, "get", ref, "--detail", detail])
         assert result.exit_code == 0, result.output
         # A summary card's cut names its Claim's read (a Subject card takes no
-        # --detail evidence); a history row is on the Claim's own card.
+        # --detail evidence); a history row's value, cut only for width, is whole
+        # in the read's --json.
         hint = (
             f"cruxible get {claim.claim_id[:CLAIM_LINE_ID_CHARS]} --detail evidence"
             if detail == "summary"
-            else "--detail evidence for all"
+            else "--json for all"
         )
         assert f"{printable(value)[: width - 1]}… ({len(value)} chars; {hint})" in result.output
         step = next(
@@ -547,7 +548,7 @@ def test_cli_value_width_boundary_and_evidence_objects_are_not_silently_cut(
         == "x" * (width - 1) + "…"
     )
     cut = _get_value_text("x" * (width + 1), width=width)
-    assert cut == "x" * (width - 1) + f"… ({width + 1} chars; --detail evidence for all)"
+    assert cut == "x" * (width - 1) + f"… ({width + 1} chars; --json for all)"
     value = {"note": "x" * 300}
     _stub(
         monkeypatch,
