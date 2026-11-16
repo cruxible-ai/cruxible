@@ -69,14 +69,15 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events
 CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
  listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
 """
-_VERSION = 7
+_VERSION = 8
 # Each authored timer's instants that fell due while no daemon ran, as the first
 # evaluations after restarts found them: accumulated across restarts until the
-# timer's target runs, retained beside the fires, never rebuilt.
+# timer's target runs, for one Trigger version (its target), retained beside the
+# fires, never rebuilt.
 _MISSED_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS missed (trigger_id TEXT PRIMARY KEY, action TEXT NOT NULL, "
     "restarted_at TEXT NOT NULL, first_due TEXT NOT NULL, last_due TEXT NOT NULL, "
-    "count INTEGER NOT NULL CHECK(count > 0)) STRICT",
+    "count INTEGER NOT NULL CHECK(count > 0), version TEXT NOT NULL DEFAULT '') STRICT",
 )
 # Each Runbook fire key's progress, retained beside its fires and never rebuilt
 # (D-R36): ``latest`` is the newest fire, kept as fires are recorded so a poll
@@ -254,10 +255,15 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                 connection.execute(table)
             connection.execute(f"PRAGMA user_version={_VERSION}")
         elif version == 6:
-            # v7 adds only the missed-instants table; a v6 reader sees none.
+            # v7 added only the missed-instants table; a v6 reader sees none.
             if create:
                 for table in _MISSED_SCHEMA:
                     connection.execute(table)
+                connection.execute(f"PRAGMA user_version={_VERSION}")
+        elif version == 7:
+            # v8 binds each missed record to its Trigger version (and so its target).
+            if create:
+                connection.execute("ALTER TABLE missed ADD COLUMN version TEXT NOT NULL DEFAULT ''")
                 connection.execute(f"PRAGMA user_version={_VERSION}")
         elif version in (2, 3, 4, 5):
             # A reader of an older journal sees what it holds; the next writer
@@ -565,6 +571,8 @@ class MissedInstants:
     first_due: datetime
     last_due: datetime
     count: int
+    #: The Trigger version (artifact digest) whose instants these are.
+    version: str = ""
 
 
 def _seeded_trigger_paths() -> frozenset[str]:
@@ -626,7 +634,11 @@ def _missed(
             continue
         gap = timer_gap(item.schedule, accepted_at=item.accepted_at, after=after, through=through)
         if gap is not None:
-            found.append(MissedInstants(item.trigger, item.action, listening_since, *gap))
+            found.append(
+                MissedInstants(
+                    item.trigger, item.action, listening_since, *gap, version=item.version
+                )
+            )
     return found
 
 
@@ -642,15 +654,18 @@ def _record_missed(
     restart: a fire of the action (read here, one index seek), or a run of the
     Runbook (``target_ran_since``; without it a Runbook's record accumulates).
     An unreconciled record keeps its earliest instant and adds the count; a
-    reconciled one is replaced. One read per timer that missed instants.
+    reconciled one is replaced, and so is a record of another Trigger version
+    (a retargeted or rescheduled Trigger owes nothing for its predecessor's
+    instants). One read per timer that missed instants.
     """
 
     for item in missed:
         row = connection.execute(
-            "SELECT restarted_at,first_due,count FROM missed WHERE trigger_id=?", (item.trigger,)
+            "SELECT restarted_at,first_due,count,action,version FROM missed WHERE trigger_id=?",
+            (item.trigger,),
         ).fetchone()
         first, count = item.first_due, item.count
-        if row is not None:
+        if row is not None and (str(row[3]), str(row[4])) == (item.action, item.version):
             previous = _instant(str(row[0]))
             if item.action.startswith(RUNBOOK_FIRE_PREFIX):
                 ran = target_ran_since is not None and target_ran_since(item.action, previous)
@@ -663,9 +678,10 @@ def _record_missed(
             if not ran:
                 first, count = min(first, _instant(str(row[1]))), count + int(row[2])
         connection.execute(
-            "INSERT INTO missed VALUES (?,?,?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET "
+            "INSERT INTO missed VALUES (?,?,?,?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET "
             "action=excluded.action,restarted_at=excluded.restarted_at,"
-            "first_due=excluded.first_due,last_due=excluded.last_due,count=excluded.count",
+            "first_due=excluded.first_due,last_due=excluded.last_due,count=excluded.count,"
+            "version=excluded.version",
             (
                 item.trigger,
                 item.action,
@@ -673,6 +689,7 @@ def _record_missed(
                 format_datetime(first),
                 format_datetime(item.last_due),
                 count,
+                item.version,
             ),
         )
 
@@ -695,11 +712,15 @@ def missed_trigger_instants(instance: Any) -> tuple[MissedInstants, ...]:
     """
 
     with _open(instance) as connection:
-        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 7:
+        if connection is None:
+            return ()
+        user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if user_version < 7:
             return ()
         rows = connection.execute(
-            "SELECT trigger_id,action,restarted_at,first_due,last_due,count FROM missed "
-            "ORDER BY trigger_id"
+            "SELECT trigger_id,action,restarted_at,first_due,last_due,count,"
+            + ("version" if user_version >= 8 else "''")
+            + " FROM missed ORDER BY trigger_id"
         ).fetchall()
     return tuple(
         MissedInstants(
@@ -709,8 +730,9 @@ def missed_trigger_instants(instance: Any) -> tuple[MissedInstants, ...]:
             _instant(first),
             _instant(last),
             int(count),
+            version=str(version),
         )
-        for trigger, action, restarted, first, last, count in rows
+        for trigger, action, restarted, first, last, count, version in rows
     )
 
 

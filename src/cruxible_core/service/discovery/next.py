@@ -4837,10 +4837,13 @@ def _trigger_missed_items(
     missed = missed_trigger_instants(instance)
     if not missed:
         return ()
-    live = {item.trigger for item in internal_triggers(instance)}
+    live = {item.trigger: item for item in internal_triggers(instance)}
     items = []
     for row in missed:
-        if row.trigger not in live:
+        current = live.get(row.trigger)
+        if current is None or (row.version and row.version != current.version):
+            # Retired, or succeeded since (another target or schedule): the
+            # record is its predecessor's, and nothing owes it now.
             continue
         if row.action.startswith(RUNBOOK_FIRE_PREFIX):
             runbook = row.action.removeprefix(RUNBOOK_FIRE_PREFIX)

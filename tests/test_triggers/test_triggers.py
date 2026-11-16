@@ -186,7 +186,7 @@ def test_a_journal_its_creator_has_not_committed_reads_as_none(tmp_path: Path) -
     # A writer still creates the schema in it.
     fire(world, NOW + timedelta(days=1), since=NOW + timedelta(days=1))
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
 
 
 def test_timer_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
@@ -392,7 +392,7 @@ def test_version_two_journal_migrates_in_place_without_losing_fires(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         assert connection.execute("SELECT * FROM timers").fetchall() == timers
     assert trigger_events(world) == events
 
@@ -409,7 +409,7 @@ def test_version_three_journal_gains_the_kit_resume_tables_in_place(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         assert connection.execute("SELECT count(*) FROM kit_resumes").fetchone() == (0,)
     assert trigger_events(world) == events
 
@@ -432,7 +432,7 @@ def test_version_four_journal_without_runbook_fires_migrates_with_empty_runbook_
     assert pending_runbook_fires(world) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         assert connection.execute("SELECT count(*) FROM runbook_fires").fetchone() == (0,)
     assert trigger_events(world) == events
     assert pending_runbook_fires(world) == ()
@@ -510,7 +510,7 @@ def test_a_v5_journal_without_plan_columns_gains_them_when_it_holds_no_runbook_f
     assert pending_runbook_fires(world) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
         columns = {row[1] for row in connection.execute("PRAGMA table_info(runbook_fires)")}
         assert {"plan_digest", "plan"} <= columns
         assert connection.execute("SELECT count(*) FROM runbook_steps").fetchone() == (0,)
@@ -693,7 +693,7 @@ def test_a_version_six_journal_gains_the_missed_table_in_place(tmp_path: Path) -
     restart = NOW + timedelta(hours=4, minutes=30)
     fire(world, restart, triggers=(HOURLY,), since=restart)
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
     assert [(item.trigger, item.count) for item in missed_trigger_instants(world)] == [
         ("Trigger:sweep-hourly", 3)
     ]
@@ -778,3 +778,52 @@ def test_an_actions_missed_instants_reconcile_on_its_own_fires(tmp_path: Path) -
         NOW + timedelta(days=5),
         4,
     )
+
+
+def test_a_retargeted_trigger_owes_nothing_for_its_predecessors_instants(tmp_path: Path) -> None:
+    """Review finding 2: a successor version (here aimed at another Runbook) starts
+    its own record; the old target's count is never relabelled as the new one's."""
+
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    asked: list[str] = []
+
+    def target_ran_since(key: str, at: datetime) -> bool:
+        asked.append(key)
+        return False
+
+    old = replace(NIGHTLY, version="sha256:" + "1" * 64)
+    evaluate_triggers(world, now=NOW + timedelta(hours=3), listening_since=NOW, triggers=(old,))
+    first = NOW + timedelta(days=2, hours=3)
+    evaluate_triggers(world, now=first, listening_since=first, triggers=(old,))
+    successor = replace(old, action="runbook:other", version="sha256:" + "2" * 64)
+    again = NOW + timedelta(days=3, hours=3)
+    evaluate_triggers(
+        world,
+        now=again,
+        listening_since=again,
+        triggers=(successor,),
+        target_ran_since=target_ran_since,
+    )
+    (row,) = missed_trigger_instants(world)
+    assert (row.action, row.version, row.count) == ("runbook:other", successor.version, 1)
+    assert row.first_due == NOW + timedelta(days=3, hours=2)
+    assert asked == []
+
+
+def test_a_version_seven_journal_gains_the_missed_version_in_place(tmp_path: Path) -> None:
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1), triggers=(HOURLY,))
+    restart = NOW + timedelta(hours=4, minutes=30)
+    fire(world, restart, triggers=(HOURLY,), since=restart)
+    with sqlite3.connect(journal_path(world)) as connection:
+        connection.execute("ALTER TABLE missed DROP COLUMN version")
+        connection.execute("PRAGMA user_version=7")
+    assert [row.version for row in missed_trigger_instants(world)] == [""]
+    schedule_deadline(world, "next.expire", NOW + timedelta(days=1))
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
+    assert [row.count for row in missed_trigger_instants(world)] == [3]
