@@ -20,7 +20,11 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.errors import ApprovalRequirementUnmet, ProposalStale
+from cruxible_client.contracts.errors import (
+    ApprovalRequirementUnmet,
+    ProposalAlreadyAccepted,
+    ProposalStale,
+)
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.subjects import (
     parse_subject,
@@ -41,6 +45,8 @@ from cruxible_core.service.proposals.proposals import (
     service_playbill_proposal_status,
     stale_unreadmitted_proposals,
 )
+from cruxible_core.service.proposals.review import service_prepare_playbill_approval
+from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import client_material
 from tests.core_support._write_support import KIND, OWNER, _claim_type, seed_write_surface
 from tests.test_ledger.test_activation import _sign
@@ -323,3 +329,50 @@ def test_activating_an_unapproved_proposal_on_the_head_names_the_approve_repair(
 
     assert refused.value.repair.operation == "cruxible.proposal.approve"
     assert _entry(instance, source_id).status == "open"
+
+
+def test_acting_again_on_an_accepted_proposal_says_accepted_not_stale(
+    tmp_path: Path,
+) -> None:
+    """gapa-01/02: its own acceptance moved the head past its base, so approval and
+    activation called it stale and sent the caller to readmit and withdraw, which
+    both refuse. They answer that it is accepted, and where."""
+
+    instance, reviewer = _world(tmp_path)
+    proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "accepted once"))
+    receipt = _approve(instance, reviewer, proposal_id)
+    assert receipt.activation is not None and receipt.activation.accepted_coordinate is not None
+    accepted_at = receipt.activation.accepted_coordinate.git_oid
+    approvals_before = instance.proposal_evidence().read_approvals(
+        _proposal_result(instance, proposal_id).candidate.candidate_digest  # type: ignore[union-attr]
+    )
+
+    refusals = []
+    for act in (
+        lambda: service_activate_playbill_proposal(
+            instance, proposal_id=proposal_id, activated_by="reviewer"
+        ),
+        lambda: _approve(instance, reviewer, proposal_id),
+        lambda: service_prepare_playbill_approval(
+            instance,
+            proposal_id=proposal_id,
+            signer_id="reviewer",
+            access=BodyAccessContext(principal_id="reviewer", can_read_body=True),
+        ),
+    ):
+        with pytest.raises(ProposalAlreadyAccepted) as refused:
+            act()
+        refusals.append(refused.value)
+
+    for refusal in refusals:
+        assert refusal.error_code == "cruxible.proposal.already_accepted"
+        assert refusal.git_oid == accepted_at
+        assert f"already accepted at {accepted_at}" in str(refusal)
+        assert refusal.repair.operation == "cruxible.get"
+    # The repeated approval stored nothing.
+    assert (
+        instance.proposal_evidence().read_approvals(
+            _proposal_result(instance, proposal_id).candidate.candidate_digest  # type: ignore[union-attr]
+        )
+        == approvals_before
+    )

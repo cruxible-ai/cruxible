@@ -34,6 +34,7 @@ from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     ProjectionIntegrityError,
     ProposalActivationRequestInvalid,
+    ProposalAlreadyAccepted,
     ProposalIntegrityError,
     ProposalStale,
     SettlementIntegrityError,
@@ -395,6 +396,10 @@ def service_submit_playbill_approval(
             stale_paths_at_head,
         )
 
+        # Approving an accepted proposal again would store a signature that
+        # settles nothing; its acceptance is what moved the head past its base.
+        refuse_accepted(instance, proposal_id, candidate.candidate_digest)
+
         # Stale only when history changed what it touches since its base: then
         # it awaits its author's readmit, and no approval settles it. Otherwise
         # the approval lands the same change set at the head.
@@ -565,6 +570,25 @@ def _approvals_remaining(
     ):
         remaining = max(remaining, 1)
     return remaining
+
+
+def refuse_accepted(
+    instance: PlaybillInstance, proposal_id: str, candidate_digest: str | None
+) -> None:
+    """Refuse a settlement door asked to settle a proposal accepted state already holds.
+
+    One keyed read of the history index (the generation that published this
+    candidate); only a proposal whose base is behind the head can be accepted.
+    """
+
+    if candidate_digest is None:
+        return
+    with instance.accepted_history_reader() as history:
+        accepted = history.generation_for_candidate(candidate_digest)
+    if accepted is not None:
+        raise ProposalAlreadyAccepted(
+            proposal_id, git_oid=accepted.git_oid, generation=accepted.sequence
+        )
 
 
 def _delegated(proposal: ProposalResult) -> bool:
@@ -781,6 +805,8 @@ def _activate_candidate(
     if evaluation_at_entry.evaluated_base_oid != instance.accepted_coordinate().git_oid:
         if _recompiled:
             raise ProposalStale(proposal_id, reason="head_moved")
+        # Its own acceptance moved the head past its base: already settled, not stale.
+        refuse_accepted(instance, proposal_id, evaluation_at_entry.candidate_digest)
         proposal, candidate = _candidate_for_proposal(instance, proposal_id)
         if mandate_digest is None and not _delegated(proposal):
             # Landing it at the head would withdraw it and readmit it: activation

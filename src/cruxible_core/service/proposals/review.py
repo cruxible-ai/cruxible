@@ -711,6 +711,11 @@ def service_prepare_playbill_approval(
         instance, proposal_id=proposal_id, access=access, detail=True
     )
     assert isinstance(review, ProposalReview)
+    if review.parent_semantic_root != instance.accepted_coordinate().semantic_root:
+        from cruxible_core.service.authoring.documents import refuse_accepted
+
+        # Nothing to sign for: an accepted proposal's change is already in state.
+        refuse_accepted(instance, review.proposal_id, review.candidate_digest)
     generation = instance.generation_for_semantic_root(review.parent_semantic_root)
     principal = generation.principals.require_active(signer_id)
     if principal.kind == "daemon":

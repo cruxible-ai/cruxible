@@ -426,6 +426,30 @@ class ProposalReadmitNotAuthor(ProposalAdmissionError):
         )
 
 
+class ProposalAlreadyAccepted(ProposalAdmissionError):
+    """Approval or activation refused: the proposal is already accepted.
+
+    Acting again on an accepted proposal settles nothing: its change is in
+    accepted state at the generation named here. The refusal says so instead of
+    calling it stale, whose readmit and withdraw repairs would all refuse.
+    """
+
+    error_code = "cruxible.proposal.already_accepted"
+
+    def __init__(self, proposal_id: str, *, git_oid: str, generation: int) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.git_oid = git_oid
+        self.generation = generation
+        self.repair = RepairOperation(operation="cruxible.get", arguments={"ref": proposal_id})
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} is already accepted at "
+            f"{git_oid} (generation {generation}); there is nothing left to approve or "
+            f"activate. Read it with `cruxible get {proposal_id}`"
+        )
+
+
 class ProposalReadmitNotStale(ProposalAdmissionError):
     """Readmission refused: only a stale proposal is readmitted, and this one is not."""
 
@@ -821,6 +845,7 @@ __all__ = [
     "PrincipalIntegrityError",
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
+    "ProposalAlreadyAccepted",
     "ProposalReadmitAlreadyAccepted",
     "ProposalReadmitNotAuthor",
     "ProposalReadmitNotStale",
