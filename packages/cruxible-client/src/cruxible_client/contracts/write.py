@@ -226,7 +226,10 @@ class FileEvidence(_StrictWriteModel):
     kind: Literal["file"] = "file"
     file: str = Field(
         pattern=FILE_ANCHOR_PATTERN,
-        description="PATH#ANCHOR: a catalogued file and text found once in it.",
+        description=(
+            "PATH#ANCHOR: a workspace file and text found once in it; the write "
+            "catalogues the file if it is not yet."
+        ),
     )
     observation: WorkingSelectionObservation | None = Field(
         default=None,

@@ -4946,7 +4946,10 @@ def run_action(
 @click.option(
     "--evidence-file",
     default=None,
-    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+    help=(
+        "PATH#ANCHOR: cite text found once in a workspace file; the write catalogues "
+        "the file if it is not yet."
+    ),
 )
 @click.option(
     "--section",
@@ -5695,7 +5698,10 @@ _NONE_HELP = (
 @click.option(
     "--evidence-file",
     default=None,
-    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+    help=(
+        "PATH#ANCHOR: cite text found once in a workspace file; the write catalogues "
+        "the file if it is not yet."
+    ),
 )
 @click.option(
     "--capture",
@@ -5808,7 +5814,10 @@ def set_value(
 @click.option(
     "--evidence-file",
     default=None,
-    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+    help=(
+        "PATH#ANCHOR: cite text found once in a workspace file; the write catalogues "
+        "the file if it is not yet."
+    ),
 )
 @click.option(
     "--capture",
