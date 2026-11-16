@@ -273,6 +273,7 @@ from cruxible_core.procedures.terminal_dependencies import (
 )
 from cruxible_core.procedures.terminal_payloads import (
     join_derived_source_request_read,
+    join_source_capture_associations,
     join_terminal_egress_read,
 )
 from cruxible_core.providers.operation_index import (
@@ -2756,13 +2757,13 @@ def _state_from_records(
     semantic_result_digest = None
     if isinstance(final, dict):
         try:
-            raw_associations = final.get("source_capture_associations", [])
-            if not isinstance(raw_associations, list):
-                raise TypeError("Source Capture associations are not a list")
+            raw_associations = join_source_capture_associations(
+                final, lambda digest: bytes(bodies.read(digest, access=access))
+            )
             source_capture_associations = tuple(
                 ProcedureSourceCaptureAssociation.model_validate(item) for item in raw_associations
             )
-        except (TypeError, ValueError, ValidationError) as exc:
+        except (TypeError, ValueError, ValidationError, KeyError, CruxibleError) as exc:
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: Source Capture associations are invalid"
             ) from exc

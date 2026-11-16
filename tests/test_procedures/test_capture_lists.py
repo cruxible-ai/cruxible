@@ -860,3 +860,32 @@ def test_an_identical_refetch_reuses_each_held_capture_and_journals_no_landing(
     assert [
         item["capture_digest"] for item in journal(instance, third.run_id, "produced_capture")
     ] == [pages[1]]
+
+
+def test_a_finalize_record_does_not_grow_with_the_captures_a_call_fetched(
+    tmp_path: Path,
+) -> None:
+    """Each invocation's binding is inline; its (field, Capture) pairs are a run-free body."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.procedures.terminal_payloads import join_source_capture_associations
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    sizes = {}
+    for count in (2, 20):
+        (tmp_path / str(count)).mkdir()
+        instance = pages_world(tmp_path / str(count), max_items=20)
+        members = [page(body, index) for index, body in enumerate(bodies(count))]
+        state, _ = run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+        assert state.status == "succeeded", state.terminal
+        (final,) = journal(instance, state.run_id, "attempt_finalized")
+        (group,) = final["source_capture_association_groups"]
+        assert group["count"] == count
+        access = BodyAccessContext(principal_id="test", can_read_body=True)
+        joined = join_source_capture_associations(
+            final, lambda digest: instance.body_store().read(digest, access=access)
+        )
+        assert sorted(item["capture_digest"] for item in joined) == sorted(state.result["pages"])
+        sizes[count] = len(canonical_bytes(final["source_capture_association_groups"]))
+    # The same bytes but the count's digits: nothing per Capture is inline.
+    assert abs(sizes[20] - sizes[2]) <= 2

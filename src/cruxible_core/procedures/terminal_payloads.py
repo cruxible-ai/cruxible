@@ -289,7 +289,76 @@ def _is_split(payload: Mapping[str, Any]) -> bool:
     )
 
 
+#: One invocation's associated (field, Capture) pairs: run-free, cited by digest.
+ASSOCIATION_MEMBERS_BODY_V1 = "playbill-source-capture-association-members-v1"
+
+
+def split_source_capture_associations(
+    associations: list[dict[str, Any]], *, store: Callable[[bytes], str]
+) -> list[dict[str, Any]]:
+    """A finalize record's associations, grouped per invocation with their pairs in a body.
+
+    The occurrence path and invocation receipt are this run's binding and stay
+    inline, one entry per invocation; the (field, Capture) pairs are a run-free
+    body an unchanged run reproduces, so the record does not grow with the
+    Captures a call fetched.
+    """
+
+    groups: dict[tuple[str, str], list[list[str]]] = {}
+    for item in associations:
+        key = (str(item["occurrence_path"]), str(item["invocation_receipt_digest"]))
+        groups.setdefault(key, []).append([str(item["field"]), str(item["capture_digest"])])
+    return [
+        {
+            "occurrence_path": path,
+            "invocation_receipt_digest": receipt,
+            "count": len(members),
+            "members_digest": store(
+                canonical_bytes({"tag": ASSOCIATION_MEMBERS_BODY_V1, "members": members})
+            ),
+        }
+        for (path, receipt), members in sorted(
+            groups.items(), key=lambda item: (item[0][0].encode("utf-8"), item[0][1])
+        )
+    ]
+
+
+def join_source_capture_associations(
+    final: object, read_body: Callable[[str], bytes]
+) -> list[dict[str, Any]]:
+    """A finalize record's associations as flat entries, either shape, in path/field order."""
+
+    if not isinstance(final, Mapping):
+        return []
+    groups = final.get("source_capture_association_groups")
+    if not isinstance(groups, list):
+        flat = final.get("source_capture_associations", [])
+        return list(flat) if isinstance(flat, list) else []
+    joined: list[dict[str, Any]] = []
+    for group in groups:
+        body = _body(read_body, group["members_digest"], tag=ASSOCIATION_MEMBERS_BODY_V1)
+        if len(body["members"]) != group["count"]:
+            raise TerminalPayloadError("an association group's count differs from its body")
+        joined.extend(
+            {
+                "tag": "playbill-procedure-source-capture-association-v1",
+                "occurrence_path": group["occurrence_path"],
+                "field": field,
+                "invocation_receipt_digest": group["invocation_receipt_digest"],
+                "capture_digest": capture,
+            }
+            for field, capture in body["members"]
+        )
+    return sorted(
+        joined,
+        key=lambda item: (item["occurrence_path"].encode("utf-8"), item["field"].encode("utf-8")),
+    )
+
+
 __all__ = [
+    "ASSOCIATION_MEMBERS_BODY_V1",
+    "join_source_capture_associations",
+    "split_source_capture_associations",
     "DERIVED_SOURCE_REQUEST_BODY_V1",
     "join_derived_source_request",
     "join_derived_source_request_read",

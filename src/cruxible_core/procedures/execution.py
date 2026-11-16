@@ -362,6 +362,7 @@ from cruxible_core.procedures.terminal_dependencies import (
 )
 from cruxible_core.procedures.terminal_payloads import (
     split_derived_source_request,
+    split_source_capture_associations,
     split_terminal_egress_payload,
     splits_terminal_egress,
 )
@@ -3233,16 +3234,12 @@ class ProcedureExecutor:
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
             "invocation_receipt_digests": state.invocation_receipt_digests,
-            "source_capture_associations": [
-                item.model_dump(mode="json")
-                for item in sorted(
-                    state.source_capture_associations,
-                    key=lambda item: (
-                        item.occurrence_path.encode("utf-8"),
-                        item.field.encode("utf-8"),
-                    ),
-                )
-            ],
+            # Each invocation's binding inline, its (field, Capture) pairs a
+            # run-free body: the record does not grow with fetched Captures.
+            "source_capture_association_groups": split_source_capture_associations(
+                [item.model_dump(mode="json") for item in state.source_capture_associations],
+                store=lambda content: self.bodies.store(content, journal_payload=True).digest,
+            ),
             "budget": ProcedureRunBudget(
                 declared=procedure_run_declared_budget(admission),
                 observed=ProcedureRunBudgetObserved(

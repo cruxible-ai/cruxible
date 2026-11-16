@@ -372,15 +372,20 @@ def test_a_stale_field_is_decided_by_its_own_rule_while_its_sibling_is_selected(
     assert produced["field"] == "left"
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
     assert final["capture_bytes"] == len(b'{"side": "left"}')
-    assert [item.field for item in final_associations(final)] == ["left"]
+    assert [item.field for item in final_associations(instance, final)] == ["left"]
 
 
-def final_associations(final: dict[str, Any]) -> list[Any]:
+def final_associations(instance: Any, final: dict[str, Any]) -> list[Any]:
     from cruxible_client.contracts.procedures.results import ProcedureSourceCaptureAssociation
+    from cruxible_core.procedures.terminal_payloads import join_source_capture_associations
+    from cruxible_core.storage.cas import BodyAccessContext
 
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
     return [
         ProcedureSourceCaptureAssociation.model_validate(item)
-        for item in final["source_capture_associations"]
+        for item in join_source_capture_associations(
+            final, lambda digest: instance.body_store().read(digest, access=access)
+        )
     ]
 
 
@@ -464,7 +469,7 @@ def test_a_call_whose_every_capture_is_omitted_still_binds_its_typed_fields(
     assert _journal(instance, state.run_id, "produced_capture") == []
     (final,) = _journal(instance, state.run_id, "attempt_finalized")
     assert final["capture_bytes"] == 0
-    assert final["source_capture_associations"] == []
+    assert final["source_capture_association_groups"] == []
 
 
 def _result_digests(tmp_path: Path, name: str, left: bytes) -> tuple[str, str, list[str]]:
