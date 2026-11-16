@@ -160,7 +160,8 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.public_names import public_name as _public_name
 from cruxible_client.contracts.read_values import shown_plain
-from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
 from cruxible_client.contracts.temporal import (
     format_datetime,
@@ -7044,13 +7045,13 @@ def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
     """
 
     if not isinstance(repair, RepairOperation):
-        return render_served_repair(repair)
+        return render_repair(repair, surface="cli")
     values = repair.arguments
     operation = normalize_code(repair.operation)
     if operation == "cruxible.block.repin":
         file, block = path or values.get("source_id"), values.get("block_id")
         if not isinstance(file, str) or not isinstance(block, str):
-            return render_served_repair(repair)
+            return render_repair(repair, surface="cli")
         parts = ["cruxible block repin", shlex.quote(file), shlex.quote(block)]
         claims = values.get("claim")
         for claim in claims if isinstance(claims, list) else ():
@@ -7069,11 +7070,11 @@ def _block_repair_line(repair: Any, *, path: str | None = None) -> str:
         file, block = values.get("source_id"), values.get("block_id")
         if isinstance(file, str) and isinstance(block, str):
             return f"cruxible block depublish {shlex.quote(file)} {shlex.quote(block)}"
-        return render_served_repair(repair)
+        return render_repair(repair, surface="cli")
     paths = values.get("paths")
     if operation == "cruxible.block.detach" and isinstance(paths, list) and paths:
         return " ".join(["cruxible block detach", *(shlex.quote(str(path)) for path in paths)])
-    return render_served_repair(repair)
+    return render_repair(repair, surface="cli")
 
 
 def _echo_list_continuation(next_cursor: str | None) -> None:
@@ -7752,27 +7753,10 @@ def procedure_group() -> None:
     """Run and measure accepted Procedures; read one with cruxible get Procedure:<name>."""
 
 
-#: Repair arguments a CLI leaf takes as its positional operand.
-_POSITIONAL_REPAIR_ARGUMENTS = frozenset(
-    {"line", "name", "example", "claim_id", "proposal_id", "prediction_id", "run_id"}
-)
-
-
 def _cli_repair(repair: Any) -> str:
     """Render a served repair as the CLI command that performs it."""
 
-    operation = normalize_code(repair.operation) if isinstance(repair, RepairOperation) else ""
-    if not isinstance(repair, RepairOperation) or not operation.startswith("cruxible."):
-        return render_served_repair(repair)
-    parts = ["cruxible", *operation.removeprefix("cruxible.").split(".")]
-    for key, value in repair.arguments.items():
-        if key in _POSITIONAL_REPAIR_ARGUMENTS:
-            parts.append(shlex.quote(str(value)))
-        elif value is True:
-            parts.append("--" + key.replace("_", "-"))
-        elif value not in (None, False):
-            parts.extend(["--" + key.replace("_", "-"), shlex.quote(str(value))])
-    return " ".join(parts)
+    return render_repair(repair, surface="cli")
 
 
 def _inbox_counts_text(counts: Any) -> str:

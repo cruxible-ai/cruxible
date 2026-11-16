@@ -17,7 +17,8 @@ from mcp.server.fastmcp.tools.tool_manager import ToolManager
 from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 
-from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
+from cruxible_client.contracts.repair_spelling import render_repair
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core import __version__
 from cruxible_core.errors import ConfigError
@@ -200,7 +201,7 @@ def _tool_failure_message(name: str, error: ToolError) -> str:
     message = str(error)
     repair = getattr(cause, "repair", None)
     if isinstance(repair, RepairOperation) and "Repair:" not in message:
-        message += f" Repair: {render_served_repair(repair)}"
+        message += f" Repair: {render_repair(repair, surface='mcp')}"
     return message
 
 
