@@ -157,6 +157,9 @@ def test_archive_transition_uses_index_without_reopening_closed_evidence(tmp_pat
 
     instance, _owner = initialize_local(tmp_path)
     proposal = _submit(instance)
+    # Creation and submission queue advisory refreshes on a background thread; one
+    # still running after the withdrawal would reconcile it. Drain them first.
+    instance.settled_workspace_advertisement()
     with monkeypatch.context() as patch:
         patch.setattr(instance, "advertise_workspace", lambda: NOT_ATTACHED_ADVERTISEMENT)
         service_withdraw_playbill_proposal(
