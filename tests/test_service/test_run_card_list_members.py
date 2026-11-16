@@ -479,28 +479,34 @@ def _stored_call_acquisition(
 
     from cruxible_client.contracts.canonical import canonical_bytes
 
-    body = canonical_bytes(
+    listed = [
         {
-            "tag": "playbill-acquired-members-v1",
-            "members": [
-                {
-                    "field": f"{field}/{index}",
-                    "input_name": "doc.pages",
-                    "decision": {"disposition": "selected", "selected_capture_digests": []},
-                    "result": {"outcome": "acquired"},
-                }
-                for index in range(members)
-            ],
+            "field": f"{field}/{index}",
+            "input_name": "doc.pages",
+            "decision": {"disposition": "selected", "selected_capture_digests": []},
+            "result": {"outcome": "acquired"},
         }
-    )
-    members_digest = instance.body_store().store(body, journal_payload=True).digest
+        for index in range(members)
+    ]
+    chunks = [
+        instance.body_store()
+        .store(
+            canonical_bytes(
+                {"tag": "playbill-acquired-members-v1", "members": listed[start : start + 64]}
+            ),
+            journal_payload=True,
+        )
+        .digest
+        for start in range(0, members, 64)
+    ]
     digest = _store_payload(
         instance,
         {
             "tag": "playbill-procedure-source-acquisition-v2",
             "node_id": node_id,
-            "members_digest": members_digest,
+            "member_chunks": chunks,
             "count": members,
+            "listed": members,
             "observed": None,
         },
     )
@@ -545,3 +551,55 @@ def test_a_calls_one_record_serves_its_members_and_flags_its_own_overflow(
     assert truncated == frozenset({"large"})
     # One index range: the two records, no probe per member.
     assert journal.index.calls == 1
+
+
+def test_a_card_opens_only_the_member_chunks_it_shows_however_many_were_fetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review P2: the card's member work is bounded by its limit, not by the run's fetches.
+
+    A call's members are stored in chunks; the card opens a chunk only when it
+    shows a member of it, and past its limit reads each later call's record
+    alone (it counts its list members) without opening a body.
+    """
+
+    from cruxible_client.contracts.operational_reads import (
+        RUN_CARD_LIST_MEMBERS_MAX,
+        GetRunNode,
+    )
+    from cruxible_core.service.discovery import runs
+    from tests.core_support._support import initialize_local
+
+    opened: list[int] = []
+    original = runs.read_payload_bytes
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        opened.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runs, "read_payload_bytes", counted)
+    reads = {}
+    for size in (RUN_CARD_LIST_MEMBERS_MAX, 50 * RUN_CARD_LIST_MEMBERS_MAX):
+        (tmp_path / str(size)).mkdir()
+        instance, _owner = initialize_local(tmp_path / str(size))
+        records = [
+            _stored_call_acquisition(
+                instance, node_id="big", field="pages", members=size, sequence=1
+            ),
+            _stored_call_acquisition(
+                instance, node_id="later", field="pages", members=size, sequence=3
+            ),
+        ]
+        nodes = [
+            GetRunNode(node="big", kind="provider", sequence=2),
+            GetRunNode(node="later", kind="provider", sequence=4),
+        ]
+        opened.clear()
+        found, truncated = runs._list_members(  # noqa: SLF001
+            instance, _FakeJournal(_FakeIndex(records)), object(), "run-1", nodes
+        )
+        assert len(found["big"]) == RUN_CARD_LIST_MEMBERS_MAX and "later" not in found
+        assert "later" in truncated
+        reads[size] = len(opened)
+    # The same chunks opened at either size: the first call's shown ones.
+    assert reads[RUN_CARD_LIST_MEMBERS_MAX] == reads[50 * RUN_CARD_LIST_MEMBERS_MAX] <= 2

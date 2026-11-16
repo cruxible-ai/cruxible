@@ -844,7 +844,7 @@ def test_an_identical_refetch_reuses_each_held_capture_and_journals_no_landing(
     assert journal(instance, again.run_id, "produced_capture") == []
     (first_record,) = _raw_records(instance, first.run_id, "source_acquisition")
     (second_record,) = _raw_records(instance, again.run_id, "source_acquisition")
-    assert second_record["members_digest"] == first_record["members_digest"]
+    assert second_record["member_chunks"] == first_record["member_chunks"]
     assert ClaimReobservationStore(instance).head_sequence() == observations + 1
     # The held envelope of the second member is recorded missing: that member
     # is fetched into a new Capture, the others are still reused.

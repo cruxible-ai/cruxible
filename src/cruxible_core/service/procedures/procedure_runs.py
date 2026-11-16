@@ -2426,24 +2426,25 @@ _LATE_READ_REFUSAL_CODES = frozenset(
 def _selected_captures(
     bodies: Any, payload: Mapping[str, Any], *, access: BodyAccessContext
 ) -> set[str]:
-    """The Captures one call's v2 acquisition record selected (its members body, read once)."""
+    """The Captures one call's v2 acquisition record selected (each members chunk read once)."""
 
     import json
 
-    digest = payload.get("members_digest")
-    if not isinstance(digest, str):
-        return set()
-    try:
-        body = json.loads(bodies.read(digest, access=access))
-    except (CruxibleError, OSError, ValueError):
-        return set()
-    members = body.get("members") if isinstance(body, dict) else None
-    return {
-        str(capture)
-        for member in (members if isinstance(members, list) else ())
-        if isinstance(member, dict) and isinstance(member.get("decision"), dict)
-        for capture in member["decision"].get("selected_capture_digests") or ()
-    }
+    selected: set[str] = set()
+    chunks = payload.get("member_chunks")
+    for digest in chunks if isinstance(chunks, list) else ():
+        try:
+            body = json.loads(bodies.read(str(digest), access=access))
+        except (CruxibleError, OSError, ValueError):
+            return set()
+        members = body.get("members") if isinstance(body, dict) else None
+        selected.update(
+            str(capture)
+            for member in (members if isinstance(members, list) else ())
+            if isinstance(member, dict) and isinstance(member.get("decision"), dict)
+            for capture in member["decision"].get("selected_capture_digests") or ()
+        )
+    return selected
 
 
 def _state_from_records(

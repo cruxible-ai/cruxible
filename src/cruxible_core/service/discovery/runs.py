@@ -11,10 +11,10 @@ first, in an order a run's status never changes; a filter keeps running runs.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from pydantic import TypeAdapter
 
@@ -555,19 +555,35 @@ def _list_members(
         payload = run_payload(instance, item.record.payload_digest)
         if not isinstance(payload, Mapping):
             continue
-        for payload in _acquisition_members(instance, payload):
+        if served == RUN_CARD_LIST_MEMBERS_MAX and _is_call_record(payload):
+            # Past the card's limit a call's record says whether it holds list
+            # members; its members bodies are never opened.
+            node_id = str(payload.get("node_id", "?"))
+            if int(cast(int, payload.get("listed", 0))) and node_id in displayed:
+                truncated_nodes.add(node_id)
+            continue
+        record = payload
+        shown = 0
+        for payload in _acquisition_members(instance, record):
             member = _list_member_field(payload)
             if member is None:
                 continue
             if served == RUN_CARD_LIST_MEMBERS_MAX:
-                # A call's one record holds all its members: the ones past
-                # the card's limit are this call's unserved overflow.
+                # A v1 record past the card's limit: the call's unserved overflow.
                 node_id = str(payload.get("node_id", "?"))
                 if node_id in displayed:
                     truncated_nodes.add(node_id)
                 break
             served += 1
+            shown += 1
             _add_list_member(found, payload, member)
+            if served == RUN_CARD_LIST_MEMBERS_MAX and _is_call_record(record):
+                # The limit is reached: the record's count says whether the
+                # call holds more, so no further members chunk is opened.
+                node_id = str(record.get("node_id", "?"))
+                if int(cast(int, record.get("listed", 0))) > shown and node_id in displayed:
+                    truncated_nodes.add(node_id)
+                break
     if len(stored) > RUN_CARD_LIST_MEMBERS_MAX and nodes:
         truncated_nodes |= _overflowing_calls(
             instance, journal, stream, run_id, nodes, stored[RUN_CARD_LIST_MEMBERS_MAX - 1]
@@ -575,26 +591,34 @@ def _list_members(
     return found, frozenset(truncated_nodes)
 
 
+def _is_call_record(payload: Mapping[str, Any]) -> bool:
+    return payload.get("tag") == "playbill-procedure-source-acquisition-v2"
+
+
 def _acquisition_members(
     instance: PlaybillInstance, payload: Mapping[str, Any]
-) -> list[Mapping[str, Any]]:
+) -> Iterator[Mapping[str, Any]]:
     """A ``source_acquisition`` record's members, each shaped as a v1 per-member record.
 
     A v1 record is one member; a v2 record (one per call) cites its members
-    body, read once here. A lost body yields no members.
+    in chunks, each read only when the reader gets that far (a card stops at
+    its limit). A lost chunk ends the members.
     """
 
-    if payload.get("tag") != "playbill-procedure-source-acquisition-v2":
-        return [payload]
-    raw = read_payload_bytes(
-        instance.body_store(), str(payload.get("members_digest")), access=_ACCESS
-    )
-    body = None if isinstance(raw, UnavailablePayload) else json.loads(raw)
-    members = body.get("members") if isinstance(body, Mapping) else None
-    if not isinstance(members, list):
-        return []
+    if not _is_call_record(payload):
+        yield payload
+        return
     node_id = payload.get("node_id")
-    return [{**member, "node_id": node_id} for member in members if isinstance(member, Mapping)]
+    chunks = payload.get("member_chunks")
+    for digest in chunks if isinstance(chunks, list) else ():
+        raw = read_payload_bytes(instance.body_store(), str(digest), access=_ACCESS)
+        body = None if isinstance(raw, UnavailablePayload) else json.loads(raw)
+        members = body.get("members") if isinstance(body, Mapping) else None
+        if not isinstance(members, list):
+            return
+        for member in members:
+            if isinstance(member, Mapping):
+                yield {**member, "node_id": node_id}
 
 
 def _add_list_member(
@@ -668,9 +692,10 @@ def _overflowing_calls(
             )
             if overflow:
                 payload = run_payload(instance, overflow[0].record.payload_digest)
-                if isinstance(payload, Mapping) and any(
-                    _list_member_field(member) is not None
-                    for member in _acquisition_members(instance, payload)
+                if isinstance(payload, Mapping) and (
+                    int(cast(int, payload.get("listed", 0)))
+                    if _is_call_record(payload)
+                    else _list_member_field(payload) is not None
                 ):
                     truncated_nodes.add(node.node)
         previous_sequence = node.sequence

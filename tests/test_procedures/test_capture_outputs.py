@@ -265,15 +265,15 @@ def _acquisition_members(instance: Any, payload: Any) -> list[dict[str, Any]]:
     from cruxible_core.storage.cas import BodyAccessContext
 
     assert payload["tag"] == "playbill-procedure-source-acquisition-v2"
-    body = json.loads(
-        instance.body_store().read(
-            payload["members_digest"],
-            access=BodyAccessContext(principal_id="test", can_read_body=True),
-        )
-    )
-    assert body["tag"] == "playbill-acquired-members-v1"
-    assert len(body["members"]) == payload["count"]
-    return [{**member, "node_id": payload["node_id"]} for member in body["members"]]
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    members: list[dict[str, Any]] = []
+    for digest in payload["member_chunks"]:
+        body = json.loads(instance.body_store().read(digest, access=access))
+        assert body["tag"] == "playbill-acquired-members-v1"
+        assert 0 < len(body["members"]) <= 64
+        members.extend(body["members"])
+    assert len(members) == payload["count"]
+    return [{**member, "node_id": payload["node_id"]} for member in members]
 
 
 def _paired_output(*, right_observed_at: str = "2026-10-29T12:00:00Z"):  # type: ignore[no-untyped-def]

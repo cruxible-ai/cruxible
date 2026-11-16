@@ -2591,6 +2591,8 @@ def _fetched_captures(state: _RunState) -> list[str]:
 SOURCE_ACQUISITION_RECORD_V2 = "playbill-procedure-source-acquisition-v2"
 #: A call's acquisition members, in field order: run-free, content-addressed.
 ACQUIRED_MEMBERS_BODY_V1 = "playbill-acquired-members-v1"
+#: How many members one members body holds: a run card shows at most 64.
+ACQUIRED_MEMBERS_CHUNK = 64
 
 
 def _acquired_member(
@@ -5771,14 +5773,25 @@ class ProcedureExecutor:
         body an earlier run stored. The record keeps what is this call's own:
         the earliest and latest instant its acquired members were observed.
 
-        The members list grows with the call's capture outputs; it is built
-        once per call, never per member.
+        The members are stored in chunks of up to ``ACQUIRED_MEMBERS_CHUNK``,
+        so a bounded reader (a run card) opens only the chunks it shows; the
+        record counts the list members, so a reader past its bound knows a
+        call has more without opening any. The list grows with the call's
+        capture outputs; it is built once per call, never per member.
         """
 
-        members_digest = self.bodies.store(
-            canonical_bytes({"tag": ACQUIRED_MEMBERS_BODY_V1, "members": members}),
-            journal_payload=True,
-        ).digest
+        chunks = [
+            self.bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": ACQUIRED_MEMBERS_BODY_V1,
+                        "members": members[start : start + ACQUIRED_MEMBERS_CHUNK],
+                    }
+                ),
+                journal_payload=True,
+            ).digest
+            for start in range(0, len(members), ACQUIRED_MEMBERS_CHUNK)
+        ]
         self._append_event(
             admission,
             records,
@@ -5786,8 +5799,9 @@ class ProcedureExecutor:
             {
                 "tag": SOURCE_ACQUISITION_RECORD_V2,
                 "node_id": node.node_id,
-                "members_digest": members_digest,
+                "member_chunks": chunks,
                 "count": len(members),
+                "listed": sum(1 for member in members if "/" in str(member["field"])),
                 "observed": None
                 if not observed
                 else {
