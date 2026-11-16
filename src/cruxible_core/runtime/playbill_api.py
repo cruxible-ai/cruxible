@@ -2090,6 +2090,10 @@ def _authoring_preflight_result(
     lint = lint_authoring_payload(coordinator.instance, payload, coordinate=_at())
     if lint is not None:
         values["lint"] = lint.model_dump(mode="json")
+    from cruxible_core.authoring.preflight import preflight_changes_nothing
+
+    if preflight_changes_nothing(result):
+        values["unchanged"] = True
     return contracts.AuthoringPreflightResult.model_validate(values)
 
 

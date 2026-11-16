@@ -39,8 +39,11 @@ def service_land_authoring_submit(
     outcome: AuthoringLanding
     if status.state == "accepted":
         assert status.accepted_generation is not None
+        # S2: accepted with no proposal is a payload identical to accepted state.
         outcome = AuthoringLanded(
-            proposal_id=proposal_id, accepted_coordinate=status.accepted_generation
+            proposal_id=proposal_id,
+            accepted_coordinate=status.accepted_generation,
+            unchanged=proposal_id is None,
         )
     elif status.state == "awaiting_external_approval" or any(
         item.condition == "external-approval" for item in status.path_to_acceptance

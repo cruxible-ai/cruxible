@@ -622,6 +622,25 @@ def _ordered_diagnostics(
     )
 
 
+def preflight_changes_nothing(result: PreflightResult) -> bool:
+    """Whether a passed preflight's candidate is its accepted tree unchanged (S2).
+
+    The certificate's candidate-tree digest covers the changed members; one
+    over no change is the digest of that coordinate with none. O(1).
+    """
+
+    certificate = result.certificate
+    empty = typed_digest(
+        Sha256Value,
+        AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN,
+        {
+            "accepted_coordinate": certificate.accepted_coordinate.model_dump(mode="json"),
+            "changed_members": [],
+        },
+    ).tagged
+    return result.verdict == "passed" and certificate.candidate_tree_digest == empty
+
+
 def _encoded_changes(
     *,
     base_tree: Mapping[str, bytes],

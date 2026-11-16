@@ -55,7 +55,10 @@ def test_restating_a_value_on_the_same_evidence_changes_nothing(instance: Playbi
     again = write(
         instance, {"op": "set", "subject": ALPHA, "field": "code", "value": " X"}, "Read it."
     )
-    assert again.status == "accepted" and again.proposal is None, again
+    assert again.status == "unchanged" and again.proposal is None, again
+    # S2: a same-value set reads as already live, and writes nothing at all.
+    assert again.changes[0].already_live and again.changes[0].claim == claim
+    assert again.base is None
     assert instance.accepted_coordinate().git_oid == head
     assert cited_captures(instance, claim) == cited
 
@@ -166,7 +169,7 @@ def test_add_restating_a_live_value_refreshes_new_content_on_its_lineage(
     before = cited_captures(instance, claim)
 
     same = write(instance, {**change, "value": " INFRA "}, "A")
-    assert same.status == "accepted" and same.proposal is None
+    assert same.status == "unchanged" and same.proposal is None
     assert same.changes[0].already_live and same.changes[0].claim == claim
     assert cited_captures(instance, claim) == before
 
@@ -208,7 +211,7 @@ def test_a_terminal_item_naming_an_alias_finds_the_live_lineage(
     again = write(
         instance, {"op": "add", "subject": f"{KIND}/a-one", "field": "tags", "value": "infra"}, "A."
     )
-    assert again.status == "accepted" and again.proposal is None
+    assert again.status == "unchanged" and again.proposal is None
     assert again.changes[0].claim == claim
 
 

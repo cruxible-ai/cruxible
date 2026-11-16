@@ -16,6 +16,9 @@ class AuthoringLanded(BaseModel):
     status: Literal["landed"] = "landed"
     proposal_id: str | None = None
     accepted_coordinate: AcceptedCoordinate
+    #: Identical to accepted state: nothing was proposed and no generation made
+    #: (S2); ``accepted_coordinate`` is the head it matched.
+    unchanged: bool = Field(default=False, exclude_if=lambda value: value is False)
 
     def __str__(self) -> str:
         """``landed: accepted at <short oid>``; ``repr()`` is its first line."""

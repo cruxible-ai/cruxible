@@ -203,12 +203,12 @@ def test_two_adds_on_one_many_valued_field_land_in_one_change_set(
 
     head = instance.accepted_coordinate().git_oid
     again = _write(instance, _add(WI1, "governs", WI2))
-    assert again.status == "accepted" and again.proposal is None
+    assert again.status == "unchanged" and again.proposal is None
     (change,) = again.changes
     assert change.already_live and change.claim in claims and change.after == WI2
     assert change.verdict == "supported"
     assert instance.accepted_coordinate().git_oid == head  # no change set was submitted
-    assert _write(instance, _add(WI1, "governs", WI2), dry_run=True).status == "would_accept"
+    assert _write(instance, _add(WI1, "governs", WI2), dry_run=True).status == "unchanged"
 
     # In a batch, only the new value is submitted.
     mixed = _write(instance, _add(WI1, "governs", WI2), _set(WI1, "status", "ready"))

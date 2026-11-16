@@ -1495,6 +1495,9 @@ class AuthoringPreflightResult(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: The payload is identical to accepted state: a submit proposes nothing
+    #: and makes no generation (S2).
+    unchanged: bool = Field(default=False, exclude_if=lambda value: value is False)
 
 
 class AuthoringSubmitResultRecord(BaseModel):

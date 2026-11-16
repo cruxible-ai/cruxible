@@ -1305,7 +1305,7 @@ class World:
             dry_run=dry_run,
             accept=write_accept(accept),
         )
-        if outcome.status == "accepted":
+        if outcome.status in {"accepted", "unchanged"}:
             for position, (landing, _create) in enumerate(creates):
                 landing.ref = outcome.changes[position].subject
             for key, landing in landings.items():

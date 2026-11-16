@@ -147,6 +147,7 @@ def write_accept(value: object) -> WriteAccept:
 WriteRetireReason = Literal["was-rescinded", "was-wrong", "superseded"]
 WriteStatus = Literal[
     "accepted",
+    "unchanged",
     "awaiting_approval",
     "refused",
     "would_accept",

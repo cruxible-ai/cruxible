@@ -15021,6 +15021,19 @@
             "title": "Status",
             "type": "string"
           }
+        },
+        "unchanged": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "unchanged",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
+          }
         }
       },
       "json_schema": {
@@ -15084,6 +15097,11 @@
             "default": "landed",
             "title": "Status",
             "type": "string"
+          },
+          "unchanged": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
           }
         },
         "required": [
@@ -15163,6 +15181,19 @@
             "default": "playbill-authoring-preflight-result-v1",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "unchanged": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "unchanged",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
           }
         },
         "verdict": {
@@ -15847,6 +15878,11 @@
             "default": "playbill-authoring-preflight-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "unchanged": {
+            "default": false,
+            "title": "Unchanged",
+            "type": "boolean"
           },
           "verdict": {
             "enum": [
@@ -16706,6 +16742,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -16747,6 +16788,11 @@
                 "default": "playbill-authoring-preflight-result-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               },
               "verdict": {
                 "enum": [
@@ -22801,6 +22847,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -24071,6 +24122,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -74152,6 +74208,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [
@@ -75759,6 +75820,11 @@
                 "default": "landed",
                 "title": "Status",
                 "type": "string"
+              },
+              "unchanged": {
+                "default": false,
+                "title": "Unchanged",
+                "type": "boolean"
               }
             },
             "required": [

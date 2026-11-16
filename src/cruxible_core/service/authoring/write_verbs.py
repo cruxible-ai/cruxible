@@ -2614,6 +2614,25 @@ class _Planner:
                 if remaining:
                     revises = remaining[0].claim_id
                     before = remaining[0].value
+                    if remaining[0].value == shown_after and remaining[0].role == role:
+                        # S2: setting the value a slot already holds restates
+                        # its Claim; lowering's re-observation comparison
+                        # decides whether anything changed.
+                        unchanged = {
+                            "subject": subject,
+                            "field": name,
+                            "predicate": info.predicate,
+                            "before": summary_value(
+                                remaining[0].value,
+                                read_whole=whole_value_read(
+                                    remaining[0].claim_id, self.head.git_oid
+                                ),
+                            ),
+                            "after": summary_value(remaining[0].value),
+                            "claim": remaining[0].claim_id,
+                            "already_live": True,
+                        }
+                        unchanged_digest = remaining[0].digest
         else:
             # A Claim retired in this same write is not live after it, so the
             # value it holds is stated anew rather than reported as present.
@@ -4849,6 +4868,12 @@ def _service_write(
     admitted: list[CandidateRecord] = []
     coordinator = _coordinator(instance, lowered.claim_ids, admitted=admitted)
     timestamp = canonical_candidate_timestamp(utc_now())
+    if _restates_only(plan, request) and _previews_unchanged(
+        coordinator, caller=caller, lowered=lowered, timestamp=timestamp
+    ):
+        # S2: every change restates a live value on the evidence it already
+        # cites: answer unchanged and write nothing (no intent, no proposal).
+        return _already_done(instance, head=head, plan=plan, request=request)
     if request.dry_run:
         # A minted id is assigned from the submitted operation, which a dry run
         # never makes: it reports the Subjects whose ids are known now.
@@ -5065,9 +5090,12 @@ def _already_done(
     plan: _Plan,
     request: WriteRequest,
 ) -> WriteOutcome:
-    """Every change is already live: accepted, with no change set submitted."""
+    """Every change is already live: unchanged, with nothing submitted (S2)."""
 
-    changes = tuple(ChangeOutcome(op=item.op, **item.outcome) for item in plan.changes)
+    changes = tuple(
+        ChangeOutcome(op=item.op, **(item.unchanged_outcome or item.outcome))
+        for item in plan.changes
+    )
     changes, warnings = _with_verdicts(
         instance,
         head=head,
@@ -5079,13 +5107,55 @@ def _already_done(
     )
     first = next((item.subject for item in changes if item.subject is not None), None)
     return WriteOutcome(
-        status="would_accept" if request.dry_run else "accepted",
+        status="unchanged",
         changes=changes,
         coordinate=compact_coordinate(instance, head),
-        base=None if request.dry_run else compact_coordinate(instance, head),
         warnings=warnings,
         next=None if first is None else _render_get(request.surface, first),
     )
+
+
+def _restates_only(plan: _Plan, request: WriteRequest) -> bool:
+    """Whether every change restates a live value in the writer's own words.
+
+    Such a write may change nothing. A change citing a Capture (file or
+    existing-Capture evidence) is left to submit: the same content under that
+    Capture is a re-observation, recorded as before.
+    """
+
+    return (
+        not request.docs
+        and not plan.pending
+        and bool(plan.changes)
+        and all(
+            item.member is None or (item.unchanged_outcome is not None and item.capture is None)
+            for item in plan.changes
+        )
+    )
+
+
+def _previews_unchanged(
+    coordinator: AuthoringIntentCoordinator,
+    *,
+    caller: WriteCaller,
+    lowered: _Lowered,
+    timestamp: str,
+) -> bool:
+    """Whether the write lowers to nothing: no member changes (S2).
+
+    Run only for a write of own-words restatements (``_restates_only``), so
+    the preflight is paid only where the write may change nothing.
+    """
+
+    _intent, computed = coordinator.preview(
+        actor=caller.actor,
+        payload=lowered.payload,
+        canonical_timestamp=timestamp,
+        reference_expectations=lowered.expectations or None,
+    )
+    if computed.result.verdict != "passed" or computed.lowered is None:
+        return False
+    return computed.lowered.idempotent
 
 
 def _slot_moved(

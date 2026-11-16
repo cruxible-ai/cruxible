@@ -4164,7 +4164,10 @@ and no current none is unknown.
 there. A value already live in the same role restates that Claim: on evidence
 of content it already cites the same way it is answered as done (already live);
 on new evidence (other `--because` words, another Capture) that Claim's evidence
-is refreshed, never a second Claim written; `--expect-absent` refuses it
+is refreshed, never a second Claim written. A `set` or `add` whose every change
+restates a live value in the same `--because` words answers `unchanged` and
+writes nothing (no proposal, no generation); the same content under a cited
+Capture is a re-observation, recorded as before; `--expect-absent` refuses it
 instead (`cruxible.write.value_already_present`). `retire` ends one live
 Claim, named by ID, by SUBJECT FIELD when that field holds one value, or by
 SUBJECT FIELD VALUE for one of several (`cruxible retire catalog.part/bp-2210

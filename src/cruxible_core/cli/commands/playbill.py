@@ -5629,6 +5629,10 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
     )
     if output_brief:
         codes = [item.code for item in result.frontier.diagnostics]
+        if result.unchanged:
+            # S2: identical to accepted state; a submit would propose nothing.
+            _emit_brief(outcome="unchanged", ids={"intent": intent_id}, next_command=None)
+            return
         _emit_brief(
             outcome=result.verdict + (f" ({', '.join(codes)})" if codes else ""),
             ids={"intent": intent_id},

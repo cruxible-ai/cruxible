@@ -220,3 +220,32 @@ def test_a_dry_run_takes_no_intent_id(playbill_http: tuple[TestClient, str, Path
     )
 
     assert response.status_code == 422
+
+
+def test_an_identical_definition_preflights_and_submits_as_unchanged(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+) -> None:
+    """S2: re-proposing an accepted definition answers unchanged; nothing is proposed."""
+
+    http, instance_id, _key = playbill_http
+    pb, _requests = _playbill(http, instance_id, tmp_path / "world")
+
+    def draft():
+        changes = pb.changes(rationale="Open the parity slot.")
+        changes.claim_type(build_claim_type(PREDICATE))
+        return changes
+
+    landed = draft().submit()
+    assert landed.outcome is not None and landed.outcome.status == "landed"
+    assert not landed.outcome.unchanged
+    head = pb._client.whoami(instance_id).coordinate
+
+    again = draft().prepare()
+    assert again._preflight is not None and again._preflight.unchanged
+    submitted = again.submit()
+
+    assert submitted.outcome is not None and submitted.outcome.unchanged
+    assert submitted.outcome.proposal_id is None
+    assert str(submitted.outcome).startswith("unchanged: identical to accepted state at ")
+    assert pb._client.whoami(instance_id).coordinate == head

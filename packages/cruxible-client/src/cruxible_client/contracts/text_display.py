@@ -883,7 +883,10 @@ def landing_lines(outcome: AuthoringLanded | AuthoringProposed | AuthoringRefuse
     """Whether an authored change landed, or why it stopped and what to run."""
 
     if outcome.status == "landed":
-        return [f"landed: accepted at {short_oid(outcome.accepted_coordinate.git_oid)}"]
+        at = short_oid(outcome.accepted_coordinate.git_oid)
+        if outcome.unchanged:
+            return [f"unchanged: identical to accepted state at {at}; nothing proposed"]
+        return [f"landed: accepted at {at}"]
     lines = [outcome.message]
     if outcome.next:
         lines.append(f"next: {outcome.next}")
