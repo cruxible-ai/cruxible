@@ -443,6 +443,30 @@ class ProposalReadmitNotAuthor(ProposalAdmissionError):
         )
 
 
+class ProposalWithdrawNotAuthor(ProposalAdmissionError):
+    """Withdrawal refused: only the proposal's author withdraws it.
+
+    Withdrawal is the author's statement that their change will not be
+    settled. Anyone else who will not accept it rejects it with a reason, so
+    the author learns why.
+    """
+
+    error_code = "cruxible.proposal.withdraw_not_author"
+
+    def __init__(self, proposal_id: str, *, author: str) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.author = author
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.reject", arguments={"proposal_id": proposal_id}
+        )
+        super().__init__(
+            f"{self.error_code}: only its author {author!r} may withdraw proposal "
+            f"{proposal_id}; reject it with a reason instead, so they learn why"
+        )
+
+
 class ProposalAlreadyAccepted(ProposalAdmissionError):
     """Approval or activation refused: the proposal is already accepted.
 
@@ -926,6 +950,7 @@ __all__ = [
     "ProposalAlreadyAccepted",
     "ProposalReadmitAlreadyAccepted",
     "ProposalReadmitNotAuthor",
+    "ProposalWithdrawNotAuthor",
     "ProposalReadmitNotStale",
     "ProposalReadmitRequiresResubmission",
     "ProposalContentUnavailable",

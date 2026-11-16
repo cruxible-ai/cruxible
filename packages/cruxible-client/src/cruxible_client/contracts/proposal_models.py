@@ -324,8 +324,8 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     statement, so a second one over the same proposal is refused rather than
     silently restating the first with a new reason.
 
-    ``kind`` says who closed it: ``withdrawn`` by its author (or a daemon-wide
-    operator), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
+    ``kind`` says who closed it: ``withdrawn`` by its author (or as superseded
+    by a later run of its Line), ``rejected`` by a reviewer. ``withdrawn_at`` is the instant it
     closed either way.
 
     A rejection records each Claim the rejected candidate proposed

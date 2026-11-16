@@ -1292,10 +1292,6 @@ def playbill_withdraw_proposal(
             actor_id=_governed_actor_id(instance_id),
             reason=reason,
             withdrawn_at=canonical_candidate_timestamp(utc_now()),
-            # No bound instance scope IS the daemon-wide operator credential (or
-            # an auth-off local daemon, which has one operator): the same reading
-            # `require_unscoped_operator` makes for every other daemon-wide lever.
-            unscoped_operator=current_request_instance_scope() is None,
             dry_run=dry_run,
             at=at,
         )

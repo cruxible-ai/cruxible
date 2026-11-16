@@ -5066,7 +5066,9 @@ record beside the admission, touches no accepted state, leaves every byte of the
 candidate readable, and moves the proposal out of `proposal list --status open`
 with terminal reason `withdrawn`. Only the actor who submitted a proposal may
 withdraw it (a later run of a Line withdraws its Line's open proposal as
-superseded, naming the successor in `superseded_by`; see [line](#line)); withdrawing an already-withdrawn proposal repeats the first answer
+superseded, naming the successor in `superseded_by`; see [line](#line)); anyone else
+refuses `cruxible.proposal.withdraw_not_author` (the repair is to reject it with a
+reason). Withdrawing an already-withdrawn proposal repeats the first answer
 rather than rewriting its reason, and a settled proposal refuses, because its
 outcome is not an intention to overwrite: an accepted one refuses
 `cruxible.proposal.already_accepted` (naming its git oid and generation), as

@@ -277,8 +277,8 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_mandate_not_applicable": "use_the_declared_terminal_authority",
     "procedure_authority_admission_invalid": "rebuild_the_terminal_from_the_exact_admitted_run",
     "procedure_authority_admission_mismatch": "rebuild_the_terminal_from_the_exact_admitted_run",
-    # Only the proposal's author may readmit it and either the author or a
-    # daemon-wide operator may withdraw it; which one is the author's call.
+    # Only the proposal's author may readmit or withdraw it; which one is the
+    # author's call.
     "proposal_stale": "readmit_as_its_author_or_withdraw_the_stale_proposal",
     # The row names the approve command for the calling principal; only the
     # signer holds the key it signs with, so the review and the key are theirs.
