@@ -305,7 +305,7 @@ def test_a_write_catalogues_the_workspace_file_it_cites(playbill_http, tmp_path)
         CataloguedFile(file="app/forms.py", name="doc-app-forms.py", written=False),
     )
     assert not catalog.exists()
-    assert "would catalogue as doc-app-forms.py" in str(preview)
+    assert "would catalogue app/forms.py (as doc-app-forms.py)" in str(preview)
     landed = cite()
     assert landed.status == "accepted", landed
     assert landed.catalogued == (

@@ -23,6 +23,7 @@ from cruxible_client.authoring.page_writes import PageWriteError, replace_page_f
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import (
     FileSelector,
+    catalog_file_paths,
     source_content_for_observation,
     workspace_files,
 )
@@ -299,7 +300,21 @@ def write_workspace(
     if not root.is_dir():
         return _write_workspace(request, workspace=root, submit=submit, held=None)
     with HeldRoot(root) as held:
-        return _write_workspace(request, workspace=root, submit=submit, held=held)
+        outcome = _write_workspace(request, workspace=root, submit=submit, held=held)
+    return _with_file_paths(outcome, root)
+
+
+def _with_file_paths(outcome: WriteOutcome, workspace: Path) -> WriteOutcome:
+    """The outcome, its text naming a note's (or edited section's) file by workspace path.
+
+    Only an outcome naming a file by catalog name reads the catalog: once,
+    after the write (a notes file it created is catalogued by then).
+    """
+
+    if not any(change.file for change in outcome.changes) and all(doc.file for doc in outcome.docs):
+        return outcome
+    paths = catalog_file_paths(workspace)
+    return outcome.with_file_paths(paths) if paths else outcome
 
 
 def _write_workspace(

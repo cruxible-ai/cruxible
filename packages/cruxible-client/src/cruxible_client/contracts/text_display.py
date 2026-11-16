@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from cruxible_client._error_base import printable
 from cruxible_client.contracts.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
 from cruxible_client.contracts.get_display import get_value_display
+from cruxible_client.contracts.get_text import file_shown
 from cruxible_client.contracts.public_names import public_name as _public_name
 
 if TYPE_CHECKING:
@@ -407,10 +408,16 @@ def awaiting_text(approval: ApprovalNeeded) -> str:
     return f"independent approval; approvers: {', '.join(approval.eligible_approvers)}"
 
 
-def change_outcome_line(change: ChangeOutcome, *, extra: Sequence[str] = ()) -> str:
+def change_outcome_line(
+    change: ChangeOutcome,
+    *,
+    extra: Sequence[str] = (),
+    file_paths: Mapping[str, str] | None = None,
+) -> str:
     """One change as a write outcome (and a proposal review) prints it, unindented.
 
-    ``extra`` are further bracketed details, after the outcome's own.
+    ``extra`` are further bracketed details, after the outcome's own. A note's
+    file reads as its workspace path when ``file_paths`` maps it (``file_shown``).
     """
 
     target = " ".join(part for part in (change.subject, change.field) if part)
@@ -425,7 +432,8 @@ def change_outcome_line(change: ChangeOutcome, *, extra: Sequence[str] = ()) -> 
     elif change.op == "rebind":
         line = f"rebind {target}: {_value_text(change.after)} (value unchanged)"
     elif change.op == "about":
-        where = f"{change.file}#{'/'.join(change.section or ())}"
+        file = "-" if change.file is None else file_shown(change.file, file_paths)
+        where = f"{file}#{'/'.join(change.section or ())}"
         about = ", ".join(change.about or ()) or "(unlinked: retired)"
         line = f"note {where} about {about}  [{change.note}]"
     elif change.before is None:
@@ -447,9 +455,18 @@ def change_outcome_line(change: ChangeOutcome, *, extra: Sequence[str] = ()) -> 
     return line + (f"  [{'; '.join(details)}]" if details else "")
 
 
-def write_outcome_lines(outcome: WriteOutcome) -> list[tuple[str, bool]]:
-    """A write outcome's lines, each with whether the CLI prints it to stderr."""
+def write_outcome_lines(
+    outcome: WriteOutcome, *, file_paths: Mapping[str, str] | None = None
+) -> list[tuple[str, bool]]:
+    """A write outcome's lines, each with whether the CLI prints it to stderr.
 
+    A file reads as its workspace path: ``file_paths`` (by default the catalog
+    the workspace write read, ``WriteOutcome.file_paths``) maps a catalog name
+    to it; the name is shown only where nothing maps it.
+    """
+
+    if file_paths is None:
+        file_paths = outcome.file_paths
     lines: list[tuple[str, bool]] = []
 
     def out(text: str, *, err: bool = False) -> None:
@@ -461,16 +478,17 @@ def write_outcome_lines(outcome: WriteOutcome) -> list[tuple[str, bool]]:
         out(outcome.hint)
     for doc in outcome.docs:
         out(
-            f"  doc {doc.file or doc.source_id} {list(doc.section)}: "
+            f"  doc {doc.file or file_shown(doc.source_id or '-', file_paths)} "
+            f"{list(doc.section)}: "
             f"{'written' if doc.written else 'not written'} ({doc.after_digest})"
         )
         if doc.refusal:
             out(f"{doc.refusal.code}: {doc.refusal.message}. {doc.refusal.repair}", err=True)
     for item in outcome.catalogued:
         done = "catalogued" if item.written else "would catalogue"
-        out(f"  file {item.file}: {done} as {item.name}")
+        out(f"  {done} {item.file} (as {item.name})")
     for change in outcome.changes:
-        out(f"  {change_outcome_line(change)}")
+        out(f"  {change_outcome_line(change, file_paths=file_paths)}")
     for subject in outcome.subjects_added:
         out(f"  + subject {subject}")
     if outcome.proposal is not None and outcome.status != "accepted":
@@ -536,17 +554,23 @@ def _table(rows: Sequence[Sequence[str]], indent: str) -> list[str]:
     ]
 
 
-def review_change_lines(item: ReviewChange, *, why: str | None = None) -> list[str]:
+def review_change_lines(
+    item: ReviewChange,
+    *,
+    why: str | None = None,
+    file_paths: Mapping[str, str] | None = None,
+) -> list[str]:
     """One proposed value change: the write outcome's line, what it cites, and why.
 
     Cited text that is exactly ``why`` (the proposal's own rationale, already
-    printed) is named, not repeated.
+    printed) is named, not repeated. A cited file reads as its workspace path
+    when ``file_paths`` maps its catalog name (``file_shown``).
     """
 
     extra = [] if item.role in (None, "normative") else [f"role {item.role}"]
-    lines = [f"  {change_outcome_line(item.change, extra=extra)}"]
+    lines = [f"  {change_outcome_line(item.change, extra=extra, file_paths=file_paths)}"]
     for citation in item.citations:
-        where = _public_name(citation.source) if citation.source else "-"
+        where = file_shown(citation.source, file_paths, public=True) if citation.source else "-"
         if citation.section:
             where += "#" + "/".join(citation.section)
         elif citation.anchor:
@@ -680,11 +704,37 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
     return lines
 
 
-def render_review_summary(review: ProposalReviewSummary, *, command: str | None = None) -> str:
+def _why_lines(rationale: object) -> list[str]:
+    """The proposal's rationale: its own line breaks kept, continuation lines indented.
+
+    Each line still goes through ``printable``, so authored text cannot forge a
+    line of output; a non-text rationale stays one compact cell.
+    """
+
+    value = getattr(rationale, "value", None)
+    if not isinstance(value, str) or "\n" not in value.strip():
+        return [f"Why: {_summary_value_text(rationale)}"]
+    text_lines = value.strip().splitlines()
+    if getattr(rationale, "truncated", False):
+        text_lines[-1] += "..."
+    return [
+        f"Why: {printable(text_lines[0])}",
+        *(f"  {printable(line)}".rstrip() for line in text_lines[1:]),
+    ]
+
+
+def render_review_summary(
+    review: ProposalReviewSummary,
+    *,
+    command: str | None = None,
+    file_paths: Mapping[str, str] | None = None,
+) -> str:
     """A proposal review summary as ``cruxible proposal review`` prints it.
 
     ``command`` is the review command a paging hint runs, when the text is shown
     by another verb (``proposal approve``); by default a hint names only flags.
+    ``file_paths`` is the workspace file catalog the caller read: a cited file
+    reads as its path (``file_shown``).
     """
 
     run = "" if command is None else f"{command} "
@@ -695,7 +745,7 @@ def render_review_summary(review: ProposalReviewSummary, *, command: str | None 
             f"{review.originating_line.artifact_digest}"
         )
     if review.rationale is not None:
-        lines.append(f"Why: {_summary_value_text(review.rationale)}")
+        lines.extend(_why_lines(review.rationale))
     lines.append(f"Required tier: {review.required_tier}; activation: {review.activation_policy}")
     for requirement in review.approval_requirements:
         lines.append(
@@ -758,7 +808,11 @@ def render_review_summary(review: ProposalReviewSummary, *, command: str | None 
         )
         why = review.rationale.value if review.rationale is not None else None
         for item in review.changes:
-            lines.extend(review_change_lines(item, why=why if isinstance(why, str) else None))
+            lines.extend(
+                review_change_lines(
+                    item, why=why if isinstance(why, str) else None, file_paths=file_paths
+                )
+            )
         if review.changes_next is not None:
             lines.append(f"More values: {run}--changes-from {review.changes_next}")
         if shown < review.change_count and review.change_counts:

@@ -755,6 +755,51 @@ def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
     assert line.endswith(f"  {shown}")
 
 
+def test_evidence_names_a_cited_file_by_its_workspace_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Text reads the path the workspace catalog maps the source name to; JSON keeps the name."""
+
+    from cruxible_client.authoring.files import catalog_file
+    from cruxible_client.contracts.get_reads import GetCaptureEvidence, GetEvidence
+
+    workspace = tmp_path / "workspace"
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / "introduction").mkdir()
+    (workspace / "introduction" / "forms.py").write_text("x\n")
+    catalog_file(workspace, path=workspace / "introduction" / "forms.py")
+    capture = GetCaptureEvidence(
+        capture="CAP-0123456789ab",
+        contract="CaptureContract:playbill.foreign-source.doc-introduction-forms.py",
+        version=1,
+        source="doc-introduction-forms.py",
+        observed_at=WHEN,
+        role="evidence",
+        origin="independent",
+        status="admitted",
+    )
+    _stub(
+        monkeypatch,
+        _result(
+            "claim",
+            detail="evidence",
+            evidence=GetEvidence(value="x", captures=(capture,), attestations=()),
+        ),
+    )
+    monkeypatch.chdir(workspace)
+    text = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
+    assert text.exit_code == 0, text.output
+    assert "source=introduction/forms.py " in text.output
+    as_json = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence", "--json"])
+    stored = json.loads(as_json.stdout)["evidence"]["captures"][0]["source"]
+    assert stored == "doc-introduction-forms.py"
+    # Outside any workspace (no catalog to read), the stored name.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cruxible").mkdir()
+    text = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
+    assert "source=doc-introduction-forms.py " in text.output
+
+
 def test_evidence_attestation_lines_say_where_each_lives_and_whether_it_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

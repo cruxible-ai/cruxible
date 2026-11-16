@@ -49,7 +49,8 @@ def test_note_appends_and_links_then_backlinks_list_it_with_drift(
         "Triage context",
     )
     assert noted.exit_code == 0, noted.output
-    assert f"note doc-notes.md#Triage about {WI1}" in noted.output
+    # Text names the file by its path; the JSON keeps the catalog name it is stored under.
+    assert f"note notes.md#Triage about {WI1}" in noted.output
     assert (tmp_path / "notes.md").read_text() == "# Triage\nNot reachable.\n\n"
     shown = _run("backlinks", WI1, "--json")
     assert shown.exit_code == 0, shown.output
@@ -63,6 +64,48 @@ def test_note_appends_and_links_then_backlinks_list_it_with_drift(
     section = _run("backlinks", "--section", "notes.md#Triage", "--json")
     assert section.exit_code == 0, section.output
     assert json.loads(section.stdout)["links"] == []
+
+
+def test_backlinks_text_names_a_cited_file_by_its_current_path(
+    reads: _Reads, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The catalog name is the stored identity; text reads the path the catalog maps it to now."""
+
+    monkeypatch.chdir(tmp_path)
+    noted = _run(
+        "note",
+        "notes.md",
+        "--text",
+        "# Triage\nNot reachable.\n\n",
+        "--about",
+        WI1,
+        "--because",
+        "Triage context",
+    )
+    assert noted.exit_code == 0, noted.output
+    shown = json.loads(_run("backlinks", WI1, "--json").stdout)
+    assert shown["links"][0]["file"] == "doc-notes.md"
+    text = _run("backlinks", WI1)
+    assert text.exit_code == 0, text.output
+    assert " notes.md#Triage" in text.output and "doc-notes.md" not in text.output
+
+    # The file moves and its catalog entry follows: text reads the new path.
+    (tmp_path / "triage").mkdir()
+    (tmp_path / "notes.md").rename(tmp_path / "triage" / "notes.md")
+    moved = _run("files", "add", "doc-notes.md", "triage/notes.md", "--replace")
+    assert moved.exit_code == 0, moved.output
+    text = _run("backlinks", WI1)
+    assert " triage/notes.md#Triage" in text.output, text.output
+    section = _run("backlinks", "--section", "triage/notes.md#Triage")
+    assert section.exit_code == 0, section.output
+    assert "backlinks of triage/notes.md#Triage" in section.output
+
+    # No catalog entry maps the name any more: text shows the stored name.
+    removed = _run("files", "remove", "doc-notes.md")
+    assert removed.exit_code == 0, removed.output
+    text = _run("backlinks", WI1)
+    assert text.exit_code == 0, text.output
+    assert " doc-notes.md#Triage" in text.output
 
 
 def test_backlinks_needs_one_target(reads: _Reads) -> None:

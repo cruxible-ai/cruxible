@@ -27,6 +27,30 @@ def plural(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
+def file_shown(name: str, file_paths: Mapping[str, str] | None, *, public: bool = False) -> str:
+    """A file citation's catalog name as a person reads it: the file's workspace path.
+
+    The catalog name is the stored identity (signed data and JSON keep it; it
+    survives the file moving). ``file_paths`` is the workspace catalog the
+    caller read once (``catalog_file_paths``): text shows the path it maps the
+    name to now. No mapping (no workspace, an entry since removed, a reader
+    over HTTP) shows the name as stored, by its public spelling with
+    ``public``. Reads nothing.
+    """
+
+    path = file_paths.get(name) if file_paths else None
+    if path:
+        return path
+    return public_name(name) if public else name
+
+
+def file_ref_shown(ref: str, file_paths: Mapping[str, str] | None) -> str:
+    """``NAME#Heading/Path`` (or a bare NAME) with NAME shown as its workspace path."""
+
+    name, mark, rest = ref.partition("#")
+    return file_shown(name, file_paths) + mark + rest
+
+
 def node_summary_text(summary: Mapping[str, Any]) -> str:
     """One node's run summary as a compact phrase: counts only, never values."""
 
@@ -145,8 +169,14 @@ def provider_operation_line(row: dict[str, Any]) -> str:
     )
 
 
-def backlink_line(link: Any) -> str:
-    where = "" if link.file is None else f" {link.file}#{'/'.join(link.section or ())}"
+def backlink_line(link: Any, *, file_paths: Mapping[str, str] | None = None) -> str:
+    """One backlink row; a cited section names its file by workspace path (``file_shown``)."""
+
+    where = (
+        ""
+        if link.file is None
+        else f" {file_shown(link.file, file_paths)}#{'/'.join(link.section or ())}"
+    )
     extra = [
         item
         for item in (
@@ -257,14 +287,15 @@ def attestation_counts_text(attestation: Any) -> str:
 _UNLOCATED_OWN_WORDS_SOURCES = frozenset({"unknown", COORDINATOR_SELF_SOURCE_IDENTITY})
 
 
-def citation_label(capture: Any) -> str:
+def citation_label(capture: Any, *, file_paths: Mapping[str, str] | None = None) -> str:
     """What a cited Capture is, in words, and whether the verdict reads it.
 
     Own words say how much text they hold, and own words found in a workspace
-    file name it: their source is the file's logical id, where unlocated own
-    words name their producer (a qualified ``Principal:``) or nothing. A copy
-    that only records where cited text sits reads as that location, never as
-    rejected evidence.
+    file name it: their source is the file's logical id (shown as the file's
+    workspace path when ``file_paths`` maps it), where unlocated own words name
+    their producer (a qualified ``Principal:``) or nothing. A copy that only
+    records where cited text sits reads as that location, never as rejected
+    evidence.
     """
 
     status = capture.status.replace("_", " ")
@@ -272,11 +303,11 @@ def citation_label(capture: Any) -> str:
         source = str(capture.source or "")
         located = bool(source) and ":" not in source
         located = located and source not in _UNLOCATED_OWN_WORDS_SOURCES
-        where = f" in {public_name(source)}" if located else ""
+        where = f" in {file_shown(source, file_paths, public=True)}" if located else ""
         size = "" if capture.byte_length is None else f" ({capture.byte_length} bytes)"
         return f"own words{where}{size}: {status}"
     if capture.role == "copy":
-        where = f"location in {public_name(capture.source)}"
+        where = f"location in {file_shown(str(capture.source), file_paths, public=True)}"
         return where if capture.status == "not_evidence" else f"{where}: {status}"
     return f"{capture.role}: {status}"
 
@@ -380,13 +411,26 @@ def proposed_reason_lines(reason: Any) -> list[str]:
     ]
 
 
-def render_get(result: Any, *, evidence_erased: bool = False) -> str | None:
+def _card_cell(part: object) -> str:
+    """One card cell: a reserved stored name in its public spelling, anything else as text."""
+
+    return public_name(part) if isinstance(part, str) else str(part)
+
+
+def render_get(
+    result: Any,
+    *,
+    evidence_erased: bool = False,
+    file_paths: Mapping[str, str] | None = None,
+) -> str | None:
     """A ``get`` answer as ``cruxible get`` prints it, values first, per kind.
 
     ``evidence_erased`` marks a stale Claim's verdict as read from erased
     evidence (the CLI learns it with one more read; ``str()`` never reads).
-    A body is its text, with no trailing newline added. ``None`` for a proof,
-    which the CLI prints as JSON. Reads nothing.
+    ``file_paths`` is the workspace file catalog the caller read: evidence
+    sources and backlinked sections name a catalogued file by its path
+    (``file_shown``). A body is its text, with no trailing newline added.
+    ``None`` for a proof, which the CLI prints as JSON. Reads nothing.
     """
 
     lines: list[str] = []
@@ -488,19 +532,28 @@ def render_get(result: Any, *, evidence_erased: bool = False) -> str | None:
                     for row in value:
                         lines.append("  " + provider_operation_line(row))
                     continue
+                # Reserved names read in their public spelling throughout the
+                # card, as its next: lines do; the JSON keeps the stored ids.
                 if isinstance(value, list) and all(isinstance(item, dict) for item in value):
                     lines.append(f"{key}:")
                     for item in value:
-                        lines.append("  " + "  ".join(str(part) for part in item.values()))
+                        lines.append("  " + "  ".join(_card_cell(part) for part in item.values()))
                     continue
                 if isinstance(value, dict):
                     value = "  ".join(
-                        f"{name}={', '.join(map(str, part)) if isinstance(part, list) else part}"
+                        f"{name}="
+                        + (
+                            ", ".join(map(_card_cell, part))
+                            if isinstance(part, list)
+                            else _card_cell(part)
+                        )
                         for name, part in value.items()
                     )
+                elif isinstance(value, str):
+                    value = public_name(value)
                 if isinstance(value, list):
                     # Names are never cut: a truncated name is not a usable reference.
-                    lines.append(f"{key}: {printable(', '.join(map(str, value)))}")
+                    lines.append(f"{key}: {printable(', '.join(map(_card_cell, value)))}")
                     continue
                 lines.append(f"{key}: {get_value_text(value, width=200, evidence_hint=False)}")
         if card.get("flags"):
@@ -519,9 +572,10 @@ def render_get(result: Any, *, evidence_erased: bool = False) -> str | None:
             erased = capture.erased
             lines.append(
                 f"capture {capture.capture}  {public_name(capture.contract)} "
-                f"v{capture.version}  source={public_name(capture.source)}  "
+                f"v{capture.version}  "
+                f"source={file_shown(capture.source, file_paths, public=True)}  "
                 f"observed={capture.observed_at.isoformat()}  "
-                f"{citation_label(capture)}"
+                f"{citation_label(capture, file_paths=file_paths)}"
                 + (
                     ""
                     if erased is None
@@ -553,9 +607,10 @@ def render_get(result: Any, *, evidence_erased: bool = False) -> str | None:
         return "\n".join(lines)
     if result.backlinks is not None:
         if not result.backlinks.links:
-            lines.append(f"(no backlinks into {result.backlinks.target})")
+            target = file_ref_shown(result.backlinks.target, file_paths)
+            lines.append(f"(no backlinks into {target})")
         for link in result.backlinks.links:
-            lines.append(backlink_line(link))
+            lines.append(backlink_line(link, file_paths=file_paths))
         return "\n".join(lines)
     if result.pairs is not None:
         if not result.pairs.groups:

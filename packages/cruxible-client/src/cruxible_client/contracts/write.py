@@ -36,6 +36,7 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    PrivateAttr,
     Tag,
     field_validator,
     model_serializer,
@@ -225,7 +226,10 @@ class FileEvidence(_StrictWriteModel):
     kind: Literal["file"] = "file"
     file: str = Field(
         pattern=FILE_ANCHOR_PATTERN,
-        description="PATH#ANCHOR: a catalogued file and text found once in it.",
+        description=(
+            "PATH#ANCHOR: a workspace file and text found once in it; the write "
+            "catalogues the file if it is not yet."
+        ),
     )
     observation: WorkingSelectionObservation | None = Field(
         default=None,
@@ -1206,10 +1210,27 @@ class WriteOutcome(_StrictWriteModel):
     warnings: tuple[WriteWarning, ...] = Field(default=(), exclude_if=_omit_empty)
     refusal: WriteRefusal | None = Field(default=None, exclude_if=_omit_none)
     next: str | None = Field(default=None, exclude_if=_omit_none)
+    # Display only, never serialized: the workspace catalog's file names to their
+    # paths, as the client's workspace write read it, so text names a note's or
+    # an edited section's file by path. JSON keeps the stored names.
+    _file_paths: Mapping[str, str] | None = PrivateAttr(default=None)
 
     @property
     def refused(self) -> bool:
         return self.status in ("refused", "would_refuse")
+
+    @property
+    def file_paths(self) -> Mapping[str, str] | None:
+        """The catalog name -> workspace path map text reads, when a workspace write set it."""
+
+        return self._file_paths
+
+    def with_file_paths(self, file_paths: Mapping[str, str]) -> WriteOutcome:
+        """This outcome, its text naming catalogued files by these paths (fields unchanged)."""
+
+        shown = self.model_copy()
+        shown._file_paths = file_paths
+        return shown
 
     def __str__(self) -> str:
         """The outcome as ``cruxible write`` prints it; ``repr()`` stays the full model."""

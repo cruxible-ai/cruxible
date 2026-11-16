@@ -71,9 +71,14 @@ class ReviewedProposal:
         return api.ProposalReviewSummary.model_validate_json(self._summary)
 
     def __str__(self) -> str:
-        """The review as ``cruxible proposal review`` prints it; no request is made."""
+        """The review as ``cruxible proposal review`` prints it; no request is made.
 
-        return str(self.summary)
+        A cited file reads as its path in the connection's workspace catalog.
+        """
+
+        from cruxible_client.contracts.text_display import render_review_summary
+
+        return render_review_summary(self.summary, file_paths=self._owner._display_file_paths())
 
 
 def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:

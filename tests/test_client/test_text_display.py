@@ -528,7 +528,7 @@ def test_a_reviewed_proposal_prints_its_summary_without_a_request() -> None:
 
     summary = _review_summary()
     reviewed = ReviewedProposal(
-        SimpleNamespace(),  # type: ignore[arg-type]
+        SimpleNamespace(_display_file_paths=dict),  # type: ignore[arg-type]
         "inst",
         b"{}",
         summary.proposal_id,  # type: ignore[attr-defined]
@@ -536,3 +536,266 @@ def test_a_reviewed_proposal_prints_its_summary_without_a_request() -> None:
         summary.model_dump_json().encode(),  # type: ignore[attr-defined]
     )
     assert str(reviewed) == str(summary)
+
+
+# -- a file citation reads as the file's path, never only its catalog name ------------
+
+_PATHS = {"doc-introduction-forms.py": "introduction/forms.py"}
+_MOVED = {"doc-introduction-forms.py": "intro/forms.py"}
+
+
+def _file_citation_review() -> object:
+    return _review_summary(
+        changes=[
+            {
+                "change": {
+                    "op": "set",
+                    "subject": "security.pair/p1",
+                    "field": "justification",
+                    "after": "not_in_execute_path",
+                },
+                "citations": [
+                    {
+                        "capture": "CAP-98cc912e1ba4",
+                        "origin": "independent",
+                        "source": "doc-introduction-forms.py",
+                        "section": ["Forms"],
+                        "text": "No caller reaches it.",
+                    }
+                ],
+            }
+        ],
+        change_count=1,
+    )
+
+
+def test_a_review_cites_a_catalogued_file_by_its_current_path() -> None:
+    from cruxible_client.contracts.text_display import render_review_summary
+
+    summary = _file_citation_review()
+
+    def cites(**kwargs: object) -> str:
+        text = render_review_summary(summary, **kwargs)  # type: ignore[arg-type]
+        (line,) = [item for item in text.splitlines() if item.startswith("    cites ")]
+        return line
+
+    assert cites(file_paths=_PATHS) == "    cites CAP-98cc912e1ba4 introduction/forms.py#Forms"
+    # The file moved and its catalog entry followed: the new path.
+    assert cites(file_paths=_MOVED) == "    cites CAP-98cc912e1ba4 intro/forms.py#Forms"
+    # Nothing maps the name (no workspace, the entry removed): the stored name.
+    assert cites() == "    cites CAP-98cc912e1ba4 doc-introduction-forms.py#Forms"
+    assert cites(file_paths={}) == cites()
+    # The JSON keeps the stored name.
+    assert summary.changes[0].citations[0].source == "doc-introduction-forms.py"  # type: ignore[attr-defined]
+
+
+def test_a_reviewed_proposal_reads_its_owners_workspace_catalog() -> None:
+    from cruxible_client.authoring.approval import ReviewedProposal
+
+    summary = _file_citation_review()
+    reviewed = ReviewedProposal(
+        SimpleNamespace(_display_file_paths=lambda: _PATHS),  # type: ignore[arg-type]
+        "inst",
+        b"{}",
+        summary.proposal_id,  # type: ignore[attr-defined]
+        summary.candidate_digest,  # type: ignore[attr-defined]
+        summary.model_dump_json().encode(),  # type: ignore[attr-defined]
+    )
+    assert "cites CAP-98cc912e1ba4 introduction/forms.py#Forms" in str(reviewed)
+
+
+def test_a_write_outcome_names_catalogued_and_noted_files_by_path() -> None:
+    outcome = WriteOutcome.model_validate(
+        {
+            "status": "accepted",
+            "coordinate": {"git_oid": _OID[:12], "generation": 4},
+            "catalogued": [
+                {
+                    "file": "introduction/forms.py",
+                    "name": "doc-introduction-forms.py",
+                    "written": True,
+                }
+            ],
+            "changes": [
+                {
+                    "op": "about",
+                    "note": "NOTE-1",
+                    "file": "doc-introduction-forms.py",
+                    "section": ["Forms"],
+                    "about": ["security.pair/p1"],
+                }
+            ],
+        }
+    )
+
+    def lines(shown: WriteOutcome) -> list[str]:
+        return str(shown).splitlines()[1:]
+
+    # The path first; the catalog name only as a detail.
+    assert lines(outcome.with_file_paths(_PATHS)) == [
+        "  catalogued introduction/forms.py (as doc-introduction-forms.py)",
+        "  note introduction/forms.py#Forms about security.pair/p1  [NOTE-1]",
+    ]
+    assert lines(outcome.with_file_paths(_MOVED))[1].startswith("  note intro/forms.py#Forms")
+    # No catalog was read (a write that names no file by its catalog name): the name.
+    assert lines(outcome)[1].startswith("  note doc-introduction-forms.py#Forms")
+    # Display only: the fields and the JSON are unchanged.
+    shown = outcome.with_file_paths(_PATHS)
+    assert shown.model_dump(mode="json") == outcome.model_dump(mode="json")
+    assert outcome.file_paths is None and shown.file_paths == _PATHS
+
+
+def test_a_get_card_names_evidence_and_backlinked_files_by_path() -> None:
+    from cruxible_client.contracts.get_reads import (
+        Backlink,
+        GetBacklinks,
+        GetCaptureEvidence,
+        GetEvidence,
+        GetResult,
+    )
+    from cruxible_client.contracts.get_text import render_get
+
+    capture = GetCaptureEvidence(
+        capture="CAP-0123456789ab",
+        contract="CaptureContract:playbill.foreign-source.doc-introduction-forms.py",
+        version=1,
+        source="doc-introduction-forms.py",
+        observed_at=datetime(2026, 11, 15, tzinfo=UTC),
+        role="copy",
+        origin="independent",
+        status="admitted",
+    )
+    coordinate = {"git_oid": _OID[:12], "generation": 4}
+    when = "2026-11-15T00:00:00Z"
+    evidence = GetResult.model_validate(
+        {
+            "ref": "CLM-1",
+            "kind": "claim",
+            "detail": "evidence",
+            "coordinate": coordinate,
+            "evaluation_time": when,
+            "evidence": GetEvidence(value="x", captures=(capture,), attestations=()).model_dump(
+                mode="json"
+            ),
+        }
+    )
+    backlinks = GetResult.model_validate(
+        {
+            "ref": "security.pair/p1",
+            "kind": "subject",
+            "detail": "backlinks",
+            "coordinate": coordinate,
+            "evaluation_time": when,
+            "backlinks": GetBacklinks(
+                target="security.pair/p1",
+                links=(
+                    Backlink(
+                        relation="cites",
+                        source_kind="Claim",
+                        source="CLM-1",
+                        file="doc-introduction-forms.py",
+                        section=("Forms",),
+                    ),
+                ),
+            ).model_dump(mode="json"),
+        }
+    )
+
+    def capture_line(**kwargs: object) -> str:
+        text = render_get(evidence, **kwargs)  # type: ignore[arg-type]
+        assert text is not None
+        return text.splitlines()[1]
+
+    shown = capture_line(file_paths=_PATHS)
+    assert "source=introduction/forms.py" in shown
+    assert shown.endswith("location in introduction/forms.py: admitted")
+    assert "source=intro/forms.py" in capture_line(file_paths=_MOVED)
+    assert "source=doc-introduction-forms.py" in capture_line()
+    linked = render_get(backlinks, file_paths=_PATHS)
+    assert linked == "cites Claim CLM-1 introduction/forms.py#Forms"
+    assert render_get(backlinks) == "cites Claim CLM-1 doc-introduction-forms.py#Forms"
+
+    # The SDK card read the catalog with the answer; str() reads nothing.
+    card = sdk.KnowledgeCard(
+        sdk.RefKind.CLAIM, "CLM-1", _COORDINATE, evidence.evidence, evidence, _PATHS
+    )
+    assert "source=introduction/forms.py" in str(card)
+
+
+def test_catalog_file_paths_maps_names_to_current_paths_and_never_raises(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.authoring.files import catalog_file, remove_catalog_entry
+    from cruxible_client.authoring.selectors import catalog_file_paths
+
+    (tmp_path / "introduction").mkdir()
+    (tmp_path / "introduction" / "forms.py").write_text("x\n")
+    assert dict(catalog_file_paths(None)) == {}
+    assert dict(catalog_file_paths(tmp_path)) == {}  # no catalog yet
+    catalog_file(tmp_path, path=tmp_path / "introduction" / "forms.py")
+    assert dict(catalog_file_paths(tmp_path)) == _PATHS
+    # The file moves and the entry follows it under the same name.
+    (tmp_path / "intro").mkdir()
+    (tmp_path / "introduction" / "forms.py").rename(tmp_path / "intro" / "forms.py")
+    catalog_file(
+        tmp_path, name="doc-introduction-forms.py", path=tmp_path / "intro/forms.py", replace=True
+    )
+    assert dict(catalog_file_paths(tmp_path)) == _MOVED
+    remove_catalog_entry(tmp_path, name="doc-introduction-forms.py")
+    assert dict(catalog_file_paths(tmp_path)) == {}
+    # An unreadable catalog maps nothing rather than failing the read.
+    (tmp_path / ".cruxible" / "files.yaml").write_text("entries: [")
+    assert dict(catalog_file_paths(tmp_path)) == {}
+
+
+def test_a_get_card_body_prints_reserved_names_in_their_public_spelling() -> None:
+    """A card prints one spelling in its body and its next: lines; JSON keeps the stored id."""
+
+    from cruxible_client.contracts.get_reads import GetResult
+    from cruxible_client.contracts.get_text import render_get
+
+    stored = "CaptureContract:playbill.coordinator-self-source-v1"
+    result = GetResult.model_validate(
+        {
+            "ref": stored,
+            "kind": "capture_contract",
+            "detail": "summary",
+            "coordinate": {"git_oid": _OID[:12], "generation": 3},
+            "evaluation_time": "2026-11-15T00:00:00Z",
+            "card": {
+                "contract": stored,
+                "version": 1,
+                "lifecycle": "live",
+                "captures": {"latest": "playbill.foreign-source.doc-notes.md"},
+                "admitted_by": ["ClaimType:dev.item.status", stored],
+                "next": ["cruxible get CaptureContract:cruxible.coordinator-self-source-v1"],
+            },
+        }
+    )
+
+    text = render_get(result)
+    assert text is not None
+    assert "contract: CaptureContract:cruxible.coordinator-self-source-v1" in text.splitlines()
+    assert "captures: latest=cruxible.foreign-source.doc-notes.md" in text.splitlines()
+    assert (
+        "admitted_by: ClaimType:dev.item.status, "
+        "CaptureContract:cruxible.coordinator-self-source-v1"
+    ) in text.splitlines()
+    assert "playbill." not in text
+    assert result.model_dump(mode="json")["card"]["contract"] == stored
+
+
+def test_a_review_prints_a_multi_line_why_as_lines_not_escapes() -> None:
+    """A Procedure's rationale reads as its paragraphs, never a literal \\n."""
+
+    summary = _review_summary(
+        rationale={"value": "Settled from the KEV feed.\n\nTwo rows changed.\x1b[2J\n"}
+    )
+    lines = str(summary).splitlines()
+    start = lines.index("Why: Settled from the KEV feed.")
+    # Line breaks kept and indented; control characters still escaped.
+    assert lines[start + 1 : start + 3] == ["", "  Two rows changed.\\x1b[2J"]
+    assert "\\n" not in str(summary)
+    cut = _review_summary(rationale={"value": "One.\nTwo", "truncated": True})
+    assert "  Two..." in str(cut).splitlines()
+    assert "Why: Seen in the notes." in str(_review_summary()).splitlines()
