@@ -172,6 +172,12 @@ unit that divides it (`now - 3d`). A query that shifts `now` is stored as
 query: `query --name` takes `--evaluation-time` (default the current instant),
 and a Line's Procedure that reads a query gets `now` from its run's evaluation
 instant, so `opened_at < now - 3d` in a Line moves forward with each run.
+A Claim is visible from the moment it was written, so a named query evaluated
+at a time before its Claims were written sees none of them, whatever the
+filter says. To try `now - 3d` out, write the Claims first and evaluate at or
+after that moment (the default `--evaluation-time` is now), or let a Line run
+it at its own evaluation instant; do not pick a past evaluation time to
+simulate elapsed days.
 
 A relation hop adds a binding:
 
