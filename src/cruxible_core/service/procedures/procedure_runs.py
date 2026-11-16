@@ -2431,9 +2431,11 @@ def _selected_captures(
 
     import json
 
+    from cruxible_core.procedures.execution import acquisition_member_chunks
+
     selected: set[str] = set()
-    chunks = payload.get("member_chunks")
-    for digest in chunks if isinstance(chunks, list) else ():
+    chunks = acquisition_member_chunks(payload, lambda digest: bodies.read(digest, access=access))
+    for digest in chunks or ():
         try:
             body = json.loads(bodies.read(str(digest), access=access))
         except (CruxibleError, OSError, ValueError):

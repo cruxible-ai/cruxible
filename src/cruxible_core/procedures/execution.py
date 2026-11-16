@@ -83,6 +83,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.errors import (
     CasError,
+    CruxibleError,
     ExecutionError,
     JournalConflictError,
     JournalError,
@@ -2595,6 +2596,36 @@ SOURCE_ACQUISITION_RECORD_V2 = "playbill-procedure-source-acquisition-v2"
 ACQUIRED_MEMBERS_BODY_V1 = "playbill-acquired-members-v1"
 #: How many members one members body holds: a run card shows at most 64.
 ACQUIRED_MEMBERS_CHUNK = 64
+#: The run-free root a v2 acquisition record cites: its member chunks, in order.
+ACQUIRED_MEMBER_CHUNKS_BODY_V1 = "playbill-acquired-member-chunks-v1"
+
+
+def acquisition_member_chunks(
+    payload: Mapping[str, Any], read: Callable[[str], bytes]
+) -> list[str] | None:
+    """The member chunk digests a v2 ``source_acquisition`` record cites (None: unreadable).
+
+    ``read`` returns a body's verified bytes and raises when it cannot. The
+    record cites one root body listing the chunks, so the record's own size
+    never depends on how many members the call fetched (F-005).
+    """
+
+    digest = payload.get("members_digest")
+    if not isinstance(digest, str):
+        return None
+    try:
+        root = json.loads(read(digest))
+    except (CruxibleError, OSError, ValueError):
+        return None
+    chunks = root.get("chunks") if isinstance(root, dict) else None
+    if (
+        not isinstance(root, dict)
+        or root.get("tag") != ACQUIRED_MEMBER_CHUNKS_BODY_V1
+        or not isinstance(chunks, list)
+        or not all(isinstance(chunk, str) for chunk in chunks)
+    ):
+        return None
+    return chunks
 
 
 def _acquired_member(
@@ -5777,9 +5808,10 @@ class ProcedureExecutor:
         the earliest and latest instant its acquired members were observed.
 
         The members are stored in chunks of up to ``ACQUIRED_MEMBERS_CHUNK``,
-        so a bounded reader (a run card) opens only the chunks it shows; the
-        record counts the list members, so a reader past its bound knows a
-        call has more without opening any. The list grows with the call's
+        listed in one root body the record cites, so a bounded reader (a run
+        card) opens the root and only the chunks it shows; the record counts
+        the list members, so a reader past its bound knows a call has more
+        without opening any. The list grows with the call's
         capture outputs; it is built once per call, never per member.
         """
 
@@ -5795,6 +5827,12 @@ class ProcedureExecutor:
             ).digest
             for start in range(0, len(members), ACQUIRED_MEMBERS_CHUNK)
         ]
+        # One root cites the chunks: an unchanged call reproduces it too, and
+        # the record stays one digest whatever the call fetched.
+        root = self.bodies.store(
+            canonical_bytes({"tag": ACQUIRED_MEMBER_CHUNKS_BODY_V1, "chunks": chunks}),
+            journal_payload=True,
+        ).digest
         self._append_event(
             admission,
             records,
@@ -5802,7 +5840,7 @@ class ProcedureExecutor:
             {
                 "tag": SOURCE_ACQUISITION_RECORD_V2,
                 "node_id": node.node_id,
-                "member_chunks": chunks,
+                "members_digest": root,
                 "count": len(members),
                 "listed": sum(1 for member in members if "/" in str(member["field"])),
                 "observed": None

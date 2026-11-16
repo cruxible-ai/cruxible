@@ -608,9 +608,13 @@ def _acquisition_members(
     if not _is_call_record(payload):
         yield payload
         return
+    from cruxible_core.procedures.execution import acquisition_member_chunks
+
     node_id = payload.get("node_id")
-    chunks = payload.get("member_chunks")
-    for digest in chunks if isinstance(chunks, list) else ():
+    chunks = acquisition_member_chunks(
+        payload, lambda digest: instance.body_store().read(digest, access=_ACCESS)
+    )
+    for digest in chunks or ():
         raw = read_payload_bytes(instance.body_store(), str(digest), access=_ACCESS)
         body = None if isinstance(raw, UnavailablePayload) else json.loads(raw)
         members = body.get("members") if isinstance(body, Mapping) else None

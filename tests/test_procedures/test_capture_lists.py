@@ -813,6 +813,29 @@ def _run_at(instance: Any, members: list[dict[str, Any]], at: Any) -> Any:
     )
 
 
+def test_an_acquisition_record_is_the_same_size_however_many_members_it_fetched(
+    tmp_path: Path,
+) -> None:
+    """F-005: the run-bound record cites one root; the chunk list is a run-free body."""
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    sizes = {}
+    for count in (3, 200):
+        (tmp_path / str(count)).mkdir()
+        instance = pages_world(tmp_path / str(count), max_items=count, capture_bytes=1 << 22)
+        members = [page(body, index) for index, body in enumerate(bodies(count))]
+        state, _ = run_line(instance, invoker=Invoker(output=answer(members)), name=LINE_NAME)
+        assert state.status == "succeeded", state.terminal
+        (record,) = _raw_records(instance, state.run_id, "source_acquisition")
+        assert record["count"] == count and "member_chunks" not in record
+        shape = {key: value for key, value in record.items() if key not in {"count", "listed"}}
+        sizes[count] = len(canonical_bytes(shape))
+    # Digests and instants render at fixed width: four chunks cost no more
+    # record bytes than one.
+    assert sizes[3] == sizes[200]
+
+
 def test_an_identical_refetch_reuses_each_held_capture_and_journals_no_landing(
     tmp_path: Path,
 ) -> None:
@@ -844,7 +867,7 @@ def test_an_identical_refetch_reuses_each_held_capture_and_journals_no_landing(
     assert journal(instance, again.run_id, "produced_capture") == []
     (first_record,) = _raw_records(instance, first.run_id, "source_acquisition")
     (second_record,) = _raw_records(instance, again.run_id, "source_acquisition")
-    assert second_record["member_chunks"] == first_record["member_chunks"]
+    assert second_record["members_digest"] == first_record["members_digest"]
     assert ClaimReobservationStore(instance).head_sequence() == observations + 1
     # The held envelope of the second member is recorded missing: that member
     # is fetched into a new Capture, the others are still reused.

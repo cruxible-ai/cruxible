@@ -267,7 +267,9 @@ def _acquisition_members(instance: Any, payload: Any) -> list[dict[str, Any]]:
     assert payload["tag"] == "playbill-procedure-source-acquisition-v2"
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     members: list[dict[str, Any]] = []
-    for digest in payload["member_chunks"]:
+    root = json.loads(instance.body_store().read(payload["members_digest"], access=access))
+    assert root["tag"] == "playbill-acquired-member-chunks-v1"
+    for digest in root["chunks"]:
         body = json.loads(instance.body_store().read(digest, access=access))
         assert body["tag"] == "playbill-acquired-members-v1"
         assert 0 < len(body["members"]) <= 64

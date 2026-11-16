@@ -499,12 +499,20 @@ def _stored_call_acquisition(
         .digest
         for start in range(0, members, 64)
     ]
+    root = (
+        instance.body_store()
+        .store(
+            canonical_bytes({"tag": "playbill-acquired-member-chunks-v1", "chunks": chunks}),
+            journal_payload=True,
+        )
+        .digest
+    )
     digest = _store_payload(
         instance,
         {
             "tag": "playbill-procedure-source-acquisition-v2",
             "node_id": node_id,
-            "member_chunks": chunks,
+            "members_digest": root,
             "count": members,
             "listed": members,
             "observed": None,
