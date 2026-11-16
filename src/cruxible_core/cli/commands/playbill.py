@@ -6656,12 +6656,16 @@ def backlinks(
             "runs",
             "backlinks",
             "proof",
+            "proof-full",
             "body",
         ]
     ),
     default="summary",
     show_default=True,
-    help="How deep to read the one thing REF names.",
+    help=(
+        "How deep to read the one thing REF names. On a Claim, proof is its verdict and "
+        "cited Captures; proof-full the whole envelope and facts."
+    ),
 )
 @click.option(
     "--range",
@@ -6728,12 +6732,14 @@ def get_by_ref(
     """
 
     from cruxible_client.contracts.get_reads import ByteRange, GetRequest
+    from cruxible_client.contracts.get_text import claim_proof_summary, claim_proof_summary_lines
 
+    proof_full = detail == "proof-full"
     try:
         request = GetRequest.model_validate(
             {
                 "ref": ref,
-                "detail": detail,
+                "detail": "proof" if proof_full else detail,
                 "range": None if byte_range is None else ByteRange.parse(byte_range),
                 "at": at_oid,
                 "evaluation_time": evaluation_time,
@@ -6758,8 +6764,17 @@ def get_by_ref(
         lambda client, instance_id: client.get(instance_id, request=request),
         command_name="cruxible get",
     )
+    proof = result.proof
+    claim_summary = result.kind == "claim" and result.detail == "proof" and not proof_full
     if output_json:
+        if claim_summary and proof is not None:
+            result = result.model_copy(update={"proof": claim_proof_summary(proof)})
         _emit_json(result.model_dump(mode="json"))
+        return
+    if claim_summary and proof is not None:
+        click.echo(f"{result.ref}  ({result.coordinate.git_oid})")
+        for line in claim_proof_summary_lines(proof):
+            click.echo(line)
         return
     _emit_get_text(result, evidence_erased=_stale_claim_evidence_erased(request, result))
     if result.next_cursor is not None:

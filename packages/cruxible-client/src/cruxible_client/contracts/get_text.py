@@ -662,3 +662,43 @@ def claim_view_lines(view: Any) -> list[str]:
         f"{view.claim}  verdict={view.verdict} lifecycle={view.lifecycle_state} "
         f"revision={view.revision}",
     ]
+
+
+def claim_proof_summary(proof: Mapping[str, Any]) -> dict[str, Any]:
+    """A Claim's proof as a summary: its verdict and each cited Capture on one line.
+
+    ``get CLM --detail proof`` answers this by default (S1); ``--detail
+    proof-full`` (MCP ``proof_full``) answers the whole envelope and facts.
+    Each Capture line is ``CAP-<12 hex>  <status>  <contract>  <role>``.
+    """
+
+    verdict = ""
+    for fact in proof.get("facts", ()):
+        if isinstance(fact, Mapping) and fact.get("schema_id") == "cruxible.claim.current_verdict":
+            value = fact.get("value")
+            verdict = str(value.get("verdict", "")) if isinstance(value, Mapping) else ""
+    captures = [
+        "  ".join(
+            (
+                "CAP-" + str(item.get("capture_digest", "")).removeprefix("sha256:")[:12],
+                str(item.get("status", "")),
+                str(item.get("capture_contract_identity", "")),
+                str(item.get("citation_role", "")),
+            )
+        )
+        for item in proof.get("admission_accounts", ())
+        if isinstance(item, Mapping)
+    ]
+    return {"verdict": verdict, "captures": captures, "full": "detail proof_full"}
+
+
+def claim_proof_summary_lines(proof: Mapping[str, Any]) -> list[str]:
+    """The summary as the CLI prints it."""
+
+    summary = claim_proof_summary(proof)
+    lines = [f"verdict: {summary['verdict'] or '-'}"]
+    lines.extend(f"  {line}" for line in summary["captures"])
+    if not summary["captures"]:
+        lines.append("  (cites no Capture)")
+    lines.append("(--detail proof-full prints the whole envelope and facts)")
+    return lines

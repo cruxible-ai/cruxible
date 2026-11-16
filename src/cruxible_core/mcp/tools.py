@@ -1345,6 +1345,7 @@ def register_tools(
             "runs",
             "backlinks",
             "proof",
+            "proof_full",
             "body",
         ] = "summary",
         range: Annotated[

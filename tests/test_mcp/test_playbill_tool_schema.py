@@ -50,6 +50,7 @@ def test_get_publishes_its_protocol_enums_and_init_takes_only_a_principal() -> N
         "runs",
         "backlinks",
         "proof",
+        "proof_full",
         "body",
     ]
 

@@ -1602,11 +1602,12 @@ def handle_playbill_get(
     cursor: str | None = None,
     field: str | None = None,
 ) -> GetResult:
+    proof_full = detail == "proof_full"
     try:
         request = GetRequest.model_validate(
             {
                 "ref": ref,
-                "detail": detail,
+                "detail": "proof" if proof_full else detail,
                 "range": range,
                 "at": at,
                 "evaluation_time": evaluation_time,
@@ -1626,9 +1627,21 @@ def handle_playbill_get(
                 for error in exc.errors(include_url=False)
             ],
         ) from exc
-    return _daemon_call(
+    result = _daemon_call(
         lambda client: client.get(instance_id, request=request), operation_name="cruxible_get"
     )
+    if (
+        isinstance(result, GetResult)
+        and result.kind == "claim"
+        and result.detail == "proof"
+        and not proof_full
+        and result.proof
+    ):
+        # S1: a Claim's proof is its verdict and cited Captures; proof_full is whole.
+        from cruxible_client.contracts.get_text import claim_proof_summary
+
+        return result.model_copy(update={"proof": claim_proof_summary(result.proof)})
+    return result
 
 
 def _playbill_query_request(

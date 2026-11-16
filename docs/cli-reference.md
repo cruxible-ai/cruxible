@@ -1851,7 +1851,8 @@ reads one Claim's card; `--detail why` its verdict with the law evidence and
 source handles it was computed from (and, when a Procedure proposed the
 accepted revision, `reason`: that item's own rationale and the run and terminal
 that proposed it), `--detail history` its revisions, and
-`--detail proof` its full envelope and facts. `orient` counts Claims by status
+`--detail proof` its verdict and cited Captures (`--detail proof-full` the full
+envelope and facts). `orient` counts Claims by status
 under `artifacts.claims`, from the `next` worker's facts when they are current
 at the read's coordinate and instant, else derived at the read.
 
@@ -1877,7 +1878,7 @@ how an agent leaves contested state contested instead of forcing a judgment it
 is not confident in: it holds the Claim's rows in `next` (see below) until what
 the agent examined changes. `--valid-until` ends the attestation, and with it
 the hold.
-`get CLM-... --detail proof --json` carries the typed statement (subject,
+`get CLM-... --detail proof-full --json` carries the typed statement (subject,
 predicate, object, role, qualifier, lifecycle, predecessor digest) in its
 top-level `statement` field alongside the canonical envelope.
 
@@ -4250,7 +4251,7 @@ catalogued here). Pages are bounded by `--limit`; `--cursor` continues one.
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|proof|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|pairs|runs|proof|proof-full|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -4323,7 +4324,10 @@ with its Claim ID. Subject rows carry the Claim id behind each value. A
 as the Subject when its first segment names a declared SubjectKind, unless that
 exact path is an accepted artifact. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
-full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
+full accepted coordinate is under `--detail proof`. On a Claim, `--detail proof`
+is a summary (its verdict and each cited Capture on one line: `CAP-` handle,
+admission status, contract and role); `--detail proof-full` (MCP `proof_full`)
+is the whole envelope and facts. `--at` takes a git oid, a
 unique 12+ hex prefix of one, or a generation number, so either half of a
 printed coordinate reads back; each history row prints both (`seq N at
 <12 hex>`). An all-digit value of 11 or fewer characters is always a
