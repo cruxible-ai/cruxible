@@ -316,6 +316,7 @@ from cruxible_core.procedures.ports import (
     AcquisitionRules,
     bound_operation,
 )
+from cruxible_core.procedures.query_rows import query_row_items
 from cruxible_core.procedures.reference_binding import (
     ProcedureExecutionPlan,
     execution_plan,
@@ -8344,6 +8345,10 @@ def _fan_out_list(
             details={"field": field, "reason": "items_not_a_list"},
         )
     values = [normalize_canonical(item) for item in resolved]
+    # A Query read's rows also offer each row's Subject and bindings (query_rows).
+    offered = query_row_items(template, state.outputs, values)
+    if offered is not None:
+        values = [normalize_canonical(item) for item in offered]
     alias = _template_alias(template)
     provenance = None if alias is None else state.provenance.get(alias)
     if provenance is None:

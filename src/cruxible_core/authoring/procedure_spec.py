@@ -349,6 +349,20 @@ def resolve_procedure_spec(
             # The ordinary definition lowerer validates again after boundary
             # Contracts are co-proposed and supplies the typed refusal/repair.
             return lowered
+        from cruxible_core.procedures.query_rows import (
+            ItemReferenceUnresolved,
+            validate_row_references,
+        )
+
+        try:
+            validate_row_references(definition, maybe_source_identity)
+        except ItemReferenceUnresolved as exc:
+            raise ProcedureSpecError(
+                "item_reference_unresolved",
+                _claims_refusal_path(spec, exc),
+                f"Procedure {spec.procedure}: {exc}",
+                repair=exc.repair,
+            ) from exc
         try:
             validate_claims_templates(definition, maybe_source_identity)
         except (ClaimsTypingRefused, ValueError) as exc:

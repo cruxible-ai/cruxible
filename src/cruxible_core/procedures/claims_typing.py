@@ -276,9 +276,14 @@ def validate_claims_templates(
             return ct.value if path == ["value"] else None
         if isinstance(producer, ReadNode) and producer.query is not None:
             query = source("QueryDefinition", producer.query.target.name)
-            fields = contract(query.row_contract).fields
+            fields = {} if query.row_contract is None else contract(query.row_contract).fields
             if path and path[0] == "rows":
                 path = path[1:]
+            if value.startswith("$item") and (path[0] if path else None) not in fields:
+                # A row's own Subject and bindings, beside its columns (query_rows).
+                from cruxible_core.procedures.query_rows import row_reference_type, rows_alias
+
+                return row_reference_type(query, path) if rows_alias(each) == alias else None
             return descend(fields[path[0]].type, path[1:]) if path and path[0] in fields else None
         return None
 
