@@ -507,3 +507,65 @@ def test_a_reviewer_registered_after_the_base_approves_by_landing_it_first(
     assert receipt.activation is not None and receipt.activation.status == "accepted"  # type: ignore[union-attr]
     assert receipt.readmits == source_id  # type: ignore[union-attr]
     assert reviewer.principal.principal_id == "reviewer"
+
+
+def test_an_ineligible_late_signer_is_refused_before_anything_lands(tmp_path: Path) -> None:
+    """Round 3: a recovery principal registered after an ordinary proposal's base
+    cannot approve it; the challenge landed the proposal (closing the source and
+    losing its signatures) before refusing. It now refuses first and changes nothing."""
+
+    from cruxible_client.contracts.errors import ApprovalIntegrityError
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_propose_playbill_principal_change,
+    )
+
+    instance, owner = seed_write_surface(tmp_path, self_approval=False)
+    reviewer = client_material(tmp_path, instance)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "before recovery joined"))
+    rescue = generate_client_principal_key(
+        tmp_path / "rescue-keys",
+        principal_id="rescue",
+        kind="recovery",
+        forbidden_roots=(instance.root,),
+    )
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=rescue.principal,
+        actor_id="owner",
+        proposal_name="register-rescue",
+        timestamp="2026-09-29T12:50:00.000000Z",
+    ).proposal
+    assert registration.candidate is not None
+    for material in (owner, reviewer):
+        last = service_submit_playbill_approval(
+            instance,
+            proposal_id=registration.admission.proposal_id,
+            attestation=_sign(
+                material,
+                registration.candidate.candidate_digest,
+                registration.candidate.candidate.parent_semantic_root,
+            ).attestation,
+            authenticated_submitter=material.principal.principal_id,
+            activate_when_complete=True,
+            may_activate=True,
+        )
+    assert last.activation is not None and last.activation.status == "accepted"  # type: ignore[union-attr]
+    admissions = instance.proposal_evidence().list_admissions()
+    head = instance.accepted_coordinate()
+    landed: list[str] = []
+
+    with pytest.raises(ApprovalIntegrityError, match="recovery principal cannot approve"):
+        service_prepare_playbill_approval(
+            instance,
+            proposal_id=source_id,
+            signer_id="rescue",
+            access=BodyAccessContext(principal_id="rescue", can_read_body=True),
+            land=lambda: landed.append("landed"),
+        )
+
+    assert landed == []
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None
+    assert instance.proposal_evidence().list_admissions() == admissions
+    assert instance.accepted_coordinate() == head
+    assert _entry(instance, source_id).status == "open"
