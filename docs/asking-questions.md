@@ -24,7 +24,11 @@ catalog.part/bp-1142  Front brake pads          brakes    42     stale
 ~~~
 
 `--where` takes `=`, `!=`, `<`, `<=`, `>`, `>=`, `in a,b`, `exists`, and `~`
-for text containing a value, and several filters all have to hold. The
+for text containing a value, and several filters all have to hold. `exists`
+means the field holds a live Claim, and an explicit none (a value recorded as
+"none of" something, such as a catalog read in full that does not list an
+item) counts; `!exists` means nobody has answered it. To find Subjects with a
+real value, filter on the value itself. The
 `flags` column marks values that are stale, contested, contradicted, uncovered
 or held as unsure; here the price's evidence has expired ([Evidence and
 admission](evidence-and-admission.md#freshness)).

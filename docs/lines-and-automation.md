@@ -451,8 +451,8 @@ A Trigger does nothing until the Line is enabled:
 ~~~text
 $ cruxible line enable catalog.acme-discontinued
 Line:catalog.acme-discontinued: enabled
-Enabled by: YOUR_ID at 2026-10-21T19:46:01.895912+00:00
-Matched through: 2026-10-21T19:46:01.895912+00:00
+Enabled by: owner at 2026-11-16T05:19:30.392139+00:00
+Matched through: 2026-11-16T05:19:30.392139+00:00
 Pending: 0 automatic, 0 awaiting explicit dispatch
 ~~~
 
@@ -465,10 +465,16 @@ $ cruxible next
 Status: line enablements stalled=0 stopped=1  next=cruxible orient --section lines
 repair  consumer_stalled  Line:catalog.acme-discontinued  next=cruxible.line.enable
   repair: cruxible line enable catalog.acme-discontinued
+...
 ~~~
 
 Triggers fire only forward: a new Trigger never runs for times before it was
-accepted, and enabling a Line never runs ticks it missed. `line disable`
+accepted, and enabling a Line never runs ticks it missed. A scheduled Trigger
+fires only while the daemon is running: an instant that passes while it is
+down is not run when it comes back (see [Recovering missed
+work](#recovering-missed-work)). A Runbook's scheduled runs never overlap:
+instants that come due while its run is still going are folded into one run
+right after it, and nothing reports the folded instants. `line disable`
 stops it; a run already going finishes. `cruxible get Line:NAME` shows its
 Triggers, enablements and recent runs, and `get ProcedureRun:RUN-…` reads one
 run step by step.
@@ -705,21 +711,27 @@ rejected or withdrawn, since your decision no longer stands.
 
 A daemon that was down didn't run what was due meanwhile, and it never runs
 missed work on its own. After a restart, `next` lists each gap with the exact
-command that covers it:
+command that covers it. Here the Line's Trigger ran on a one-minute cadence
+and the daemon was stopped for about three minutes:
 
 ~~~text
 $ cruxible next
-repair  line_coverage_gap  Line:catalog.acme-notices  next=cruxible.line.evaluate
-  repair: cruxible line evaluate catalog.acme-notices --since 2026-10-21T19:48:40.974240+00:00 --until 2026-10-21T19:51:32.748324+00:00 --dispatch
+repair  line_coverage_gap  Line:catalog.acme-discontinued  next=cruxible.line.evaluate
+  repair: cruxible line evaluate catalog.acme-discontinued --since 2026-11-16T05:20:51.533979+00:00 --until 2026-11-16T05:24:04.296892+00:00 --dispatch
+...
 
-$ cruxible line evaluate catalog.acme-notices --since 2026-10-21T19:48:40.974240+00:00 --until 2026-10-21T19:51:32.748324+00:00 --dispatch
-Line:catalog.acme-notices: met (2 occurrences)
-sha256:6c5718bb…: admitted run=RUN-7a89b406…
-sha256:8e6dfbe7…: admitted run=RUN-6a46e70d…
+$ cruxible line evaluate catalog.acme-discontinued --since 2026-11-16T05:20:51.533979+00:00 --until 2026-11-16T05:24:04.296892+00:00 --dispatch
+Line:catalog.acme-discontinued: met (3 occurrences)
+sha256:3b50bdfb…: admitted run=RUN-b82e07df…
+sha256:3c6aed43…: admitted run=RUN-885f1947…
+sha256:c28c3222…: admitted run=RUN-2a82cfb5…
 ~~~
 
 `--dispatch` runs what it finds; without it, `evaluate` only records the
-missed occurrences, and `line dispatch` runs them later.
+missed occurrences, and `line dispatch` runs them later. Only a Trigger aimed
+at a Line leaves a gap row: a missed instant of a Trigger aimed at a Runbook
+is not reported, so after downtime run the Runbook yourself (`cruxible runbook
+run NAME`).
 
 ## Automation that comes with a kit
 

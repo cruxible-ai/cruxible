@@ -1,7 +1,8 @@
 # Security walkthrough
 
-The [Quickstart](quickstart.md) hands the intake to an agent. This walkthrough
-does it by hand, one step at a time, so you can see what each step does. We'll
+The [Quickstart](quickstart.md) gets to the first answer in a few commands.
+This walkthrough takes the same steps one at a time, with their outputs, so you
+can see what each step does. We'll
 point Cruxible at one of your projects, find which of its dependencies carry a
 known vulnerability, rank them by whether attackers exploit them (CISA's Known
 Exploited Vulnerabilities catalog, KEV) and how likely they are to (FIRST's
@@ -127,7 +128,10 @@ uv export --format cyclonedx1.5 > sbom.cdx.json                      # a uv proj
 
 The SBOM's root component (`metadata.component.purl`) names the
 **inventory**. `cyclonedx-py requirements` writes none, so here the inventory
-is named after the file, `sbom.cdx.json`.
+is named after the file, `sbom.cdx.json`. An SBOM covers what its generator
+read: this one lists pygoat's root `requirements.txt`, not the lab containers
+that carry their own requirements files, so their packages are on no worklist
+unless you import an SBOM for each.
 
 ## Step 4: Adopt the automation
 
@@ -261,7 +265,10 @@ done
 ~~~
 
 The SBOM import is not on the clock: rerun `cruxible runbook run
-security.start` when the SBOM changes.
+security.start` when the SBOM changes. (It is enabled anyway so `next` stops
+listing it as `line_not_enabled`.) The Trigger fires only while the daemon is
+running: a daily instant missed while it was down is not run afterwards, so run
+`cruxible runbook run security.maintain` yourself after downtime.
 
 ## Step 6: Ask your questions
 
@@ -556,12 +563,33 @@ A failed or incomplete read never becomes "not affected". KEV records a
 watched CVE as not listed only when the catalog's records match its stated
 count; an OSV answer that failed or came back incomplete never retires an
 `affected_by` Claim; an EPSS request that fails leaves the run incomplete, and
-a CVE FIRST has not scored yet gets no score. Check a Line's recent runs
-before you read an empty answer as "none":
+a CVE FIRST has not scored yet gets no score. Check the run before you read
+an empty answer as "none". `runbook run` marks a step that needs attention,
+an incomplete one included, with `!`. `get Line:NAME --detail runs` lists a
+Line's runs by status only; the run itself says whether each step was
+complete:
 
-~~~bash
-cruxible get Line:security.osv-query --detail runs
+~~~text
+$ cruxible get Line:security.osv-query --detail runs
+RUN-461b30558b670fdcd085aaa52666e86051386c21335c062979acc0905630c9a2  succeeded  started 2026-11-16T05:11:00.601053+00:00  nodes_done=5  Procedure:security.osv-query
+
+$ cruxible get RUN-461b30558b670fdcd085aaa52666e86051386c21335c062979acc0905630c9a2
+...
+nodes:
+  components read succeeded: 32 rows
+  osv call succeeded: 338 captures CAP-21dd7fccfe8a CAP-fa09735787f4 ...
+  matched call succeeded: 1 capture CAP-1794680ef26b
+  affected extract succeeded: 181 records, complete_when 181/181
+  write claims succeeded: 181 written, 181 subjects created; settled
+...
 ~~~
+
+One gap no run reports: the kit keys vulnerabilities by CVE id, so an OSV
+advisory with no CVE alias (a GHSA-only advisory) appears only in the OSV match
+document's `unkeyed` list, with no vulnerability Subject and no worklist row.
+On pygoat that is 10 advisories (for certifi, cryptography, pillow, pyjwt and
+sqlparse). Read the match document's Capture to see them
+([Reading a Capture's bytes](evidence-and-admission.md#reading-a-captures-bytes)).
 
 ## What's next
 

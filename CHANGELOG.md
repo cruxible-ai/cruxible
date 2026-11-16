@@ -387,6 +387,56 @@ quickstart and concepts pages.
   dependency floors (`mcp`, `certifi`, `uv`, PyJWT) are raised past known
   advisories.
 
+### Fixed during the release candidate
+
+- **An explicit none reaches the daemon.** `cruxible set --none`, MCP
+  `cruxible_set`, SDK `cx.set` and write files sending a none on a one-valued
+  field failed request validation (`body.value.NoneValue.none: Field
+  required`) before any check. The none now arrives; a field with no declared
+  inverse refuses it with `cruxible.write.inverse_undeclared`.
+- **A refused preflight reads refused.** A one-shot `authoring submit` whose
+  payload failed preflight answered `proposed` with no proposal and exited 0.
+  It now answers `refused` (reason `preflight_refused`, SDK
+  `AuthoringRefused`), exits 1, and names a revised payload as the next step.
+- **Intent commands refuse caller faults by code.** An unknown, malformed or
+  other actor's intent ID, or a revision of a submitted intent or of another
+  kind, answered 500. They now refuse `cruxible.authoring.intent_not_found`,
+  `intent_other_actor`, `intent_submitted` or `intent_kind_changed`, each with
+  a repair.
+- **`block repin` renders a still-rendered block again.** The repair `next`
+  and `block sync --check` name for a stale rendered block kept the old table
+  and stamped it current. Repin now renders a block whose body is still its
+  query's rendering (other backings kept), and refuses, writing nothing, when
+  it cannot prove or render it. `block repin` and MCP `cruxible_block_repin`
+  take the page's workspace path or its catalog name; MCP block repairs use
+  the tools' own argument names; `block detach` with nothing to detach reads
+  `unchanged`.
+- **`workspace attach` attaches an uninitialized host,** as its help says:
+  the registration, config and `--no-floor-delivery` choice land, and it ends
+  `next: cruxible init`.
+- **`kit remove` removes a kit.** It refused even on a fresh instance
+  (`cruxible.query.pair_hop_invalid`). A query's traversal checks now apply
+  only to a live query (compiler revision 73, `retiring-query-traversal`;
+  revision 72 instances are refused for reseed), and removal keeps a pair
+  kind's endpoint ClaimTypes beside Contracts, capabilities and Documents. A
+  removal blocked by dependents now counts them by kind with a repair instead
+  of printing every one, records nothing, and exits 1; so does a blocked
+  `kit add` commit.
+- **`get` reads a `.json` id as its Subject.** A `kind/id` ref ending in
+  `.json` (an SBOM file name as an inventory id) resolves as the Subject when
+  its kind is declared. A cut value's hint says `--json for all`, and a cut
+  many-valued field adds one `cruxible get SUBJECT --json` line instead of one
+  per Claim.
+- **`server restart` returns.** The old Unix-socket listener was carried
+  across the re-exec, so a waiting restart could hang past `--timeout`. The
+  listener is no longer inherited, and each wait probe is bounded by the time
+  left (at most 5 seconds).
+- **`curation overrule` previews by default.** It closes an item for good,
+  so it is now an irreversible change: a commit needs `--commit --at OID`
+  (MCP and SDK: `dry_run=false` and `at`).
+- **`ledger publish` exits 1 when publication ends `behind`,** and prints
+  Git's multi-line reason one line at a time.
+
 ## [0.3.2] - 2026-08-06
 
 - **Procedure reads show their run-ledger track record.** List and detail

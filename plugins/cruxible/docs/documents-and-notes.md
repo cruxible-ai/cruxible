@@ -89,9 +89,12 @@ heading paths to find sections:
 
 - **`append_section`** (`op: append`) adds a new section under the heading
   path in `under` (`()` appends at the end of the file). Its text must start
-  with a heading.
+  with a heading. Only an append at the root (`under` empty) creates a missing
+  file; an append under a heading needs the file and that heading to exist,
+  and refuses `cruxible.doc.section_not_found` otherwise, writing nothing. To
+  start a new file under a heading, append the heading at the root first.
 - **`replace_section`** (`op: replace`) replaces the section at a heading
-  path, including its heading. By default it overwrites the current text and
+  path, including its heading, in a file that exists. By default it overwrites the current text and
   keeps the old version in history. Pass `expect` when others may be editing,
   using the section's digest when you read it (each write reports the digest
   it wrote): if someone changed the section since then, nothing is written.
@@ -248,7 +251,12 @@ in a write file.
 Either is evidence from a file, not your own words, so the field's rules must
 admit that file's source (Evidence and admission).
 A file the catalog does not name yet is catalogued when the write is admitted,
-and the outcome lists it under `catalogued` (a dry run says it would be).
+and the outcome lists it under `catalogued` (a dry run says it would be), so
+there is no need to catalogue it first. The quoted anchor is text on one line,
+found exactly once in the file, and is exactly what the Claim cites: for a
+multi-line passage, quote the line that decides it, or cite the section. A line
+that appears more than once in the file cannot be quoted this way; quote a
+nearby line that is unique.
 
 ## Governed Documents
 
@@ -330,7 +338,9 @@ kinds, and both are watched the same way.
    ~~~
 
 4. **Bring it back in step.** `cruxible block sync --all` re-renders every
-   stale rendered block. An authored block is only flagged: re-read it, rewrite
+   stale rendered block, and `cruxible block repin FILE BLOCK` (the repair
+   `next` names) renders one again while its body is still its query's
+   rendering; FILE is the page's path or its catalog name. An authored block is only flagged: re-read it, rewrite
    it if it no longer holds, and `cruxible block repin FILE BLOCK`. A repin is
    your declaration that the passage reflects its backings again.
 

@@ -86,8 +86,8 @@ makes you its owner under your OS username with a key kept under
 `~/.config/cruxible/keys/`, attaches the repository as its workspace, and
 remembers all of it, so later commands need no flags or environment. The
 [Quickstart](docs/quickstart.md) continues from here: install the security
-kit, let an agent pull in what your project ships and runs, and ask which of
-its dependencies carry a vulnerability attackers are exploiting now.
+kit, read in your project's dependencies, and ask which of them carry a known
+vulnerability and which of those attackers are exploiting.
 
 An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the registry
 listing). Every tool runs on a daemon: the server uses `CRUXIBLE_SERVER_SOCKET`

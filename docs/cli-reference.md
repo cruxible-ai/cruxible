@@ -121,7 +121,8 @@ which exists before `init` too.
   to commit: `kit add` and `kit remove`. Commit with `--commit`.
 - A change that cannot be undone previews unless asked to commit, and commits
   only with the preview's coordinate: `instance decommission`,
-  `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
+  `credential revoke`, `credential rotate`, `ledger set-mirror`, `capture
+  erase` and `curation overrule`. Commit with
   `--commit --at OID`; without `--at` it refuses
   `cruxible.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
@@ -340,7 +341,10 @@ that wait. The command exits NON-ZERO with the typed
 `cruxible server stop && cruxible server start` cannot walk into the lock
 refusal the stop existed to clear. A stopped socket daemon removes its socket
 file. `server restart` waits until the probe answers from the NEW process
-image (a different `boot_id` on `/version`), not the image it replaced. Against a daemon bound to TCP on another
+image (a different `boot_id` on `/version`), not the image it replaced. Each
+probe is bounded by the time left in `--timeout` (at most 5 seconds a probe),
+and a wait that runs out names the probe that got no answer and exits non-zero;
+`--no-wait` returns once the restart is requested. Against a daemon bound to TCP on another
 host, the state root is not a path this machine has: the command then prints
 `Stop requested; lock release not observable from this client.` and exits zero
 rather than claiming a release it cannot see. `--json` reports the same two
@@ -869,7 +873,11 @@ compare them, never check them out or merge them to admit governed state.
 Explicit `--workspace DIR` over TCP writes only the client-local URL binding.
 An instance initialized without daemon registration can register a worktree
 later: `cruxible workspace attach` over the local socket attaches an initialized
-host in place.
+host in place. It attaches an uninitialized host too: the registration, the
+workspace config and the `--no-floor-delivery` choice all land, only the world
+stub waits, and the command ends `Host INSTANCE_ID is not initialized yet;
+next: cruxible init`. `init` in that folder then writes the stub, so the order `host create`,
+`workspace attach`, `init` works.
 
 The ledger's Git object format follows `--object-format`: with no flag it
 inherits an attached workspace's format, and with no workspace it is `sha1`.
@@ -910,8 +918,12 @@ or prefix must name one Capture, resolved exactly as the write verbs resolve
 `cruxible.capture.not_found` points at `orient --section captures`, and
 `cruxible.capture.ref_scan_exhausted` asks for a longer handle when more share
 the prefix than one bounded lookup examines).
-Uses body-read permission and never refetches the external source. The SDK equivalent
-is `cx.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
+Uses body-read permission and never refetches the external source. There is no
+text form yet: the retained bytes are base64 in `material.body_access.body_base64`
+(`cruxible capture read CAP-… | jq -r .material.body_access.body_base64 | base64 -d`
+prints them; see [Reading a Capture's bytes](evidence-and-admission.md#reading-a-captures-bytes)).
+The SDK equivalent is `cx.capture(digest)`, whose `.text()` and `.json()` decode the
+bytes; its `.ref` can be passed to Claim authoring as `supported_by`.
 
 `capture erase` destroys one Capture's retained body: its CAS commitment and
 CAS source, the bytes replay reads. The envelope, its digest, its contract, the
@@ -1048,8 +1060,11 @@ publication and waits at most `--timeout` seconds (default 60); zero only queues
 work. The JSON receipt includes `wait_sequence`, `published_sequence`, and the
 exact `published_refs` acknowledged by the remote. The barrier succeeded when
 `wait_sequence` is non-null and `published_sequence >= wait_sequence`. Newer work
-may still be `pending` or `publishing`. Failure is `behind`; timeout returns the
-actual pending/publishing status. A destination change interrupts the old wait.
+may still be `pending` or `publishing`. Failure is `behind`, and the command
+then exits 1 (with or without `--json`), so `ledger publish && ...` stops on a
+stale mirror; Git's multi-line reason prints under `Detail:`, one indented line
+at a time. A timeout returns the actual pending/publishing status and exits 0,
+as do a preview and `--timeout 0`. A destination change interrupts the old wait.
 A success acknowledges that snapshot at that time, not permanent remote durability.
 Missing local status is rebuilt; it is not ledger authority.
 
@@ -1408,9 +1423,18 @@ or a resumed add) is listed with its state and proposal, and while that
 proposal is open, `next: cruxible proposal approve ID --signer-id ID --key
 FILE`; `No kits installed.` prints only when there is neither. Installing an update stays explicit:
 `kit add REFERENCE:VERSION`. `remove` retires what a kit owns (never what it only
-carries, and never a bundled provider, which stays installed); a path edited
+carries, and never a bundled provider, which stays installed). It keeps the
+kit's Contracts, capabilities, Documents and the endpoint ClaimTypes of its pair
+kinds, with the reason on each `keep` plan line. A path edited
 since install blocks it, and so does any live Claim or definition that still
-depends on what it would retire (`Refused: cruxible.change_set.incomplete_closure`). Removing a kit that is not installed
+depends on what it would retire (`Refused: cruxible.change_set.incomplete_closure`):
+the refusal counts the dependents by kind, names a few, and gives the repair
+(retire the automation you authored over the kit, retire the Claims Subject by
+Subject with `cruxible retire KIND/ID --with-claims`, or keep the kit); there is
+no option that retires Claims. A blocked commit of `kit add` or `kit remove`
+exits 1, and a blocked removal commit records nothing (a blocked preview exits
+0). A removed kit cannot be added back: its retired definitions refuse revival
+(`revival_refused`). Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
 MCP: `cruxible_kit_build` (`providers` names packages staged with
@@ -1833,7 +1857,11 @@ PAYLOAD is a tagless authoring input file, or `-` for stdin. `authoring submit
 PAYLOAD` compiles, checks and lands in one call when no approval is required and
 the caller has GRAPH_WRITE. Otherwise `outcome` reports `proposed`, the proposal
 ID, the typed stop reason and the next step; `landed` carries the accepted
-coordinate. `--no-accept` keeps the proposal. `--dry-run` returns the
+coordinate. A payload that fails preflight reads `refused` (reason
+`preflight_refused`) with the diagnostics and no proposal, and the command
+exits 1 (also under `--json`). Rerunning preflight cannot help, since the faults
+are in the payload: the next step is `cruxible authoring submit REVISED_PAYLOAD
+--intent-id ID`. `--no-accept` keeps the proposal. `--dry-run` returns the
 preflight the submit would run, with every refusal, and saves no intent. Durable
 intents are optional, for staged work on large definitions: `compile PAYLOAD`
 creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
@@ -1842,7 +1870,14 @@ submits it. `preflight` and `submit` check a refused intent whose base the
 accepted head moved past again at the head; when it passes there it advances to
 the head (same payload and identity, the next revision), and a payload fault
 still refuses. `get` and `list`
-find staged work again after the context that started it is gone.
+find staged work again after the context that started it is gone. An intent
+command naming an ID with no intent here refuses
+`cruxible.authoring.intent_not_found`, and one naming another actor's intent
+`cruxible.authoring.intent_other_actor` (both repair with `authoring list`).
+Revising a submitted intent refuses `cruxible.authoring.intent_submitted`,
+naming its proposal and the withdraw command, and a revision of another kind
+refuses `cruxible.authoring.intent_kind_changed` (both repair with a new
+`compile`).
 `authoring example` prints a model-generated template for NAME, or lists the
 names without one. Every example compiles as printed once the definitions it
 names exist: the `procedure` example calls a `workspace.file@1` slot, extracts
@@ -2274,11 +2309,13 @@ holding a visible `scope` (`!` makes either required; by default a missing
 pair keeps the row). A whole-key hop names every key part; a `with` hop binds
 exactly one Subject-valued part and a fact that is not a key part. Anything
 else refuses `cruxible.query.pair_hop_invalid`, naming the parts the key
-allows.
+allows. These checks apply to a live query: a query retiring in the same change
+as the kinds it walks (as in `kit remove`) is not checked against them.
 
 Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
 add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key
-ClaimTypes with it.
+ClaimTypes with it. A pair kind's Subject-valued key ClaimTypes are never
+retired while the kind exists, retired or not, so `kit remove` keeps them.
 
 Kits also carry governed Documents (`documents/`), such as the review
 guidance that `guides` the kit's own ClaimTypes and Procedures: an owned
@@ -2290,7 +2327,7 @@ files); a body that is not staged refuses
 (`cruxible.kit.document_bodies_not_staged`) before anything is written. No kit
 Document may take a receipt's path (`documents/kit-<id>.json`). Documents have
 no retired state, so `kit remove` and a release that drops one leave it
-accepted, as an immutable Contract version is.
+accepted, as an immutable Contract version is; the plan's `keep` line says so.
 
 ## query
 
@@ -2360,6 +2397,11 @@ many-valued column matches any of its values), list only live rows unless a
 numbers, instants as instants), nulls last, ties by name. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`f exists` matches a Subject whose field holds a live Claim, including an explicit
+none (a KEV field read in full that shows `none of security.catalog/cisa-kev`);
+`f !exists` matches only a field with no Claim at all, one nobody has answered.
+To find a field holding a real value, filter on the value
+(`listed_in=security.catalog/cisa-kev`); `f=none` refuses.
 `--follow field:alias` hops forward along one of KIND's Subject-valued predicates;
 `--follow-in field:alias` hops backwards along another kind's predicate whose values
 name KIND's Subjects (for example `query project.task --follow-in
@@ -3159,7 +3201,13 @@ no branching and no parameters of its own. Author one with a `runbook` input
 (`{kind: runbook, name, steps: [{line: NAME} | {action: NAME}, ...]}`); a
 Trigger may aim at it with `runbook_name` on a cadence, cron or
 generation_accepted schedule, and each Line step then runs under that Line's
-own enablement.
+own enablement: a step whose Line is not enabled stops the scheduled run there.
+A scheduled Trigger fires only while the daemon is running. An instant missed
+while it was down is not run afterwards, and for a Runbook nothing reports it
+(a Trigger aimed at a Line leaves a `line_coverage_gap` row in `next`): run the
+Runbook yourself after downtime. A Runbook's scheduled runs never overlap:
+instants that come due while its run is still going are folded into one run
+right after it, and nothing reports the folded instants.
 
 `cruxible runbook run NAME` runs the steps in order, each Line as your manual
 `line run` and each action fired as `action run` fires it. It stops at the
@@ -3369,8 +3417,10 @@ the markers and the prose (or `repin --render` for a rendered table or list),
 `repin` to stamp, let `next` or `block sync` report a block stale or dirty,
 re-check it and repin; `block depublish` and then `block detach` when the
 block is no longer wanted. A rendered block is the exception: it is derived from state, so
-`block sync` re-renders a stale one itself (below). The client, not the daemon, computes every stamp: `repin` reads the
-backings, writes the marker and then declares the block to the instance.
+`block sync` re-renders a stale one itself, and a plain `repin` renders it again
+(below). The client, not the daemon, computes every stamp: `repin` reads the
+backings, writes the marker and then declares the block to the instance. FILE
+is the page's workspace path or its catalog name.
 `--render` writes the body from the block's one `--query` backing: a Markdown
 table of the result Subjects and their projected fields, or a bulleted list of
 Subjects when the query projects none, and `_No rows._` when it returns none.
@@ -3441,19 +3491,36 @@ the author's declaration after reviewing the prose, not proof that arbitrary
 prose follows logically from its backings. Ordinary repin preserves the body;
 the SDK can install explicitly supplied reviewed body bytes.
 
+A rendered block is not prose. When a block's body is still exactly its one
+query's rendering at the stamp's own coordinate and time (the test sync uses,
+below), a repin with no body and no `--render` renders it again from that query
+(or the new single query it names), keeping its other backings, so the repair
+`next` and `block sync --check` name for a stale rendered block runs as written.
+A repin that cannot render such a block (a `--backing` successor, or Claims or
+artifacts added) refuses and writes nothing; so does one whose proof cannot be
+taken because the query does not answer at the stamp. The refusal names the
+ways on: keep one query backing, retry once the query answers, repin with
+`--render`, or edit the body first, which makes it prose kept as written.
+
 No authoring option publishes a Claim as its own page text: a block whose one
 backing was the Claim it states would be a source block projected as its own
 projection, the overlap the two kinds never allow.
 
 On MCP the same adapter runs in the MCP server process:
 `cruxible_block_repin` takes the block and its catalogued page (`file`,
-the file catalog name) and computes the stamp there,
+the page's workspace path or its catalog name) and computes the stamp there,
 so an agent never builds one (`render: true` is `--render`);
-`cruxible_block_sync` is `block sync --check`, a read that edits no page. Detaching is
+`cruxible_block_sync` is `block sync --check`, a read that edits no page, so on
+MCP a stale rendered block is re-rendered by `cruxible_block_repin`. The repairs
+in `cruxible_block_sync` and `cruxible_block_detach` rows use the tools' own
+argument names (`block_repin {file, block, claims}`, `block_depublish {file_id,
+block_id}`, `block_sync {all_files, files}`, `block_detach {files}`). Detaching is
 `block detach` and the write-tier `cruxible_block_detach` (`files`, `dry_run`,
 `at`): its preview
 reports what the edit would change and is pinned to the pages' bytes, and a
-commit with `at` refuses if a page changed since. `--dry-run` (MCP `dry_run`)
+commit with `at` refuses if a page changed since. When no block can be detached
+(every row refused, for example `block_still_published`), the status is
+`unchanged` and the rows say why; the CLI offers no commit then. `--dry-run` (MCP `dry_run`)
 on a repin computes and checks the stamp and writes nothing: no manifest, no
 page edit, no declaration.
 
@@ -3498,11 +3565,13 @@ and one failed dependency does not hide the others. Repin acknowledges a reviewe
 body and refreshes its dependencies; there is no separate accept-local bypass.
 
 Without `--check`, `block sync` converges what is mechanical. A stale block
-whose body is its query's rendering -- one query backing, an unedited body, and
+whose body is its query's rendering -- one query backing (other Claim or
+artifact backings beside it are kept), an unedited body, and
 that query evaluated again at the stamp's own coordinate and evaluation time
 renders exactly the stamped body -- is derived from state: sync re-renders it
 from the query at the head, writes the page (whole-file compare-and-swap) and
-repins it, reporting `rendered`. Stale prose is only reported: repinning it is
+repins it, reporting `rendered`. A block whose query does not answer at the
+stamp cannot be proven rendered; sync leaves it stale and unwritten. Stale prose is only reported: repinning it is
 the author declaring the text right. Sync then records the declared blocks of
 the pages it checked for block-churn detection (as every `block repin` does for
 its page), which needs governed write. `--check` is the pure report: it
@@ -3873,7 +3942,12 @@ each page.
 
 The rulings append attributed operational events; they do not create governed
 proposals or mutate accepted knowledge. `overrule` closes an item permanently:
-its pattern is never raised again. `accept-fixed` links an item to the accepted
+its pattern is never raised again. Because it cannot be undone it is an
+irreversible change, like `capture erase`: with no mode it previews, and a
+commit needs `--commit --at OID` (the preview's git oid) or the confirmation
+prompt; MCP and the SDK commit only with `dry_run=false` and `at`, and refuse
+`cruxible.preview.confirmation_required` without it. The other rulings commit
+directly. `accept-fixed` links an item to the accepted
 change that fixed it, named by proposal (pinned with `--changeset-digest` if
 wanted) or by `--generation`; the change must postdate the item and touch its
 subject or evidence. Detection never closes an item itself, even one whose
@@ -3928,6 +4002,10 @@ cruxible write --schema
 `write` accepts `docs` with heading paths as lists. Append adds a child subtree
 (`under: []` appends at EOF); replace replaces a subtree (`section: []` selects
 the preamble after frontmatter). Optional `expect` is the prior subtree digest.
+Only an append at the root (`under: []`) creates a missing file. An append
+`under` a heading needs the file and that heading to exist, and replace needs
+the file: otherwise the write refuses `cruxible.doc.section_not_found` and writes nothing.
+To start a file under a heading, append the heading at the root first.
 A created file contains your text, including any frontmatter you supply, and
 gets a catalog entry. No `type` option is inferred.
 An operation may declare an `id`; `{kind: section, ref: ID}` cites the section
@@ -3965,6 +4043,16 @@ to another file refuses `cruxible.doc.catalog_name_exists` before anything is
 sent, with the repair to catalogue the file under a name of your own and cite
 it. A path outside the workspace, a missing file and an anchor not found
 exactly once refuse, each with a repair.
+
+The anchor in `PATH#ANCHOR` is text on one line (the form is
+`^[^#]+#.+$`, so a newline in it fails the request's schema), found exactly
+once in the file, and those bytes are what the Claim cites. To rest a Claim on
+a multi-line passage, anchor the one line that decides it, a line that stays
+put when the lines around it change; in a Markdown page a `section` citation
+cites a heading's whole body instead. A line that appears more than once in
+the file cannot be anchored, since any text taken from it is found more than
+once: the write refuses with the occurrences' byte offsets (`anchor resolved
+to N occurrences at byte offsets [...]`). Anchor a nearby line that is unique.
 
 Use `write - --workspace-root DIR` for stdin and `write --schema` for the
 payload schema. Docs-only writes create no change set. Accepted and
@@ -4210,7 +4298,13 @@ single-value field); `--field FIELD` narrows them to one field. Locating a page
 reads the Subject's own Claims and revisions; only the page's revisions are
 read. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters, says how long it is, and names the read that shows
-it whole (`cruxible get CLM-… --detail evidence`). Subject rows carry the Claim id behind each value. A
+it whole (`cruxible get CLM-… --detail evidence`, or `--json for all` when the
+cut value has no single Claim). A Subject card that cuts a many-valued field
+adds one line, `cruxible get SUBJECT --json`, whose result carries every value
+with its Claim ID. Subject rows carry the Claim id behind each value. A
+`kind/id` ref ending in `.json` (such as an SBOM file name used as an id) reads
+as the Subject when its first segment names a declared SubjectKind, unless that
+exact path is an accepted artifact. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
 full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
 unique 12+ hex prefix of one, or a generation number, so either half of a
