@@ -206,11 +206,24 @@ def test_block_sync_repair_needs_governed_write_on_cli_but_stays_read_only_elsew
 def test_every_repair_operation_names_its_door_in_one_table() -> None:
     from typing import get_args
 
-    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
-    from cruxible_core.service.discovery.next import _REPAIR_TOOLS, NextRepairOperation
+    from cruxible_core.runtime.permissions import PERMISSION_REQUIREMENTS, TOOL_PERMISSIONS
+    from cruxible_core.service.discovery.next import (
+        _CLI_ONLY_REPAIRS,
+        _REPAIR_TOOLS,
+        NextRepairOperation,
+    )
 
     assert set(_REPAIR_TOOLS) == set(get_args(NextRepairOperation))
-    assert {tool for tool in _REPAIR_TOOLS.values() if tool is not None} <= set(TOOL_PERMISSIONS)
+    # An MCP-served repair names its tool; a CLI-only one names its runtime
+    # operation's permission entry.
+    assert {
+        tool
+        for operation, tool in _REPAIR_TOOLS.items()
+        if tool is not None and operation not in _CLI_ONLY_REPAIRS
+    } <= set(TOOL_PERMISSIONS)
+    assert {_REPAIR_TOOLS[operation] for operation in _CLI_ONLY_REPAIRS} <= set(
+        PERMISSION_REQUIREMENTS
+    )
 
 
 def _line_enable_row() -> PlaybillNextItemV1:

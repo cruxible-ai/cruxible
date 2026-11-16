@@ -19,7 +19,7 @@ from cruxible_core.service.discovery.next import NextRequest, service_playbill_n
 from cruxible_core.triggers.journal import evaluate_triggers, internal_triggers, trigger_events
 
 
-def _next(instance, at, **caller):  # type: ignore[no-untyped-def]
+def _next(instance, at, caller_rung=None, **caller):  # type: ignore[no-untyped-def]
     request = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=at,
@@ -31,7 +31,7 @@ def _next(instance, at, **caller):  # type: ignore[no-untyped-def]
     )
     return [
         item
-        for item in service_playbill_next(instance, request=request).items
+        for item in service_playbill_next(instance, request=request, caller_rung=caller_rung).items
         if item.reason == "trigger_instants_missed"
     ]
 
@@ -74,6 +74,13 @@ def test_an_action_rows_repair_is_a_cli_command_on_every_surface(tmp_path: Path)
     )
     (sdk,) = _next(instance, restart, caller_surface="sdk")
     assert sdk.repair is not None and "(on the CLI;" in (sdk.repair.command or "")
+
+    # A read-only caller is told the tier the CLI door needs (a runtime
+    # operation, not an MCP tool), not a profile.
+    (reader,) = _next(instance, restart, caller_rung=0, caller_surface="mcp", caller_tools=())
+    assert reader.repair is None and reader.repair_requires is not None
+    assert reader.repair_requires.because == ("tier",)
+    assert reader.repair_requires.tier == "governed_write"
 
     # A fire of the action after the restart (here by hand) clears the row.
     from cruxible_core.triggers.journal import fire_manual

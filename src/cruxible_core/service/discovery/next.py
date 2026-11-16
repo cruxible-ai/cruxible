@@ -917,9 +917,10 @@ _AUTHORING_FREE_REPAIRS = frozenset(
 def _tool_rung(tool: str) -> int:
     """The least caller rung (``PermissionMode.value - 1``) a tool runs at."""
 
-    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+    from cruxible_core.runtime.permissions import PERMISSION_REQUIREMENTS
 
-    return int(TOOL_PERMISSIONS[tool]) - 1
+    # A CLI-only door (``action run``) is a runtime operation, not an MCP tool.
+    return int(PERMISSION_REQUIREMENTS[tool]) - 1
 
 
 #: The most contenders a contest row offers a keep-one option for.
