@@ -227,7 +227,9 @@ Record your judgment as state, so it isn't asked again:
   --because "Different suppliers' part numbers."`).
 
 Both are ordinary fields, so the judgment has its reason and its history like
-any other Claim. `cruxible curation list` shows the items detection recorded,
+any other Claim. `cruxible curation list` shows the items detection recorded
+(detection runs only once a `curation-detect` Trigger aimed at the
+`curation.detect` action is authored; none is seeded),
 and `overrule`, `suppress`, `unsuppress` and `accept-fixed` close them out.
 `overrule` is permanent, so it previews first: commit it with `--commit --at
 OID` from the preview (or answer its confirmation prompt).

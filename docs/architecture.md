@@ -81,7 +81,8 @@ blocks, and signing approvals with a private key.
 
 Background work runs inside the daemon as consumers driven by Triggers:
 delivering the floor to a registered workspace after each accepted generation,
-detecting curation patterns, and running enabled Lines.
+detecting curation patterns (once a `curation-detect` Trigger is authored;
+none is seeded), and running enabled Lines.
 
 ## Keys and credentials
 
