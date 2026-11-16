@@ -768,12 +768,9 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
     logical source. The re-observation's receipt cites the first page, which is sound.
     """
 
-    from datetime import UTC, datetime, timedelta
-
     from cruxible_client.contracts.claims import claim_path, parse_claim
     from cruxible_core.evidence.claim_reobservations import (
         ClaimReobservationStore,
-        ReobservationReader,
         cited_content_keys,
     )
     from cruxible_core.procedures.claims_context import AcceptedClaimsContext
@@ -823,8 +820,6 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
         instance, Pages(restated, sources=sources), line="test.kev-pages-line", minute=2
     )
     assert third.status == "succeeded", third.terminal
-    (call,) = (node for node in third.nodes if node.node == "pages")
-    members = tuple(call.summary.capture_digests)
     # Nothing is recorded per Claim; the terminal's one transition re-checks the
     # inverse in the first page's new bytes only when its whole witness stands.
     assert ClaimReobservationStore(instance).history(inverse) == ()
@@ -835,12 +830,17 @@ def test_an_absence_reobservation_verifies_every_member_of_its_witness(
     keys = cited_content_keys(
         instance, coordinate=head, capture_digests=tuple(claim.backing.capture_digests)
     )
-    # The journal stamps the wall clock: read after every record.
-    reading = ReobservationReader(instance).latest(
-        inverse, keys, datetime.now(UTC) + timedelta(days=1)
-    )
-    reobserving = {item.reobserving_capture_digest for item in reading.evidence}
-    assert (members[0] in reobserving) == (defect is None)
+    # The fixture's pages share one observed instant, so freshness ties; what
+    # differs is whether a transition from the cited page applies to the inverse.
+    (key,) = keys
+    with ClaimReobservationStore(instance)._locked() as conn:  # noqa: SLF001
+        applies = conn.execute(
+            "SELECT 1 FROM transitions t WHERE contract_digest=? AND from_content_digest=? "
+            "AND NOT EXISTS (SELECT 1 FROM transition_exceptions e "
+            "WHERE e.sequence=t.sequence AND e.claim_id=?)",
+            (key.contract_digest, key.observed_content_digest, inverse),
+        ).fetchone()
+    assert (applies is not None) == (defect is None)
 
 
 def test_a_list_the_provider_says_is_incomplete_never_retires(tmp_path: Path) -> None:
