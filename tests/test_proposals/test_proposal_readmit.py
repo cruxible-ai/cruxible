@@ -640,7 +640,8 @@ def test_a_refused_readmit_names_the_real_exit_by_origin_never_readmit(
     )
 
     assert error.error_code == "cruxible.proposal.readmit_refused"
-    assert isinstance(error, ProposalStale)  # served as a stale-proposal refusal (409)
+    # A stale-proposal refusal, served as HTTP 400 (ProposalStale is a ProposalAdmissionError).
+    assert isinstance(error, ProposalStale)
     assert error.repair is not None
     assert (error.repair.operation, error.repair.arguments) == (operation, arguments)
     message = str(error)
