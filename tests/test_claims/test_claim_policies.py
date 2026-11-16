@@ -412,8 +412,8 @@ def test_an_uncatalogued_path_cannot_be_cited(tmp_path: Path) -> None:
     exact, is ever consulted.
     """
 
-    from cruxible_client.authoring.sdk_types import SourceSelectionError
     from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.errors import WriteRefusalError
     from cruxible_client.contracts.write import FileEvidence
 
     workspace = tmp_path
@@ -426,9 +426,11 @@ def test_an_uncatalogued_path_cannot_be_cited(tmp_path: Path) -> None:
     observed = observe_evidence(FileEvidence(file="known.md#Count: 3"), workspace=workspace)
     assert observed is not None and observed.observation is not None
 
-    # The uncatalogued one, despite matching text, cannot be selected at all.
-    with pytest.raises(SourceSelectionError):
+    # The uncatalogued one, despite matching text, cannot be selected at all: reading
+    # evidence never catalogues (a write catalogues a cited file before it gets here).
+    with pytest.raises(WriteRefusalError) as refused:
         observe_evidence(FileEvidence(file="secret.md#Count: 3"), workspace=workspace)
+    assert refused.value.error_code == "cruxible.doc.file_uncatalogued"
 
 
 def test_resolution_preserves_conflict_and_rejects_deleted_authority_selector() -> None:
