@@ -1781,6 +1781,16 @@ def _close_once(
     if entry is None:  # pragma: no cover - a read admission always lists
         raise ProposalNotFoundError(record.proposal_id)
     verb = "withdrawn" if record.kind == "withdrawn" else "rejected"
+    if entry.terminal_reason == "accepted":
+        # Typed as approve and activate refuse it: settled, nothing to close.
+        from cruxible_core.service.authoring.documents import refuse_accepted
+
+        refuse_accepted(
+            instance,
+            record.proposal_id,
+            entry.candidate_digest,
+            acts="withdraw" if record.kind == "withdrawn" else "reject",
+        )
     if entry.status not in _UNSETTLED_STATUSES:
         raise ProposalAdmissionError(
             f"only an open or stale proposal may be {verb}; this one is {entry.terminal_reason}"

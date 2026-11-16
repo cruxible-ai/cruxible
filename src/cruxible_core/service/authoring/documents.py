@@ -638,7 +638,11 @@ def outstanding_approvals(
 
 
 def refuse_accepted(
-    instance: PlaybillInstance, proposal_id: str, candidate_digest: str | None
+    instance: PlaybillInstance,
+    proposal_id: str,
+    candidate_digest: str | None,
+    *,
+    acts: str = "approve or activate",
 ) -> None:
     """Refuse a settlement door asked to settle a proposal accepted state already holds.
 
@@ -652,7 +656,7 @@ def refuse_accepted(
         accepted = history.generation_for_candidate(candidate_digest)
     if accepted is not None:
         raise ProposalAlreadyAccepted(
-            proposal_id, git_oid=accepted.git_oid, generation=accepted.sequence
+            proposal_id, git_oid=accepted.git_oid, generation=accepted.sequence, acts=acts
         )
 
 

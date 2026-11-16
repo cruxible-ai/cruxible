@@ -453,7 +453,14 @@ class ProposalAlreadyAccepted(ProposalAdmissionError):
 
     error_code = "cruxible.proposal.already_accepted"
 
-    def __init__(self, proposal_id: str, *, git_oid: str, generation: int) -> None:
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        git_oid: str,
+        generation: int,
+        acts: str = "approve or activate",
+    ) -> None:
         from cruxible_client.contracts.repairs import RepairOperation
 
         self.proposal_id = proposal_id
@@ -462,8 +469,8 @@ class ProposalAlreadyAccepted(ProposalAdmissionError):
         self.repair = RepairOperation(operation="cruxible.get", arguments={"ref": proposal_id})
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} is already accepted at "
-            f"{git_oid} (generation {generation}); there is nothing left to approve or "
-            f"activate. Read it with `cruxible get {proposal_id}`"
+            f"{git_oid} (generation {generation}); there is nothing left to {acts}. "
+            f"Read it with `cruxible get {proposal_id}`"
         )
 
 

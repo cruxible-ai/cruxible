@@ -569,3 +569,48 @@ def test_an_ineligible_late_signer_is_refused_before_anything_lands(tmp_path: Pa
     assert instance.proposal_evidence().list_admissions() == admissions
     assert instance.accepted_coordinate() == head
     assert _entry(instance, source_id).status == "open"
+
+
+def test_withdrawing_or_rejecting_an_accepted_proposal_says_accepted(tmp_path: Path) -> None:
+    """Withdraw and reject answered "only an open or stale proposal may be withdrawn;
+    this one is accepted" with no code or repair; typed as approve and activate are."""
+
+    from cruxible_core.service.proposals.proposals import (
+        service_reject_playbill_proposal,
+        service_withdraw_playbill_proposal,
+    )
+
+    instance, reviewer = _world(tmp_path)
+    proposal_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "accepted once"))
+    receipt = _approve(instance, reviewer, proposal_id)
+    assert receipt.activation is not None and receipt.activation.accepted_coordinate is not None
+    accepted_at = receipt.activation.accepted_coordinate.git_oid
+
+    for verb, act in (
+        (
+            "withdraw",
+            lambda: service_withdraw_playbill_proposal(
+                instance,
+                proposal_id=proposal_id,
+                actor_id="owner",
+                reason="no",
+                withdrawn_at="2026-11-16T12:00:00.000000Z",
+            ),
+        ),
+        (
+            "reject",
+            lambda: service_reject_playbill_proposal(
+                instance,
+                proposal_id=proposal_id,
+                actor_id="reviewer",
+                reason="no",
+                rejected_at="2026-11-16T12:00:00.000000Z",
+            ),
+        ),
+    ):
+        with pytest.raises(ProposalAlreadyAccepted) as refused:
+            act()
+        assert refused.value.git_oid == accepted_at
+        assert f"nothing left to {verb}" in str(refused.value)
+        assert refused.value.repair.operation == "cruxible.get"
+    assert instance.proposal_evidence().read_withdrawal(proposal_id) is None
