@@ -668,8 +668,16 @@ def erase_capture(instance_id: str, request: CaptureEraseRequest) -> CaptureEras
     "/{instance_id}/files/context",
     response_model=contracts.FileContext,
 )
-def file_context(instance_id: str) -> contracts.FileContext:
-    return playbill_api.playbill_file_context(resolve_server_instance_id(instance_id))
+def file_context(
+    instance_id: str,
+    document: Annotated[
+        list[str] | None,
+        Query(description="Only these Documents (repeatable); default: every Document."),
+    ] = None,
+) -> contracts.FileContext:
+    return playbill_api.playbill_file_context(
+        resolve_server_instance_id(instance_id), documents=document
+    )
 
 
 @router.post(

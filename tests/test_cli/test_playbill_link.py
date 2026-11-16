@@ -36,9 +36,12 @@ class _Served(_ServiceClient):
     def backlinks(self, instance_id: str, *, request: BacklinksRequest) -> BacklinksResult:
         return service_playbill_backlinks(self.instance, request=request)
 
-    def file_context(self, instance_id: str) -> contracts.FileContext:
+    def file_context(self, instance_id: str, *, documents: Any = None) -> contracts.FileContext:
+        self.requests.append(("file_context", documents))
         return contracts.FileContext.model_validate(
-            service_playbill_file_context(self.instance).model_dump(mode="json")
+            service_playbill_file_context(self.instance, documents=documents).model_dump(
+                mode="json"
+            )
         )
 
     def propose_file_bundle(
@@ -52,7 +55,7 @@ class _Served(_ServiceClient):
         at: str | None = None,
         accept: Any = "if_allowed",
     ) -> contracts.ProposalInspection:
-        self.requests.append(("propose", file, proposal_name, dry_run))
+        self.requests.append(("propose", file, proposal_name, dry_run, bundle))
         result = service_propose_playbill_file_bundle(
             self.instance,
             bundle=FileCompilationBundle.model_validate(bundle),
@@ -346,3 +349,52 @@ def test_an_overlay_added_during_the_proposal_is_a_conflict(
     result = _run("link", "guide.md", "--guides", STATUS)
     assert result.exit_code == 1 and "changed this entry meanwhile" in result.output
     assert (tmp_path / ".cruxible" / "files.yaml").read_text() == before
+
+
+@pytest.mark.parametrize("unrelated", [3, 30])
+def test_linking_one_page_compiles_and_looks_up_only_that_page(
+    served: _Served, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unrelated: int
+) -> None:
+    """The work is the linked page's: no other catalogued file, no other accepted Document."""
+
+    from cruxible_core.service.evidence import file_catalog
+
+    for index in range(unrelated):
+        (tmp_path / f"page{index}.md").write_text(f"# Page {index}\n")
+        added = _run(
+            "files", "add", f"page{index}.md", "--document-id", f"page{index}",
+            "--document-kind", "note", "--title", f"Page {index}", "--scope", "project",
+            "--root", str(tmp_path),
+        )  # fmt: skip
+        assert added.exit_code == 0, added.output
+    proposed = _run("files", "propose", "--file", "doc-page0.md", "--name", "p0",
+                    "--root", str(tmp_path))  # fmt: skip
+    assert proposed.exit_code == 0, proposed.output
+    # An unrelated catalogued file that has gone missing does not block the link.
+    (tmp_path / f"page{unrelated - 1}.md").unlink()
+    (tmp_path / "guide.md").write_text("# Guide\nText.\n")
+    assert _run("files", "add", "guide.md", "--root", str(tmp_path)).exit_code == 0
+
+    def no_listing(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("linking one page listed every accepted Document")
+
+    monkeypatch.setattr(file_catalog, "_accepted_documents", no_listing)
+    served.requests.clear()
+    linked = _run("link", "guide.md", "--guides", STATUS)
+    assert linked.exit_code == 0, linked.output
+    (context,) = [item for item in served.requests if item[0] == "file_context"]
+    assert context == ("file_context", ("doc-guide.md",))
+    (proposal,) = [item for item in served.requests if item[0] == "propose"]
+    bundle = proposal[4]
+    assert [item["source"]["name"] for item in bundle["documents"]] == ["doc-guide.md"]
+    # A page already accepted compiles as its next revision from its own lookup.
+    linked_again = _run("link", "doc-page0.md", "--guides", STATUS, "--json")
+    assert linked_again.exit_code == 0, linked_again.output
+    shell = json.loads(linked_again.stdout)["proposal"]
+    assert shell["outcome"]["status"] == "landed"
+    (page0,) = [
+        item
+        for item in served.file_context("inst_write", documents=("page0",)).documents
+        if item["identity"] == "document:page0"
+    ]
+    assert page0["lifecycle"]["revision"] == 2

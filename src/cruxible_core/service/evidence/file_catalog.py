@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Sequence
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
@@ -64,13 +65,41 @@ def _accepted_documents(
         return documents
 
 
-def service_playbill_file_context(instance: PlaybillInstance) -> FileContext:
+def _named_documents(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    document_ids: Sequence[str],
+) -> dict[str, DocumentShell]:
+    """The accepted Documents named, by identity lookups: work grows with the names asked."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        documents = {}
+        for document_id in document_ids:
+            shell = projection.typed.source(f"document:{document_id}")
+            if isinstance(shell, DocumentShell):
+                documents[shell.document_id] = shell
+        return documents
+
+
+def service_playbill_file_context(
+    instance: PlaybillInstance, *, documents: Sequence[str] | None = None
+) -> FileContext:
+    """Accepted inputs for compiling files: every Document, or only those ``documents`` name.
+
+    Compiling one file (``link --guides``) names its Document, so the context
+    costs that one lookup, not the instance's Documents.
+    """
+
     coordinate = instance.accepted_coordinate()
-    documents = _accepted_documents(instance, coordinate)
+    if documents is None:
+        found = _accepted_documents(instance, coordinate)
+    else:
+        found = _named_documents(instance, coordinate, documents)
+    documents_by_id = found
     return FileContext(
         accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
         documents=tuple(
-            documents[key] for key in sorted(documents, key=lambda item: item.encode())
+            documents_by_id[key] for key in sorted(documents_by_id, key=lambda item: item.encode())
         ),
     )
 

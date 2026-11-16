@@ -81,7 +81,9 @@ _DEFINITION_KINDS = ("ClaimType", "Procedure")
 
 
 class _FileContextProposer(Protocol):
-    def file_context(self, instance_id: str) -> contracts.FileContext: ...
+    def file_context(
+        self, instance_id: str, *, documents: Sequence[str] | None = None
+    ) -> contracts.FileContext: ...
 
     def propose_file_bundle(
         self,
@@ -391,15 +393,16 @@ def link_guides(
                 governance_scope=(GUIDANCE_SCOPE,),
             )
         revised = FileCatalogEntry.model_validate({**fields, "links": (*others, *current.values())})
-    catalog = FileCatalog(
-        catalog_kind=files.catalog.catalog_kind,
-        entries=tuple(
-            revised if isinstance(item, FileCatalogEntry) and item.name == entry.name else item
-            for item in files.catalog.entries
-        ),
-    )
+    assert revised.document_id is not None
+    # Only the linked page compiles, against only its own accepted Document:
+    # the work is this page's, not the catalog's or the instance's.
     bundle: FileCompilationBundle = compile_client_file_context(
-        client, instance_id, catalog=catalog, repository_root=root, aliases={}
+        client,
+        instance_id,
+        catalog=FileCatalog(catalog_kind="portable", entries=(revised,)),
+        repository_root=root,
+        aliases={},
+        documents=(revised.document_id,),
     )
     inspection = client.propose_file_bundle(
         instance_id,
