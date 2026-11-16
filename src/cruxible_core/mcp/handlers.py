@@ -413,10 +413,19 @@ def handle_playbill_provider_move(
     )
 
 
-def handle_playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
-    return _daemon_call(
+def handle_playbill_kit_build(
+    instance_id: str, request: KitBuildRequest, *, files: Sequence[str] = ()
+) -> KitBuildResult:
+    """Build the release; ``files`` (paths in this adapter's workspace) are carried
+    as inert kit files, read here before the build so a bad path refuses first."""
+
+    from cruxible_client.kits import add_kit_files, read_kit_build_files
+
+    carried = read_kit_build_files(files, workspace=mcp_workspace_root()) if files else ()
+    built = _daemon_call(
         lambda client: client.build_kit(instance_id, request), operation_name="cruxible_kit_build"
     )
+    return built.model_copy(update={"bundle": add_kit_files(built.bundle, carried)})
 
 
 def handle_playbill_kit_status(instance_id: str, *, offline: bool = False) -> KitStatus:

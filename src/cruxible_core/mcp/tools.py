@@ -453,9 +453,20 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         request: KitBuildRequest,
+        files: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Plain files in this adapter's workspace (README.md, a reference page) "
+                    "the release carries for its reader, listed in the manifest with sha256."
+                )
+            ),
+        ] = None,
     ) -> KitBuildResult:
         """Export this instance's definitions under the owned prefixes as one kit release."""
-        return handlers.handle_playbill_kit_build(require_instance_id(instance_id), request)
+        return handlers.handle_playbill_kit_build(
+            require_instance_id(instance_id), request, files=tuple(files or ())
+        )
 
     @_tool
     def cruxible_kit_status(

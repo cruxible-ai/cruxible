@@ -206,8 +206,10 @@ from cruxible_client.contracts.write import (
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
+    add_kit_files,
     check_kit_updates,
     kit_automation_template,
+    read_kit_build_files,
     resolve_kit,
     resolve_kit_image,
     stage_kit_providers,
@@ -2495,6 +2497,17 @@ def _echo_kit_change(
         "is stored); kit add never installs or submits it."
     ),
 )
+@click.option(
+    "--file",
+    "kit_files",
+    multiple=True,
+    metavar="PATH",
+    help=(
+        "A plain file the kit carries for its reader, such as README.md or a reference "
+        "page (repeatable). It keeps its path relative to the workspace root and is "
+        "listed in the manifest's files with its sha256; it is never a definition."
+    ),
+)
 @json_option
 @handle_errors
 def build_kit(
@@ -2505,6 +2518,7 @@ def build_kit(
     providers: tuple[Path, ...],
     default_providers: tuple[Path, ...],
     automation_template: Path | None,
+    kit_files: tuple[str, ...],
     output_json: bool,
 ) -> None:
     """Export this instance's owned definitions as one self-contained kit release.
@@ -2543,7 +2557,12 @@ def build_kit(
         )
         return client.build_kit(instance_id, request)
 
-    bundle = _server_call(build, command_name="cruxible kit build").bundle
+    carried: tuple[tuple[str, bytes], ...] = ()
+    if kit_files:
+        workspace = _existing_workspace_root() or Path.cwd()
+        # Read before the build, so a missing or outside path refuses first.
+        carried = read_kit_build_files(kit_files, workspace=workspace)
+    bundle = add_kit_files(_server_call(build, command_name="cruxible kit build").bundle, carried)
     write_kit_directory(bundle, out)
     if output_json:
         _emit_json(bundle.manifest.model_dump(mode="json"))
@@ -2554,8 +2573,10 @@ def build_kit(
             f"content {bundle.manifest.content_digest}"
         )
         _echo_kit_requires(bundle.manifest.requires)
-        template = bundle.manifest.automation_template
-        _echo_automation_template(template, on_disk=_kit_directory_file(str(out), template))
+        template_path = bundle.manifest.automation_template
+        _echo_automation_template(
+            template_path, on_disk=_kit_directory_file(str(out), template_path)
+        )
 
 
 @kit_group.command("add")

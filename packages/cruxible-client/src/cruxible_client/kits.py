@@ -28,7 +28,7 @@ files reach it through its body store (``stage_kit_providers``).
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,6 +68,8 @@ from cruxible_client.contracts.kits import (
     KitProviderFileBytes,
     KitStatus,
     kit_document_body_digests,
+    kit_file_entry,
+    kit_file_path_allowed,
     kit_version_key,
 )
 from cruxible_client.contracts.validation_messages import validation_summary
@@ -210,6 +212,104 @@ def _write_new_file(root: Path, relative: str, content: bytes) -> None:
     # ``x`` refuses an existing file and a dangling link alike.
     with target.open("xb") as handle:
         handle.write(content)
+
+
+class KitFileRefused(ConfigError):
+    """A file named for a kit build cannot be carried (missing, outside, unfit)."""
+
+    error_code = "cruxible.kit.file_refused"
+
+    def __init__(self, path: str, why: str, repair: str) -> None:
+        from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+
+        self.repair = HandEditRepair(
+            hand_edit=HandEditInstruction(target=path, required_change=repair)
+        )
+        super().__init__(f"{self.error_code}: {path}: {why}; repair: {repair}")
+
+
+def read_kit_build_files(
+    paths: Sequence[str | Path], *, workspace: Path
+) -> tuple[tuple[str, bytes], ...]:
+    """Each named plain file as (its path in the kit, its bytes), refused unless it
+    is a regular file inside ``workspace`` whose relative path a kit file may take.
+
+    The kit path is the file's path relative to the workspace root, so
+    ``README.md`` lands at the kit's root and ``docs/guide.md`` under ``docs/``.
+    """
+
+    root = workspace.resolve()
+    found: dict[str, bytes] = {}
+    for named in paths:
+        given = Path(named).expanduser()
+        candidate = (given if given.is_absolute() else Path.cwd() / given).resolve()
+        shown = str(named)
+        if not candidate.is_relative_to(root):
+            raise KitFileRefused(
+                shown,
+                f"is outside the workspace {root}",
+                "copy the file into the workspace, then name it from there",
+            )
+        if not candidate.is_file():
+            raise KitFileRefused(
+                shown,
+                "is not a file in the workspace",
+                "check the path, or create the file before building",
+            )
+        relative = candidate.relative_to(root).as_posix()
+        if not kit_file_path_allowed(relative):
+            raise KitFileRefused(
+                shown,
+                f"{relative!r} is not a path a kit file may take (hidden, or a reserved "
+                "kit directory)",
+                "move it to a plain path such as README.md or docs/NAME.md",
+            )
+        if relative in found:
+            raise KitFileRefused(shown, "is named twice", "name each file once")
+        found[relative] = candidate.read_bytes()
+    return tuple(sorted(found.items()))
+
+
+def add_kit_files(bundle: KitBundle, files: Sequence[tuple[str, bytes]]) -> KitBundle:
+    """``bundle`` carrying ``files`` too, each listed in the manifest with its sha256.
+
+    Inert files are not part of the release identity, so the manifest's content
+    digest is unchanged. A path the bundle already carries (its automation
+    template) is refused rather than replaced.
+    """
+
+    if not files:
+        return bundle
+    carried = {item.path for item in bundle.manifest.files}
+    for path, _content in files:
+        if path in carried:
+            raise KitFileRefused(
+                path,
+                "is already a file of this kit (its automation template)",
+                "leave it out of --file; the build carries it",
+            )
+    entries = tuple(
+        sorted(
+            (*bundle.manifest.files, *(kit_file_entry(path, content) for path, content in files)),
+            key=lambda item: item.path,
+        )
+    )
+    contents = tuple(
+        sorted(
+            (*bundle.files, *(KitFileBytes.of(path, content) for path, content in files)),
+            key=lambda item: item.path,
+        )
+    )
+    manifest = bundle.manifest.model_copy(update={"files": entries})
+    return KitBundle.model_validate(
+        {
+            **bundle.model_dump(mode="json"),
+            "manifest": KitManifest.model_validate(manifest.model_dump(mode="json")).model_dump(
+                mode="json"
+            ),
+            "files": [item.model_dump(mode="json") for item in contents],
+        }
+    )
 
 
 def write_kit_directory(bundle: KitBundle, root: Path) -> None:

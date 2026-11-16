@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-11-16:repin-principal-preflight",
-    "surface_digest": "sha256:c61a99c82ebc56f63e33c12b39855a38db9a4dc21ef14888cfc96ba0b4163656"
+    "register_entry": "2026-11-16:kit-build-files",
+    "surface_digest": "sha256:aca864f75f3ed07d1d21ab5521717096aeadf11701a7c051c5401fd33913f4fb"
   },
   "surface": {
     "cli_leaves": [
@@ -2467,7 +2467,7 @@
           "build_kit"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_build",
-        "input_schema_digest": "sha256:aa02642b4d17c39778cd3dfcfbe5ee91d54596862e14859b17ca22cba54d6f61",
+        "input_schema_digest": "sha256:67c62f671fd7f79cc2728541dd0cf48d5cdc4349dfeb1c4cdb2e0ee33d4e9b25",
         "name": "cruxible_kit_build",
         "output_schema_digest": "sha256:97d258111501436856e1fa81e1b71d81d5798832fded41548320fe800d7efc80",
         "permission": "GOVERNED_WRITE"

@@ -1073,3 +1073,54 @@ def test_a_blocked_kit_remove_prints_its_refusal_first_and_the_plan_as_counts(
     assert "acme.c7" not in brief.output
     assert listed.output.index(refusal) < listed.output.index("retire: ClaimType:acme.c7")
     assert "(--detail lists each path)" not in listed.output
+
+
+def test_kit_build_carries_named_files_listed_with_their_sha256(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kit-build-files: `--file PATH` copies plain files into the kit and lists each in
+    the manifest's files with its sha256, as a released kit's files are listed."""
+
+    from cruxible_client.contracts.kits import KitBuildResult
+    from cruxible_client.kits import read_kit_directory
+
+    workspace = tmp_path / "workspace"
+    (workspace / ".cruxible").mkdir(parents=True)
+    (workspace / "docs").mkdir()
+    (workspace / "README.md").write_text("# Acme kit\n")
+    (workspace / "docs" / "guide.md").write_text("How to use it.\n")
+    monkeypatch.chdir(workspace)
+
+    class StubClient:
+        def build_kit(self, instance_id: str, request: KitBuildRequest) -> KitBuildResult:
+            return KitBuildResult(bundle=_bundle())
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    out = tmp_path / "kit"
+    argv = [*BASE, "build", "--id", "acme", "--version", "1.0.0", "--owns", "acme."]
+    result = CliRunner().invoke(
+        cli, [*argv, "--out", str(out), "--file", "README.md", "--file", "docs/guide.md"]
+    )
+
+    assert result.exit_code == 0, result.output
+    manifest = json.loads((out / "cruxible-kit.json").read_text())
+    assert [(item["path"], item["role"], item["sha256"]) for item in manifest["files"]] == [
+        ("README.md", "readme", "sha256:" + hashlib.sha256(b"# Acme kit\n").hexdigest()),
+        (
+            "docs/guide.md",
+            "reference",
+            "sha256:" + hashlib.sha256(b"How to use it.\n").hexdigest(),
+        ),
+    ]
+    assert (out / "docs" / "guide.md").read_text() == "How to use it.\n"
+    assert read_kit_directory(out).manifest.content_digest == _bundle().manifest.content_digest
+
+    (tmp_path / "outside.md").write_text("elsewhere\n")
+    for path, why in (("missing.md", "is not a file"), ("../outside.md", "outside the workspace")):
+        refused = CliRunner().invoke(
+            cli, [*argv, "--out", str(tmp_path / f"refused-{why[:4]}"), "--file", path]
+        )
+        assert refused.exit_code == 1, refused.output
+        assert "cruxible.kit.file_refused" in refused.output and why in refused.output
+        assert "Repair:" in refused.output
+        assert not (tmp_path / f"refused-{why[:4]}").exists()

@@ -1199,7 +1199,8 @@ and `POST /{instance}/providers/install`.
 
 ~~~text
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
-  --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]... [--json]
+  --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]...
+  [--automation-template FILE] [--file PATH]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--keep-build Line:NAME]...
   [--retire-dependents IDENTITY]... [--allow-downgrade]
@@ -1475,14 +1476,24 @@ revival (`revival_refused`). After a removal `orient` no longer lists its
 retired SubjectKinds, even where a kept pair-endpoint ClaimType still names one. Removing a kit that is not installed
 refuses with `cruxible.kit.not_installed`, naming the installed kits.
 
+`kit build --file PATH` (repeatable) copies a plain file, such as `README.md`
+or a reference page, into the kit at its path relative to the workspace root
+and lists it in the manifest's `files` with its sha256 and role; like the
+automation template it is outside the release's content digest and is never a
+definition. A missing file, a path outside the workspace, a hidden or reserved
+kit path, or the automation template's own path refuses
+`cruxible.kit.file_refused` with its repair, before the build runs.
+
 MCP: `cruxible_kit_build` (`providers` names packages staged with
-`cruxible_body_store`; `delivery: index` makes one a default provider), `cruxible_kit_status` (with the same update check,
+`cruxible_body_store`; `delivery: index` makes one a default provider; `files`
+names plain files in the adapter's workspace, as `--file`), `cruxible_kit_status` (with the same update check,
 `offline`), `cruxible_kit_add` (`reference` is a kit directory or layout the adapter reads,
 or a registry reference it pulls; or inline `bundle`; a commit stages its provider files) and
 `cruxible_kit_remove`. HTTP:
 `POST /{instance}/kits/build`, `GET /{instance}/kits`,
 `POST /{instance}/kits` and `POST /{instance}/kits/remove`.
-SDK: `read_kit_directory`, `write_kit_directory` and `stage_kit_providers` in
+SDK: `read_kit_directory`, `write_kit_directory`, `stage_kit_providers`,
+`read_kit_build_files` and `add_kit_files` (what `--file` does) in
 `cruxible_client.kits`, with the matching `CruxibleClient` methods.
 
 ## document

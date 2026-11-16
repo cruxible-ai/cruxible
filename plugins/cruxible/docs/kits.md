@@ -636,6 +636,13 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   definitions. The check is an authoring preview: nothing is stored. The
   template travels as one of the kit's files, outside the release's content
   digest, and is never installed.
+- `--file PATH` (repeatable) copies a plain file for the kit's reader, such as
+  `README.md` or a reference page, into the kit at its path relative to the
+  workspace root, and lists it in the manifest's `files` with its sha256 (a
+  root `README*` is the `readme`, `examples/...` an `example`, anything else a
+  `reference`). Like the template it is outside the content digest. A missing
+  file or one outside the workspace refuses `cruxible.kit.file_refused` with
+  its repair.
 
 ### Bundle your own provider
 
