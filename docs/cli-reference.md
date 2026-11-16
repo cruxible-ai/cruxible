@@ -4043,7 +4043,11 @@ use `files propose` for Document changes, then cite the section as evidence for
 a bounded Claim value (see `write` above). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
 workspace file, read on this side (a file the catalog does not name is
-catalogued by the write, as below), and `--capture` an existing
+catalogued by the write, as below). A quoted code line is a pointer for
+reviewers, not a witness that resurfaces the judgment: a judgment that depends
+on code cites a check result where one exists (a scanner's finding, by
+`--capture` or `--evidence-contract`), while prose keeps quote and `--section`
+citations. `--capture` cites an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
 unique among the verified Captures the instance holds, cited or not; ambiguous
 or unknown handles refuse with the nearest handles). A Capture under a

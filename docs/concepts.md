@@ -285,6 +285,14 @@ evidence is one or more of:
   example a supplier API response that a Procedure fetched (`--capture CAP-…`,
   or `--evidence-contract` for the newest one about the Subject).
 
+Which citation fits depends on what the judgment rests on. A quoted code line
+(`--evidence-file PATH#TEXT`) is a pointer for reviewers: it shows where to
+look, but it is not a witness that resurfaces the judgment when the code
+changes in a way that matters. A judgment that depends on code should cite a
+check result where one exists, such as a scanner's finding, so the evidence
+moves when the check's answer does. Prose keeps quote and `--section`
+citations.
+
 A Capture's bytes are the document its producer returned, verbatim: the body an
 origin sent, the file read, the document a conversion produced, in whatever
 format it is. How it was obtained (the URL and the URL a redirect settled on,
