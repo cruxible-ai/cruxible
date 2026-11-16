@@ -203,12 +203,15 @@ compiler, so reads and proofs at them are unchanged. The instance descriptor
 keeps its genesis compiler; inspection reports the active compiler from
 accepted history.
 
-This release installs one compiler, revision 72 (`one-capture-per-citation`), and
-no upgrade edge leads to or from it: `cruxible compiler upgrade` refuses
-`cruxible.compiler_upgrade.already_current` (or
+This release installs one compiler, revision 73 (`retiring-query-traversal`:
+a query's pair-hop and traversal checks apply only to a live query, so a query
+retiring with the kinds it walks, as in `kit remove`, is not checked against
+them), and no upgrade edge leads to or from it: `cruxible compiler upgrade`
+refuses `cruxible.compiler_upgrade.already_current` (or
 `cruxible.compiler_upgrade.unsupported_transition` for any other target). An
 instance created by an earlier build (any 0.3.x release, or an unshipped
-development build) records another compiler and is refused, never converted:
+development build, including one on revision 72 `one-capture-per-citation`)
+records another compiler and is refused, never converted:
 the daemon answers `cruxible.instance.reseed_required` and `cruxible host
 show` reports it `reseed_required` (`compiler_lineage_not_writable`). Move it
 aside and re-import its content into a fresh instance. A fresh instance starts
