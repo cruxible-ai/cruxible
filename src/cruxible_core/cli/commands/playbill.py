@@ -4452,8 +4452,18 @@ def _principal_successor(
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
+    command: str,
 ) -> None:
-    """Propose a successor key for ``target_id`` and print it (``rotate`` and ``recover``)."""
+    """Propose a successor key for ``target_id`` and print it (``rotate`` and ``recover``).
+
+    S5: the new key directory gets the principal's settings file, as `principal
+    add` writes one: the connection, the instance, the new key and the bearer
+    token of the settings file the CLI remembers for the principal. The CLI keeps
+    acting with the old file until the change is active (activation is signed
+    with the current key); the output names the new file to load then.
+    """
+
+    generated: list[tuple[str, GeneratedKeyMaterial]] = []
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
         matches = principal_records(client, instance_id)
@@ -4466,6 +4476,7 @@ def _principal_successor(
             kind=target.kind,
             forbidden_roots=_custody_forbidden_roots(),
         )
+        generated.append((instance_id, material))
         return client.propose_principal_change(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
@@ -4486,10 +4497,55 @@ def _principal_successor(
         if dry_run
         else _server_call(call, command_name="cruxible principal change")
     )
+    settings = (
+        _successor_settings(target_id, Path(key_dir).expanduser(), *generated[0], command=command)
+        if generated
+        else None
+    )
     if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        _echo_proposal(result, result.lint, principal_change=True)
+        payload = result.model_dump(mode="json")
+        if settings is not None:
+            payload["settings_path"] = str(settings)
+        _emit_json(payload)
+        return
+    _echo_proposal(result, result.lint, principal_change=True)
+    if settings is not None:
+        click.echo(f"Settings for the new key: {settings}")
+        click.echo(f"Once the change is active, load them with: set -a; . {settings}; set +a")
+
+
+def _successor_settings(
+    principal_id: str,
+    key_dir: Path,
+    instance_id: str,
+    material: GeneratedKeyMaterial,
+    *,
+    command: str,
+) -> Path:
+    """Write the settings file beside a successor key, carrying the remembered token."""
+
+    from cruxible_client.authoring.principal_settings import read_principal_settings
+    from cruxible_core.cli.context import principal_binding
+
+    token: str | None = None
+    transport = _transport_target(_root_ctx_obj())
+    if transport is not None:
+        known = load_cli_context().principals.get(principal_binding(transport, instance_id))
+        remembered = None if known is None else known.settings.get(principal_id)
+        if remembered is not None:
+            try:
+                token = read_principal_settings(Path(remembered)).token
+            except (OSError, ValueError):
+                token = None
+    return write_principal_settings(
+        key_dir,
+        ctx_obj=_root_ctx_obj(),
+        instance_id=instance_id,
+        principal_id=principal_id,
+        private_key_path=material.private_key_path,
+        token=token,
+        written_by=command,
+    )
 
 
 @principal_group.command("rotate")
@@ -4521,6 +4577,7 @@ def rotate_principal(
         dry_run=dry_run,
         at=at,
         output_json=output_json,
+        command="cruxible principal rotate",
     )
 
 
@@ -4554,6 +4611,7 @@ def recover_principal(
         dry_run=dry_run,
         at=at,
         output_json=output_json,
+        command="cruxible principal recover",
     )
 
 

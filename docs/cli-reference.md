@@ -5262,7 +5262,11 @@ self-rotation: run `cruxible proposal approve PID --signer-id <the proposing
 actor> --key <that actor's current private key> --yes`, which activates it
 once that signature completes it. For `principal add` and `principal recover`,
 the signer is the actor performing the operation, never the new or
-locked-out principal. Registration neither
+locked-out principal. `principal rotate` and `principal recover` write the
+principal's settings file (`cruxible.env`) beside the new key in `--key-dir`,
+carrying the bearer token of the settings file the CLI remembers for it; the
+CLI keeps acting with the old file, and the output names the new one to load
+once the change is active. Registration neither
 grants authority immediately nor sends a private key to the daemon. Other
 non-creator principals may record additional voluntary approvals. `--kind`
 is explicit and may be `ordinary` or `recovery`; the daemon kind is

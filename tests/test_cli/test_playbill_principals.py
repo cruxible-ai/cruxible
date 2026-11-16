@@ -219,3 +219,85 @@ def test_the_global_principal_id_reaches_the_client_and_whoami_says_it_is_a_clai
     assert "configured principal ID (CRUXIBLE_PRINCIPAL_ID)" in result.output
     assert "Identity is a claim, not authentication" in result.output
     assert "Can author: yes" in result.output
+
+
+def test_principal_rotate_writes_the_settings_file_beside_the_new_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """S5: rotate leaves a loadable settings file for the new key, token carried over."""
+
+    from cruxible_client.authoring.principal_settings import read_principal_settings
+    from cruxible_core.cli.context import (
+        CliContextState,
+        principal_binding,
+        save_cli_context,
+    )
+    from cruxible_core.cli.principal_settings import write_principal_settings
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    url, instance = "https://principals.example.test", "inst_principals"
+    old_dir, new_dir = tmp_path / "old-custody", tmp_path / "new-custody"
+    old_dir.mkdir()
+    old = write_principal_settings(
+        old_dir,
+        ctx_obj={"server_url": url},
+        instance_id=instance,
+        principal_id="reviewer",
+        private_key_path=old_dir / "reviewer.ed25519",
+        token="tok-carried",
+        written_by="cruxible principal add",
+    )
+    save_cli_context(
+        CliContextState(server_url=url).remember_principal(
+            principal_binding(url, instance), "reviewer", old, activate=False
+        )
+    )
+    record = PrincipalRecord(principal_id="reviewer", public_key="a" * 64, kind="ordinary")
+
+    class StubClient:
+        def orient(self, instance_id: str, **values: Any) -> Any:
+            return SimpleNamespace(principals=(record,), truncated=False, next_cursor=None)
+
+        def propose_principal_change(self, instance_id: str, **_: object) -> Any:
+            return contracts.ProposalInspection(
+                proposal={"proposal_id": "sha256:" + "5" * 64},
+                accepted_coordinate=COORDINATE,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            url,
+            "--instance-id",
+            instance,
+            "principal",
+            "rotate",
+            "reviewer",
+            "--key-dir",
+            str(new_dir),
+            "--name",
+            "Rotate Reviewer",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    written = read_principal_settings(Path(payload["settings_path"]))
+    assert written.path == new_dir.resolve() / "cruxible.env"
+    assert written.private_key_path == str((new_dir / "reviewer.ed25519").resolve())
+    assert (written.principal_id, written.instance_id, written.token) == (
+        "reviewer",
+        instance,
+        "tok-carried",
+    )
+    assert stat.S_IMODE(written.path.stat().st_mode) == 0o600
+    # The old file stays the one the CLI acts with until the change is active.
+    assert read_principal_settings(old).private_key_path.endswith("old-custody/reviewer.ed25519")
+    assert "tok-carried" not in result.output
