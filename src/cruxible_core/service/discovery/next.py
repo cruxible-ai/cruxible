@@ -4785,6 +4785,21 @@ def _line_attention_items(
     return tuple(items)
 
 
+def _missed_record_binds(row: Any, current: Any) -> bool:
+    """Whether a missed-instants record is the live Trigger version's own.
+
+    A v8 record names its Trigger version. One migrated from v7 names none
+    (``version=''``): it binds only when it fires the same target and the live
+    version was already accepted when its first instant fell due -- otherwise a
+    succession (retarget or reschedule) may have come after the outage, and
+    the record is conservatively its predecessor's.
+    """
+
+    if row.version:
+        return bool(row.version == current.version)
+    return bool(row.action == current.action and current.accepted_at <= row.first_due)
+
+
 def _missed_instants_item(
     trigger: str,
     *,
@@ -4850,7 +4865,7 @@ def _trigger_missed_items(
             # An accepted Trigger aimed at an action this release does not
             # serve: nothing runs it, and its repair would refuse.
             continue
-        if current is None or (row.version and row.version != current.version):
+        if current is None or not _missed_record_binds(row, current):
             # Retired, or succeeded since (another target or schedule): the
             # record is its predecessor's, and nothing owes it now.
             continue

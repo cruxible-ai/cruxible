@@ -177,3 +177,36 @@ def test_a_recorded_outage_of_an_unserved_action_offers_no_repair(
         ),
     )
     assert _next(instance, at) == []
+
+
+def test_a_migrated_unversioned_record_binds_only_to_its_own_target_and_era(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Review r2: a v7 record (version '') never shows under a retargeted or later
+    Trigger version; it shows only for the same target, accepted before the outage."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.triggers import journal
+    from cruxible_core.triggers.journal import MissedInstants
+
+    instance, _workspace = runbook_world(tmp_path)
+    at = instance.accepted_evaluation_time(instance.accepted_coordinate().git_oid)
+    record = MissedInstants(
+        "Trigger:maintain-daily", "runbook:old", at, at, at + timedelta(hours=1), 3
+    )
+    monkeypatch.setattr(journal, "missed_trigger_instants", lambda _instance: (record,))
+
+    def shown(action: str, accepted_at: object) -> list[str]:
+        trigger = SimpleNamespace(
+            trigger="Trigger:maintain-daily", action=action, version="v2", accepted_at=accepted_at
+        )
+        monkeypatch.setattr(journal, "internal_triggers", lambda _instance: (trigger,))
+        return [item for item in _next(instance, at) if "maintain-daily" in str(item)]
+
+    # Retargeted to another Runbook: the old record is the predecessor's.
+    assert shown("runbook:new", at - timedelta(days=1)) == []
+    # Same target, but this version was accepted after the outage began.
+    assert shown("runbook:old", at + timedelta(minutes=1)) == []
+    # Same target, accepted before the outage: it is this version's own.
+    assert shown("runbook:old", at - timedelta(days=1)) != []
