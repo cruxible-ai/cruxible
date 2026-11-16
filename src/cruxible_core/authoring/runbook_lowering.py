@@ -76,6 +76,9 @@ def _step(
                 repair_kind="replace_input",
                 repair_description="Name a registered internal action.",
             )
+        from cruxible_core.authoring.lowering import _refuse_unserved_action
+
+        _refuse_unserved_action(action, f"steps[{index}].action")
         return ActionTarget(action=action)
     assert line is not None
     path = line_spec_path(line)

@@ -214,6 +214,8 @@ def test_authoring_lowers_steps_to_trigger_targets_and_accepts(tmp_path: Path) -
     [
         ({"line": "test.no-such-line"}, "cruxible.authoring.runbook_line_missing"),
         ({"action": "nothing.here"}, "cruxible.authoring.runbook_action_unknown"),
+        # Ruling 13: curation is registered for the law but not served.
+        ({"action": "curation.detect"}, "cruxible.authoring.action_not_served"),
     ],
 )
 def test_a_target_it_cannot_run_refuses_at_authoring(

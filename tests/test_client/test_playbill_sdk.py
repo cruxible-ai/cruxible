@@ -292,22 +292,6 @@ def test_sdk_since_uses_its_active_orientation(tmp_path: Path) -> None:
     assert result.rows == []
 
 
-def test_sdk_curation_list_is_a_pure_read(tmp_path: Path) -> None:
-    _workspace(tmp_path)
-    client = _Client()
-    pb = Cruxible._from_client(  # type: ignore[arg-type]
-        client,
-        instance_id="inst_test",
-        workspace=tmp_path,
-        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
-    )
-
-    listed = pb.curation_list()
-    assert listed.detection.state == "never_run"
-    assert set(client.curation_list_request) == {"access_profile", "limit", "cursor"}
-    assert not hasattr(pb, "curation_observe")
-
-
 def test_sdk_audit_uses_current_head_and_explicit_time(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
@@ -330,37 +314,6 @@ def test_sdk_audit_uses_current_head_and_explicit_time(tmp_path: Path) -> None:
     assert client.audit_request["at"] is None
     assert client.audit_request["claim_type_identities"] == ("ClaimType:status",)
     assert client.audit_request["subject_kinds"] == ("work_item",)
-
-
-def test_sdk_curation_lifecycle_methods_are_thin_typed_delegates(tmp_path: Path) -> None:
-    _workspace(tmp_path)
-    client = _Client()
-    pb = Cruxible._from_client(  # type: ignore[arg-type]
-        client,
-        instance_id="inst_test",
-        workspace=tmp_path,
-        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
-    )
-    common = {
-        "item_id": "sha256:" + "1" * 64,
-        "expected_latest_event_digest": "sha256:" + "2" * 64,
-        "reason": "operator-reviewed mechanical facts",
-    }
-
-    pb.curation_overrule(**common)
-    pb.curation_accept_fixed(
-        **common,
-        accepted_proposal_id="sha256:" + "3" * 64,
-        accepted_changeset_digest="sha256:" + "4" * 64,
-    )
-    pb.curation_suppress(**common, scope="item", until_generation=8)
-
-    assert [name for name, _values in client.curation_actions] == [
-        "overrule",
-        "accept_fixed",
-        "suppress",
-    ]
-    assert client.curation_actions[2][1]["scope"] == "item"
 
 
 def test_sdk_declared_block_refuses_every_citation_role_inside_it(

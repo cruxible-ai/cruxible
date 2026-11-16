@@ -366,12 +366,12 @@ def _tick(part: str) -> Callable[[World], object]:
 
 
 #: Whether a tick of each part has work after a generation: the triggers fire
-#: floor.refresh and curation.detect, the armed Line's GenerationAccepted Trigger
-#: is due, the new Claims' Captures wait for the evidence check, next's facts and the
-#: floor have a new target, curation a new generation, and the refusal index a
-#: generation to catch up. Neither world holds a prediction contract, so the
-#: prediction part only ever matches, and the needed-inputs part folds Line and
-#: Runbook versions in its match and never has a unit. Idle, nothing is due anywhere.
+#: floor.refresh, the armed Line's GenerationAccepted Trigger is due, the new
+#: Claims' Captures wait for the evidence check, next's facts and the floor have
+#: a new target, and the refusal index a generation to catch up. Neither world
+#: holds a prediction contract, so the prediction part only ever matches, and the
+#: needed-inputs part folds Line and Runbook versions in its match and never has a
+#: unit. Idle, nothing is due anywhere.
 _DUE_AFTER_GENERATION = {
     "triggers": True,
     "line": True,
@@ -379,7 +379,6 @@ _DUE_AFTER_GENERATION = {
     "facts": True,
     "evidence": True,
     "prediction": False,
-    "curation": True,
     "settled_refusals": True,
     "line_upgrades": False,
     "line_inputs": False,
@@ -798,12 +797,6 @@ def _reopen(world: World) -> None:
 # makes the case pass, which a strict xfail reports as a failure until the entry
 # is removed.
 
-_CURATION = (
-    "audit#2: curation detection rescans the instance every generation: unscoped facts "
-    "(curation/curation_detectors.py:1279), every Claim revision ever accepted "
-    "(curation_detectors.py:182 _curation_history_index) and every dependency artifact "
-    "(claims/closure.py:417), via service/discovery/curation.py:738"
-)
 _COVERAGE = (
     "audit#10: coverage reads every cited Capture envelope and re-derives every citation "
     "id (indexes/evidence/citation_coverage.py:103-174 via "
@@ -869,24 +862,6 @@ GROWS: dict[str, dict[str, str]] = {
         "file_opens": (
             "audit#11: each floor refresh re-reads every cited Capture envelope for "
             "sources/LEDGER (service/floor/floor_sources.py:114 via :165)"
-        ),
-    },
-    "tick.after_generation.curation": {
-        **_grows(
-            _CURATION,
-            "claim_parses",
-            *_DIGESTS,
-            "file_opens",
-            "sql_statements",
-            "git_blob_reads",
-        ),
-        "sql_vm_steps": (
-            "audit#2: each curation detection walks the whole history index from its start "
-            "(SELECT * FROM artifact_versions WHERE occurrence_sequence<=? ORDER BY ..., "
-            "indexes/history/history_index.py:893, from curation/curation_detectors.py:169 "
-            "_curation_history_index), and looks up every Claim's law locations by a "
-            "non-unique prefix (indexes/history/history_index.py:686 via "
-            "service/evidence/evidence.py:926, from service/discovery/query.py:493)"
         ),
     },
     # Workspace-source next digests passed with section-copy commitments (strict XPASS).

@@ -31,7 +31,12 @@ from cruxible_client.contracts.operational_reads import (
 )
 from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.runbooks import Runbook, RunbookRunResult
-from cruxible_client.contracts.triggers import INTERNAL_ACTIONS, ActionTarget, Trigger
+from cruxible_client.contracts.triggers import (
+    INTERNAL_ACTIONS,
+    UNSERVED_INTERNAL_ACTIONS,
+    ActionTarget,
+    Trigger,
+)
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.operational import (
@@ -49,7 +54,9 @@ def _revision(projection: Any, identity: str) -> int:
 def _step(projection: Any, index: int, target: Any) -> GetRunbookStep:
     if isinstance(target, ActionTarget):
         availability: RunbookStepAvailability = (
-            "available" if target.action in INTERNAL_ACTIONS else "action_unregistered"
+            "available"
+            if target.action in INTERNAL_ACTIONS and target.action not in UNSERVED_INTERNAL_ACTIONS
+            else "action_unregistered"
         )
         return GetRunbookStep(
             step=index, target=f"action:{target.action}", availability=availability

@@ -81,8 +81,7 @@ blocks, and signing approvals with a private key.
 
 Background work runs inside the daemon as consumers driven by Triggers:
 delivering the floor to a registered workspace after each accepted generation,
-detecting curation patterns (once a `curation-detect` Trigger is authored;
-none is seeded), and running enabled Lines.
+the `next` findings worker, and running enabled Lines.
 
 ## Keys and credentials
 
@@ -268,7 +267,8 @@ The daemon implementation lives directly under `src/cruxible_core/`, grouped by
 responsibility. `ledger/` owns Git publication and accepted generations;
 `compiler/` owns deterministic compilation; `indexes/` owns rebuildable SQLite
 read models. Claims, evidence, documents, procedures, providers, governance,
-coverage, and curation each have their own package.
+and coverage each have their own package (`curation/` is kept in the tree but
+not served in this release).
 
 `service/<domain>/` is the single home for served orchestration. CLI, HTTP, MCP,
 and SDK-facing runtime adapters delegate there. `runtime/` owns instance

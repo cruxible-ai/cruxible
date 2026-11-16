@@ -75,8 +75,8 @@ changes:
 ~~~text
 Definitions (1):
   Runbook catalog.weekly: created
-    Look for duplicate parts once a week.
-    1  action:curation.detect
+    Sweep the evidence once a week.
+    1  action:evidence.sweep
 ~~~
 
 A page shows up to 10 value changes and 20 definitions. A longer proposal

@@ -193,7 +193,6 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStamp,
     ProjectionCurrencyPolicy,
 )
-from cruxible_client.contracts.duplicates import DuplicatesAuditResult
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BATCH_MAX_REFS,
@@ -5515,46 +5514,6 @@ class Cruxible:
         self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
         return result
 
-    def curation_list(
-        self, *, limit: int | None = None, cursor: str | None = None
-    ) -> api.CurationListResult:
-        """Read one page of the curation queue: a pure read of what detection recorded.
-
-        Detection runs on its own on accepted generations; ``result.detection`` says
-        when it last ran and ``inactive_detectors`` which detectors cannot run here.
-        A truncated page carries ``next_cursor``; pass it back as ``cursor``.
-
-        Next: ``cx.curation_overrule(...)``, ``cx.curation_accept_fixed(...)`` or
-        ``cx.curation_suppress(...)`` on an item.
-        """
-
-        return self._client.list_curation(
-            self._instance_id,
-            access_profile=self._access_profile.model_dump(),
-            limit=limit,
-            cursor=cursor,
-        )
-
-    def curation_duplicates(
-        self, kind: str, *, limit: int | None = None, cursor: str | None = None
-    ) -> DuplicatesAuditResult:
-        """List possible duplicates of one kind for you to resolve; a pure, bounded read.
-
-        Groups Subjects whose ids or aliases, and values of one predicate, that
-        meet under a broad comparison (casefold, no punctuation, the alias graph)
-        but differ under the declared rules, and Subjects of a ``hint`` kind that
-        hold one key. A truncated page carries ``next_cursor``; pass it back as
-        ``cursor``.
-
-        Next: add a ``semantic.alias`` and retire one Subject, or assert
-        ``semantic.distinct_from``; for values, succeed the ClaimType with a wider
-        ``canonical_form``.
-        """
-
-        return self._client.curation_duplicates(
-            self._instance_id, kind=kind, limit=limit, cursor=cursor
-        )
-
     def audit(
         self,
         *,
@@ -5583,127 +5542,6 @@ class Cruxible:
         )
         self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
         return result
-
-    def curation_overrule(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Record, permanently, that a detector pattern does not apply here.
-
-        It cannot be undone, so it previews by default (``dry_run`` unset or
-        true appends nothing); commit with ``dry_run=False`` and ``at`` set to
-        the preview's ``coordinate.git_oid``.
-
-        Next: ``cx.curation_list()``; the pattern is never raised again.
-        """
-
-        return self._client.overrule_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_accept_fixed(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        accepted_proposal_id: str | None = None,
-        accepted_changeset_digest: str | None = None,
-        accepted_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Link an item to the accepted change that fixed it.
-
-        Name the change by ``accepted_proposal_id`` (``accepted_changeset_digest``
-        pins it exactly) or by ``accepted_generation``; the daemon resolves the rest.
-
-        Next: ``cx.curation_list()``; the item is resolved.
-        """
-
-        return self._client.accept_fixed_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=accepted_proposal_id,
-            accepted_changeset_digest=accepted_changeset_digest,
-            accepted_generation=accepted_generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_suppress(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        scope: Literal["item", "lineage"],
-        until_generation: int | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Hide an item (``item``) or its whole lineage (``lineage``) without resolving it.
-
-        Detection keeps running; ``until_generation`` lets the suppression lapse.
-
-        Next: ``cx.curation_unsuppress(...)`` to lift it.
-        """
-
-        return self._client.suppress_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=scope,
-            until_generation=until_generation,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
-
-    def curation_unsuppress(
-        self,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        suppression_event_id: str | None = None,
-        attribution_refs: tuple[str, ...] = (),
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> api.CurationActionResult:
-        """Lift a suppression on an item; name it when the item carries more than one.
-
-        Next: ``cx.curation_list()``; what it hid is listed again.
-        """
-
-        return self._client.unsuppress_curation(
-            self._instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=attribution_refs,
-            dry_run=dry_run,
-            at=at,
-        )
 
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
         if coordinate != self.coordinate:

@@ -341,43 +341,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a predicted Claim and its matching later observation are accepted: pass the "
         "prediction id and the observation's Claim ID."
     ),
-    "cruxible_curation_list": (
-        "Beta: detection runs only when a curation-detect Trigger is authored. "
-        "List the curation patterns detection recorded; a pure read. Each item carries the "
-        "latest_event_digest the rulings "
-        "need; detection says when it last ran, inactive_detectors which detectors cannot run. "
-        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
-    ),
-    "cruxible_curation_duplicates": (
-        "Use to find what may name one thing twice in one kind: Subjects whose ids or aliases, "
-        "and values of one predicate, that meet under a broad comparison (casefold, no "
-        "punctuation, the alias graph) but differ under the declared rules, and Subjects of a "
-        "hint kind holding one key. Resolve a Subject or key group with semantic.alias plus "
-        "retire, or semantic.distinct_from; a value group with "
-        "a canonical_form succession. A pure, bounded read; pass next_cursor while truncated."
-    ),
     "cruxible_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
         "This read records completed coverage but never recommends or executes a repair."
-    ),
-    "cruxible_curation_overrule": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Use when a detected pattern does not apply here: closes the item permanently, and the "
-        "pattern is never raised again. It cannot be undone: preview, then commit with "
-        "dry_run=false and at=<the preview's coordinate git_oid>."
-    ),
-    "cruxible_curation_accept_fixed": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Use after an accepted change fixed an item: name it by accepted_proposal_id or "
-        "accepted_generation; it must touch the item's subject or evidence."
-    ),
-    "cruxible_curation_suppress": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Hide an item (scope item) or its whole lineage (scope lineage) without resolving it."
-    ),
-    "cruxible_curation_unsuppress": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Lift a suppression on an item, so what it hid is listed again."
     ),
     "cruxible_since": ("The exact accepted ChangeSet members after a known generation."),
     "cruxible_floor_export": (

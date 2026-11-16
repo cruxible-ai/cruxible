@@ -809,15 +809,6 @@ def _sdk_procedure(method: str) -> SdkSpelling:
     return spell
 
 
-def _sdk_curation(verb: str, *keywords: str, required: tuple[str, ...] = ()) -> SdkSpelling:
-    def spell(values: Mapping[str, object]) -> str:
-        operands = {key: _operand(values, key) for key in (*_CURATION_REQUIRED, *required)}
-        optional = tuple(key for key in keywords if key not in required)
-        return _sdk_call(f"cx.curation_{verb}", **operands, **_given(values, *optional))
-
-    return spell
-
-
 def _sdk_approve(values: Mapping[str, object]) -> str:
     """The approval call; SIGNER is the caller's ApprovalSigner (a NameError until given)."""
 
@@ -825,32 +816,6 @@ def _sdk_approve(values: Mapping[str, object]) -> str:
     signer = values.get("signer_id")
     whose = f"  # SIGNER: {signer}'s ApprovalSigner" if isinstance(signer, str) and signer else ""
     return f"{handle}.approve(signer=SIGNER, reviewed={handle}.review()){whose}"
-
-
-_CURATION_REQUIRED = ("item_id", "expected_latest_event_digest", "reason")
-_CURATION_FLAGS = _flags(
-    _CHANGE_FLAGS,
-    expected_latest_event_digest="--expected-latest-event-digest",
-    reason="--reason",
-)
-_CURATION_ARGS = _flags(
-    _CHANGE_ARGS,
-    item_id="item_id",
-    expected_latest_event_digest="expected_latest_event_digest",
-    reason="reason",
-)
-
-
-def _curation(verb: str, **extra: str) -> RepairSpelling:
-    return RepairSpelling(
-        cli=f"curation {verb}",
-        cli_args=("item_id",),
-        cli_flags=_flags(_CURATION_FLAGS, **{key: f"--{flag}" for key, flag in extra.items()}),
-        mcp=f"cruxible_curation_{verb.replace('-', '_')}",
-        mcp_args=_flags(_CURATION_ARGS, **{key: key for key in extra}),
-        sdk=_sdk_curation(verb.replace("-", "_"), *extra, "dry_run", "at", required=tuple(extra)),
-        required=(*_CURATION_REQUIRED, *extra),
-    )
 
 
 def _proposal_verb(
@@ -1236,7 +1201,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         sdk=lambda values: _sdk_call("cx.block.sync", *_listed(values, "paths")),
         required=("paths",),
     ),
-    # Captures and curation.
+    # Captures.
     "cruxible.capture.erase": RepairSpelling(
         cli="capture erase",
         cli_args=("capture_digest",),
@@ -1251,15 +1216,6 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         ),
         required=("capture_digest", "because"),
     ),
-    "cruxible.curation.list": RepairSpelling(
-        cli="curation list",
-        mcp="cruxible_curation_list",
-        sdk=lambda _values: "cx.curation_list()",
-    ),
-    "cruxible.curation.suppress": _curation("suppress", scope="scope"),
-    "cruxible.curation.unsuppress": _curation("unsuppress"),
-    "cruxible.curation.overrule": _curation("overrule"),
-    "cruxible.curation.accept-fixed": _curation("accept-fixed"),
     # Lines and Procedures.
     "cruxible.line.enable": RepairSpelling(
         cli="line enable",

@@ -5376,7 +5376,8 @@ def _triggers_health(
     delivery_enabled = record is not None and record.floor_delivery
     # Workspace delivery defaults on when attached: an instance with it disabled
     # needs no floor schedule. Findings actions retain their existing advisory.
-    # An opt-in action (curation detection, beta) is expected to be unscheduled.
+    # An opt-in action (curation detection, not served in this release) is
+    # expected to be unscheduled.
     unscheduled = [
         action
         for action, spec in INTERNAL_ACTIONS.items()

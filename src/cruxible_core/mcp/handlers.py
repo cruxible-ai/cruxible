@@ -77,10 +77,6 @@ from cruxible_client.contracts.declared_blocks import (
     BlockRepinResult,
 )
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.duplicates import (
-    DUPLICATES_AUDIT_DEFAULT_LIMIT,
-    DuplicatesAuditResult,
-)
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     ByteRange,
@@ -2107,42 +2103,6 @@ def handle_playbill_next(
     return _daemon_call(remote, operation_name="cruxible_next")
 
 
-def handle_playbill_curation_list(
-    instance_id: str,
-    *,
-    access_profile: dict[str, Any] | None,
-    limit: int = contracts.CURATION_LIST_DEFAULT_LIMIT,
-    cursor: str | None = None,
-) -> contracts.CurationListResult:
-    profile = access_profile or {
-        "tag": "playbill-coverage-access-profile-v1",
-        "profile_id": "mcp-curation",
-        "permitted_access_classes": ["instance", "public"],
-        "disclose_restricted_existence": True,
-    }
-    return _daemon_call(
-        lambda client: client.list_curation(
-            instance_id, access_profile=profile, limit=limit, cursor=cursor
-        ),
-        operation_name="cruxible_curation_list",
-    )
-
-
-def handle_playbill_curation_duplicates(
-    instance_id: str,
-    *,
-    kind: str,
-    limit: int = DUPLICATES_AUDIT_DEFAULT_LIMIT,
-    cursor: str | None = None,
-) -> DuplicatesAuditResult:
-    return _daemon_call(
-        lambda client: client.curation_duplicates(
-            instance_id, kind=kind, limit=limit, cursor=cursor
-        ),
-        operation_name="cruxible_curation_duplicates",
-    )
-
-
 def handle_playbill_audit(
     instance_id: str,
     *,
@@ -2176,114 +2136,6 @@ def handle_playbill_audit(
             cursor=cursor,
         ),
         operation_name="cruxible_audit",
-    )
-
-
-def handle_playbill_curation_overrule(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.overrule_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_overrule",
-    )
-
-
-def handle_playbill_curation_accept_fixed(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    accepted_proposal_id: str | None,
-    accepted_changeset_digest: str | None,
-    accepted_generation: int | None,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.accept_fixed_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=accepted_proposal_id,
-            accepted_changeset_digest=accepted_changeset_digest,
-            accepted_generation=accepted_generation,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_accept_fixed",
-    )
-
-
-def handle_playbill_curation_suppress(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    scope: Literal["item", "lineage"],
-    until_generation: int | None,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.suppress_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=scope,
-            until_generation=until_generation,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_suppress",
-    )
-
-
-def handle_playbill_curation_unsuppress(
-    instance_id: str,
-    *,
-    item_id: str,
-    expected_latest_event_digest: str,
-    reason: str,
-    suppression_event_id: str | None,
-    attribution_refs: list[str],
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationActionResult:
-    return _daemon_call(
-        lambda client: client.unsuppress_curation(
-            instance_id,
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=tuple(attribution_refs),
-            dry_run=dry_run,
-            at=at,
-        ),
-        operation_name="cruxible_curation_unsuppress",
     )
 
 

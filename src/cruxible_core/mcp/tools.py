@@ -37,11 +37,6 @@ from cruxible_client.contracts.compact_query import (
 from cruxible_client.contracts.declared_blocks import BlockRepinResult
 from cruxible_client.contracts.doc_sections import HeadingText
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.duplicates import (
-    DUPLICATES_AUDIT_DEFAULT_LIMIT,
-    DUPLICATES_AUDIT_MAX_LIMIT,
-    DuplicatesAuditResult,
-)
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
@@ -1940,45 +1935,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_curation_list(
-        instance_id: InstanceId = None,
-        *,
-        access_profile: CoverageAccessProfile | None = None,
-        limit: Annotated[
-            int, Field(ge=1, le=contracts.CURATION_LIST_MAX_LIMIT)
-        ] = contracts.CURATION_LIST_DEFAULT_LIMIT,
-        cursor: str | None = None,
-    ) -> contracts.CurationListResult:
-        """List one page of the curation queue detection recorded; a pure read.
-
-        Pass next_cursor back while the result is truncated.
-        """
-        return handlers.handle_playbill_curation_list(
-            require_instance_id(instance_id),
-            access_profile=_dump(access_profile),
-            limit=limit,
-            cursor=cursor,
-        )
-
-    @_tool
-    def cruxible_curation_duplicates(
-        instance_id: InstanceId = None,
-        *,
-        kind: str,
-        limit: Annotated[
-            int, Field(ge=1, le=DUPLICATES_AUDIT_MAX_LIMIT)
-        ] = DUPLICATES_AUDIT_DEFAULT_LIMIT,
-        cursor: str | None = None,
-    ) -> DuplicatesAuditResult:
-        """List possible duplicates of one kind for you to resolve; a pure, bounded read.
-
-        Pass next_cursor back while the result is truncated.
-        """
-        return handlers.handle_playbill_curation_duplicates(
-            require_instance_id(instance_id), kind=kind, limit=limit, cursor=cursor
-        )
-
-    @_tool
     def cruxible_audit(
         instance_id: InstanceId = None,
         *,
@@ -2006,117 +1962,6 @@ def register_tools(
             max_rows=max_rows,
             max_bytes=max_bytes,
             cursor=_dump(cursor),
-        )
-
-    @_tool
-    def cruxible_curation_overrule(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Resolve one detector-version item as mechanically inapplicable."""
-        return handlers.handle_playbill_curation_overrule(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
-        )
-
-    @_tool
-    def cruxible_curation_accept_fixed(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        accepted_proposal_id: Annotated[
-            str | None, Field(description="The fixing proposal; or give accepted_generation.")
-        ] = None,
-        accepted_changeset_digest: Annotated[
-            str | None, Field(description="Pins accepted_proposal_id to its ChangeSet.")
-        ] = None,
-        accepted_generation: Annotated[
-            int | None, Field(ge=1, description="The fixing accepted generation.")
-        ] = None,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Link one curation item to the accepted change that fixed it."""
-        return handlers.handle_playbill_curation_accept_fixed(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            accepted_proposal_id=accepted_proposal_id,
-            accepted_changeset_digest=accepted_changeset_digest,
-            accepted_generation=accepted_generation,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
-        )
-
-    @_tool
-    def cruxible_curation_suppress(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        scope: Annotated[
-            Literal["item", "lineage"],
-            Field(description="item: this item; lineage: also its pattern's successors."),
-        ],
-        until_generation: int | None = None,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Hide an item or its lineage without resolving it."""
-        return handlers.handle_playbill_curation_suppress(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            scope=scope,
-            until_generation=until_generation,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
-        )
-
-    @_tool
-    def cruxible_curation_unsuppress(
-        instance_id: InstanceId = None,
-        *,
-        item_id: str,
-        expected_latest_event_digest: str,
-        reason: str,
-        suppression_event_id: Annotated[
-            str | None, Field(description="Needed only when the item carries several.")
-        ] = None,
-        attribution_refs: list[str] | None = None,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationActionResult:
-        """Lift a suppression on an item, so what it hid is listed again."""
-        return handlers.handle_playbill_curation_unsuppress(
-            require_instance_id(instance_id),
-            item_id=item_id,
-            expected_latest_event_digest=expected_latest_event_digest,
-            reason=reason,
-            suppression_event_id=suppression_event_id,
-            attribution_refs=attribution_refs or [],
-            dry_run=dry_run,
-            at=at,
         )
 
     @_tool

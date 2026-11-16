@@ -326,13 +326,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillClaimExplanation", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimVerdictQuery", "evaluation_time"): "EVALUATION INSTANT",
     ("ClaimViewRecord", "admission_evaluation_time"): "EVALUATION INSTANT",
-    ("CurationActionResult", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationActionResultV1", "generation"): "SETTLEMENT ORDER",
-    ("CurationListResult", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationListResultV1", "generation"): "SETTLEMENT ORDER",
     # Detection runs at its Trigger fire's recorded instant, through a generation.
-    ("CurationDetection", "detected_at"): "EVALUATION INSTANT",
-    ("CurationDetection", "detected_through_generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationDetectionV1", "detected_at"): "EVALUATION INSTANT",
     ("PlaybillCurationDetectionV1", "detected_through_generation"): "SETTLEMENT ORDER",
     ("BlockObserveResult", "generation"): "SETTLEMENT ORDER",

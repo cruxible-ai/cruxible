@@ -8,8 +8,8 @@ plus ``title`` and ``status``), every other generation also revises ``status``
 on older items, and every fifth cites file evidence, so the world holds
 Captures. After the bulk, one governed proposal accepts the definitions the
 routes need (a named query, a propose Procedure and a settle Procedure with
-their Lines and mandates, an armed no-terminal Line with a generation Trigger,
-and the curation-detect Trigger), the operator attests some Claims, the refusal
+their Lines and mandates, and an armed no-terminal Line with a generation
+Trigger), the operator attests some Claims, the refusal
 index is built and caught up through its read path, the workspace is attached
 with floor delivery, the tick Line is enabled, and every consumer part ticks
 once.
@@ -94,7 +94,6 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.triggers import (
     GenerationAcceptedSchedule,
     parse_trigger,
-    render_trigger,
     trigger_path,
 )
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
@@ -125,7 +124,6 @@ TICK = "scale-tick"
 TERMINAL_ITEMS = 10
 _FAR_PAST = datetime(2020, 1, 1, tzinfo=UTC)
 _FAR_FUTURE = datetime(2099, 1, 1, tzinfo=UTC)
-_CURATION_DETECT = Path(__file__).resolve().parents[2] / "tests/data/triggers/curation-detect.json"
 
 
 @dataclass(frozen=True)
@@ -663,9 +661,6 @@ def definitions(world: World) -> dict[str, bytes]:
                 schedule=GenerationAcceptedSchedule(),
             )
         ),
-        "triggers/curation-detect.json": render_trigger(
-            parse_trigger(_CURATION_DETECT.read_bytes(), path="triggers/curation-detect.json")
-        ),
     }
     return {**members, **propose_members, **settle_members}
 
@@ -807,7 +802,6 @@ TICK_PARTS = (
     "facts",
     "evidence",
     "prediction",
-    "curation",
     "settled_refusals",
     "line_upgrades",
     "line_inputs",
@@ -824,7 +818,6 @@ def tick(world: World, part: str) -> object:
     from cruxible_core.consumers.floor import FLOOR
     from cruxible_core.consumers.lines import LINE_ARMS
     from cruxible_core.consumers.next import (
-        curation,
         evidence,
         facts,
         line_inputs,
@@ -850,7 +843,6 @@ def tick(world: World, part: str) -> object:
         "facts": facts._PART,  # noqa: SLF001
         "evidence": evidence._PART,  # noqa: SLF001
         "prediction": predictions._PART,  # noqa: SLF001
-        "curation": curation._PART,  # noqa: SLF001
         "settled_refusals": settled_refusals._PART,  # noqa: SLF001
         "line_upgrades": line_upgrades._PART,  # noqa: SLF001
         "line_inputs": line_inputs._PART,  # noqa: SLF001

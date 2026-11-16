@@ -86,24 +86,6 @@
   "/api/v1/{instance_id}/coverage/resolve": {
     "POST": "CoverageResult"
   },
-  "/api/v1/{instance_id}/curation/accept-fixed": {
-    "POST": "CurationActionResult"
-  },
-  "/api/v1/{instance_id}/curation/duplicates": {
-    "POST": "DuplicatesAuditResult"
-  },
-  "/api/v1/{instance_id}/curation/list": {
-    "POST": "CurationListResult"
-  },
-  "/api/v1/{instance_id}/curation/overrule": {
-    "POST": "CurationActionResult"
-  },
-  "/api/v1/{instance_id}/curation/suppress": {
-    "POST": "CurationActionResult"
-  },
-  "/api/v1/{instance_id}/curation/unsuppress": {
-    "POST": "CurationActionResult"
-  },
   "/api/v1/{instance_id}/documents/proposals": {
     "POST": "ProposalInspection"
   },

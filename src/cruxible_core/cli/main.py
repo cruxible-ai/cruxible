@@ -1017,34 +1017,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     ),
     "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
     "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
-    "curation": _group(
-        "Review curation detection's patterns (beta: only with an authored curation-detect "
-        "Trigger).",
-        {
-            "list": _command("playbill", "curation_list", "Read the curation queue."),
-            "duplicates": _command(
-                "playbill",
-                "curation_duplicates",
-                "List possible duplicates of one kind for an agent to resolve.",
-            ),
-            "overrule": _command(
-                "playbill", "curation_overrule", "Close an item as not applying, permanently."
-            ),
-            "accept-fixed": _command(
-                "playbill",
-                "curation_accept_fixed",
-                "Link an item to the accepted change that fixed it.",
-            ),
-            "suppress": _command(
-                "playbill", "curation_suppress", "Hide an item or its lineage without resolving it."
-            ),
-            "unsuppress": _command(
-                "playbill", "curation_unsuppress", "Lift a suppression on an item."
-            ),
-        },
-        module="playbill",
-        attr="curation_group",
-    ),
     "get": _command(
         "playbill", "get_by_ref", "Read one governed thing by reference, values first."
     ),

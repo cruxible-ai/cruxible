@@ -676,22 +676,13 @@ through the queue, repairs, duplicates and `audit`.
 
 ### Work queues
 
-Three queues tell you what to do, each a read:
+Two queues tell you what to do, each a read:
 
 - **next** is what is wrong or waiting on you, each row with the exact
   operation that repairs it, and alternatives where there are several: stale or drifted evidence, stale proposals, stale
   blocks, Lines with gaps, available compiler upgrades, and more. It is one
   to-do list for people and agents alike.
 - **audit** ranks Claims worth verifying, by stake, weakness and recency.
-- **curation** (beta) lists ontology-maintenance patterns that detection found.
-  Detection runs only when a `curation-detect` Trigger aimed at the
-  `curation.detect` action is authored (none is seeded), never on `next`'s
-  path; `curation list` only reads. Each item takes one ruling: `overrule`
-  closes it as not applying, permanently (it previews first and commits only
-  with the preview's coordinate); `suppress` hides the item, or with
-  `--scope lineage` also every successor its pattern opens; `unsuppress` lifts
-  a suppression; and `accept-fixed` links it to the accepted proposal or
-  generation that fixed it.
 
 ### Projection blocks
 
@@ -872,9 +863,8 @@ armed:
   --dispatch` does both). `next` names the exact command for each gap, for
   example after the daemon was down.
 
-Internal actions (floor refresh, evidence sweeps, prediction retries, and
-curation detection once its Trigger is authored) also run on Triggers, and
-need no enablement.
+Internal actions (floor refresh, evidence sweeps, prediction retries) also
+run on Triggers, and need no enablement.
 
 "Arm" has one meaning: a labeled branch of a Procedure graph, such as a
 guard's true or false edge, which measurements can read at `arm` grain to

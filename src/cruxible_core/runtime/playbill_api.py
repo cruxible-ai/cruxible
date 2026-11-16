@@ -51,7 +51,6 @@ from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
     BootstrapError,
 )
@@ -115,7 +114,7 @@ from cruxible_client.contracts.uploads import (
     CaptureUploadOpenRequest,
     CaptureUploadSession,
 )
-from cruxible_client.contracts.validation_messages import validation_lines, validation_summary
+from cruxible_client.contracts.validation_messages import validation_lines
 from cruxible_client.contracts.write import (
     RetireRequest,
     SetRequest,
@@ -216,29 +215,16 @@ from cruxible_core.service.discovery.audit import (
     service_playbill_audit,
     validate_playbill_audit_request,
 )
+from cruxible_core.service.discovery.block_observations import (
+    PlaybillBlockObserveRequestV1,
+    service_observe_playbill_blocks,
+    validate_playbill_block_observe_request,
+)
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.coverage import (
     coverage_access_profile,
     coverage_claim_lines,
     service_resolve_playbill_coverage,
-)
-from cruxible_core.service.discovery.curation import (
-    OVERRULE_CHANGE_KIND,
-    CurationError,
-    PlaybillBlockObserveRequestV1,
-    PlaybillCurationAcceptFixedRequestV1,
-    PlaybillCurationListRequestV1,
-    PlaybillCurationOverruleRequestV1,
-    PlaybillCurationSuppressRequestV1,
-    PlaybillCurationUnsuppressRequestV1,
-    service_accept_fixed_playbill_curation,
-    service_list_playbill_curation,
-    service_observe_playbill_blocks,
-    service_overrule_playbill_curation,
-    service_suppress_playbill_curation,
-    service_unsuppress_playbill_curation,
-    validate_playbill_block_observe_request,
-    validate_playbill_curation_list_request,
 )
 from cruxible_core.service.discovery.next import (
     NextRequest,
@@ -329,7 +315,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 
 _ProposalResultT = TypeVar("_ProposalResultT")
-_CurationRequestT = TypeVar("_CurationRequestT")
 
 
 def _proposal_validation_boundary(
@@ -344,19 +329,6 @@ def _proposal_validation_boundary(
         raise DataValidationError(
             f"Cruxible {family} proposal reference is invalid",
             errors=validation_lines(exc),
-        ) from exc
-
-
-def _curation_validation_boundary(
-    operation: Callable[[], _CurationRequestT],
-) -> _CurationRequestT:
-    """Map internal curation request validation to its typed HTTP 400 family."""
-
-    try:
-        return operation()
-    except ValidationError as exc:
-        raise CurationError(
-            f"{CurationError.code}: curation request is malformed: {validation_summary(exc)}"
         ) from exc
 
 
@@ -1937,15 +1909,26 @@ def playbill_action_run(
     ``ActionRunOutcome`` for the statuses that can report.
     """
 
-    from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
+    from cruxible_client.contracts.triggers import (
+        INTERNAL_ACTIONS,
+        SERVED_INTERNAL_ACTIONS,
+        UNSERVED_INTERNAL_ACTIONS,
+    )
     from cruxible_core.triggers.journal import fire_manual
 
     check_permission("cruxible_action_run", instance_id=instance_id)
     spec = INTERNAL_ACTIONS.get(request.action)
+    if spec is not None and spec.name in UNSERVED_INTERNAL_ACTIONS:
+        raise ConfigError(
+            f"Internal action {request.action!r} is not served: "
+            f"{UNSERVED_INTERNAL_ACTIONS[spec.name]}; choose one of: "
+            + ", ".join(SERVED_INTERNAL_ACTIONS)
+            + "."
+        )
     if spec is None:
         raise ConfigError(
             f"Internal action {request.action!r} is not registered; choose one of: "
-            + ", ".join(sorted(INTERNAL_ACTIONS))
+            + ", ".join(SERVED_INTERNAL_ACTIONS)
             + "."
         )
     actor_context = _attributed_actor(instance_id, "Firing an internal action")
@@ -1986,12 +1969,11 @@ def _action_fire_reader(spec: InternalActionSpec) -> Callable[..., int] | None:
 
         return refresh_covered_sequence
     if spec.consumer == "next":
-        from cruxible_core.consumers.next import curation, evidence, predictions
+        from cruxible_core.consumers.next import evidence, predictions
 
         readers: dict[str, Callable[..., int]] = {
             "evidence": evidence.sweep_covered_sequence,
             "prediction": predictions.retry_covered_sequence,
-            "curation": curation.covered_sequence,
         }
         return readers.get(spec.part)
     return None
@@ -2981,30 +2963,6 @@ def playbill_next(
     return contracts.NextResult.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_curation_list(
-    instance_id: str,
-    *,
-    request: PlaybillCurationListRequestV1 | Mapping[str, object],
-) -> contracts.CurationListResult:
-    check_permission("cruxible_curation_list", instance_id=instance_id)
-    parsed = validate_playbill_curation_list_request(request)
-    result = service_list_playbill_curation(get_playbill_manager().get(instance_id), request=parsed)
-    return contracts.CurationListResult.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_curation_duplicates(
-    instance_id: str,
-    *,
-    request: DuplicatesAuditRequest | Mapping[str, object],
-) -> DuplicatesAuditResult:
-    """One page of the post-hoc duplicates audit of one kind; a pure, bounded read."""
-
-    check_permission("cruxible_curation_duplicates", instance_id=instance_id)
-    from cruxible_core.service.discovery.duplicates import service_duplicates_audit
-
-    return service_duplicates_audit(get_playbill_manager().get(instance_id), request=request)
-
-
 def playbill_block_observe(
     instance_id: str,
     *,
@@ -3039,101 +2997,6 @@ def playbill_audit(
         actor_context=actor,
     )
     return contracts.AuditResult.model_validate(result.model_dump(mode="json"))
-
-
-def _curation_actor(instance_id: str) -> GovernedActorContext:
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Cruxible curation actions require an attributed actor")
-    return actor
-
-
-def playbill_curation_overrule(
-    instance_id: str,
-    *,
-    request: PlaybillCurationOverruleRequestV1 | Mapping[str, object],
-) -> contracts.CurationActionResult:
-    check_permission("cruxible_curation_overrule", instance_id=instance_id)
-    parsed = _curation_validation_boundary(
-        lambda: (
-            request
-            if isinstance(request, PlaybillCurationOverruleRequestV1)
-            else PlaybillCurationOverruleRequestV1.model_validate(request)
-        )
-    )
-    with change_entry(parsed.dry_run, OVERRULE_CHANGE_KIND):
-        result = service_overrule_playbill_curation(
-            get_playbill_manager().get(instance_id),
-            request=parsed,
-            actor_context=_curation_actor(instance_id),
-        )
-    return contracts.CurationActionResult.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_curation_accept_fixed(
-    instance_id: str,
-    *,
-    request: PlaybillCurationAcceptFixedRequestV1 | Mapping[str, object],
-) -> contracts.CurationActionResult:
-    check_permission("cruxible_curation_accept_fixed", instance_id=instance_id)
-    parsed = _curation_validation_boundary(
-        lambda: (
-            request
-            if isinstance(request, PlaybillCurationAcceptFixedRequestV1)
-            else PlaybillCurationAcceptFixedRequestV1.model_validate(request)
-        )
-    )
-    with change_entry(parsed.dry_run, "direct"):
-        result = service_accept_fixed_playbill_curation(
-            get_playbill_manager().get(instance_id),
-            request=parsed,
-            actor_context=_curation_actor(instance_id),
-        )
-    return contracts.CurationActionResult.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_curation_suppress(
-    instance_id: str,
-    *,
-    request: PlaybillCurationSuppressRequestV1 | Mapping[str, object],
-) -> contracts.CurationActionResult:
-    check_permission("cruxible_curation_suppress", instance_id=instance_id)
-    parsed = _curation_validation_boundary(
-        lambda: (
-            request
-            if isinstance(request, PlaybillCurationSuppressRequestV1)
-            else PlaybillCurationSuppressRequestV1.model_validate(request)
-        )
-    )
-    with change_entry(parsed.dry_run, "direct"):
-        result = service_suppress_playbill_curation(
-            get_playbill_manager().get(instance_id),
-            request=parsed,
-            actor_context=_curation_actor(instance_id),
-        )
-    return contracts.CurationActionResult.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_curation_unsuppress(
-    instance_id: str,
-    *,
-    request: PlaybillCurationUnsuppressRequestV1 | Mapping[str, object],
-) -> contracts.CurationActionResult:
-    check_permission("cruxible_curation_unsuppress", instance_id=instance_id)
-    parsed = _curation_validation_boundary(
-        lambda: (
-            request
-            if isinstance(request, PlaybillCurationUnsuppressRequestV1)
-            else PlaybillCurationUnsuppressRequestV1.model_validate(request)
-        )
-    )
-    with change_entry(parsed.dry_run, "direct"):
-        result = service_unsuppress_playbill_curation(
-            get_playbill_manager().get(instance_id),
-            request=parsed,
-            actor_context=_curation_actor(instance_id),
-        )
-    return contracts.CurationActionResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_since(

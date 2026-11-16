@@ -30,7 +30,7 @@ and `get` the ref a hit names; an agent without a shell searches values with
 
 `full` advertises the complete catalog below, including the `authoring_*`
 intent tools, `cruxible_query_spec`, `cruxible_since`,
-curation, coverage, the floor, files, blocks, kits, Procedures, Lines, and the
+coverage, the floor, files, blocks, kits, Procedures, Lines, and the
 split approval pair
 `cruxible_proposal_approve_prepare` and `cruxible_proposal_approve_submit` for
 a signer outside the MCP process. `CRUXIBLE_MCP_TOOLS` (a comma-separated
@@ -506,12 +506,6 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
 | `cruxible_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible next` does | `READ_ONLY` |
 | `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
-| `cruxible_curation_list` | List one page of the curation queue detection recorded (`limit`, `cursor`), with when detection last ran and which detectors are inactive; a pure read | `READ_ONLY` |
-| `cruxible_curation_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |
-| `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution. Irreversible, so it previews by default: commit with `dry_run: false` and `at` (the preview's git oid), else `cruxible.preview.confirmation_required` | `GOVERNED_WRITE` |
-| `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |
-| `cruxible_curation_suppress` | Hide an item (`scope: item`) or its lineage (`scope: lineage`) without resolving it | `GOVERNED_WRITE` |
-| `cruxible_curation_unsuppress` | Lift a suppression on an item | `GOVERNED_WRITE` |
 | `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts (a daemon that delivers this workspace's floor is its only writer: over its socket it delivers now, over TCP `write` refuses); `mode=status` reports whether that floor is current, stale, or missing. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref), `current/<kind>/INDEX`, `ontology/` (the accepted definitions: kind cards and INDEX files), `changes/`, `sources/`, `projections/INDEX` and `manifest.json` (see [floor](cli-reference.md#what-is-in-the-floor)). `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
 | `cruxible_vocabulary_export` | Write the accepted kinds and fields to `.cruxible/vocabulary.yaml` under the MCP workspace, as `cruxible vocabulary export` does: shorthand where it round-trips, the full ClaimType input form otherwise, every entry checked by lowering it back; `force` replaces a file that holds changes not in accepted state | `READ_ONLY` |
 | `cruxible_vocabulary_plan` | What applying the vocabulary file (`file`, default `.cruxible/vocabulary.yaml`) would add, replace and retire, read at the export it names; the Claims an enum mapping moves come first, then the daemon's write-free preflight; writes nothing. The adapter reads the file and sends the change set, never a path | `READ_ONLY` |
@@ -537,7 +531,7 @@ active) has every writing repair withheld with `because` including
 `whoami` reports.
 
 Lists that can outgrow one answer are paged. `query`, `orient` sections,
-`proposal_list` and `curation_list` take `limit` and `cursor`; a cut page
+and `proposal_list` take `limit` and `cursor`; a cut page
 carries top-level `truncated: true` and a `next_cursor` to pass back as `cursor`.
 A cursor whose listing changed since its first page is refused as
 `cruxible.list.cursor_stale`; list again without it.
@@ -548,7 +542,7 @@ runs, coverage delivery, and Procedure dependency resolution also append
 idempotent per-artifact touches to the daemon-local operational store. A
 `READ_ONLY` actor can therefore grow that store, but these records never alter
 accepted state or any semantic/generation root. Audit likewise appends an
-idempotent completed-run record, but audit and curation never create
+idempotent completed-run record, but audit never creates
 qualifying consumption touches and never execute Procedures or emit repair
 recommendations. The floor export returns bytes keyed by floor path;
 materializing a directory is a client act.

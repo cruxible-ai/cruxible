@@ -71,7 +71,7 @@ The `default` profile advertises 13 tools, the everyday loop: `orient`,
 `proposal_review`, `proposal_approve`, `proposal_activate`, `whoami` and
 `server_info` (each prefixed `cruxible_`). Set `CRUXIBLE_MCP_PROFILE=full` for
 the rest: authoring, ClaimTypes, Procedures, Lines, predictions, files,
-coverage, blocks, curation, kits and providers. Profiles change what is
+coverage, blocks, kits and providers. Profiles change what is
 advertised; the credential's tier still gates every call.
 
 **CLI.** The same operations, with `--json` for structured output. After

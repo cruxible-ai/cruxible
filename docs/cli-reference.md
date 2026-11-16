@@ -138,8 +138,8 @@ which exists before `init` too.
   to commit: `kit add` and `kit remove`. Commit with `--commit`.
 - A change that cannot be undone previews unless asked to commit, and commits
   only with the preview's coordinate: `instance decommission`,
-  `credential revoke`, `credential rotate`, `ledger set-mirror`, `capture
-  erase` and `curation overrule`. Commit with
+  `credential revoke`, `credential rotate`, `ledger set-mirror` and `capture
+  erase`. Commit with
   `--commit --at OID`; without `--at` it refuses
   `cruxible.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
@@ -599,7 +599,7 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 The daemon's internal schedules are governed Trigger artifacts
 (`triggers/<name>.json`) aimed at an internal action, not daemon-local
 configuration. Internal actions are registered in code (`evidence.sweep`,
-`prediction.anchor_retry`, `floor.refresh`, `curation.detect`); a Trigger aimed
+`prediction.anchor_retry`, `floor.refresh`); a Trigger aimed
 at one takes a
 `cadence`, `cron`, or `generation_accepted` schedule. Capture-landing and
 window-close schedules for internal actions are
@@ -609,10 +609,10 @@ action name that is not registered is refused at acceptance
 instance is initialized with `evidence-sweep` (daily),
 `prediction-anchor-retry` (hourly) and `floor-refresh` (on accepted
 generations); change a schedule, add a Trigger, or retire one through an
-ordinary proposal. Curation detection (beta) is opt-in: author a
-`curation-detect` Trigger aimed at the `curation.detect` action to run it.
-Internal-action Triggers need no enablement. `cruxible next` reports
-unscheduled findings actions other than opt-in `curation.detect`, and an
+ordinary proposal. Curation is not served in this release: authoring a
+Trigger, a Runbook step or an `action run` of `curation.detect` refuses
+(`cruxible.authoring.action_not_served`). Internal-action Triggers need no
+enablement. `cruxible next` reports unscheduled findings actions, and an
 unscheduled floor action when workspace delivery is enabled.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
@@ -1035,7 +1035,7 @@ What travels: `refs/heads/main`, whichever of `refs/notes/cruxible-gen`,
 per OPEN proposal under `refs/heads/proposals/`, and `refs/settled/archive` once
 there is retained closed work. Activated, withdrawn and stale review branches
 are removed; their commits and refused admission commits stay reachable through
-that single archive ref. Historical review, readmission and curation keep the
+that single archive ref. Historical review and readmission keep the
 candidate bytes after Git collection. Old `refs/settled/<digest>` links no longer
 resolve; retained commits can be opened by their exact OID. To retain this history
 in a reviewer clone, fetch the custom archive ref explicitly:
@@ -1599,7 +1599,7 @@ Cruxible ships builtin ClaimTypes, and a new instance starts with every one of t
 values; stored in the canonical form `nfc, casefold, collapse_whitespace,
 trim`). `semantic.distinct_from` states that its object Subject is a different
 thing from its subject, whatever names or keys they share (any kinds; many
-values): the duplicates audit never groups the pair. An instance created before a builtin shipped adopts it with
+values). An instance created before a builtin shipped adopts it with
 `propose --builtin NAME`, which asks the daemon to propose its exact builtin
 definition; MCP's
 `cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
@@ -1943,11 +1943,7 @@ full event stream.
 **Read receipts.** A local daemon records no read-touch (consumption) receipts:
 `CRUXIBLE_CONSUMPTION_RECEIPTS` defaults to `off`, so reads write no receipts. Set it
 to `on` on a managed daemon to record one receipt per served artifact. Receipts
-feed curation only: with them off, dead-vocabulary detection stands down
-(`consumption_receipts_off`). If a daemon that was recording is later run with
-receipts off, it marks the instance unobserved once, and when recording resumes
-the detector stays silent (`consumption_observation_gap`) until a receipt is
-written, then counts zero use only from that point.
+feed `audit`'s reader counts.
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_type_succession`,
@@ -3211,8 +3207,8 @@ under a new operation key.
 cruxible action run NAME [--wait] [--wait-timeout SECONDS] [--json]
 ~~~
 
-Fire one registered internal action (`floor.refresh`, `evidence.sweep`,
-`prediction.anchor_retry`, or `curation.detect`) by hand, outside any
+Fire one registered internal action (`floor.refresh`, `evidence.sweep` or
+`prediction.anchor_retry`) by hand, outside any
 Trigger's schedule. The fire is appended to the same trigger journal a
 Trigger's own schedule writes to -- the manual fire's occurrence records
 that it was manual and the writer principal -- so the owning consumer's
@@ -3920,92 +3916,6 @@ Nothing renews a mandate, so its repair starts a successor from
 `cruxible authoring example procedure-mandate`; a successor
 whose window reaches past the lead time, or the mandate's retirement, closes
 the row.
-
-## curation
-
-~~~text
-cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
-cruxible curation duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
-cruxible curation overrule ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
-  [--dry-run|--commit] [--at OID] [--json]
-cruxible curation accept-fixed ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT
-  (--proposal-id DIGEST [--changeset-digest DIGEST] | --generation N)
-  [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
-cruxible curation suppress ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT
-  --scope item|lineage [--until-generation N] [--attribution-ref REF]...
-  [--dry-run|--commit] [--at OID] [--json]
-cruxible curation unsuppress ITEM_ID
-  --expected-latest-event-digest DIGEST --reason TEXT [--suppression EVENT_ID]
-  [--attribution-ref REF]... [--dry-run|--commit] [--at OID] [--json]
-~~~
-
-Curation is beta, and detection runs only when a Trigger aimed at the
-`curation.detect` internal action is authored (for example `curation-detect` on
-accepted generations; none is seeded, and `next` never runs or waits on it).
-Each fire runs every detector at the head and records what it found, evaluated
-at the fire's recorded instant. `curation list` is a pure read of that queue: it prints each item's ID,
-pattern kind, subject and `latest_event_digest` (what every ruling needs), when
-detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
-is live, and the detectors that cannot run here and why (dead vocabulary needs
-`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs recorded block observations).
-With no such Trigger, `curation list` reports detection `never_run` and its
-Trigger `missing`.
-
-Block churn is the one detector that reads the workspace, which the daemon never
-does: `block repin` and `block sync` (without `--check`) record the declared
-blocks of the pages they touched, with their accounting, for detection to read
-when it next runs. Nothing else records them, and nothing reads the whole
-workspace to do it.
-
-The queue is paged (default 25 items, at most 200); a cut page has
-`truncated: true` and a `next_cursor` for `--cursor`, which continues only while
-accepted state and the queue itself are unchanged; otherwise it is refused as
-`cruxible.list.cursor_stale`.
-
-`curation duplicates` is the post-hoc duplicates audit: computed on demand,
-never on the write path and never by detection. For one Subject kind it lists
-what is equal under a broad comparison (NFKC, casefold, punctuation stripped,
-whitespace collapsed and trimmed, plus the alias graph) but distinct under the
-declared rules: Subjects whose ids or aliases meet (`subjects` groups), Subjects
-of a `hint` kind holding one canonical key (`keys` groups), and live
-values of one literal predicate that meet but differ under its canonical form
-(`values` groups, naming the form). Cruxible proposes no fix; each group names its
-resolutions. Merge two Subjects by adding a `semantic.alias` to the one that
-stays and retiring the other (`cruxible retire KIND/ID --with-claims`); keep them apart by asserting
-`semantic.distinct_from` between them: no group ever holds a pair asserted
-distinct (a key's Subjects are taken in path order, and each joins the first
-group holding no Subject it is asserted distinct from), though each may still
-appear in a group with a third Subject. Unify values by a governed ClaimType
-succession declaring a wider `canonical_form` (dependents re-authored). The
-audit reads at most 50,000 rows in all, one budget shared by its reads --
-Subjects, aliases, `distinct_from` relations, key Claims, values -- each asking SQL for no
-more than what remains; when the budget runs out it says so
-(`budget_exhausted`) and the groups cover only what was read. `scanned` counts
-the rows each read returned. It pages like the
-queue (default 25 groups, at most 200), recomputing within the same bound for
-each page.
-
-The rulings append attributed operational events; they do not create governed
-proposals or mutate accepted knowledge. `overrule` closes an item permanently:
-its pattern is never raised again. Because it cannot be undone it is an
-irreversible change, like `capture erase`: with no mode it previews, and a
-commit needs `--commit --at OID` (the preview's git oid) or the confirmation
-prompt; MCP and the SDK commit only with `dry_run=false` and `at`, and refuse
-`cruxible.preview.confirmation_required` without it. The other rulings commit
-directly. `accept-fixed` links an item to the accepted
-change that fixed it, named by proposal (pinned with `--changeset-digest` if
-wanted) or by `--generation`; the change must postdate the item and touch its
-subject or evidence. Detection never closes an item itself, even one whose
-artifact a later change retired: closing a fixed pattern is always this
-attributed ruling. `suppress` hides the item (`item`) or its whole lineage,
-the successors its pattern opens after a fix (`lineage`), until
-`--until-generation` or until `unsuppress` lifts it; detection keeps running.
-`unsuppress` names the item that recorded the suppression, even once that item
-is fixed: a lineage suppression on a resolved item keeps hiding its successors
-until lifted there.
 
 ## audit
 

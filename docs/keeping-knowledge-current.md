@@ -191,21 +191,11 @@ automation](lines-and-automation.md). A compiler upgrade is covered in
 [Upgrading](upgrading.md). Adding a newer release of a kit proposes its changes,
 which you review like any change ([Kits](kits.md)).
 
-## Duplicates (beta)
+## Duplicates
 
-The same thing recorded twice splits what's known about it.
-`cruxible curation duplicates --kind KIND` lists Subjects whose ids, aliases
-or key values look the same under a loose comparison (case, punctuation) but
-differ under the kind's own rules:
-
-~~~text
-$ cruxible curation duplicates --kind catalog.part
-Possible duplicates of catalog.part: 2 group(s); read 3 Subject(s), 0 alias(es), 7 value(s).
-  subjects 'bp1142': catalog.part/bp-1142 (bp-1142), catalog.part/bp1142 (bp1142)
-  ...
-~~~
-
-Record your judgment as state, so it isn't asked again:
+The same thing recorded twice splits what's known about it. When you find two
+Subjects that name one thing, or two that only look alike, record your
+judgment as state, so it isn't asked again:
 
 - **The same thing**: merge them. Add the other spelling as an alias of the
   Subject you keep, then retire the duplicate with its Claims:
@@ -227,12 +217,7 @@ Record your judgment as state, so it isn't asked again:
   --because "Different suppliers' part numbers."`).
 
 Both are ordinary fields, so the judgment has its reason and its history like
-any other Claim. `cruxible curation list` shows the items detection recorded
-(detection runs only once a `curation-detect` Trigger aimed at the
-`curation.detect` action is authored; none is seeded),
-and `overrule`, `suppress`, `unsuppress` and `accept-fixed` close them out.
-`overrule` is permanent, so it previews first: commit it with `--commit --at
-OID` from the preview (or answer its confirmation prompt).
+any other Claim.
 
 ## When a field turns into prose
 
