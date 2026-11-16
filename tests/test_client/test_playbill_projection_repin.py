@@ -918,3 +918,128 @@ def test_shared_editing_reference_teaches_file_repin_operand() -> None:
     text = (root / "skills/_shared/references/concurrent-edits.md").read_text()
     assert "cruxible block repin FILE ID" in text
     assert "cruxible block repin SOURCE ID" not in text
+
+
+class _MovingRowsClient(_StaleClient):
+    """The query answers one table before ``LATER`` and another from it on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._evaluated_at: datetime | None = None
+
+    def query(self, instance_id: str, *, request: Any) -> Any:
+        self._evaluated_at = request.evaluation_time
+        return super().query(instance_id, request=request)
+
+    def _run(self, name: str, **values: Any) -> SimpleNamespace:
+        run = super()._run(name, **values)
+        tier = "web" if self._evaluated_at is None or self._evaluated_at < LATER else "worker"
+        run.result = run.result.model_copy(
+            update={"rows": (_row("Subject:svc/celery", tier=tier),)}
+        )
+        return run
+
+
+LATER = NOW.replace(hour=13)
+WEB_TABLE = b"| subject | tier |\n|---|---|\n| svc/celery | web |\n"
+WORKER_TABLE = b"| subject | tier |\n|---|---|\n| svc/celery | worker |\n"
+
+
+def _body(source: Path, root: Path) -> bytes:
+    content = source.read_bytes()
+    (block,) = parse_projection_blocks(
+        content, source_id="corpus.runbook", manifests=load_projection_manifests(root, content)
+    )
+    return content[block.body_start : block.body_end]
+
+
+def test_a_plain_repin_of_a_rendered_block_renders_it_again(tmp_path: Path) -> None:
+    """gapc-26: `block repin FILE BLOCK` kept the old table and stamped it current."""
+
+    source = _workspace(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    assert _body(source, tmp_path) == WEB_TABLE
+
+    # The repair every surface names: a repin with no backing or body change.
+    stamp = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=LATER,
+    )
+
+    assert _body(source, tmp_path) == WORKER_TABLE
+    assert stamp.body_digest == "sha256:" + hashlib.sha256(WORKER_TABLE).hexdigest()
+
+
+def test_a_repin_that_cannot_render_a_rendered_block_refuses_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    source = _workspace(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    before = source.read_bytes()
+    declared = len(client.declared)
+
+    with pytest.raises(ProjectionRepinError, match="is its query's rendering"):
+        repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="corpus.runbook",
+            block_id="summary",
+            claims=("CLM-1",),
+            evaluation_time=LATER,
+        )
+
+    assert source.read_bytes() == before
+    assert len(client.declared) == declared
+
+
+def test_a_repin_keeps_a_rendered_block_its_author_edited_as_prose(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    client = _MovingRowsClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    prose = b"Celery runs as a web worker, as the author reads it.\n"
+    source.write_bytes(source.read_bytes().replace(WEB_TABLE, prose))
+
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        file="corpus.runbook",
+        block_id="summary",
+        evaluation_time=LATER,
+    )
+
+    assert _body(source, tmp_path) == prose

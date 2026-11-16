@@ -1426,7 +1426,10 @@ def repin_projection_block(
 
     Omitted body preserves prose. ``render`` instead writes the body from the
     block's one query backing (``render_query_block_body``), so a rendered
-    table or list needs no hand-written prose. Compact markers are the default; their manifests
+    table or list needs no hand-written prose. A body that is still its
+    query's rendering (proved as a converging sync proves it) is never prose:
+    it is rendered again, or the repin refuses, so no repin stamps an old
+    rendering current. Compact markers are the default; their manifests
     are retained before the page write. Use a reviewed package Document
     for ledger recovery.
     The whole-file compare-and-swap preserves concurrent author edits.
@@ -1491,6 +1494,19 @@ def repin_projection_block(
         raise ProjectionRepinError("--backing cannot be combined with replacement backing refs")
     if not claim_refs and not query_refs and not artifact_refs:
         raise ProjectionRepinError("a block declaration requires at least one explicit backing")
+    if not render and body is None and _rendered_from_its_query(client, instance_id, block):
+        # The bytes prove this body is its query's rendering, a projection of
+        # state (the rule a converging sync follows). Keeping it would stamp an
+        # old rendering current, so the repin renders it again from the
+        # query; anything that cannot be rendered refuses.
+        if backing_digest is not None or len(query_refs) != 1 or claim_refs or artifact_refs:
+            raise ProjectionRepinError(
+                f"block {block_id!r} in file {source_id!r} is its query's rendering, which "
+                "this repin would stamp current unchanged; repin it onto one query backing "
+                "(it is rendered again), or edit its body on the page first (an edited "
+                "body is prose and is kept as written)"
+            )
+        render = True
     if render and (body is not None or backing_digest is not None or len(query_refs) != 1):
         raise ProjectionRepinError(
             "--render writes the body from exactly one query backing; it takes no explicit "

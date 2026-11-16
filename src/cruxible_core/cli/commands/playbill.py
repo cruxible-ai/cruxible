@@ -6742,7 +6742,8 @@ def repin_projection(
     marker and then declares the block, creating its registration the first
     time. The authored body is kept as written, unless ``--render`` writes it
     from the block's one query backing (a table, or a list when the query
-    projects no fields).
+    projects no fields). A body that is still its query's rendering is
+    rendered again, so a repin never stamps an old table current.
     """
 
     if (clear_claims and claims) or (clear_queries and queries) or (clear_artifacts and artifacts):
