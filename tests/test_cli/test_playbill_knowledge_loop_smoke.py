@@ -405,6 +405,9 @@ def test_cli_custody_uses_the_git_workspace_across_working_directories(
         _write(tmp_path / "claim-type-custody.json", claim_type_input_from_artifact(_claim_type())),
         "--name",
         "custody-workspace",
+        # Left for the reviewer: under self-approval the operator's propose would
+        # land it, and an accepted proposal refuses another approval.
+        "--no-accept",
     )
 
     monkeypatch.chdir(approval_directory)
