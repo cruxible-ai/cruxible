@@ -629,6 +629,11 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
   Cruxible's built-in provider is pinned as it is and never exported.
 - The manifest records who built the release, on which instance and at which
   accepted coordinate.
+- A field's evidence rule that names one workspace file's own contract
+  (`cruxible.foreign-source.NAME`) refuses the build
+  (`cruxible.kit.per_file_evidence_rule`): the consumer may not have that
+  file. Admit workspace citations with `capture_contract_families:
+  [workspace_file]` instead.
 - `--automation-template FILE` names the kit's automation template (it sits at
   the kit's root under its own file name). The build refuses
   (`cruxible.kit.automation_template_invalid`, naming the template and its first
