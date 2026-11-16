@@ -5454,13 +5454,8 @@ def compile_authoring(payload: str, intent_id: str | None) -> None:
         ),
         command_name="cruxible authoring compile",
     )
-    record = result.model_dump(mode="json")
-    _emit_json(record)
-    if result.verdict != "passed":
-        # The refusal submit would give, on stderr beside the record, and the
-        # same exit: a script or agent reading compile must not see success.
-        click.echo(f"refused: {_preflight_refusal_reason(record)}", err=True)
-        raise click.exceptions.Exit(1)
+    _emit_json(result.model_dump(mode="json"))
+    _exit_if_preflight_refused(result)
 
 
 @authoring_group.command("bind")
@@ -5541,6 +5536,7 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
     A refused intent whose base is behind the accepted head is checked again at
     the head and, when it passes there, advances to it; one with a payload fault
     stays refused and is revised with `authoring compile PAYLOAD --intent-id ID`.
+    A refused preflight names its diagnostics on stderr and exits 1, as submit does.
     """
 
     result = _server_call(
@@ -5558,8 +5554,9 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
                 else f"cruxible authoring compile - --intent-id {intent_id}  # repaired payload"
             ),
         )
-        return
-    _emit_json(result.model_dump(mode="json"))
+    else:
+        _emit_json(result.model_dump(mode="json"))
+    _exit_if_preflight_refused(result)
 
 
 @authoring_group.command("submit")
@@ -5596,7 +5593,7 @@ def submit_authoring_intent(
 
     \b
     authoring submit PAYLOAD                  compile and submit in one call
-    authoring submit PAYLOAD --dry-run        every refusal, nothing saved
+    authoring submit PAYLOAD --dry-run        every refusal, nothing saved (exits 1 if refused)
     authoring submit --intent-id ID           submit a staged intent
     authoring submit PAYLOAD --intent-id ID   revise a staged intent, then submit
 
@@ -5633,8 +5630,9 @@ def submit_authoring_intent(
                     else None
                 ),
             )
-            return
-        _emit_json(preview.model_dump(mode="json"))
+        else:
+            _emit_json(preview.model_dump(mode="json"))
+        _exit_if_preflight_refused(preview)
         return
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.AuthoringSubmitResultRecord:
@@ -5699,6 +5697,20 @@ def _submit_refusal_reason(submitted: Any) -> str | None:
     if submitted.status.state != "preflight_refused" or not isinstance(submitted.intent, Mapping):
         return None
     return _preflight_refusal_reason(submitted.intent.get("last_preflight"))
+
+
+def _exit_if_preflight_refused(result: contracts.AuthoringPreflightResult) -> None:
+    """Every authoring command refuses alike: the refusal line on stderr, exit 1.
+
+    The record (or brief) is already on stdout; a script or agent reading the
+    exit code of compile, preflight or a dry run must not see success.
+    """
+
+    if result.verdict != "passed":
+        click.echo(
+            f"refused: {_preflight_refusal_reason(result.model_dump(mode='json'))}", err=True
+        )
+        raise click.exceptions.Exit(1)
 
 
 def _preflight_refusal_reason(preflight: object) -> str:

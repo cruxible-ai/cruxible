@@ -1881,7 +1881,9 @@ coordinate. A payload that fails preflight reads `refused` (reason
 exits 1 (also under `--json`). Rerunning preflight cannot help, since the faults
 are in the payload: the next step is `cruxible authoring submit REVISED_PAYLOAD
 --intent-id ID`. `--no-accept` keeps the proposal. `--dry-run` returns the
-preflight the submit would run, with every refusal, and saves no intent. Durable
+preflight the submit would run, with every refusal, and saves no intent; a
+refused dry run, like a refused `compile` or `preflight`, names its diagnostics
+on stderr and exits 1. Durable
 intents are optional, for staged work on large definitions: `compile PAYLOAD`
 creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
 revises it (the daemon keeps every revision), and `submit --intent-id ID`
