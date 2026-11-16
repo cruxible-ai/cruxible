@@ -743,7 +743,9 @@ def attach_workspace(
     this one (an initialized host included, as long as a Git worktree is in its
     ledger's Git object format); a host registered to this folder gets the
     client config, and its ledger mirror is rebound: after `git init` in a plain
-    folder, attaching again turns the mirror on.
+    folder, attaching again turns the mirror on. An uninitialized host attaches
+    the same way; `cruxible init` in the folder then creates its ledger and the
+    world stub.
     """
 
     resolution = _local_workspace_root(required="cruxible workspace attach")
@@ -765,6 +767,7 @@ def attach_workspace(
     )
     assert isinstance(registration, contracts.HostWorkspaceRegistration)
     registered = registration.workspace_path
+    attached: contracts.HostWorkspaceAttachResult | None = None
     if registration.status != "registered" or (
         registered is not None and Path(registered).resolve(strict=False) == workspace
     ):
@@ -796,6 +799,9 @@ def attach_workspace(
             requested_workspace=str(workspace),
             registered_workspace=registered,
         )
+    # Every road that reaches here attached the folder (a host registered to
+    # another folder refused above).
+    assert attached is not None
     if dry_run:
         click.echo(f"{workspace} is already attached to Cruxible host {selected}; nothing changes")
         return
@@ -818,7 +824,10 @@ def attach_workspace(
         allow_local=False,
         command_name="cruxible workspace attach",
     )
-    _write_world_stub(workspace, selected)
+    # An uninitialized host has no accepted world to stub yet; `cruxible init`
+    # in this folder creates its ledger and writes the stub.
+    if attached.initialized:
+        _write_world_stub(workspace, selected)
     acting = _acting_principal_key_dir()
     identity_path = (
         None
@@ -853,6 +862,8 @@ def attach_workspace(
         click.echo(f"Folder identity: {identity_path} (agents started here act as {acting[0]})")
     if mirror is not None:
         click.echo(mirror)
+    if not attached.initialized:
+        click.echo(f"Host {selected} is not initialized yet; next: cruxible init")
 
 
 @workspace_group.command("detach")
