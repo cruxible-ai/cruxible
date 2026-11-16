@@ -347,25 +347,22 @@ def compact_schedule(schedule: TriggerSchedule) -> str:
 def runbook_schedules(projection: Any, line: str, *, limit: int) -> tuple[str, ...]:
     """Each Runbook Trigger that runs ``line`` through a Runbook step, compact.
 
-    Read only for a Line card. Examines the Runbooks live Triggers aim at
-    (the maintained ``trigger_aim_counts`` rows for runbook targets), at most
-    ``limit`` of them, parsing each one's steps; it grows with Trigger-aimed
-    Runbooks, never with Claims or Triggers aimed at Lines.
+    The Runbooks that run the Line come from the maintained ``runbook_lines``
+    index (one seek by Line), and only then is the answer bounded: ``limit``
+    Runbooks, each with up to ``limit`` of its Triggers. It never reads a
+    Runbook that does not run this Line.
     """
 
     runbooks = [
         str(row[0])
         for row in projection.typed.connection.execute(
-            "SELECT DISTINCT target FROM trigger_aim_counts WHERE target_kind='runbook' "
-            "ORDER BY target LIMIT ?",
-            (limit,),
+            "SELECT source_identity FROM runbook_lines WHERE line=? "
+            "ORDER BY source_identity LIMIT ?",
+            (line, limit),
         )
     ]
     found: list[str] = []
     for name in runbooks:
-        runbook = projection.typed.source(name)
-        if runbook is None or line not in {item.qualified for item in runbook.lines}:
-            continue
         aimed = aimed_trigger_page(projection, (name,), limit=limit, target_kind="runbook")[name]
         for trigger in aimed.identities:
             schedule = cast(Trigger, projection.typed.source(trigger)).schedule

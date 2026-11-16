@@ -275,6 +275,7 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "provider_control_domains",
             "provider_pinners",
             "provider_operations",
+            "runbook_lines",
             *(owner.table for owner in OWNER_CODECS),
         ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
@@ -505,6 +506,11 @@ def replace_rows(
         connection,
         "DELETE FROM provider_operations WHERE source_identity IN ({})",
         [identity for _path, identity, kind in replaced if kind == "provider"],
+    )
+    execute_in(
+        connection,
+        "DELETE FROM runbook_lines WHERE source_identity IN ({})",
+        [identity for _path, identity, kind in replaced if kind == "runbook"],
     )
     identities = [identity for _path, identity, _kind in replaced]
     for table in ("provider_pinners", "claim_type_names", "vocabulary_terms"):

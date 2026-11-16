@@ -314,3 +314,32 @@ def test_s3_card_cells_read_as_plain_values_never_python_reprs() -> None:
         "3",
         '{"a":[1]}',
     ]
+
+
+def test_a_line_card_finds_its_runbook_past_ten_unrelated_triggered_ones(
+    tmp_path: Path,
+) -> None:
+    """Review r2: the Runbooks that run a Line are selected before the card bounds them."""
+
+    instance, _root = runbook_world(tmp_path)
+    for index in range(10):
+        # Alphabetically before the one that runs the Line, each with a Trigger.
+        author_runbook(instance, f"test.aaa-{index}", [{"action": "evidence.sweep"}])
+        author_runbook_trigger(
+            instance,
+            f"test.aaa-{index}-daily",
+            runbook=f"test.aaa-{index}",
+            schedule={"kind": "cron", "expression": "0 5 * * *"},
+        )
+    author_runbook(instance, "test.zzz", [{"line": SETTLE}])
+    author_runbook_trigger(
+        instance,
+        "test.zzz-daily",
+        runbook="test.zzz",
+        schedule={"kind": "cron", "expression": "0 6 * * *"},
+    )
+
+    card = _get(instance, f"Line:{SETTLE}").card
+
+    assert card.trigger == "runbook"
+    assert card.sched == "cron 0 6 * * * (Trigger:test.zzz-daily via Runbook:test.zzz)"
