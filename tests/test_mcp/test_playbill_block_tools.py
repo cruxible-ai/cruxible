@@ -348,3 +348,28 @@ def test_mcp_repin_repair_arguments_cover_a_cleared_claim_list() -> None:
     )
     sweep = RepairOperation(operation="cruxible.block.sync", arguments={"all": True})
     assert handlers._mcp_block_repair(sweep).arguments == {"all_files": True}
+
+
+def test_a_detach_with_nothing_to_detach_reads_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gapc-29: every row refused block_still_published, yet the status said would_detach."""
+
+    from tests.test_client.test_playbill_block_sync import _SyncClient
+    from tests.test_client.test_playbill_block_sync import _workspace as _sync_workspace
+
+    page = _sync_workspace(tmp_path)
+    before = page.read_bytes()
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(handlers, "_get_client", lambda: _SyncClient(registered=True))
+
+    preview = handlers.handle_playbill_block_detach(
+        "inst_block_sync", files=["corpus/runbook.md"], dry_run=True
+    )
+    assert preview.status == "unchanged"
+    assert [item.reason for item in preview.sync.items] == ["block_still_published"]
+    committed = handlers.handle_playbill_block_detach(
+        "inst_block_sync", files=["corpus/runbook.md"], at=preview.coordinate.digest
+    )
+    assert committed.status == "unchanged"
+    assert page.read_bytes() == before

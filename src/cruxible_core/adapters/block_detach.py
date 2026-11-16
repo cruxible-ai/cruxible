@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Literal
 
 from cruxible_client.authoring.blocks import sync_projection_blocks
 from cruxible_client.contracts.authoring.models import BlockDetachResult
@@ -73,8 +74,16 @@ def detach_projection_pages(
             # read no bytes, and pins (and is checked against) the empty set.
             change.observe(workspace_pages_state(root, {}))
     assert change.coordinate is not None
+    # Every row refused or untouched: say so, not that something would detach.
+    status: Literal["detached", "would_detach", "unchanged"] = (
+        "unchanged"
+        if not synced.would_change
+        else "would_detach"
+        if change.previewing
+        else "detached"
+    )
     return BlockDetachResult(
-        status="would_detach" if change.previewing else "detached",
+        status=status,
         sync=synced,
         coordinate=change.coordinate,
     )

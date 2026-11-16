@@ -2699,13 +2699,15 @@ class BlockSyncResult(_StrictAuthoringModel):
 class BlockDetachResult(_StrictAuthoringModel):
     """Retired blocks' markers removed from pages, bodies kept; or (preview) which would be.
 
+    ``unchanged`` is a call that detached nothing and would detach nothing:
+    every block it read was refused or left as it was (the rows say why).
     ``coordinate`` digests the named pages' bytes as this call read them; a
     commit carrying ``at`` refuses ``cruxible.preview.state_moved`` if any page
     changed since its preview.
     """
 
     tag: Literal["playbill-block-detach-result-v1"] = "playbill-block-detach-result-v1"
-    status: Literal["detached", "would_detach"]
+    status: Literal["detached", "would_detach", "unchanged"]
     sync: BlockSyncResult
     coordinate: StateCoordinate
 
