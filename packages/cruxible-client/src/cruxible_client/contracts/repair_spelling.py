@@ -459,6 +459,10 @@ def _sdk_repair_call(
     return None
 
 
+#: Served operations only the CLI performs: no MCP tool, no SDK method.
+CLI_ONLY_OPERATIONS: frozenset[str] = frozenset({"cruxible.action.run"})
+
+
 def next_repair_command(
     operation: str,
     *,
@@ -474,6 +478,13 @@ def next_repair_command(
 
     if operation == "hand_edit":
         return None
+    if surface in {"mcp", "sdk"} and operation in CLI_ONLY_OPERATIONS:
+        # Only the CLI runs it: the line is the CLI command, saying so.
+        values = arguments if isinstance(arguments, Mapping) else {}
+        return render_repair(
+            RepairOperation(operation=operation, arguments=dict(values)),
+            surface=surface,
+        )
     if surface == "mcp":
         return _mcp_repair_call(operation, arguments=arguments, operands=operands)
     if surface == "sdk":

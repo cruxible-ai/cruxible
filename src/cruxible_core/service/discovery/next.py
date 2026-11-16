@@ -103,6 +103,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.repair_spelling import (
+    CLI_ONLY_OPERATIONS,
     _mcp_call,
     _sdk_example,
 )
@@ -901,6 +902,10 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.vocabulary.export": "cruxible_vocabulary_export",
     "hand_edit": None,
 }
+#: Repairs only the CLI performs (no MCP tool, no SDK method): an MCP caller is
+#: not told it needs another tool profile; its row's command is the CLI one,
+#: saying so (``next_repair_command``).
+_CLI_ONLY_REPAIRS = CLI_ONLY_OPERATIONS
 _GOVERNED_WRITE_RUNG = 1
 #: Repairs whose served door writes nothing and so never meets the principal
 #: boundary; every other served repair is refused to a caller that cannot author.
@@ -6488,7 +6493,12 @@ class _CallerView:
         tool = _REPAIR_TOOLS[repair.operation]
         if tool is None:
             return None
-        unadvertised = self.surface == "mcp" and self.tools is not None and tool not in self.tools
+        unadvertised = (
+            self.surface == "mcp"
+            and self.tools is not None
+            and tool not in self.tools
+            and repair.operation not in _CLI_ONLY_REPAIRS
+        )
         unauthored = (
             self.authoring_refusal is not None and repair.operation not in _AUTHORING_FREE_REPAIRS
         )

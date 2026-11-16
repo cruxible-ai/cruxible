@@ -110,6 +110,12 @@ COMPUTED_PRODUCERS: Mapping[tuple[str, str], Mapping[str, frozenset[str]]] = {
         "credential.claim-bootstrap": frozenset({"instance_id"}),
         "credential.recover-admin": frozenset({"instance_id"}),
     },
+    # A CLI-only operation's next line on MCP or the SDK: the CLI form, re-rendered
+    # from the row's own operation and arguments.
+    (
+        "packages/cruxible-client/src/cruxible_client/contracts/repair_spelling.py",
+        "next_repair_command",
+    ): {"cruxible.action.run": frozenset({"action"})},
     ("src/cruxible_core/service/identity.py", "credential_unbound_refusal"): {
         "credential.mint": frozenset({"unbound_credential_id"})
     },
