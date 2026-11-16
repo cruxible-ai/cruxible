@@ -704,6 +704,25 @@ def review_definition_lines(item: ReviewDefinition) -> list[str]:
     return lines
 
 
+def _why_lines(rationale: object) -> list[str]:
+    """The proposal's rationale: its own line breaks kept, continuation lines indented.
+
+    Each line still goes through ``printable``, so authored text cannot forge a
+    line of output; a non-text rationale stays one compact cell.
+    """
+
+    value = getattr(rationale, "value", None)
+    if not isinstance(value, str) or "\n" not in value.strip():
+        return [f"Why: {_summary_value_text(rationale)}"]
+    text_lines = value.strip().splitlines()
+    if getattr(rationale, "truncated", False):
+        text_lines[-1] += "..."
+    return [
+        f"Why: {printable(text_lines[0])}",
+        *(f"  {printable(line)}".rstrip() for line in text_lines[1:]),
+    ]
+
+
 def render_review_summary(
     review: ProposalReviewSummary,
     *,
@@ -726,7 +745,7 @@ def render_review_summary(
             f"{review.originating_line.artifact_digest}"
         )
     if review.rationale is not None:
-        lines.append(f"Why: {_summary_value_text(review.rationale)}")
+        lines.extend(_why_lines(review.rationale))
     lines.append(f"Required tier: {review.required_tier}; activation: {review.activation_policy}")
     for requirement in review.approval_requirements:
         lines.append(

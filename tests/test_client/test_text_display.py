@@ -783,3 +783,19 @@ def test_a_get_card_body_prints_reserved_names_in_their_public_spelling() -> Non
     ) in text.splitlines()
     assert "playbill." not in text
     assert result.model_dump(mode="json")["card"]["contract"] == stored
+
+
+def test_a_review_prints_a_multi_line_why_as_lines_not_escapes() -> None:
+    """A Procedure's rationale reads as its paragraphs, never a literal \\n."""
+
+    summary = _review_summary(
+        rationale={"value": "Settled from the KEV feed.\n\nTwo rows changed.\x1b[2J\n"}
+    )
+    lines = str(summary).splitlines()
+    start = lines.index("Why: Settled from the KEV feed.")
+    # Line breaks kept and indented; control characters still escaped.
+    assert lines[start + 1 : start + 3] == ["", "  Two rows changed.\\x1b[2J"]
+    assert "\\n" not in str(summary)
+    cut = _review_summary(rationale={"value": "One.\nTwo", "truncated": True})
+    assert "  Two..." in str(cut).splitlines()
+    assert "Why: Seen in the notes." in str(_review_summary()).splitlines()
