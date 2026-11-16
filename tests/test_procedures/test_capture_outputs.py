@@ -269,9 +269,13 @@ def _acquisition_members(instance: Any, payload: Any) -> list[dict[str, Any]]:
     assert payload["tag"] == "playbill-procedure-source-acquisition-v2"
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     members: list[dict[str, Any]] = []
-    root = json.loads(instance.body_store().read(payload["members_digest"], access=access))
-    assert root["tag"] == "playbill-acquired-member-chunks-v1"
-    for digest in root["chunks"]:
+    from cruxible_core.procedures.execution import acquisition_member_chunks
+
+    chunks = acquisition_member_chunks(
+        payload, lambda digest: instance.body_store().read(digest, access=access)
+    )
+    assert chunks is not None
+    for digest in chunks:
         body = json.loads(instance.body_store().read(digest, access=access))
         assert body["tag"] == "playbill-acquired-members-v1"
         assert 0 < len(body["members"]) <= 64

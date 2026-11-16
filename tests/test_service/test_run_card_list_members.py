@@ -499,14 +499,22 @@ def _stored_call_acquisition(
         .digest
         for start in range(0, members, 64)
     ]
-    root = (
-        instance.body_store()
-        .store(
-            canonical_bytes({"tag": "playbill-acquired-member-chunks-v1", "chunks": chunks}),
-            journal_payload=True,
+    root = None
+    for start in reversed(range(0, max(len(chunks), 1), 8)):
+        root = (
+            instance.body_store()
+            .store(
+                canonical_bytes(
+                    {
+                        "tag": "playbill-acquired-member-chunks-v1",
+                        "chunks": chunks[start : start + 8],
+                        **({} if root is None else {"next": root}),
+                    }
+                ),
+                journal_payload=True,
+            )
+            .digest
         )
-        .digest
-    )
     digest = _store_payload(
         instance,
         {
@@ -586,7 +594,19 @@ def test_a_card_opens_only_the_member_chunks_it_shows_however_many_were_fetched(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(runs, "read_payload_bytes", counted)
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    pages: list[int] = []
+    read = ContentAddressedBodyStore.read
+
+    def paged(self: Any, *args: Any, **kwargs: Any) -> Any:
+        content = read(self, *args, **kwargs)
+        pages.append(len(content))
+        return content
+
+    monkeypatch.setattr(ContentAddressedBodyStore, "read", paged)
     reads = {}
+    roots = {}
     for size in (RUN_CARD_LIST_MEMBERS_MAX, 50 * RUN_CARD_LIST_MEMBERS_MAX):
         (tmp_path / str(size)).mkdir()
         instance, _owner = initialize_local(tmp_path / str(size))
@@ -603,11 +623,17 @@ def test_a_card_opens_only_the_member_chunks_it_shows_however_many_were_fetched(
             GetRunNode(node="later", kind="provider", sequence=4),
         ]
         opened.clear()
+        pages.clear()
         found, truncated = runs._list_members(  # noqa: SLF001
             instance, _FakeJournal(_FakeIndex(records)), object(), "run-1", nodes
         )
         assert len(found["big"]) == RUN_CARD_LIST_MEMBERS_MAX and "later" not in found
         assert "later" in truncated
         reads[size] = len(opened)
+        roots[size] = sum(pages)
     # The same chunks opened at either size: the first call's shown ones.
     assert reads[RUN_CARD_LIST_MEMBERS_MAX] == reads[50 * RUN_CARD_LIST_MEMBERS_MAX] <= 2
+    # And the same bytes read (review 2b F-007): the chunk list is paged, so a
+    # card never parses a large call's whole list.
+    # (at most one fuller page: eight chunk digests and the next page's).
+    assert roots[50 * RUN_CARD_LIST_MEMBERS_MAX] <= roots[RUN_CARD_LIST_MEMBERS_MAX] + 1024, roots

@@ -7,7 +7,7 @@ import hashlib
 import json
 import time
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -2634,32 +2634,44 @@ ACQUIRED_MEMBERS_CHUNK = 64
 ACQUIRED_MEMBER_CHUNKS_BODY_V1 = "playbill-acquired-member-chunks-v1"
 
 
+#: Chunk digests one root page lists before citing the next page.
+ACQUIRED_MEMBER_CHUNKS_PAGE = 8
+
+
 def acquisition_member_chunks(
     payload: Mapping[str, Any], read: Callable[[str], bytes]
-) -> list[str] | None:
-    """The member chunk digests a v2 ``source_acquisition`` record cites (None: unreadable).
+) -> Iterator[str] | None:
+    """The member chunk digests a v2 ``source_acquisition`` record cites, lazily.
 
-    ``read`` returns a body's verified bytes and raises when it cannot. The
-    record cites one root body listing the chunks, so the record's own size
-    never depends on how many members the call fetched (F-005).
+    None when the record cites no root. ``read`` returns a body's verified
+    bytes and raises when it cannot; an unreadable or malformed page ends the
+    chunks. The record cites one root page (F-005); each page lists a few
+    chunks and cites the next, so a bounded reader (a run card) reads only the
+    pages holding the chunks it shows (review 2b F-007).
     """
 
     digest = payload.get("members_digest")
     if not isinstance(digest, str):
         return None
-    try:
-        root = json.loads(read(digest))
-    except (CruxibleError, OSError, ValueError):
-        return None
-    chunks = root.get("chunks") if isinstance(root, dict) else None
-    if (
-        not isinstance(root, dict)
-        or root.get("tag") != ACQUIRED_MEMBER_CHUNKS_BODY_V1
-        or not isinstance(chunks, list)
-        or not all(isinstance(chunk, str) for chunk in chunks)
-    ):
-        return None
-    return chunks
+    return _member_chunk_pages(digest, read)
+
+
+def _member_chunk_pages(digest: str | None, read: Callable[[str], bytes]) -> Iterator[str]:
+    while isinstance(digest, str):
+        try:
+            page = json.loads(read(digest))
+        except (CruxibleError, OSError, ValueError):
+            return
+        chunks = page.get("chunks") if isinstance(page, dict) else None
+        if (
+            not isinstance(page, dict)
+            or page.get("tag") != ACQUIRED_MEMBER_CHUNKS_BODY_V1
+            or not isinstance(chunks, list)
+            or not all(isinstance(chunk, str) for chunk in chunks)
+        ):
+            return
+        yield from chunks
+        digest = page.get("next")
 
 
 def _acquired_member(
@@ -5976,10 +5988,18 @@ class ProcedureExecutor:
         ]
         # One root cites the chunks: an unchanged call reproduces it too, and
         # the record stays one digest whatever the call fetched.
-        root = self.bodies.store(
-            canonical_bytes({"tag": ACQUIRED_MEMBER_CHUNKS_BODY_V1, "chunks": chunks}),
-            journal_payload=True,
-        ).digest
+        root: str | None = None
+        for start in reversed(range(0, max(len(chunks), 1), ACQUIRED_MEMBER_CHUNKS_PAGE)):
+            root = self.bodies.store(
+                canonical_bytes(
+                    {
+                        "tag": ACQUIRED_MEMBER_CHUNKS_BODY_V1,
+                        "chunks": chunks[start : start + ACQUIRED_MEMBER_CHUNKS_PAGE],
+                        **({} if root is None else {"next": root}),
+                    }
+                ),
+                journal_payload=True,
+            ).digest
         self._append_event(
             admission,
             records,
