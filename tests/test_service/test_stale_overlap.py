@@ -24,6 +24,7 @@ from cruxible_client.contracts.errors import (
     ApprovalRequirementUnmet,
     ProposalAlreadyAccepted,
     ProposalStale,
+    ProposalWithdrawnError,
 )
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.subjects import (
@@ -376,3 +377,46 @@ def test_acting_again_on_an_accepted_proposal_says_accepted_not_stale(
         )
         == approvals_before
     )
+
+
+def test_an_approval_that_lands_a_moved_proposal_names_its_source(tmp_path: Path) -> None:
+    """gapa-03: approval lands a moved proposal at the head under a new id. The
+    receipt for the landed proposal names the one reviewed, and the old id refuses
+    with the replacement to activate, not "author the change again"."""
+
+    instance, reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "held"))
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-2", "title", "moves the head"))
+    landed = _approve(instance, reviewer, source_id)
+    assert isinstance(landed, ProposalRecompiled) and landed.proposal_id is not None
+    successor = _proposal_result(instance, landed.proposal_id)
+    assert successor.candidate is not None
+
+    held = service_submit_playbill_approval(
+        instance,
+        proposal_id=landed.proposal_id,
+        attestation=_sign(
+            reviewer,
+            successor.candidate.candidate_digest,
+            successor.candidate.candidate.parent_semantic_root,
+        ).attestation,
+        authenticated_submitter="reviewer",
+        activate_when_complete=False,
+        may_activate=True,
+    )
+    assert held.not_activated == "held"  # type: ignore[union-attr]
+    assert held.readmits == source_id  # type: ignore[union-attr]
+
+    with pytest.raises(ProposalWithdrawnError) as refused:
+        service_activate_playbill_proposal(instance, proposal_id=source_id, activated_by="owner")
+    assert refused.value.superseded_by == landed.proposal_id
+    assert f"cruxible proposal activate {landed.proposal_id}" in str(refused.value)
+    assert "author the change again" not in str(refused.value)
+    assert refused.value.repair.operation == "cruxible.proposal.activate"
+    assert refused.value.repair.arguments == {"proposal_id": landed.proposal_id}
+
+    activation = service_activate_playbill_proposal(
+        instance, proposal_id=landed.proposal_id, activated_by="reviewer"
+    )
+    assert activation.status == "accepted"  # type: ignore[union-attr]
+    assert activation.readmits == source_id  # type: ignore[union-attr]

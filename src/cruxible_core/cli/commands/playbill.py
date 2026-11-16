@@ -3344,8 +3344,16 @@ def approve_proposal(
         _echo_activation(result)
         return
     click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
+    if result.readmits is not None:
+        click.echo(_replaces_line(result.proposal_id, result.readmits))
     for line in _approval_outcome_lines(result):
         click.echo(line)
+
+
+def _replaces_line(proposal_id: str, source_id: str) -> str:
+    """A readmission's receipt names the proposal it replaces, which is the one reviewed."""
+
+    return f"{proposal_id} replaces {source_id} (readmitted at the head); act on {proposal_id}"
 
 
 def _landed_same_change_set(result: contracts.ProposalApprovalResult) -> str | None:
@@ -3498,6 +3506,8 @@ def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -
 
 
 def _echo_activation(result: contracts.ActivationReceipt) -> None:
+    if result.readmits is not None:
+        click.echo(_replaces_line(result.proposal_id, result.readmits))
     if result.status == "accepted" and result.accepted_coordinate is not None:
         click.echo(f"accepted ({result.accepted_coordinate.git_oid[:12]}) by {result.activated_by}")
         click.echo("next: cruxible next")

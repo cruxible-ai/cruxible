@@ -144,6 +144,9 @@ class ActivationReceipt(_StrictServiceModel):
     status: Literal["accepted", "lost_cas"]
     accepted_coordinate: AcceptedCoordinate | None
     workspace_advertisement: WorkspaceAdvertisement
+    #: The proposal this one re-admitted at the head, when it is a readmission
+    #: (a moved proposal an approval or activation landed): the one reviewed.
+    readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 #: Why an approval did not activate its candidate: the signer held activation
@@ -167,6 +170,9 @@ class ApprovalReceipt(_StrictServiceModel):
     not_activated: ApprovalNotActivated | None = None
     #: Signatures still required before the candidate can activate.
     approvals_remaining: int = Field(default=0, ge=0)
+    #: The proposal this one re-admitted at the head, when it is a readmission
+    #: (a moved proposal an approval landed): the one the signer reviewed.
+    readmits: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _one_outcome(self) -> "ApprovalReceipt":
@@ -453,6 +459,8 @@ def service_submit_playbill_approval(
         principals=signing_generation.principals,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
+    link = proposal.admission.readmits
+    readmits = None if link is None else link.source_proposal_id
     evidence = instance.proposal_evidence()
     # One lock, held from the store write through the note's own read-back. The
     # note restates the WHOLE canonical list rather than appending one signer,
@@ -513,7 +521,9 @@ def service_submit_playbill_approval(
         else:
             if isinstance(activation, ProposalRecompiled):
                 return activation
-            return _approval_receipt(proposal_id, candidate, verified, activation=activation)
+            return _approval_receipt(
+                proposal_id, candidate, verified, activation=activation, readmits=readmits
+            )
     # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
     # branch and its notes from the store and now takes the same candidate lock
     # around projected approval rendering, so nesting would deadlock. Both lanes
@@ -521,7 +531,12 @@ def service_submit_playbill_approval(
     instance.advertise_workspace()
     instance.request_ledger_mirror()
     return _approval_receipt(
-        proposal_id, candidate, verified, not_activated=reason, approvals_remaining=remaining
+        proposal_id,
+        candidate,
+        verified,
+        not_activated=reason,
+        approvals_remaining=remaining,
+        readmits=readmits,
     )
 
 
@@ -644,6 +659,7 @@ def _approval_receipt(
     activation: ActivationReceipt | None = None,
     not_activated: ApprovalNotActivated | None = None,
     approvals_remaining: int = 0,
+    readmits: str | None = None,
 ) -> ApprovalReceipt:
     return ApprovalReceipt(
         proposal_id=proposal_id,
@@ -656,6 +672,7 @@ def _approval_receipt(
         activation=activation,
         not_activated=not_activated,
         approvals_remaining=approvals_remaining,
+        readmits=readmits,
     )
 
 
@@ -945,6 +962,11 @@ def _activate_candidate(
             else None
         ),
         workspace_advertisement=advertisement,
+        readmits=(
+            None
+            if proposal.admission.readmits is None
+            else proposal.admission.readmits.source_proposal_id
+        ),
     )
 
 

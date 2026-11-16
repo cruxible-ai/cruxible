@@ -758,6 +758,26 @@
             "type": "string"
           }
         },
+        "readmits": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "readmits",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Readmits"
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -929,6 +949,18 @@
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
+          },
+          "readmits": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Readmits"
           },
           "status": {
             "enum": [
@@ -2107,6 +2139,26 @@
             "type": "string"
           }
         },
+        "readmits": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "readmits",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Readmits"
+          }
+        },
         "signer_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -2210,6 +2262,18 @@
               "proposal_id": {
                 "title": "Proposal Id",
                 "type": "string"
+              },
+              "readmits": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Readmits"
               },
               "status": {
                 "enum": [
@@ -2405,6 +2469,18 @@
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
+          },
+          "readmits": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Readmits"
           },
           "signer_id": {
             "title": "Signer Id",

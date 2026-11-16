@@ -271,11 +271,28 @@ class ProposalWithdrawnError(ProposalAdmissionError):
         actor_id: str,
         reason: str,
         withdrawn_at: str,
+        superseded_by: str | None = None,
     ) -> None:
         self.proposal_id = proposal_id
         self.actor_id = actor_id
         self.reason = reason
         self.withdrawn_at = withdrawn_at
+        self.superseded_by = superseded_by
+        if superseded_by is not None:
+            # Superseded, not abandoned: the same work goes on under the successor
+            # (a landing at the head, or a later run of the same Line).
+            from cruxible_client.contracts.repairs import RepairOperation
+
+            self.repair = RepairOperation(
+                operation="cruxible.proposal.activate", arguments={"proposal_id": superseded_by}
+            )
+            super().__init__(
+                f"{self.error_code}: proposal {proposal_id} was superseded by {superseded_by} "
+                f"at {withdrawn_at} ({reason}); act on {superseded_by} instead: "
+                f"`cruxible proposal activate {superseded_by}` once its approvals are in "
+                f"(`cruxible proposal approve {superseded_by}` while they are not)."
+            )
+            return
         super().__init__(
             f"{self.error_code}: proposal {proposal_id} was withdrawn by {actor_id!r} at "
             f"{withdrawn_at} ({reason}); a withdrawal is terminal, so author the change "

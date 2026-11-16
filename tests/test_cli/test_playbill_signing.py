@@ -293,6 +293,8 @@ def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch) ->
     # The landed candidate sits on the head the approval met.
     assert landed["signing_semantic_root"] == head_root
     assert f"Landed at the head as {landed_id}" in result.stdout
+    # The receipt names the proposal it replaces, the one reviewed (gapa-03).
+    assert f"{landed_id} replaces {first_id} (readmitted at the head)" in result.stdout
     assert "Activated at" in result.stdout
 
 
