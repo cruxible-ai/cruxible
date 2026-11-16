@@ -207,8 +207,10 @@ def _member_problem(
 ) -> str | None:
     """Why ``rest`` does not descend into ``column``'s declared type, or ``None``.
 
-    Only a declared shape is judged: a nested Contract the lookup cannot resolve,
-    a record or a variant is left to the run.
+    Paths are judged as the run resolves them: a field result is its wire
+    record (``.value``, ``.tag``, ``.at``), never implicitly unwrapped. Only a
+    declared shape is judged: a nested Contract the lookup cannot resolve, a
+    record, a variant or an invalid result's ``problem`` is left to the run.
     """
 
     from cruxible_client.contracts.shapes import (
@@ -225,7 +227,22 @@ def _member_problem(
     while path:
         member = path[0]
         if isinstance(current, FieldResultType):
-            current = current.value
+            # A field result is its wire record ({tag, value, at}); nothing unwraps it.
+            if member == "value":
+                current, path = current.value, path[1:]
+            elif member in ("tag", "at"):
+                if len(path) > 1:
+                    return (
+                        f"{column}'s field-result {member} is text, which has no member {path[1]!r}"
+                    )
+                return None
+            elif member == "problem":
+                return None
+            else:
+                return (
+                    f"column {column} is {render_type(current)}: read its .value (or .tag, .at), "
+                    f"not {member!r}"
+                )
         elif isinstance(current, ListType):
             if member != "[*]" and not member.isdigit():
                 return (

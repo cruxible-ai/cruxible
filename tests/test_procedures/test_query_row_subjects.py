@@ -683,31 +683,38 @@ def test_the_row_reference_check_never_runs_under_a_recorded_law(
 # -- a path beneath a column is checked against the column's declared type --------------
 
 
-def _typed_lookup() -> Any:
+def _owner_pin() -> dict[str, Any]:
     owner = validate_contract({"name": "test.owner", "version": 1, "fields": {"name": "string"}})
-    pin = {"name": owner.name, "version": 1, "digest": contract_digest(owner).tagged}
+    return {"name": owner.name, "version": 1, "digest": contract_digest(owner).tagged}
+
+
+def _typed_lookup(extra: dict[str, Any] | None = None) -> Any:
+    from cruxible_client.contracts.query.grammar import QueryClaimValueRef, QueryProjectionField
+
+    owner = validate_contract({"name": "test.owner", "version": 1, "fields": {"name": "string"}})
+    columns = {
+        "owner": {"type": {"kind": "contract", "contract": _owner_pin()}},
+        **(extra or {}),
+    }
     row = validate_contract(
         {
             "name": ROW,
             "version": 1,
-            "fields": {
-                "item_id": "string",
-                "status": "string",
-                "owner": {"type": {"kind": "contract", "contract": pin}},
-            },
+            "fields": {"item_id": "string", "status": "string", **columns},
         }
     )
-    from cruxible_client.contracts.query.grammar import QueryClaimValueRef, QueryProjectionField
-
     query = _query(row)
     assert query.projection is not None
-    owned = QueryProjectionField(
-        name="owner", value=QueryClaimValueRef(binding="item", predicate=SUBJECT_KIND + ".owner")
+    added = tuple(
+        QueryProjectionField(
+            name=name, value=QueryClaimValueRef(binding="item", predicate=f"{SUBJECT_KIND}.{name}")
+        )
+        for name in columns
     )
     query = query.model_copy(
         update={
             "projection": query.projection.model_copy(
-                update={"fields": (*query.projection.fields, owned)}
+                update={"fields": (*query.projection.fields, *added)}
             )
         }
     )
@@ -811,3 +818,70 @@ def test_a_kept_rows_subject_is_its_own_through_filter_and_dedupe(
     ] == [f"{SUBJECT_KIND}/{name}" for name in expected]
     # The rows themselves are exactly what the transform kept.
     assert [dict(item) for item in items] == value["rows"]
+
+
+# -- a field-result column is its wire record, as the run reads it ----------------------
+
+
+def _field_result_lookup() -> Any:
+    pinned = {"kind": "contract", "contract": _owner_pin()}
+    return _typed_lookup(
+        {
+            "seen": {"type": {"kind": "field_result", "value": {"kind": "string"}}},
+            "held": {"type": {"kind": "field_result", "value": pinned}},
+            "many": {
+                "type": {
+                    "kind": "list",
+                    "max_items": 4,
+                    "item": {"kind": "field_result", "value": {"kind": "string"}},
+                }
+            },
+        }
+    )
+
+
+ROW_VALUE = {
+    "seen": {"tag": "present", "value": "ready", "at": "/seen"},
+    "held": {"tag": "present", "value": {"name": "ana"}, "at": "/held"},
+    "many": [{"tag": "present", "value": "a", "at": "/many/0"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("reference", "resolved"),
+    [
+        ("$item.seen.value", "ready"),
+        ("$item.seen.tag", "present"),
+        ("$item.seen.at", "/seen"),
+        ("$item.held.value.name", "ana"),
+        ("$item.many.0.value", "a"),
+    ],
+)
+def test_a_field_result_path_the_run_resolves_passes(reference: str, resolved: object) -> None:
+    from cruxible_core.procedures.execution import _resolve_reference
+
+    validate_row_references(_inbox_definition({"item": reference}), _field_result_lookup())
+    assert (
+        _resolve_reference(reference, input_payload={}, parameters={}, outputs={}, item=ROW_VALUE)
+        == resolved
+    )
+
+
+@pytest.mark.parametrize(
+    ("reference", "said"),
+    [
+        ("$item.held.name", "read its .value"),
+        ("$item.seen.kind", "read its .value"),
+        ("$item.seen.tag.more", "is text"),
+        ("$item.held.value.email", "declares no field 'email'"),
+        ("$item.many.0.name", "read its .value"),
+    ],
+)
+def test_a_field_result_path_the_run_cannot_resolve_refuses(reference: str, said: str) -> None:
+    from cruxible_core.procedures.execution import ExecutionError, _resolve_reference
+
+    with pytest.raises(ItemReferenceUnresolved) as refused:
+        validate_row_references(_inbox_definition({"item": reference}), _field_result_lookup())
+    assert said in str(refused.value)
+    with pytest.raises(ExecutionError):
+        _resolve_reference(reference, input_payload={}, parameters={}, outputs={}, item=ROW_VALUE)
