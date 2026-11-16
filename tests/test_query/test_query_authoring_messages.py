@@ -1,4 +1,4 @@
-"""Authored-query refusals a first-time kit author meets (coldkit-04, -08)."""
+"""Authored-query refusals a first-time kit author meets (coldkit-04, -08, -09)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,15 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from cruxible_client.authoring.compact_query import parse_where
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.query.authored import (
     QuerySpecError,
     QuerySpecInput,
     lower_query_spec,
+    parse_filter,
+    query_spec_from_definition,
 )
 from cruxible_core.service.discovery.authored_query import (
     AuthoredQueryResolver,
@@ -89,3 +92,40 @@ def test_a_string_param_against_a_link_field_names_subject_reference(resolver):
     assert caught.value.error_code == "cruxible.query.value_type_mismatch"
     assert "declare it in params as vuln: subject_reference" in str(caught.value)
     assert "link field" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "single,double",
+    [
+        ("incident.status in ('open', 'closed')", 'incident.status in ("open", "closed")'),
+        ("incident.name == 'it''s'", None),
+        ("incident.name == 'say \"hi\"'", 'incident.name == "say \\"hi\\""'),
+        ("incident.name == 'it\\'s'", 'incident.name == "it\'s"'),
+    ],
+)
+def test_single_quoted_text_lowers_like_double_quoted(single, double, resolver):
+    """coldkit-09: both quote styles name the same value and render back double-quoted."""
+
+    if double is None:
+        # Doubling the quote is not an escape; the tokens after it do not parse.
+        with pytest.raises(QuerySpecError):
+            lower_query_spec(spec(where=single), resolver)
+        return
+    from_single = lower_query_spec(spec(where=single), resolver)
+    from_double = lower_query_spec(spec(where=double), resolver)
+    assert from_single == from_double
+    rendered = query_spec_from_definition(from_single).where
+    assert rendered is not None and "'" not in rendered.replace("it's", "")
+
+
+def test_single_quotes_are_not_a_reference():
+    with pytest.raises(QuerySpecError) as caught:
+        parse_filter("'open' == incident.status")
+    assert caught.value.error_code == "cruxible.query.filter_invalid"
+
+
+def test_compact_where_accepts_single_quotes():
+    assert parse_where("status='open'") == parse_where('status="open"')
+    assert parse_where("status in ('open', 'closed')") == parse_where(
+        'status in ("open", "closed")'
+    )

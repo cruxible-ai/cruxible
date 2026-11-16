@@ -156,7 +156,8 @@ written in full.
 
 Filters support `==`, `!=`, `<`, `<=`, `>`, `>=`, `in (value, value)`,
 `exists binding.predicate`, parentheses, and `not`, `and`, `or` in that order of
-precedence. Quote text literals; `$name` references a declared parameter and
+precedence. Quote text literals, in double or single quotes (`"open"` and
+`'open'` are the same value); `$name` references a declared parameter and
 `now` references the query's evaluation time.
 
 A relation hop adds a binding:

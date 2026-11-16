@@ -221,7 +221,7 @@ _PAIR_HOP = re.compile(
 
 
 _TOKEN = re.compile(
-    r'\s*(?:("(?:[^"\\]|\\.)*")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?)|'
+    r'\s*(?:("(?:[^"\\]|\\.)*")|(\'(?:[^\'\\]|\\.)*\')|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?)|'
     r"(\$?[a-zA-Z_][a-zA-Z0-9_.]*)|(==|!=|<=|>=|[=<>~(),]))"
 )
 _SYMBOLS = {
@@ -234,6 +234,28 @@ _SYMBOLS = {
     ">=": "gte",
     "~": "contains",
 }
+
+
+def _single_quoted_as_json(token: str) -> str:
+    """Respell a single-quoted text literal as the JSON string it denotes.
+
+    Both quote styles name the same value, so a filter lowers (and renders back)
+    the same whichever the author typed. Inside single quotes, a double quote
+    needs no escape and a single quote is written as a backslash and a quote.
+    """
+    out: list[str] = []
+    inner = token[1:-1]
+    index = 0
+    while index < len(inner):
+        char = inner[index]
+        if char == "\\" and index + 1 < len(inner):
+            following = inner[index + 1]
+            out.append("'" if following == "'" else char + following)
+            index += 2
+            continue
+        out.append('\\"' if char == '"' else char)
+        index += 1
+    return '"' + "".join(out) + '"'
 
 
 class _FilterParser:
@@ -327,7 +349,7 @@ class _FilterParser:
                 "expected a reference, $parameter, or literal", self.tokens[self.index - 1][1]
             )
         if reference and (
-            token.startswith(("$", '"'))
+            token.startswith(("$", '"', "'"))
             or token in {"true", "false", "null"}
             or re.fullmatch(r"-?\d+(?:\.\d+)?", token)
         ):
@@ -336,6 +358,8 @@ class _FilterParser:
             )
         if token.startswith("$"):
             return FilterOperand("parameter", token[1:])
+        if token.startswith("'"):
+            token = _single_quoted_as_json(token)
         if (
             token.startswith('"')
             or token in {"true", "false", "null"}
