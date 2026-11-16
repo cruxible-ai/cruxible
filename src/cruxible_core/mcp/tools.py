@@ -107,6 +107,7 @@ from cruxible_client.contracts.write import (
     WriteValue,
     _omit_empty,
 )
+from cruxible_client.kits import compact_kit_change
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.coverage.adapter import WorkingSourceObservation
@@ -515,11 +516,20 @@ def register_tools(
             Field(description="Lines (Line:NAME) to keep on their current provider builds."),
         ] = None,
         allow_downgrade: bool = False,
+        detail: Annotated[
+            bool,
+            Field(
+                description=(
+                    "true: list every path in plan, unchanged ones too (by default they "
+                    "are counted in unchanged)."
+                )
+            ),
+        ] = False,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> KitChangeResult:
         """Install or upgrade a kit as one change set; it always proposes."""
-        return handlers.handle_playbill_kit_add(
+        result = handlers.handle_playbill_kit_add(
             require_instance_id(instance_id),
             reference=reference,
             bundle=bundle,
@@ -531,6 +541,7 @@ def register_tools(
             dry_run=dry_run,
             at=at,
         )
+        return result if detail else compact_kit_change(result)
 
     @_tool
     def cruxible_kit_remove(

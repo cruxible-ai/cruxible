@@ -1170,6 +1170,9 @@ class KitChangeResult(_Strict):
         max_length=KIT_AUTOMATION_TEMPLATE_MAX_BYTES,
         exclude_if=lambda value: value is None,
     )
+    #: How many ``unchanged`` plan entries a compact answer left out of ``plan``
+    #: (``compact_kit_change``); None when ``plan`` lists every path.
+    unchanged: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 #: Whether the adapter looked for a newer release of a registry-sourced kit:

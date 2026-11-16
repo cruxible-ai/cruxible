@@ -1203,7 +1203,7 @@ cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   [--automation-template FILE] [--file PATH]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
   [--keep-build Line:NAME]...
-  [--retire-dependents IDENTITY]... [--allow-downgrade]
+  [--retire-dependents IDENTITY]... [--allow-downgrade] [--detail]
   [--dry-run|--commit] [--at OID] [--json]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible kit status [--offline] [--json]
@@ -1371,6 +1371,10 @@ owning a prefix that overlaps another kit's or takes in a definition it holds,
 blocks the change. `add` refuses a release older than
 the installed one unless `--allow-downgrade`, and the preview names the transition
 (install, upgrade, downgrade, reinstall).
+
+The answer lists the paths a change touches and counts the ones it leaves as
+they are (`unchanged: N`, the `unchanged` field in `--json` and MCP);
+`--detail` (MCP `detail: true`) lists every path.
 
 `add` and `remove` land at once when the instance's approval policy requires no
 approval and the request's tier may activate (`graph_write`), like value

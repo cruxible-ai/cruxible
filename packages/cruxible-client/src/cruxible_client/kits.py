@@ -526,6 +526,25 @@ def kit_automation_template(bundle: KitBundle) -> KitAutomationTemplate | None:
     return KitAutomationTemplate(path=path, content=text)
 
 
+def compact_kit_change(result: KitChangeResult) -> KitChangeResult:
+    """``result`` with its ``unchanged`` plan entries counted instead of listed.
+
+    A kit add preview of a large release is mostly paths it leaves as they are;
+    the compact answer (the default on every surface) lists what changes and
+    counts the rest. Pass ``--detail`` (MCP ``detail=true``) for every path.
+    """
+
+    unchanged = sum(1 for item in result.plan if item.action == "unchanged")
+    if not unchanged:
+        return result
+    return result.model_copy(
+        update={
+            "plan": tuple(item for item in result.plan if item.action != "unchanged"),
+            "unchanged": unchanged,
+        }
+    )
+
+
 def with_automation_template(
     result: KitChangeResult, template: KitAutomationTemplate | None
 ) -> KitChangeResult:

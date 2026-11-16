@@ -208,6 +208,7 @@ from cruxible_client.kits import (
     KIT_ARTIFACT,
     add_kit_files,
     check_kit_updates,
+    compact_kit_change,
     kit_automation_template,
     read_kit_build_files,
     resolve_kit,
@@ -2395,8 +2396,9 @@ def _echo_kit_change(
             if blocked_plan == "counts":
                 click.echo("(--detail lists each path)")
     groups: dict[str, list[str]] = {}
+    shows_unchanged = result.unchanged is None
     for item in result.plan:
-        if item.action == "unchanged":
+        if item.action == "unchanged" and not shows_unchanged:
             continue
         kind = _kit_plan_heading((item.identity or item.path).partition(":")[0])
         line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
@@ -2419,6 +2421,8 @@ def _echo_kit_change(
             click.echo(f"{kind}:")
             for line in groups[kind]:
                 click.echo(line)
+    if result.unchanged:
+        click.echo(f"unchanged: {result.unchanged:,} (--detail lists each)")
     if not refusal_first:
         _echo_kit_refusals(result)
     _echo_automation_template(
@@ -2615,6 +2619,12 @@ def build_kit(
 @click.option(
     "--allow-downgrade", is_flag=True, help="Install a release older than the installed one."
 )
+@click.option(
+    "--detail",
+    "show_unchanged",
+    is_flag=True,
+    help="List every path, the unchanged ones too (by default they are counted).",
+)
 @change_control_options
 @json_option
 @handle_errors
@@ -2626,6 +2636,7 @@ def add_kit(
     retire_dependents: tuple[str, ...],
     keep_build: tuple[str, ...],
     allow_downgrade: bool,
+    show_unchanged: bool,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
@@ -2681,6 +2692,8 @@ def add_kit(
         return client.add_kit(instance_id, request)
 
     result = with_automation_template(_server_call(add, command_name="cruxible kit add"), template)
+    if not show_unchanged:
+        result = compact_kit_change(result)
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:

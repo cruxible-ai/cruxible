@@ -1124,3 +1124,56 @@ def test_kit_build_carries_named_files_listed_with_their_sha256(
         assert "cruxible.kit.file_refused" in refused.output and why in refused.output
         assert "Repair:" in refused.output
         assert not (tmp_path / f"refused-{why[:4]}").exists()
+
+
+def test_kit_add_counts_unchanged_paths_and_lists_them_only_with_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S1: a large release's preview lists what changes and counts the rest."""
+
+    from cruxible_client.kits import compact_kit_change
+
+    answer = KitChangeResult(
+        kit_id="acme",
+        version="1.1.0",
+        status="would_propose",
+        plan=(
+            KitPathPlan(
+                path="claim-types/acme.account/plan.json",
+                action="replace",
+                identity="ClaimType:acme.account.plan",
+            ),
+            *(
+                KitPathPlan(
+                    path=f"claim-types/acme.account/f{index}.json",
+                    action="unchanged",
+                    identity=f"ClaimType:acme.account.f{index}",
+                )
+                for index in range(175)
+            ),
+        ),
+    )
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return answer
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme-1.1.0")
+    )
+
+    brief = CliRunner().invoke(cli, [*BASE, "add", "./acme"])
+    full = CliRunner().invoke(cli, [*BASE, "add", "./acme", "--detail"])
+    as_json = CliRunner().invoke(cli, [*BASE, "add", "./acme", "--json"])
+
+    assert brief.exit_code == full.exit_code == as_json.exit_code == 0, brief.output
+    assert "replace: ClaimType:acme.account.plan" in brief.output
+    assert "acme.account.f7" not in brief.output
+    assert "unchanged: 175 (--detail lists each)" in brief.output
+    assert "unchanged: ClaimType:acme.account.f7" in full.output
+    assert "unchanged: 175" not in full.output
+    payload = json.loads(as_json.output[as_json.output.index("{") :])
+    assert payload["unchanged"] == 175 and len(payload["plan"]) == 1
+    compact = compact_kit_change(answer)
+    assert compact.unchanged == 175 and compact_kit_change(compact) == compact
