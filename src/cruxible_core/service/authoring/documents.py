@@ -30,6 +30,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
+    ApprovalRequirementUnmet,
     DocumentNotFoundError,
     ProjectionIntegrityError,
     ProposalActivationRequestInvalid,
@@ -566,6 +567,51 @@ def _approvals_remaining(
     return remaining
 
 
+def _delegated(proposal: ProposalResult) -> bool:
+    """Whether a mandate, not candidate approvals, settles this proposal."""
+
+    settle = proposal.admission.settle_submission
+    return settle is not None and settle.mode == "delegated"
+
+
+def _refuse_unmet_approval(
+    instance: PlaybillInstance, proposal: ProposalResult, candidate: CandidateRecord
+) -> None:
+    """Refuse to activate a candidate whose approval requirement is not met, naming
+    who may approve; reads only this candidate's approvals and principal registry."""
+
+    principals = instance.generation_for_semantic_root(
+        candidate.candidate.parent_semantic_root
+    ).principals
+    approvals = instance.proposal_evidence().read_approvals(candidate.candidate_digest)
+    creator = proposal.admission.actor_id
+    remaining = _approvals_remaining(
+        approvals,
+        candidate,
+        creator=creator,
+        principals=principals,
+        principal_lifecycle=all(
+            member.artifact_kind == "principal-lifecycle" for member in candidate.members
+        ),
+    )
+    if not remaining:
+        return
+    signed = {submission.attestation.signer_id for submission in approvals}
+    eligible = tuple(
+        sorted(
+            principal.principal_id
+            for principal in principals.principals
+            if principal.status == "active"
+            and principal.kind == "ordinary"
+            and principal.principal_id != creator
+            and principal.principal_id not in signed
+        )
+    )
+    raise ApprovalRequirementUnmet(
+        proposal.admission.proposal_id, remaining=remaining, eligible_signers=eligible
+    )
+
+
 def _approval_receipt(
     proposal_id: str,
     candidate: CandidateRecord,
@@ -735,7 +781,11 @@ def _activate_candidate(
     if evaluation_at_entry.evaluated_base_oid != instance.accepted_coordinate().git_oid:
         if _recompiled:
             raise ProposalStale(proposal_id, reason="head_moved")
-        proposal, _candidate = _candidate_for_proposal(instance, proposal_id)
+        proposal, candidate = _candidate_for_proposal(instance, proposal_id)
+        if mandate_digest is None and not _delegated(proposal):
+            # Landing it at the head would withdraw it and readmit it: activation
+            # changes nothing about a proposal that may not settle yet.
+            _refuse_unmet_approval(instance, proposal, candidate)
         recompiled = _recompile_for_review(instance, proposal)
         if recompiled is None:
             from cruxible_core.service.proposals.staleness import (
@@ -814,6 +864,9 @@ def _activate_candidate(
                 "delegated settle mandate expired, was suspended, or was superseded "
                 "before publication"
             )
+    if mandate_digest is None:
+        # Settlement refuses this too; refusing first names who may approve.
+        _refuse_unmet_approval(instance, proposal, candidate)
     approvals = (
         ()
         if mandate_digest is not None

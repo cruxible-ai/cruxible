@@ -20,7 +20,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.errors import ProposalStale
+from cruxible_client.contracts.errors import ApprovalRequirementUnmet, ProposalStale
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.subjects import (
     parse_subject,
@@ -31,7 +31,10 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import service_submit_playbill_approval
+from cruxible_core.service.authoring.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
 from cruxible_core.service.proposals.proposals import (
     _proposal_result,
     service_list_playbill_proposals,
@@ -277,3 +280,46 @@ def test_the_overlap_check_does_keyed_lookups_that_do_not_grow_with_the_instance
         assert _entry(instance, source_id).status == "open"
         measured.append(sum(looked_up))
     assert measured[0] == measured[1] > 0
+
+
+def test_activating_an_unapproved_moved_proposal_refuses_and_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """gapa-04: activation used to land an unapproved proposal whose base moved at the
+    head, withdrawing it; it refuses with the unmet requirement and who may approve."""
+
+    instance, reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "unapproved"))
+    _accept_write(instance, reviewer, _set(f"{KIND}/wi-2", "title", "moves the head"))
+    head = instance.accepted_coordinate()
+
+    for _ in range(2):  # refused again, exactly the same way
+        with pytest.raises(ApprovalRequirementUnmet) as refused:
+            service_activate_playbill_proposal(
+                instance, proposal_id=source_id, activated_by="owner"
+            )
+        assert refused.value.error_code == "cruxible.approval.requirement_unsatisfied"
+        assert (refused.value.remaining, refused.value.eligible_signers) == (1, ("reviewer",))
+        assert refused.value.repair.operation == "cruxible.proposal.approve"
+        assert refused.value.repair.arguments == {"proposal_id": source_id}
+        assert "nothing was changed" in str(refused.value)
+
+    assert instance.accepted_coordinate() == head
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None
+    assert _entry(instance, source_id).status == "open"
+    # Approval still lands it at the head as before.
+    landed = _approve(instance, reviewer, source_id)
+    assert isinstance(landed, ProposalRecompiled) and landed.status == "pending_review"
+
+
+def test_activating_an_unapproved_proposal_on_the_head_names_the_approve_repair(
+    tmp_path: Path,
+) -> None:
+    instance, _reviewer = _world(tmp_path)
+    source_id = _pending(instance, _set(f"{KIND}/wi-1", "title", "on the head"))
+
+    with pytest.raises(ApprovalRequirementUnmet) as refused:
+        service_activate_playbill_proposal(instance, proposal_id=source_id, activated_by="owner")
+
+    assert refused.value.repair.operation == "cruxible.proposal.approve"
+    assert _entry(instance, source_id).status == "open"

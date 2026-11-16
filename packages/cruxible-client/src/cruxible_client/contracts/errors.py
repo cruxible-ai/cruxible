@@ -594,6 +594,37 @@ class ApprovalIntegrityError(CruxibleError):
     """An approval statement, signer, signature, or required quorum was refused."""
 
 
+class ApprovalRequirementUnmet(ApprovalIntegrityError):
+    """Activation refused: the candidate's approval requirement is not met yet.
+
+    Activation never changes a proposal that may not settle: it refuses before
+    anything is landed, readmitted or withdrawn, and names who may approve.
+    """
+
+    error_code = "cruxible.approval.requirement_unsatisfied"
+
+    def __init__(
+        self, proposal_id: str, *, remaining: int, eligible_signers: tuple[str, ...]
+    ) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.remaining = remaining
+        self.eligible_signers = eligible_signers
+        self.repair = RepairOperation(
+            operation="cruxible.proposal.approve", arguments={"proposal_id": proposal_id}
+        )
+        who = ", ".join(eligible_signers) if eligible_signers else "none registered yet"
+        plural = "s" if remaining != 1 else ""
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} needs {remaining} more approval{plural} "
+            "before it can be activated (independent_approval_required mode needs an active "
+            "ordinary approver other than the candidate creator); nothing was changed. "
+            f"Eligible signers: {who}. Next: `cruxible proposal approve {proposal_id} "
+            "--signer-id ID --key FILE`; the approval that completes it activates it"
+        )
+
+
 class PrincipalIntegrityError(CruxibleError):
     """A principal registry or historical key transition failed replay."""
 
@@ -770,6 +801,7 @@ class ProjectionIntegrityError(ProjectionError):
 __all__ = [
     "CanonicalEncodingError",
     "ApprovalIntegrityError",
+    "ApprovalRequirementUnmet",
     "ClaimNotFoundError",
     "DocumentFormatError",
     "DocumentNotFoundError",
