@@ -48,7 +48,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -98,7 +98,9 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 16  # Rows' repairs name their because operand and quoted placeholders
+#: 17: a current Claim's facts end at its freshness expiry less next's lead, and
+#: a content observation derives only the Claims it changes (built at 16: rebuild).
+FORMAT = 17  # Rows' repairs name their because operand and quoted placeholders
 #: (<TEXT>, <CLAIM_ID>), and a due dispatch names its Line. A state built at 15 stores
 #: rows with the old commands and ids, so it must rebuild once. (15: subject-end entries
 #: per (end, pair) key; live key-object index.)
@@ -617,6 +619,17 @@ def _claim_facts(
         raise raised[0]
     reads.update(_read_key(read) for read in recording.keys())
     if verdict is not None and verdict.freshness_expirations:
+        # A current Claim is not derived again on each observation of its
+        # content: its facts hold until its expiry nears next's lead, when it
+        # is derived again and reads every observation recorded by then.
+        from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
+
+        lead = timedelta(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS)
+        boundaries.update(
+            item.expires_at - lead
+            for item in verdict.freshness_expirations
+            if item.expires_at - lead > at
+        )
         # A verdict that read freshness reads every observation of the content
         # it cites (ruling 1a): one recorded for any Capture of that content
         # re-derives this Claim. A Claim whose verdict ignores freshness is
@@ -1272,8 +1285,23 @@ def _touched(
             cursors.reobs, through=heads.reobs
         )
         claims.update(f"Claim:{claim_id}" for claim_id in lineages)
-        # Keyed by content: only the Claims whose freshness read the content.
-        keys.update(f"observed:{contract}|{content}" for contract, content in observed)
+        # Keyed by content, and only where the observation changes a stored
+        # fact: a Claim whose freshness read the content and whose stored
+        # verdict is not currently supported-and-current. A current Claim's
+        # stored facts still hold (its verdict only lasts longer); it is
+        # derived again when its stored expiry nears (its facts' upper bound
+        # includes the expiry less next's lead), reading the observation then.
+        # One write per stale period, never one per observation.
+        claims.update(
+            str(row[0])
+            for row in _rows(
+                connection,
+                "SELECT r.claim_id FROM fact_reads r JOIN claim_facts f "
+                "ON f.claim_id=r.claim_id WHERE r.read_key IN ({marks}) "
+                "AND (f.verdict IS NOT 'supported' OR f.currency IS NOT 'current')",
+                tuple(sorted(f"observed:{contract}|{content}" for contract, content in observed)),
+            )
+        )
     fired_at: datetime | None = None
     if heads.expire != cursors.expire:
         after = cursors.expire
