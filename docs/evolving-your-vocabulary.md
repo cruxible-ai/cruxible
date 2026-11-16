@@ -524,8 +524,9 @@ the move in one write: each ruling becomes a section with an `id`, a one-line
 `dry_run=True`, then write it:
 
 ~~~python
-from cruxible_client import SlotRef
+from cruxible_client import Cruxible, SlotRef
 
+cx = Cruxible.connect()
 batch = cx.changes(
     because="Move decision rulings into the decisions page; keep a one-line summary that cites each.",
     subject="catalog.decision/ceramic-pads-default",

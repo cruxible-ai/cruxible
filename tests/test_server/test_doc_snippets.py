@@ -235,6 +235,7 @@ def car_parts_fields(*, category: tuple[str, ...]) -> list[dict[str, object]]:
         _field("catalog.vehicle.year", schema={"type": "integer"}),
         _slug("catalog.decision"),
         _field("catalog.decision.summary"),
+        _field("catalog.decision.decided_on", schema={"type": "string", "format": "date"}),
         _field("catalog.decision.status", schema=_enum("proposed", "accepted", "superseded")),
         _field("catalog.decision.governs", many=True, objects=("catalog.part", "catalog.vehicle")),
         _field("catalog.decision.amends", many=True, objects=("catalog.decision",)),

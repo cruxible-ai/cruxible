@@ -333,7 +333,7 @@ To send several Subjects' changes as one change set, build them instead:
 collects changes to an accepted one; nothing is sent until `w.write(...)`:
 
 ~~~python
-rotor = w.catalog.part.define("rt-500", title="Front brake rotor", category="brake-rotors")
+rotor = w.catalog.part.define("rt-500", title="Front brake rotor", category="brakes")
 w.write(rotor, part.edit().add(replaces=rotor), because="New rotor line from Acme's 2026 list.")
 ~~~
 
