@@ -14,6 +14,7 @@ from typing_extensions import TypeAliasType
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.links import GuidanceLinkOutcome
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import (
     BlockDetachResult,
@@ -1532,6 +1533,61 @@ def register_tools(
             docs=docs or [],
             because=because,
             subject=subject,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+        )
+
+    @_tool
+    def cruxible_link(
+        instance_id: InstanceId = None,
+        *,
+        source: Annotated[
+            str,
+            Field(
+                description=(
+                    "FILE#Heading/Path with about (a section's note); FILE with guides "
+                    "(a registered page). FILE is a path or a catalog name."
+                )
+            ),
+        ],
+        about: Annotated[
+            list[str] | SkipJsonSchema[None],
+            Field(description="Subjects (kind/id) the section is about."),
+        ] = None,
+        guides: Annotated[
+            list[str] | SkipJsonSchema[None],
+            Field(description="ClaimType:NAME or Procedure:NAME the page is review guidance of."),
+        ] = None,
+        unlink: Annotated[bool, Field(description="Remove the named links.")] = False,
+        because: Annotated[
+            str | SkipJsonSchema[None], Field(description="With about: why the note is linked.")
+        ] = None,
+        proposal_name: Annotated[
+            str | SkipJsonSchema[None],
+            Field(description="With guides: the Document proposal's name."),
+        ] = None,
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | SkipJsonSchema[None],
+            Field(description="The coordinate you read at; default: head."),
+        ] = None,
+    ) -> WriteOutcome | GuidanceLinkOutcome:
+        """Link a section about Subjects (a note), or a registered page as guidance."""
+        return handlers.handle_playbill_link(
+            require_instance_id(instance_id),
+            source=source,
+            about=about or (),
+            guides=guides or (),
+            unlink=unlink,
+            because=because,
+            proposal_name=proposal_name,
             dry_run=dry_run,
             accept=accept,
             at=at,

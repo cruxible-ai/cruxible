@@ -360,8 +360,7 @@ def _write_workspace(
             raise DocSectionError(
                 "file_uncatalogued",
                 "Catalogue the file before linking its existing sections.",
-                repair="Cite it as evidence in a write first: a cited workspace file is "
-                "catalogued by the write",
+                repair=f"Catalogue it first: cruxible files add {shlex.quote(file)}",
             )
         source_id = entry.name if entry else name or default_catalog_name(workspace, path)
         if entry is None and catalog is not None:

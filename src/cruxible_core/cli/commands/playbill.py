@@ -6477,6 +6477,171 @@ def note(
     )
 
 
+@playbill_group.command("link")
+@click.argument("source", metavar="FILE[#Heading/Path]")
+@click.option(
+    "--about",
+    "subjects",
+    multiple=True,
+    help="With FILE#Heading/Path: a Subject (kind/id) the section is about; repeat for more.",
+)
+@click.option(
+    "--guides",
+    "guides",
+    multiple=True,
+    help="With a registered FILE: ClaimType:NAME or Procedure:NAME it guides; repeat for more.",
+)
+@click.option("--unlink", is_flag=True, help="Remove the named links instead of adding them.")
+@click.option("--because", default=None, help="With --about: why the note is linked.")
+@click.option(
+    "--name",
+    "proposal_name",
+    default=None,
+    help="With --guides: the Document proposal's name (default: link-<file>).",
+)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose file catalog FILE is read through.",
+)
+@_write_options
+@handle_errors
+def link(
+    source: str,
+    subjects: tuple[str, ...],
+    guides: tuple[str, ...],
+    unlink: bool,
+    because: str | None,
+    proposal_name: str | None,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Link a section about Subjects (a note), or a registered page as guidance.
+
+    FILE#Heading/Path --about kind/id links that section about Subjects: a
+    note on what the text says, in the value lane under the same governance as
+    write; backlinks on the Subject list it. FILE --guides ClaimType:NAME (or
+    Procedure:NAME) links the whole registered page to a definition as its
+    review guidance: the link is recorded on the file's entry in files.yaml
+    and the Document's next revision is proposed from the file's bytes plus
+    its links (later files propose keeps them); proposal review shows it.
+    FILE is a path or a catalog name. --unlink removes the named links.
+    """
+
+    from cruxible_client.authoring.links import (
+        LINK_ONE_LANE,
+        about_link_request,
+        link_guides,
+    )
+    from cruxible_client.contracts.errors import WriteRefusalError
+    from cruxible_core.cli.commands._common import _echo_refusal
+
+    accept: Literal["if_allowed", "never"] = "never" if no_accept else "if_allowed"
+    try:
+        if bool(subjects) == bool(guides):
+            raise WriteRefusalError(
+                LINK_ONE_LANE,
+                "link takes --about (a section's note) or --guides (a page's guidance), "
+                + ("not both" if subjects else "and got neither"),
+                repair_line=(
+                    'cruxible link FILE#Heading --about kind/id --because "..."; or '
+                    "cruxible link FILE --guides ClaimType:NAME"
+                ),
+            )
+        if subjects:
+            if because is None:
+                raise click.UsageError("--about records a note: give it --because")
+            if proposal_name is not None:
+                raise click.UsageError("--name names a --guides proposal; --about is a write")
+            request = about_link_request(
+                source,
+                subjects=subjects,
+                unlink=unlink,
+                because=because,
+                dry_run=dry_run,
+                accept=accept,
+                at=at_oid,
+            )
+        elif because is not None:
+            raise click.UsageError(
+                "--because goes with --about; a --guides link is a Document proposal "
+                "(name it with --name)"
+            )
+    except WriteRefusalError as exc:
+        if output_json:
+            raise
+        _echo_refusal(
+            "not submitted", code=exc.error_code, message=exc.detail, repair=exc.repair_line
+        )
+        raise SystemExit(1) from None
+    if subjects:
+        _workspace_write(
+            request,
+            workspace_root=workspace_root,
+            send=lambda observed: _server_call(
+                lambda client, instance_id: client.write(instance_id, request=observed),
+                command_name="cruxible link",
+            ),
+            output_json=output_json,
+        )
+        return
+
+    def call(client: CruxibleClient, instance_id: str) -> Any:
+        return link_guides(
+            client,
+            instance_id,
+            workspace=Path(workspace_root),
+            source=source,
+            guides=guides,
+            unlink=unlink,
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            accept=accept,
+            at=at_oid,
+        )
+
+    try:
+        outcome = _server_call(call, command_name="cruxible link")
+    except WriteRefusalError as exc:
+        if output_json:
+            raise
+        _echo_refusal(
+            "not submitted", code=exc.error_code, message=exc.detail, repair=exc.repair_line
+        )
+        raise SystemExit(1) from None
+    refused = not outcome.catalog_written and not outcome.proposal.status.startswith("would_")
+    if output_json:
+        _emit_json(outcome.model_dump(mode="json"))
+        if refused:
+            raise SystemExit(1)
+        return
+    result = outcome.proposal
+    targets = ", ".join(item.target_identity for item in outcome.links if item.relation == "guides")
+    click.echo(f"{outcome.file}: guides {targets or 'nothing'} ({result.status})")
+    if outcome.declared_document:
+        click.echo(f"Declared Document {outcome.document_id} on its catalog entry")
+    admission = result.proposal.get("admission")
+    proposal_id = admission.get("proposal_id") if isinstance(admission, dict) else None
+    if proposal_id:
+        click.echo(f"Proposal: {proposal_id}")
+    _echo_landing(result.outcome)
+    if outcome.catalog_written:
+        click.echo("Recorded in files.yaml; files propose keeps these links")
+    elif result.status.startswith("would_"):
+        click.echo(
+            f"Preview at {result.accepted_coordinate.git_oid}; nothing was written. "
+            f"Commit it: rerun without --dry-run, with --at {result.accepted_coordinate.git_oid}"
+        )
+    elif refused:
+        click.echo("The proposal was refused; files.yaml is unchanged")
+        raise SystemExit(1)
+
+
 @playbill_group.command("backlinks")
 @click.argument("ref", required=False)
 @click.option(

@@ -21,6 +21,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
+    DocumentLink,
     DocumentShell,
     document_digest,
     document_path,
@@ -87,7 +88,9 @@ class FileCatalogEntry(_StrictCatalogModel):
     Document fields (``document_id``, ``document_kind``, ``title``,
     ``media_type``, ``governance_scope``) come together or not at all: an entry
     with them can be compiled and proposed as a governed Document, one without
-    them is evidence-only.
+    them is evidence-only. ``links`` (a Document's only) are the links each
+    compiled revision carries, e.g. ``guides`` a ClaimType or Procedure, as
+    ``cruxible link FILE --guides`` records them.
     """
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -101,6 +104,8 @@ class FileCatalogEntry(_StrictCatalogModel):
     governance_scope: tuple[str, ...] | None = None
     public_uri: str | None = None
     root_alias: str | None = None
+    # Omitted when empty, so a catalog without links digests as it always did.
+    links: tuple[DocumentLink, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @property
     def is_document(self) -> bool:
@@ -127,7 +132,23 @@ class FileCatalogEntry(_StrictCatalogModel):
             )
         if not self.is_document and self.public_uri is not None:
             raise ValueError(f"evidence-only file {self.name!r} cannot declare a public_uri")
+        if not self.is_document and self.links:
+            raise ValueError(
+                f"evidence-only file {self.name!r} cannot declare links: links are carried "
+                "by the Document the file compiles to"
+            )
         return self
+
+    @field_validator("links")
+    @classmethod
+    def _links(cls, value: tuple[DocumentLink, ...]) -> tuple[DocumentLink, ...]:
+        def key(item: DocumentLink) -> tuple[bytes, bytes]:
+            return item.relation.encode("utf-8"), item.target_identity.encode("utf-8")
+
+        if len({key(item) for item in value}) != len(value):
+            raise ValueError("file catalog links must be unique")
+        # Sorted as a Document's links are, whatever order the catalog lists them in.
+        return tuple(sorted(value, key=key))
 
     @model_validator(mode="after")
     def _locator_shape(self) -> FileCatalogEntry:
@@ -431,6 +452,7 @@ def compile_file_catalog(
             title=entry.title,
             media_type=entry.media_type,
             body_digest=body_digest,
+            links=entry.links,
             authority=DocumentAuthority(
                 required_tier=entry.required_tier,
             ),

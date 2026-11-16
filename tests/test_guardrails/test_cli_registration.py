@@ -142,8 +142,8 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # Multi-build adds provider move and provider retire; measurement review adds procedure dispose.
     # First-run adds rebind; Capture erasure adds capture erase; `console` adds one;
     # the vocabulary file adds `vocabulary export|plan|apply`.
-    assert len(leaf_claims) == 120, (
-        f"expected 120 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 121, (
+        f"expected 121 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

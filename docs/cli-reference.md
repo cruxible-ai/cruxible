@@ -4048,9 +4048,13 @@ changes:
     evidence: {kind: section, ref: basis}
 ```
 
-A change may cite any workspace file by its path
-(`suppliers/acme-2026.md#bp-1142: Front brake pads`, file or section
-evidence, in `write`, or `set` and `add` with `--evidence-file`). A file the
+A change may cite any workspace file by its path or by its catalog name
+(`suppliers/acme-2026.md#bp-1142: Front brake pads`, or `acme.quotes#bp-1142:
+Front brake pads` once the file is catalogued as `acme.quotes`; file or
+section evidence, in `write`, or `set` and `add` with `--evidence-file`). The
+same rule holds everywhere a file is named: `rebind --file/--section`,
+`claim attest --evidence-file/--section`, `note`, `link` and `cx.file`. A path
+that exists wins; otherwise a catalog name maps to the file it locates. A file the
 catalog does not name yet is catalogued once the write is admitted, as `files
 add` would, and the outcome lists it (`catalogued`). The catalog keeps a
 derived name for it (`doc-` and its path), a stable handle mapped to the
@@ -4223,10 +4227,14 @@ up front, a proposal, then review and activation. ClaimTypes keep their own
 `claim-type` group, because changing vocabulary disposes the Claims that
 depend on it.
 
-## note and backlinks
+## note, link and backlinks
 
 ~~~text
 cruxible note FILE --text TEXT [--under Heading/Path] --about KIND/ID [--about ...] --because WHY
+cruxible link FILE#Heading/Path --about KIND/ID [--about ...] --because WHY [--unlink]
+  [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible link FILE --guides ClaimType:NAME|Procedure:NAME [--guides ...] [--unlink]
+  [--name NAME] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible backlinks [REF | --section FILE#Heading/Path] [--limit N] [--cursor C] [--at OID] [--json]
 ~~~
 
@@ -4239,6 +4247,33 @@ the same link is an about change: `{"op": "about", "file", "section",
 "subjects", "unlink"}` (or `"ref"`, a doc op's `id`); linking a section again
 moves its note to the section's current bytes, and unlinking every Subject
 retires it.
+
+`cruxible link` adds or removes a link without editing the file. FILE is a
+path or a catalog name. There are two links, in two lanes:
+
+- `link FILE#Heading/Path --about KIND/ID --because WHY` links an existing
+  *section* about Subjects: a note saying what that text is about. It is the
+  about change above, as one `write` under the same governance; `backlinks`
+  on the Subject lists it. The file must be catalogued (`files add`).
+- `link FILE --guides ClaimType:NAME` (or `Procedure:NAME`) links a *whole
+  registered page* to a definition as its review guidance. The link is
+  recorded on the file's entry in `files.yaml` (`links`), and the Document's
+  next revision is proposed from the file's current bytes plus its links,
+  exactly as `files propose` proposes it; every later `files propose` keeps
+  the links. `proposal review` and `backlinks ClaimType:NAME` show it. A page
+  catalogued without a Document (one a write catalogued, `doc-<path>`)
+  declares its Document in place under that name (kind `guidance`, title from
+  its first heading, scope `guidance`), so the file still compiles to one
+  Document. `files.yaml` is written only once the proposal stands (landed or
+  awaiting approval): a dry run or a refused proposal leaves it unchanged.
+
+`--unlink` removes the named links. Arguments that mix the two refuse before
+anything is sent, each saying which link is which: a Subject given to
+`--guides` (`cruxible.link.guides_needs_definition`), a ClaimType or Procedure
+given to `--about` (`cruxible.link.about_needs_subject`), a whole file given
+to `--about` (`cruxible.link.about_needs_section`), a section given to
+`--guides` (`cruxible.link.guides_needs_page`), and a file the catalog does not
+name given to `--guides` (`cruxible.link.file_unregistered`, repair `files add`).
 
 `cruxible backlinks REF` lists what points into a Subject (the notes and
 Documents `about` it, then the workspace sections its live Claims cite) or into
@@ -5304,7 +5339,9 @@ another. An entry needs only `name` and `locator` to be cited as evidence
 catalogues it once the write is admitted (see [write](#set-add-retire-rebind-and-write)).
 Adding `document_id`, `document_kind`, `title`, `media_type` and
 `governance_scope` (all five together) makes it a Document that compiles and
-can be proposed.
+can be proposed. A Document entry's `links` (`{relation, target_identity}`,
+for example `guides` a ClaimType) are carried by every revision it compiles
+to; `cruxible link FILE --guides ClaimType:NAME` records them.
 
 `files add [NAME] PATH` writes that entry so nobody hand-writes the YAML: PATH
 (relative to the current directory) must be a file inside the workspace, and

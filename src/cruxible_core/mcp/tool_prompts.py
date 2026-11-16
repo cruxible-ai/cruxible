@@ -225,6 +225,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "(heading lists; [] preamble); cite it as kind=section evidence or by doc id. Docs "
         "are written after admission."
     ),
+    "cruxible_link": (
+        "Use to link an existing section about Subjects (source FILE#Heading, about, "
+        "because: a note, a write) or a whole registered page as a ClaimType's or "
+        "Procedure's review guidance (source FILE, guides: recorded in the file catalog "
+        "and proposed as the Document's next revision)."
+    ),
     "cruxible_backlinks": (
         "Use to find what points into one thing: ref a Subject (kind/id) for the notes "
         "about it and the workspace sections its Claims cite; a ClaimType or Procedure for "
