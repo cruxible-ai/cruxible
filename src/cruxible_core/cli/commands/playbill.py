@@ -7952,7 +7952,7 @@ def _proposed_children_lines(
 def _restated_count(result: contracts.ProcedureRunState, egress: Any) -> int:
     """How many of a claims terminal's items restated accepted state: its summary's count."""
 
-    for node in result.nodes:
+    for node in getattr(result, "nodes", ()):
         summary = getattr(node, "summary", None)
         if node.node == egress.node_id and getattr(summary, "kind", None) == "claims":
             return int(
