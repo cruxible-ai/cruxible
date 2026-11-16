@@ -479,9 +479,15 @@ class JournalProducerReceiptResolver:
             if record.event_kind not in _PROOF_EVENT_KINDS:
                 continue
             self._current_run = record.run_id or ""
+            #: Every body this record's answer is derived from: its payload, and
+            #: a derived Source request's run-free request body it cites.
+            used = [record.payload_digest]
             try:
                 payload = read_payload(self._bodies, record.payload_digest, access=self._access)
                 if record.event_kind == "source_request_derived":
+                    cited = payload.get("request_body_digest") if isinstance(payload, dict) else None
+                    if isinstance(cited, str):
+                        used.append(cited)
                     payload = join_derived_source_request_read(
                         payload, self._bodies, access=self._access
                     )
@@ -502,7 +508,7 @@ class JournalProducerReceiptResolver:
                 )
                 continue
             # What this run's answers rest on: re-checked before any is reused.
-            self._run_bodies.setdefault(self._current_run, set()).add(record.payload_digest)
+            self._run_bodies.setdefault(self._current_run, set()).update(used)
             candidate_digest = self._candidate_digest(record.event_kind, payload)
             if record.event_kind == "produced_capture":
                 self._produced(stored, payload)
