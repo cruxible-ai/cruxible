@@ -334,6 +334,14 @@ def effective_text(start: datetime | None, end: datetime | None) -> str:
     return "effective " + "..".join("" if at is None else at.isoformat() for at in (start, end))
 
 
+def _by(item: Any) -> str:
+    """Who accepted a revision: ``by owner``, then ``, approved by alice`` when anyone signed."""
+
+    approvers = [name for name in getattr(item, "approved_by", ()) if name]
+    shown = f"by {item.actor or '-'}"
+    return shown + (f", approved by {', '.join(approvers)}" if approvers else "")
+
+
 def history_lines(history: Any) -> list[str]:
     """Revisions newest first; a Subject's field events grouped by field, each its timeline."""
 
@@ -346,7 +354,7 @@ def history_lines(history: Any) -> list[str]:
         period = effective_text(revision.effective_from, revision.effective_until)
         lines.append(
             f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
-            f"{revision.accepted}  by {revision.actor or '-'}{change}{value}"
+            f"{revision.accepted}  {_by(revision)}{change}{value}"
             + (f"  {period}" if period else "")
         )
         if revision.reason is not None:
@@ -388,7 +396,7 @@ def history_lines(history: Any) -> list[str]:
                     what += "  (contends with a live value)"
             lines.append(
                 f"  seq {event.sequence}  {event.git_oid}  {event.accepted}  "
-                f"by {event.actor or '-'}  {what}  [{event.claim}]"
+                f"{_by(event)}  {what}  [{event.claim}]"
             )
             if event.reason is not None:
                 lines.append(f"      reason: {reason_text(event.reason)}")

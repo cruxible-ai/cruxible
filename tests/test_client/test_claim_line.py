@@ -74,3 +74,40 @@ def test_a_rebound_field_event_is_its_own_history_change() -> None:
 
     assert history.events[0] == event
     assert event.model_dump(mode="json")["change"] == "rebound"
+
+
+def test_history_names_who_approved_beside_who_accepted() -> None:
+    """Ruling 11: a revision and a field event print `by owner, approved by alice`."""
+
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.get_reads import GetFieldStated, GetHistory, GetRevision
+    from cruxible_client.contracts.get_text import history_lines
+
+    common = {"sequence": 4, "git_oid": "4" * 12, "accepted": "2026-10-21T00:00:00Z"}
+    revisions = GetHistory(
+        revisions=(
+            GetRevision(
+                revision=2, digest="d" * 12, actor="owner", approved_by=("alice", "bob"), **common
+            ),
+            GetRevision(revision=1, digest="e" * 12, actor="owner", **common),
+        )
+    )
+    lines = history_lines(revisions)
+    assert "  by owner, approved by alice, bob" in lines[0]
+    assert "by owner" in lines[1] and "approved by" not in lines[1]
+
+    event = GetFieldStated(
+        field="price",
+        predicate="acme.price",
+        claim=CLAIM,
+        actor="owner",
+        approved_by=("alice",),
+        value=42,
+        **common,
+    )
+    history = TypeAdapter(GetHistoryAny).validate_python(
+        {"kind": "subject", "revisions": [], "events": [event.model_dump(mode="json")]}
+    )
+    (field_line,) = [line for line in history_lines(history) if line.startswith("  seq")]
+    assert "by owner, approved by alice  stated  42" in field_line
