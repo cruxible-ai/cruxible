@@ -718,3 +718,63 @@ def test_a_cadence_gap_is_counted_without_walking_its_grid() -> None:
         3,
     )
     assert timer_gap(every_minute, accepted_at=NOW, after=NOW, through=NOW) is None
+
+
+@pytest.mark.parametrize("ran", [False, True])
+def test_missed_instants_accumulate_until_the_target_runs(tmp_path: Path, ran: bool) -> None:
+    """A second outage before the target runs adds to the first: the earliest
+    instant, the latest instant and the summed count; once it ran, it replaces."""
+
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    asked: list[tuple[str, datetime]] = []
+
+    def target_ran_since(key: str, at: datetime) -> bool:
+        asked.append((key, at))
+        return ran
+
+    def restart(at: datetime) -> None:
+        evaluate_triggers(
+            world,
+            now=at,
+            listening_since=at,
+            triggers=(NIGHTLY,),
+            target_ran_since=target_ran_since,
+        )
+
+    evaluate_triggers(world, now=NOW + timedelta(hours=3), listening_since=NOW, triggers=(NIGHTLY,))
+    first = NOW + timedelta(days=2, hours=3)  # missed day 1 and day 2 at 02:00
+    restart(first)
+    restart(NOW + timedelta(days=4, hours=3))  # missed day 3 and day 4
+    (row,) = missed_trigger_instants(world)
+    assert asked == [("runbook:maintain", first)]
+    assert row.last_due == NOW + timedelta(days=4, hours=2)
+    assert row.restarted_at == NOW + timedelta(days=4, hours=3)
+    if ran:
+        assert (row.first_due, row.count) == (NOW + timedelta(days=3, hours=2), 2)
+    else:
+        assert (row.first_due, row.count) == (NOW + timedelta(days=1, hours=2), 4)
+
+
+def test_an_actions_missed_instants_reconcile_on_its_own_fires(tmp_path: Path) -> None:
+    from cruxible_core.triggers.journal import missed_trigger_instants
+
+    world = instance(tmp_path)
+    daily = _cadence("Trigger:sweep-daily", "evidence.sweep", timedelta(days=1))
+    fire(world, NOW + timedelta(days=1), triggers=(daily,))
+    fire(
+        world,
+        NOW + timedelta(days=3, hours=1),
+        triggers=(daily,),
+        since=NOW + timedelta(days=3, hours=1),
+    )
+    # Down again before the action fired: the count adds up.
+    again = NOW + timedelta(days=5, hours=1)
+    fire(world, again, triggers=(daily,), since=again)
+    (row,) = missed_trigger_instants(world)
+    assert (row.first_due, row.last_due, row.count) == (
+        NOW + timedelta(days=2),
+        NOW + timedelta(days=5),
+        4,
+    )

@@ -71,8 +71,8 @@ CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
 """
 _VERSION = 7
 # Each authored timer's instants that fell due while no daemon ran, as the first
-# evaluation after the latest restart that skipped any found them: retained
-# beside the fires, replaced by the next such restart, never rebuilt.
+# evaluations after restarts found them: accumulated across restarts until the
+# timer's target runs, retained beside the fires, never rebuilt.
 _MISSED_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS missed (trigger_id TEXT PRIMARY KEY, action TEXT NOT NULL, "
     "restarted_at TEXT NOT NULL, first_due TEXT NOT NULL, last_due TEXT NOT NULL, "
@@ -630,6 +630,53 @@ def _missed(
     return found
 
 
+def _record_missed(
+    connection: sqlite3.Connection,
+    missed: Sequence[MissedInstants],
+    *,
+    target_ran_since: Callable[[str, datetime], bool] | None,
+) -> None:
+    """Record a restart's skipped instants, accumulating while the target has not run.
+
+    A timer's earlier record is unreconciled until its target runs after that
+    restart: a fire of the action (read here, one index seek), or a run of the
+    Runbook (``target_ran_since``; without it a Runbook's record accumulates).
+    An unreconciled record keeps its earliest instant and adds the count; a
+    reconciled one is replaced. One read per timer that missed instants.
+    """
+
+    for item in missed:
+        row = connection.execute(
+            "SELECT restarted_at,first_due,count FROM missed WHERE trigger_id=?", (item.trigger,)
+        ).fetchone()
+        first, count = item.first_due, item.count
+        if row is not None:
+            previous = _instant(str(row[0]))
+            if item.action.startswith(RUNBOOK_FIRE_PREFIX):
+                ran = target_ran_since is not None and target_ran_since(item.action, previous)
+            else:
+                fired = connection.execute(
+                    "SELECT fired_at FROM events WHERE action=? ORDER BY sequence DESC LIMIT 1",
+                    (item.action,),
+                ).fetchone()
+                ran = fired is not None and _instant(str(fired[0])) >= previous
+            if not ran:
+                first, count = min(first, _instant(str(row[1]))), count + int(row[2])
+        connection.execute(
+            "INSERT INTO missed VALUES (?,?,?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET "
+            "action=excluded.action,restarted_at=excluded.restarted_at,"
+            "first_due=excluded.first_due,last_due=excluded.last_due,count=excluded.count",
+            (
+                item.trigger,
+                item.action,
+                format_datetime(item.restarted_at),
+                format_datetime(first),
+                format_datetime(item.last_due),
+                count,
+            ),
+        )
+
+
 def _coverage(connection: sqlite3.Connection | None) -> dict[str, str]:
     if connection is None:
         return {}
@@ -897,8 +944,13 @@ def evaluate_triggers(
     listening_since: datetime,
     triggers: Sequence[InternalTrigger] | None = None,
     listening_generation: int | None = None,
+    target_ran_since: Callable[[str, datetime], bool] | None = None,
 ) -> tuple[TriggerEvent, ...]:
     """Fire each timer instant and due deadline once.
+
+    ``target_ran_since(fire_key, instant)`` says whether a Runbook ran at or
+    after ``instant`` (its manual runs are not in this log); a timer's missed
+    instants accumulate across restarts until its target has run.
 
     ``listening_since`` is when this evaluator (the daemon's consumer runner)
     began firing: timer instants before it passed while nothing was listening
@@ -952,24 +1004,10 @@ def evaluate_triggers(
             generation_updates,
         )
         if unchecked:
-            # A restart's skipped instants replace the timer's earlier record.
-            connection.executemany(
-                "INSERT INTO missed VALUES (?,?,?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET "
-                "action=excluded.action,restarted_at=excluded.restarted_at,"
-                "first_due=excluded.first_due,last_due=excluded.last_due,count=excluded.count",
-                [
-                    (
-                        item.trigger,
-                        item.action,
-                        format_datetime(item.restarted_at),
-                        format_datetime(item.first_due),
-                        format_datetime(item.last_due),
-                        item.count,
-                    )
-                    for item in _missed(
-                        _coverage(connection), listening_since=listening_since, triggers=triggers
-                    )
-                ],
+            _record_missed(
+                connection,
+                _missed(_coverage(connection), listening_since=listening_since, triggers=triggers),
+                target_ran_since=target_ran_since,
             )
         for item in triggers:
             if isinstance(item.schedule, GenerationAcceptedSchedule):

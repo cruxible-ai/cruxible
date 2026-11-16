@@ -3249,8 +3249,9 @@ Trigger (`detail`: `since` and `until`, the first and last missed instant,
 `cruxible runbook run NAME` for a Runbook, `cruxible action run NAME` for an
 internal action, and for a Line the `line evaluate` of the range its restart
 left uncovered. A Runbook or action row stands until the target runs after the
-restart (by hand or on its next instant); a Line row until an evaluation covers
-the range. The Triggers creation seeds (the daemon's own housekeeping) are not
+restart (by hand or on its next instant), and another outage before then adds to
+it (the earliest `since`, the latest `until`, the summed `count`); a Line row
+stands until an evaluation covers the range. The Triggers creation seeds (the daemon's own housekeeping) are not
 reported, and nothing is ever caught up automatically. A Runbook's scheduled runs never overlap:
 instants that come due while its run is still going are folded into one run
 right after it, and nothing reports the folded instants.
