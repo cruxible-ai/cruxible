@@ -279,7 +279,14 @@ def append_section(
     if not inserted.sections or (
         content is not None and not identical_document and inserted.sections[0].start != 0
     ):
-        raise DocSectionError("section_invalid", "Append text must start with a heading.")
+        raise DocSectionError(
+            "section_invalid",
+            "Append text must start with a heading.",
+            repair=(
+                "Start TEXT with a Markdown heading line (for example ## Title), or give "
+                'note the heading on its own (--heading TITLE, heading="TITLE")'
+            ),
+        )
     if content is None and under:
         raise DocSectionError(
             "section_not_found",

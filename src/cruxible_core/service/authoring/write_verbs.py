@@ -363,6 +363,29 @@ def _option(surface: ReadSurface, name: str, value: object = True) -> str:
     return f"{name}: {json.dumps(value)}"
 
 
+def _render_rebind_citation(surface: ReadSurface, claim_id: str, capture: str | None) -> str:
+    """One Claim's re-bind naming its citation (ID) onto ``capture``; ``because`` is TEXT."""
+
+    fresh = "CAP" if capture is None else capture
+    if surface == "cli":
+        return (
+            f"cruxible rebind {claim_id} --capture {shlex.quote(fresh)} --citation ID "
+            "--because TEXT"
+        )
+    if surface == "sdk":
+        return (
+            f'cx.rebind({json.dumps(claim_id)}, capture={json.dumps(fresh)}, citation="ID", '
+            'because="TEXT")'
+        )
+    change = {
+        "op": "rebind",
+        "target": claim_id,
+        "citation": "ID",
+        "evidence": {"kind": "capture", "capture": fresh},
+    }
+    return f'cruxible_write(changes=[{json.dumps(change)}], because="TEXT")'
+
+
 def _render_orient_kind(surface: ReadSurface, kind: str) -> str:
     if surface == "cli":
         return f"cruxible orient --kind {shlex.quote(kind)}"
@@ -3061,13 +3084,22 @@ class _Planner:
             if fresh is not None
             else f"of {file_source}"
         )
+        name_citation = (
+            # A re-bind expanded from from_capture names no citation of its own:
+            # this Claim is re-bound by its ID, naming the citation there.
+            "Re-bind this Claim by its ID, naming one of the listed citations: "
+            + _render_rebind_citation(self.request.surface, claim_id, fresh)
+            if replacing is not None
+            else "Name one of the listed citations with "
+            + _option(self.request.surface, "citation", "ID")
+        )
         if not named:
             raise _refuse(
                 "cruxible.write.citation_not_held",
                 f"{claim_id} holds no citation " + what,
                 change=index,
                 candidates=shown,
-                repair="Name one of the listed citations with citation (--citation)",
+                repair=name_citation,
                 field_path=f"{prefix}.citation",
             )
         if len(named) > 1:
@@ -3076,7 +3108,7 @@ class _Planner:
                 f"{claim_id} holds {len(named)} citations " + what,
                 change=index,
                 candidates=tuple(item.citation_id.partition(":")[2][:12] for item in named),
-                repair="Name one of the listed citations with citation (--citation)",
+                repair=name_citation,
                 field_path=f"{prefix}.citation",
             )
         (replaced,) = named
@@ -3107,7 +3139,10 @@ class _Planner:
                     f"{replaced.citation_id.partition(':')[2][:12]} is not a Capture citation "
                     "of evidence, so a Capture cannot replace it",
                     change=index,
-                    repair="Name the Claim's evidence citation with citation (--citation)",
+                    repair=(
+                        "Name the Claim's evidence citation with "
+                        + _option(self.request.surface, "citation", "ID")
+                    ),
                     field_path=f"{prefix}.citation",
                 )
             source = ExistingCaptureCitationSource(capture_digest=fresh)

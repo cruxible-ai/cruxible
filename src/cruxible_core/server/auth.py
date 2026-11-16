@@ -180,14 +180,33 @@ def set_current_operation_id(operation_id: str) -> None:
         request.state.operation_id = operation_id
 
 
-def _unauthorized_response(message: str = "Unauthorized") -> JSONResponse:
+def _unauthorized_response(
+    message: str = "Unauthorized",
+    *,
+    error_code: str | None = None,
+    repair: RepairOperation | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=401,
         content=ErrorResponse(
             error_type="AuthenticationError",
             message=message,
+            error_code=error_code,
+            repair=repair,
         ).model_dump(mode="json"),
     )
+
+
+#: A bearer token no active credential of this daemon matches: revoked, rotated
+#: away, or never minted here. The daemon cannot tell which, and says so.
+CREDENTIAL_UNRECOGNIZED_CODE = "cruxible.auth.credential_unrecognized"
+CREDENTIAL_UNRECOGNIZED_MESSAGE = (
+    f"{CREDENTIAL_UNRECOGNIZED_CODE}: the bearer token is not an active credential of this "
+    "daemon (revoked, rotated, or minted for another daemon); repair: put an active one in "
+    "CRUXIBLE_SERVER_BEARER_TOKEN: its principal mints a fresh one (`cruxible credential "
+    "mint --principal-id ID --key-dir DIR --mode MODE`, or `credential rotate ID --key-dir "
+    "DIR` for one still active), or an operator uses the bootstrap secret"
+)
 
 
 def _identity_refusal_response(request: Request, refusal: PrincipalRefusedError) -> JSONResponse:
@@ -291,8 +310,14 @@ def _principal_claim_refusal(request: Request) -> PrincipalRefusedError | None:
     )
 
 
-def _unauthorized_request_response(request: Request, message: str = "Unauthorized") -> JSONResponse:
-    response = _unauthorized_response(message)
+def _unauthorized_request_response(
+    request: Request,
+    message: str = "Unauthorized",
+    *,
+    error_code: str | None = None,
+    repair: RepairOperation | None = None,
+) -> JSONResponse:
+    response = _unauthorized_response(message, error_code=error_code, repair=repair)
     log_runtime_request(
         request,
         status=response.status_code,
@@ -523,7 +548,19 @@ async def token_auth_middleware(
                     principal_id=runtime_credential.principal_id,
                 )
             else:
-                return _unauthorized_request_response(request)
+                return _unauthorized_request_response(
+                    request,
+                    CREDENTIAL_UNRECOGNIZED_MESSAGE,
+                    error_code=CREDENTIAL_UNRECOGNIZED_CODE,
+                    repair=RepairOperation(
+                        operation="credential.mint",
+                        arguments={
+                            "principal_id": "ID",
+                            "key_dir": "DIR",
+                            "permission_mode": "MODE",
+                        },
+                    ),
+                )
 
     if bearer_token is None and auth_enabled:
         return _unauthorized_request_response(request, MISSING_BEARER_CREDENTIAL_MESSAGE)

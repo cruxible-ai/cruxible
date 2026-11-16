@@ -2351,6 +2351,23 @@ def test_rebind_names_the_citation_when_none_of_that_file_is_held(
     )
     assert refusal.code == "cruxible.write.citation_not_held"
     assert len(refusal.candidates) == 1 and len(refusal.candidates[0]) == 12
+    assert refusal.repair == 'Name one of the listed citations with citation: "ID"'
+
+
+def test_selection_and_section_refusals_name_their_repair() -> None:
+    """gapb-24/25: a missing or repeated anchor, and a heading-less note, say what to do."""
+
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+    from cruxible_client.authoring.selectors import _unique_window
+    from cruxible_client.contracts.doc_sections import DocSectionError, append_section
+
+    with pytest.raises(SourceSelectionError, match="does not occur in the file; repair: copy"):
+        _unique_window(b"alpha\nbeta\n", "gamma")
+    with pytest.raises(SourceSelectionError, match="occurs 2 times .*repair: quote more"):
+        _unique_window(b"alpha\nalpha\n", "alpha")
+    with pytest.raises(DocSectionError) as heading:
+        append_section(b"# Notes\n", text="no heading here")
+    assert heading.value.repair is not None and "--heading TITLE" in heading.value.repair
 
 
 _TWO_FILES_CATALOG = """\

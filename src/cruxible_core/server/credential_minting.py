@@ -45,35 +45,61 @@ from cruxible_core.service.identity import principal_refusal
 from cruxible_core.storage.preview_fence import is_previewing
 
 
-def _mint_command(principal_id: str, permission_mode: str) -> str:
+def _signed_repair(
+    principal_id: str, permission_mode: str, rotating: str | None
+) -> RepairOperation:
+    """The same request signed with the principal's key: a mint, or the rotation refused.
+
+    Rotating is never repaired by minting: a fresh credential would leave the
+    one being rotated active.
+    """
+
+    if rotating is not None:
+        return RepairOperation(
+            operation="credential.rotate",
+            arguments={"credential_id": rotating, "key_dir": "DIR"},
+        )
+    return RepairOperation(
+        operation="credential.mint",
+        arguments={
+            "principal_id": principal_id,
+            "key_dir": "DIR",
+            "permission_mode": permission_mode,
+        },
+    )
+
+
+def _signed_command(principal_id: str, permission_mode: str, rotating: str | None) -> str:
+    if rotating is not None:
+        return f"cruxible credential rotate {rotating} --key-dir DIR"
     return (
         f"cruxible credential mint --principal-id {principal_id} --key-dir DIR "
         f"--mode {permission_mode}"
     )
 
 
-def _authority_required(principal_id: str, permission_mode: str) -> PrincipalRefusedError:
+def _authority_required(
+    principal_id: str, permission_mode: str, rotating: str | None = None
+) -> PrincipalRefusedError:
+    verb = "rotating" if rotating is not None else "minting"
     return PrincipalRefusedError(
         "runtime_credential.principal_authority_required",
-        f"minting a credential that acts as {principal_id!r} needs that principal's "
-        "authority, and an admin credential alone is not it; repair: sign the mint with "
-        f"the principal's key: `{_mint_command(principal_id, permission_mode)}`",
-        repair=RepairOperation(
-            operation="credential.mint",
-            arguments={"principal_id": principal_id, "permission_mode": permission_mode},
-        ),
+        f"{verb} a credential that acts as {principal_id!r} needs that principal's "
+        f"authority, and an admin credential alone is not it; repair: sign the "
+        f"{verb.removesuffix('ing')} with the principal's key (DIR holds it): "
+        f"`{_signed_command(principal_id, permission_mode, rotating)}`",
+        repair=_signed_repair(principal_id, permission_mode, rotating),
     )
 
 
-def _proof_invalid(principal_id: str, permission_mode: str, reason: str) -> PrincipalRefusedError:
+def _proof_invalid(
+    principal_id: str, permission_mode: str, reason: str, rotating: str | None = None
+) -> PrincipalRefusedError:
     return PrincipalRefusedError(
         "runtime_credential.principal_proof_invalid",
         f"the signed consent for {principal_id!r} is not valid: {reason}; repair: sign a "
-        f"fresh one with `{_mint_command(principal_id, permission_mode)}`",
-        repair=RepairOperation(
-            operation="credential.mint",
-            arguments={"principal_id": principal_id, "permission_mode": permission_mode},
-        ),
+        f"fresh one with `{_signed_command(principal_id, permission_mode, rotating)}`",
+        repair=_signed_repair(principal_id, permission_mode, rotating),
     )
 
 
@@ -85,6 +111,7 @@ def _verified_proof_digest(
     public_key: str,
     permission_mode: str,
     label: str,
+    rotating: str | None = None,
 ) -> str:
     statement = proof.statement
     if (
@@ -94,15 +121,21 @@ def _verified_proof_digest(
         or statement.label != label
     ):
         raise _proof_invalid(
-            principal_id, permission_mode, "it names a different instance, principal, mode or label"
+            principal_id,
+            permission_mode,
+            "it names a different instance, principal, mode or label",
+            rotating,
         )
     issued_at = parse_datetime(statement.issued_at)
     assert issued_at is not None  # the statement model refuses anything else
     if abs(utc_now() - issued_at) > timedelta(seconds=RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS):
-        raise _proof_invalid(principal_id, permission_mode, "it was not signed just now")
+        raise _proof_invalid(principal_id, permission_mode, "it was not signed just now", rotating)
     if not verify_runtime_credential_proof(proof, public_key=public_key):
         raise _proof_invalid(
-            principal_id, permission_mode, "the signature is not the principal's registered key"
+            principal_id,
+            permission_mode,
+            "the signature is not the principal's registered key",
+            rotating,
         )
     return _proof_digest(proof)
 
@@ -133,6 +166,7 @@ def _principal_authority(
     label: str,
     principal_proof: RuntimeCredentialPrincipalProof | None,
     auth_context: ResolvedAuthContext | None,
+    rotating: str | None = None,
 ) -> str | None:
     """Require ``principal_id``'s authority for a credential in its name.
 
@@ -170,10 +204,11 @@ def _principal_authority(
             public_key=registered.public_key,
             permission_mode=mode_name,
             label=label,
+            rotating=rotating,
         )
     if auth_context is not None and auth_context.principal_id == principal_id:
         return None
-    raise _authority_required(principal_id, mode_name)
+    raise _authority_required(principal_id, mode_name, rotating)
 
 
 def mint_principal_credential(
@@ -253,6 +288,7 @@ def rotate_principal_credential(
             label=existing.label,
             principal_proof=principal_proof,
             auth_context=auth_context,
+            rotating=credential_id,
         )
     created = store.prepare_rotated_credential(
         instance_id=instance_id,
