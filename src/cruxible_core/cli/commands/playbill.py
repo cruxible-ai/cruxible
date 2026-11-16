@@ -1922,9 +1922,26 @@ def set_ledger_mirror(
         return
     click.echo(f"Ledger mirror: {result.mirror_url}")
     click.echo(f"Publication: {result.status}")
-    if result.detail is not None:
-        click.echo(f"Detail: {printable(result.detail)}")
+    _echo_publication_detail(result.detail)
     echo_preview_next(result.status, result.coordinate)
+
+
+def _echo_publication_detail(detail: str | None) -> None:
+    """Print a publication detail (git's own error text) with its real line breaks.
+
+    Each line is indented under ``Detail:`` and escaped, so a remote's message
+    keeps its shape but cannot pass for a line of this command's own output.
+    """
+
+    if detail is None:
+        return
+    lines = [line for line in detail.splitlines() if line.strip()]
+    if len(lines) <= 1:
+        click.echo(f"Detail: {printable(lines[0] if lines else detail)}")
+        return
+    click.echo("Detail:")
+    for line in lines:
+        click.echo(f"  {printable(line)}")
 
 
 @ledger_group.command("publish")
@@ -1933,7 +1950,11 @@ def set_ledger_mirror(
 @json_option
 @handle_errors
 def ledger_publish(timeout: float, dry_run: bool | None, at: str | None, output_json: bool) -> None:
-    """Wait for publication to the configured mirror; timeout 0 only requests it."""
+    """Wait for publication to the configured mirror; timeout 0 only requests it.
+
+    Exits 1 when publication ends behind (the attempt failed): the mirror does
+    not hold the accepted ledger.
+    """
 
     result = _server_call(
         lambda client, instance_id: client.publish_ledger(
@@ -1943,17 +1964,18 @@ def ledger_publish(timeout: float, dry_run: bool | None, at: str | None, output_
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"Publication: {result.status}")
-    if result.wait_sequence is not None:
-        acknowledged = result.published_sequence >= result.wait_sequence
-        click.echo(
-            f"Request {result.wait_sequence}: "
-            f"{'acknowledged' if acknowledged else 'awaiting acknowledgment'}"
-        )
-    if result.detail is not None:
-        click.echo(f"Detail: {printable(result.detail)}")
-    echo_preview_next(result.status, result.coordinate)
+    else:
+        click.echo(f"Publication: {result.status}")
+        if result.wait_sequence is not None:
+            acknowledged = result.published_sequence >= result.wait_sequence
+            click.echo(
+                f"Request {result.wait_sequence}: "
+                f"{'acknowledged' if acknowledged else 'awaiting acknowledgment'}"
+            )
+        _echo_publication_detail(result.detail)
+        echo_preview_next(result.status, result.coordinate)
+    if result.status == "behind":
+        raise SystemExit(1)
 
 
 @playbill_group.group("provider")
