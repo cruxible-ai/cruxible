@@ -36,7 +36,7 @@ from cruxible_client.authoring.files import (
     compile_client_file_context,
     media_type_for,
 )
-from cruxible_client.authoring.selectors import WorkspaceFiles, catalogued_path, workspace_files
+from cruxible_client.authoring.selectors import WorkspaceFiles, workspace_files
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.documents import DocumentLink
 from cruxible_client.contracts.errors import WriteRefusalError
@@ -67,6 +67,7 @@ LINK_ABOUT_NEEDS_SUBJECT = "cruxible.link.about_needs_subject"
 LINK_ABOUT_NEEDS_SECTION = "cruxible.link.about_needs_section"
 LINK_GUIDES_NEEDS_PAGE = "cruxible.link.guides_needs_page"
 LINK_FILE_UNREGISTERED = "cruxible.link.file_unregistered"
+LINK_FILE_AMBIGUOUS = "cruxible.link.file_ambiguous"
 LINK_ONE_LANE = "cruxible.link.one_lane"
 
 #: A Document a ``link --guides`` declares on an evidence-only catalog entry.
@@ -238,20 +239,34 @@ def _title(path: Path, fallback: str) -> str:
 def _guidance_entry(
     files: WorkspaceFiles, file: str, *, root: Path
 ) -> tuple[FileCatalogEntry, Path]:
-    """The one catalog entry ``file`` (a path or name) names, or the unregistered refusal."""
+    """The one catalog entry ``file`` (a path or name) names, or a typed refusal.
 
-    located = catalogued_path(root, file)
+    Resolved once, by the rule every citation uses (an existing path wins,
+    otherwise a catalog name), then matched by path: a resolved path is never
+    read again as a name.
+    """
+
     try:
-        name = files.file_name(located)
-        entry = files.entry_for_file(name)
-        return entry, files.path_for_file(name)
+        path = files.locate(file)
+        matches = files.entries_for_path(path)
     except ValueError:
+        matches = ()
+    if len(matches) > 1:
+        names = ", ".join(entry.name for entry in matches)
+        raise WriteRefusalError(
+            LINK_FILE_AMBIGUOUS,
+            f"{file} is catalogued under several names ({names}); guidance links the one "
+            "page its Document compiles from",
+            repair_line=f"Keep one entry: cruxible files remove {matches[-1].name}",
+        )
+    if not matches:
         raise WriteRefusalError(
             LINK_FILE_UNREGISTERED,
             f"{file} is not a registered workspace file; guidance links a page in the "
             "file catalog, the one its Document compiles from",
             repair_line=f"Register it first: cruxible files add {shlex.quote(file)}",
-        ) from None
+        )
+    return matches[0], path
 
 
 def link_guides(
@@ -400,6 +415,7 @@ __all__ = [
     "GuidanceLinkOutcome",
     "LINK_ABOUT_NEEDS_SECTION",
     "LINK_ABOUT_NEEDS_SUBJECT",
+    "LINK_FILE_AMBIGUOUS",
     "LINK_FILE_UNREGISTERED",
     "LINK_GUIDES_NEEDS_DEFINITION",
     "LINK_GUIDES_NEEDS_PAGE",

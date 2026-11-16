@@ -266,3 +266,29 @@ def test_an_entry_edited_during_the_proposal_is_not_overwritten(
     assert result.exit_code == 1 and "changed this entry meanwhile" in result.output
     entry = _entries(tmp_path)["doc-guide.md"]
     assert entry["required_tier"] == "admin" and "links" not in entry
+
+
+def test_guides_resolves_a_path_before_a_colliding_catalog_name(
+    served: _Served, tmp_path: Path
+) -> None:
+    """An existing path wins, as for every citation; it is never re-read as a name."""
+
+    (tmp_path / "guide").write_text("# Actual guide\nThe page at path guide.\n")
+    (tmp_path / "other.md").write_text("# Other\nA different page.\n")
+    for name, path, document in (
+        ("guide", "other.md", "other-doc"),
+        ("actual", "guide", "actual-doc"),
+    ):
+        added = _run(
+            "files", "add", name, path, "--document-id", document, "--document-kind", "guidance",
+            "--title", name, "--media-type", "text/markdown", "--scope", "project",
+            "--root", str(tmp_path),
+        )  # fmt: skip
+        assert added.exit_code == 0, added.output
+    linked = _run("link", "guide", "--guides", STATUS, "--json")
+    assert linked.exit_code == 0, linked.output
+    assert json.loads(linked.stdout)["file"] == "actual"
+    entries = _entries(tmp_path)
+    assert "links" in entries["actual"] and "links" not in entries["guide"]
+    unlinked = _run("link", "guide", "--guides", STATUS, "--unlink", "--json")
+    assert json.loads(unlinked.stdout)["file"] == "actual"
