@@ -112,19 +112,21 @@ Error: cruxible.vocabulary.export_refused: .cruxible/vocabulary.yaml holds chang
 **When someone else changed the same field.** `plan` and `apply` read at the
 export the file names (`based_on`), so an edit replaces the definition you
 saw. If someone changed that definition since your export, preflight refuses
-it rather than overwriting their change:
+it rather than overwriting their change, and `apply` names each definition
+that moved (`moved` in the result) with the repair:
 
 ~~~text
-$ cruxible vocabulary plan
-...
+$ cruxible vocabulary apply --rationale "My edit."
+Vocabulary plan: .cruxible/vocabulary.yaml (based on e5db9b1208d3)
 Changes:
   replace ClaimType:catalog.part.title (description)
 Preflight: refused
   cruxible.authoring.claim_type_succession_invalid at members[0].successor: cruxible.claim_type.migration_invalid: successor does not pin the current ClaimType
+...
+Refused: nothing was submitted.
+Changed since the file's export: ClaimType:catalog.part.title
+Next: Save your edits to .cruxible/vocabulary.yaml elsewhere, run cruxible vocabulary export --force to read the definitions as they are now, redo your edits, check them with cruxible vocabulary plan, then cruxible vocabulary apply
 ~~~
-
-Keep your edit aside, `vocabulary export --force` to read the current
-definitions, make the edit again on top of them, and apply.
 
 ### The format
 
@@ -276,7 +278,8 @@ entry: `value` (below), `description`, `default_role`, `permitted_roles`,
 and `incomplete_fallback`, `allowed_subject_kinds` (for a field several kinds
 share), and the rest that `cruxible claim-type propose --template --expanded`
 prints with their defaults. Anything shorthand cannot say is written this way,
-so an export never loses meaning: `discontinued` above states its evidence
+so an export never loses meaning (a ClaimType's `inverse` included; when some
+field cannot be written faithfully, export refuses once, naming each one): `discontinued` above states its evidence
 rule in full. Hand-written, the same rule may name the contract briefly
 (`capture_contracts: [CaptureContract:catalog.acme-discontinued]`), and export
 writes it back in full. [Evidence and
@@ -524,8 +527,9 @@ the move in one write: each ruling becomes a section with an `id`, a one-line
 `dry_run=True`, then write it:
 
 ~~~python
-from cruxible_client import SlotRef
+from cruxible_client import Cruxible, SlotRef
 
+cx = Cruxible.connect()
 batch = cx.changes(
     because="Move decision rulings into the decisions page; keep a one-line summary that cites each.",
     subject="catalog.decision/ceramic-pads-default",

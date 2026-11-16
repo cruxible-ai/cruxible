@@ -21,9 +21,10 @@ A Claim rests on one or more of these:
 - **A passage you wrote**: a section of a Markdown document written in the
   same `write` as the Claim that cites it. It is still your own words, with a
   location people can read.
-- **A citation**: a passage quoted from a catalogued workspace file, such as
-  a supplier's catalog saved in the repository (`--evidence-file
-  PATH#ANCHOR`).
+- **A citation**: a passage quoted from a workspace file, such as a
+  supplier's catalog saved in the repository (`--evidence-file PATH#ANCHOR`).
+  A file the catalog does not name yet is catalogued when the write is
+  admitted.
 - **A Capture**: retained bytes recorded under a CaptureContract, typically a
   response that a Procedure fetched from the outside world, or a file it read
   from the workspace or from an upload (a hosted instance's way in for scans and
@@ -142,7 +143,9 @@ landed: accepted at f91d19c76229
 
 `cruxible.foreign-source.NAME` admits passages of the catalogued file named
 `NAME` (here, the quotes file), and `cruxible.coordinator-self-source-v1`
-admits the writer's own words. Durations are ISO 8601 (`P30D`, `PT12H`).
+admits the writer's own words. A file's contract exists once a write has
+cited the file; until then a rule naming it refuses
+`cruxible.change_set.unresolved_pin`, so cite the file once first. Durations are ISO 8601 (`P30D`, `PT12H`).
 [Evolving your vocabulary](evolving-your-vocabulary.md#add-a-field) covers
 fields in general.
 

@@ -73,13 +73,23 @@ quickstart and concepts pages.
   QueryDefinitions, with `--status`, `--claims` and full replay receipts.
   `get REF` reads one thing at a chosen `--detail` (evidence, why, history,
   incoming, pairs, runs, backlinks, proof, body). Every read takes `--at` a
-  generation.
+  generation. `get` accepts a built-in's printed `cruxible.` spelling
+  (`CaptureContract:cruxible.coordinator-self-source-v1`).
 - **The write verbs change values directly.** `cruxible set`, `add`, `retire`
   and `write` (a file of create, set, add, retire and document edits) lower
   into an ordinary change set and accept it when the approval policy and your
   tier allow; `--no-accept` only proposes. Each takes `--because`, evidence
   options, `--expect`/`--expect-absent` compare-and-set, and `--dry-run`.
-  `@kind/id` names a Subject anywhere a Subject is taken.
+  `@kind/id` names a Subject anywhere a Subject is taken. A `create` change's
+  `key` takes `{field: value}` (CLI write files, MCP `cruxible_write`, the
+  SDK) beside the full `[{predicate, value}]` form.
+- **A write catalogues the workspace files it cites.** A file or section
+  citation by path (in `write`, or `set`/`add` with file evidence) of a file
+  `.cruxible/files.yaml` does not name catalogues it once the write is
+  admitted, and the outcome lists it (`catalogued`). The catalog's derived
+  name is a stable handle mapped to the file's current path; `files add NAME
+  PATH` chooses one (NAME is now optional). A derived name already bound to
+  another file refuses `cruxible.doc.catalog_name_exists`.
 - **Cruxible names every new Subject.** A SubjectKind declares how a kind's
   Subjects are named: by key ClaimTypes (`unique` or `hint`), or minted
   (`sub-<32 hex>`). A creation names the kind and key; Cruxible assigns the id.
@@ -87,6 +97,8 @@ quickstart and concepts pages.
   `cruxible.subject.kind_undeclared`, and creating by a key several Subjects
   hold refuses `key_ambiguous`. Pair Subjects whose key parts are other
   Subjects have their own reads (`get --detail pairs`).
+- **`set` accepts key values.** A `key<K>` field takes a canonical key, as
+  authoring does.
 - **A revision may not move a Claim's subject or predicate.** `revises=`
   refuses `cruxible.claim.revision_subject_moved` and
   `cruxible.claim.revision_predicate_moved`; retire the Claim and author a new
@@ -140,7 +152,10 @@ quickstart and concepts pages.
   untouched. `next` reports `vocabulary_file_behind` and
   `vocabulary_file_baseline_invalid` and `orient` shows the file's status;
   `vocabulary export` repairs both, and refuses to replace a file holding
-  changes not yet accepted unless `--force`.
+  changes not yet accepted unless `--force`. Export writes a ClaimType with an
+  `inverse` faithfully, and a refusal names every definition it cannot write.
+  When `apply` is refused because a definition changed since the export, it
+  lists the changed definitions (`moved`) and the repair.
 - **ClaimTypes evolve through governed change.** `claim-type propose`,
   `claim-type migrate` (a successor plus every dependent Claim's
   disposition) and `claim-type retire` (CLI; SDK
@@ -166,6 +181,18 @@ quickstart and concepts pages.
   stale proposal, by its author) and `withdraw` (an open proposal that will
   never activate). A change set's `rationale` becomes the candidate commit's
   subject.
+- **`proposal review` reads like the write that made it.** Each value change
+  prints as a write outcome, with its role and the Captures it cites and their
+  text (an erased body says who erased it, when and why; a missing one says
+  `unavailable`); each definition gets a typed block (a Line's bindings and
+  parameters, a mandate's ClaimType table, a Runbook's steps, a Trigger's
+  schedule). `--changes-from` and `--definitions-from` page them; grouped
+  rows moved to `--json` (MCP: `groups=true`). The same text is `str()` of
+  the SDK summary and the `proposal approve` prompt. A withheld summary also
+  leaves out definition fields.
+- **A second agent reviews.** A `--no-accept` proposal under a policy that
+  needs no approval waits as `ready_to_activate` and `next` lists it; the
+  agent guidance says a different agent reviews it and approves or activates.
 - **Review is Git.** Candidate commits carry a readable summary, and the
   daemon's evaluation and signed approvals ride as notes
   (`refs/notes/cruxible-eval`, `refs/notes/cruxible-approval`). `cruxible
@@ -216,7 +243,12 @@ quickstart and concepts pages.
   `cruxible.line.slot_unfilled`, `cruxible.line.slot_ambiguous`,
   `cruxible.line.binding_unfit` (declares it but does not fit, naming the
   first failing path), `cruxible.line.binding_undeclared` and
-  `cruxible.line.binding_builtin_mismatch`.
+  `cruxible.line.binding_builtin_mismatch`. Each binding refusal, with
+  `binding_unavailable`, ends with its repair.
+- **`authoring example` prints templates that compile.** The Procedure example
+  calls a `workspace.file@1` slot and extracts over its CaptureKind's layout.
+- **`runbook preview` names builds and capabilities.** A provider build prints
+  as `Provider:NAME/<12 hex>`, and each call ends `(capability NAME@N)`.
 - **CaptureKind layouts and a thin EXTRACT step.** A CaptureContract may
   declare a `layout` over a json or csv decoding: header fields and named
   record sets (`at`, `key`, `row: name@N`, `fields`, `count_at`). A successor
@@ -265,7 +297,12 @@ quickstart and concepts pages.
   `cruxible.kit.requires_missing` (repair: `cruxible kit add base`) and
   `cruxible.kit.requires_unresolved`; `kit remove` refuses
   `cruxible.kit.remove_required` while another kit requires it. `kit status`
-  shows `requires base >= 1.0.0: met`.
+  and the `kit add` preview show `requires base >= 1.0.0: met`.
+- **`kit status` says what is installed.** It labels the digest `content
+  sha256:`, says when installed content differs from the available release of
+  the same version, and shows a pending base kit add with the command that
+  approves it. `kit remove base` refuses `cruxible.kit.base_required`: the
+  bundled base kit cannot be removed.
 - **Provider registration schema 3.** Each operation declares `description`,
   `source` (`path`, optional `repository`, `revision`), `serves` (capability
   names without versions, at most 16), its own `in` and `out` Contracts,
@@ -296,7 +333,12 @@ quickstart and concepts pages.
   `Cruxible.connect(workspace=...)` refuses a folder that does not exist.
 - **MCP has a default and a full profile.** `CRUXIBLE_MCP_PROFILE` selects
   `default` (reads, writes and everyday work) or `full`; `CRUXIBLE_MODE` caps
-  the tier. `cruxible_init` sets up a bare folder.
+  the tier. `cruxible_init` sets up a bare folder. `cruxible mcp` logs
+  warnings and errors only; `FASTMCP_LOG_LEVEL` or `CRUXIBLE_DEBUG` turn
+  request logs on.
+- **SDK write batches create Subjects.** `batch.create(kind, key=...)` returns
+  a handle usable as `subject=` or a value in the same write, and a
+  `cx.new_subject(...)` draft works in the same places.
 - **A plugin for Claude Code and Codex.** `plugins/cruxible` ships four
   general skills (`adopt-kit`, `automate-state`, `create-state`,
   `review-state`) and a lean MCP catalog; see `plugins/README.md`.
@@ -312,6 +354,10 @@ quickstart and concepts pages.
   instance's governed writes without deleting a byte; reads keep serving.
   `cruxible instance rebuild-next` rebuilds the `next` worker's state from
   nothing. `cruxible host create|show` allocates and inspects hosts.
+- **Provider-lane detail.** `server status` reports a degraded Provider
+  lane's reason; transient process-table failures surface their
+  bounded count, retained ring occupancy, and last typed message in the
+  lane's detail.
 - **Client timeouts.** `CRUXIBLE_CLIENT_TIMEOUT_S` sets the client's read
   budget; a value that is not a positive number is refused.
 - **Runtime image and isolated executors.** A container image is published

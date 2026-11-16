@@ -277,7 +277,7 @@ passage, file or fetched response it came from, not a paraphrase. A Claim's
 evidence is one or more of:
 
 - **its author's own words**: the `--because` text every write carries;
-- **a citation**: a passage quoted from a catalogued workspace file
+- **a citation**: a passage quoted from a workspace file
   (`--evidence-file PATH#ANCHOR`, `cx.file(path).anchor(...)` in the SDK), like
   the line of the supplier's catalog above;
 - **a Capture**: retained evidence recorded under a CaptureContract, for
@@ -361,8 +361,10 @@ evidence, verdicts, freshness and attestations in full.
 ### Files, citations and Documents
 
 The file catalog, `.cruxible/files.yaml`, gives each workspace file a stable
-name. An entry needs only a `name` and a `locator` (its path) to be cited;
-`cruxible files add NAME PATH` writes one. Two different things can rest on a
+name, a handle mapped to the file's current path so citations survive the file
+moving. You cite a file by its path; a write that cites a file the catalog
+does not name yet catalogues it under a name derived from the path, and
+`cruxible files add NAME PATH` chooses the name yourself. Two different things can rest on a
 catalogued file:
 
 | | Citation | Document |
@@ -504,9 +506,10 @@ cited workspace files and pages.
 A **proposal** is a frozen candidate: the exact change, evaluated against the
 accepted base it names. It is not accepted state. A refused proposal is kept
 with its diagnostics, and `get PROPOSAL_ID` reads any proposal, its status, and
-for a refusal the code, message and repair. `proposal review` shows the
-candidate as a paged, factored summary; `proposal review --detail` shows how
-to diff it with plain Git.
+for a refusal the code, message and repair. `proposal review` reads the
+candidate as a reviewer needs it: each value change as a write prints it, with
+the text it cites, then one block per definition; `proposal review --detail`
+shows every member and how to diff it with plain Git.
 
 The instance's **approval policy** (`ApprovalPolicy:instance`) decides how much
 review a change needs. It is either `self_approval_allowed`, where an author
@@ -522,7 +525,10 @@ approver's private key on the client; only the signature reaches the daemon.
 **Activation** checks the approvals and the policy and advances accepted state
 by compare-and-set. When an approval completes what the candidate needs and the
 approver may activate, the same `proposal approve` activates it (`--hold` signs
-only, and someone runs `proposal activate` later).
+only, and someone runs `proposal activate` later). A proposal kept with
+`--no-accept` under a policy that needs no approval waits as
+`ready_to_activate`; a second agent, as its own principal, reviews it and runs
+`proposal approve` or `proposal activate`.
 
 Because every change records the generation it was made on, many writers can
 work at once without silently overwriting each other. A proposal becomes

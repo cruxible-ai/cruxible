@@ -22,10 +22,13 @@ $ cruxible files add fitment docs/fitment.md
 Added file fitment -> docs/fitment.md (no Document: cite it, or project blocks into it) in .cruxible/files.yaml
 ~~~
 
-The name is what citations and blocks use, so pick one that will last. A file
-must exist before it can be named. A write that creates a new file catalogs it
-for you under a generated name, so for a page you'll refer to often, create
-it and name it first.
+The name is a stable handle: the catalog maps it to the file's current path,
+so citations and blocks keep working when the file moves. A file must exist
+before it can be named, and `files add PATH` without a name derives one from
+the path. You don't have to catalogue a file before citing it: a write that
+creates a file, or cites one by its path, catalogues it for you under a name
+derived from the path, and you go on referring to it by path. For a page
+you'll refer to often, or to choose the name, create it and name it first.
 
 ## Writing notes with the Claims they back
 
@@ -242,6 +245,8 @@ from `cruxible_client.contracts.write`, or
 in a write file.
 Either is evidence from a file, not your own words, so the field's rules must
 admit that file's source ([Evidence and admission](evidence-and-admission.md)).
+A file the catalog does not name yet is catalogued when the write is admitted,
+and the outcome lists it under `catalogued` (a dry run says it would be).
 
 ## Governed Documents
 

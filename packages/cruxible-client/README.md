@@ -354,15 +354,16 @@ capture-contract and evidence-kind parameters, with no reducer digest parameter.
 
 ```text
 changes(*, rationale: str | None=None) -> ChangeSetDraft
-changes(*, because: str, subject: str | SubjectRef | None=None) -> WriteBatch
+changes(*, because: str, subject: str | SubjectRef | CreatedSubject | SubjectCreationDraft | None=None) -> WriteBatch
 ```
 
 With `rationale` (or nothing), returns a changeset builder retaining the last
 observed coordinate for references and vocabulary. With `because`, returns a
-`WriteBatch` of typed write changes: `.set(subject, field, value, ...)`,
-`.add(subject, field, value, ...)` and `.retire(target, ...)` (with `subject=`
-naming the Subject of every change that names none, `.set(field, value)` is
-enough), sent as one change set by `.write(dry_run=False, accept="if_allowed", at=...)`, which returns the
+`WriteBatch` of typed write changes: `.create(kind, key=...)`,
+`.set(subject, field, value, ...)`, `.add(subject, field, value, ...)` and
+`.retire(target, ...)` (with `subject=` naming the Subject of every change
+that names none, `.set(field, value)` is enough; a `cx.new_subject(...)` draft
+as `subject=` is created by the same write), sent as one change set by `.write(dry_run=False, accept="if_allowed", at=...)`, which returns the
 `WriteOutcome` or raises `WriteRefusalError`.
 
 **Conditions and effects:** No prepare/submit/accept at construction. The set admits or refuses as one governed decision.
@@ -673,7 +674,10 @@ readable rendering of the canonical key, or a minted id). `key` maps each key
 ClaimType to its value, or is the value when the kind has one key; omit it for
 a minted kind. A key a live Subject already holds resolves to it;
 `create_new=True` creates another holder of a `hint` kind's key. Pass the draft
-to `ChangeSetDraft.subject` to say more about it in the same set.
+to `ChangeSetDraft.subject` to say more about it in the same set, or use it in
+a `WriteBatch` (`cx.changes(because=...)`) as `subject=` or as a Subject value:
+the write creates it once, with the draft's `rationale` as the key Claims' own
+words.
 
 **Conditions and effects:** Writes nothing until `draft.submit()` or the containing change set is submitted.
 
@@ -899,13 +903,13 @@ Reads a cataloged workspace file into a FileSelector using .cruxible/files.yaml 
 [Source](src/cruxible_client/authoring/files.py)
 
 ```text
-files.add(name: str, path: str | Path, *, document_id=None, document_kind=None, title=None,
+files.add(name: str | Path | None = None, path: str | Path | None = None, *, document_id=None, document_kind=None, title=None,
           media_type=None, governance_scope=(), required_tier=None, public_uri=None,
           replace=False) -> FileCatalogEdit
 files.remove(name: str) -> FileCatalogEdit
 ```
 
-Catalogues a workspace file under a source name in `.cruxible/files.yaml`, or removes its entry: the same edits as `cruxible files add` and `cruxible files remove`, through the same code.
+Catalogues a workspace file under a source name in `.cruxible/files.yaml`, or removes its entry: the same edits as `cruxible files add` and `cruxible files remove`, through the same code. The name is a stable handle the catalog maps to the file's current path; `files.add(path)` alone derives it from the path, as a write citing the file would. A write that cites an uncatalogued workspace file by path catalogues it on its own (`WriteOutcome.catalogued`), so `files.add` is for choosing the name or declaring a Document.
 
 **Conditions and effects:** Writes only the catalog file. A relative path is read from the workspace root. An existing name refuses (`entry_exists`) unless `replace=True`; a partial Document or a duplicate Document target refuses.
 
@@ -1565,6 +1569,7 @@ and `.write()` sends the batch.
 append_section(file, text, *, under=(), name=None, id=None) -> WriteBatch
 replace_section(file, section, text, *, expect=None, id=None) -> WriteBatch
 section(id: str) -> SectionEvidence
+create(kind, *, key=None, create_new=False, expect_new=False, role=None, evidence=None, label=None) -> CreatedSubject
 set(*operands, subject=None, evidence=None, supported_by=None, role=None, contend=False, expect=None) -> WriteBatch
 add(*operands, subject=None, evidence=None, supported_by=None, role=None, expect_absent=False) -> WriteBatch
 retire(target: str | ClaimRef | SlotRef, *, because=None, reason='was-rescinded', expect=None) -> WriteBatch
@@ -1574,7 +1579,29 @@ write(*, dry_run=False, accept='if_allowed', at=<this context's coordinate>) -> 
 `set` and `add` are spelled `set(field, value)` (about the batch's `subject`)
 or `set(subject, field, value)`. `set` replaces a single-value field, `add` puts
 one more value in a many-valued field, and `retire` ends one live Claim, by
-Claim ID or `SlotRef(field=...)`. `write()` returns the `WriteOutcome` (accepted
+Claim ID or `SlotRef(field=...)`. `create` makes a Subject of `kind` by its
+key in the same write (`key` is the value of a kind's one key, or `{field:
+value}` for each key field, a pair's end as `kind/id`, a handle or a draft;
+none for a minted kind) and returns its handle, which `set`, `add` and another
+`create`'s key take as a Subject; a key a live Subject holds lands on it
+(`expect_new=True` refuses instead). A `cx.new_subject(...)` draft works
+wherever a handle does:
+
+```python
+batch = cx.changes(because="Acme catalog 2026 adds the 2020 Civic.")
+civic = batch.create("catalog.vehicle", key={"name": "honda-civic-2020"})
+batch.add("catalog.part/bp-2210", "fits", civic)
+print(batch.write())
+# accepted (generation 10, bf79962037bd)
+#   create catalog.vehicle/honda-civic-2020: created
+#   add catalog.part/bp-2210 fits: catalog.vehicle/honda-civic-2020  [CLM-6a6b96c5…; verdict supported]
+#   + subject catalog.vehicle/honda-civic-2020
+# next: cx.get("catalog.vehicle/honda-civic-2020")
+```
+
+File and section evidence cite a workspace file by path; a file the catalog
+does not name is catalogued once the write is admitted, and
+`WriteOutcome.catalogued` lists it. `write()` returns the `WriteOutcome` (accepted
 in the same call when the approval policy and the caller's tier allow it,
 otherwise awaiting approval) or raises `WriteRefusalError`. The same changes
 are `cruxible write` on the CLI and `cruxible_write` on MCP.
@@ -2473,7 +2500,11 @@ Import: `cruxible_client.authoring.sdk.Proposal`. [Source](src/cruxible_client/a
 review() -> ReviewedProposal
 ```
 
-Fetch an immutable full review; inspect its details before approving.
+Fetch an immutable full review; read it before approving. `print(review)`
+shows what `cruxible proposal review` prints: each value change with what it
+cites and the cited text, then one block per definition. `review.summary` is
+that page as a `ProposalReviewSummary`, and `review.details` the full
+candidate review.
 
 <a id="api-proposal-activate"></a>
 
@@ -2675,7 +2706,9 @@ __getitem__(measurement_name: str) -> MeasurementOutcome
 
 Import: `cruxible_client.authoring.approval.ReviewedProposal`. [Source](src/cruxible_client/authoring/approval.py)
 
-Use `Proposal.review()`; `.details` is a defensive copy of the exact review.
+Use `Proposal.review()`; `.details` is a defensive copy of the exact review,
+`.summary` the reviewer's view of the same candidate (its first page), and
+`str()` that view as the CLI prints it.
 
 | Field | Type | Default / construction |
 |---|---|---|
@@ -2690,6 +2723,7 @@ Use `Proposal.review()`; `.details` is a defensive copy of the exact review.
 
 ```text
 details: api.ProposalReview
+summary: api.ProposalReviewSummary
 ```
 
 <a id="api-authoring-sdk-carry"></a>
@@ -5759,10 +5793,30 @@ review_proposal(
     instance_id: str,
     proposal_id: str,
     *,
-    include_body: bool = False,
+    include_body: bool | None = None,
     workspace_observation: Mapping[str, Any] | None = None,
-) -> contracts.ProposalReview
+    item_reasons_after: str | None = None,
+    item_reasons_limit: int | None = None,
+    detail: bool = False,
+    summary_after: str | None = None,
+    summary_group: str | None = None,
+    rows_after: str | None = None,
+    rows_limit: int = 5,
+    groups_limit: int = 5,
+    findings_after: str | None = None,
+    changes_from: int = 0,
+    definitions_from: int = 0,
+    groups: bool = True,
+) -> contracts.ProposalReviewResponse
 ```
+
+Without `detail`, a `ProposalReviewSummary`: the value changes (`changes`,
+each a write's `ChangeOutcome` with its role, citations and cited text),
+`change_counts`, and `definitions` (typed blocks for a Line, ProcedureMandate,
+Runbook and Trigger), paged by `changes_from` / `definitions_from` (a page's
+`changes_next` / `definitions_next`); `groups=False` leaves out the stored
+fields grouped by kind. `str(summary)` is the text `cruxible proposal review`
+prints. With `detail=True`, the full `ProposalReview`.
 
 HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/review'`.
 

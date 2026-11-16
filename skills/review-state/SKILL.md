@@ -38,7 +38,11 @@ approval; append one only when requested, with what was actually examined.
 
 For proposal review, use the exact candidate digest from a separate agent
 session (its own principal); never approve your own proposal, even with auth
-off. The [governance reference](../_shared/references/governance-flow.md)
+off. `proposal review` prints each proposed value change with the Captures it
+cites and their text (an erased or unavailable body says so), then one block
+per definition (a Line's bindings and parameters, a mandate's ClaimType table,
+a Runbook's steps, a Trigger's schedule); `--json` adds the stored fields
+grouped by kind, `--detail` every member. The [governance reference](../_shared/references/governance-flow.md)
 covers acceptance and changed candidates. Authorized repairs use
 [guarded edits](../_shared/references/concurrent-edits.md). Report findings with
 references, evidence, repair and limits of what was checked; do not turn
