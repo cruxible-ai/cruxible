@@ -58,7 +58,7 @@ def test_kit_build_refuses_a_rule_naming_a_per_file_contract(tmp_path: Path) -> 
     assert caught.value.error_code == KIT_PER_FILE_EVIDENCE_RULE
     message = str(caught.value)
     assert "this contract stands for one workspace file" in message
-    assert "capture_contract_families: [workspace_file]" in message
+    assert "evidence: [<contract name>, ...]" in message
     assert "cruxible.foreign-source." in message
 
 

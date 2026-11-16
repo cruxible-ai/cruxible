@@ -277,23 +277,12 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
         warning.code for warning in lint.warnings
     }
 
-    source_intent = ClaimTypeInputRecord.model_validate(
-        {
-            **example.model_dump(mode="json"),
-            "anticipated_source_ids": ["repo.work-items"],
-        }
-    )
-    lowered = lower_claim_type_input(
-        source_intent,
-        tree=instance.tree_at(instance.accepted_coordinate().git_oid),
-    )
-    assert "anticipated_source_ids" not in lowered.model_dump(mode="json")
-
-    with pytest.raises(ValidationError, match="byte-sorted and unique"):
+    # Retired: a workspace citation needs no rule; shaped sources go in evidence.
+    with pytest.raises(ValidationError, match="evidence: \\[<contract name>"):
         ClaimTypeInputRecord.model_validate(
             {
                 **example.model_dump(mode="json"),
-                "anticipated_source_ids": ["repo.z", "repo.a"],
+                "anticipated_source_ids": ["repo.work-items"],
             }
         )
 
@@ -363,12 +352,10 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
-    # A named source adds its default rule beside the own-words one.
+    # The default rule admits own words and workspace citations: a file
+    # source needs no rule of its own.
     template = claim_type_input_template().model_copy(
-        update={
-            "anticipated_source_ids": ("repo.replace-me",),
-            "permitted_roles": ("normative", "observation"),
-        }
+        update={"permitted_roles": ("normative", "observation")}
     )
     claim_type_proposal = service_propose_playbill_claim_type_input(
         instance,
@@ -410,7 +397,7 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
             rationale="The accepted work source reports ready.",
             source=WorkingSelectionInput(
                 kind="working_selection",
-                source_id=template.anticipated_source_ids[0],
+                source_id="repo.replace-me",
             ),
             citation_role="evidence",
         ),
@@ -541,34 +528,27 @@ def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(
     assert [rule["rule_id"] for rule in warning.replacement_rule_fragment["rules"]] == ["self"]
 
 
-def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
+def test_claim_type_source_intent_proposes_no_per_source_rule(
     tmp_path: Path,
 ) -> None:
+    """A workspace source's citations need no rule, so the lint names none (2026-11-16)."""
+
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
-    input_value = ClaimTypeInputRecord.model_validate(
-        {
-            **claim_type_input_example().model_dump(mode="json"),
-            "anticipated_source_ids": ["corpus.runbook"],
-        }
-    )
 
     lint = lint_claim_type_input(
         instance,
-        input_value,
+        claim_type_input_example(),
         coordinate=instance.accepted_coordinate(),
+        anticipated_source_ids=("corpus.runbook",),
     )
 
-    source_warning = next(
-        item
-        for item in lint.warnings
-        if item.code == "cruxible.claim_type.anticipated_source_contract_omitted"
+    assert "cruxible.claim_type.anticipated_source_contract_omitted" not in {
+        item.code for item in lint.warnings
+    }
+    assert not any(
+        "foreign-source" in str(item.replacement_rule_fragment) for item in lint.warnings
     )
-    assert source_warning.source_id == "corpus.runbook"
-    assert source_warning.contract_identity.endswith("corpus.runbook")
-    assert source_warning.replacement_rule_fragment["capture_contract_digests"] == [
-        source_warning.contract_digest
-    ]
 
 
 def test_a_procedure_input_refuses_acquisition_rules_naming_the_line() -> None:

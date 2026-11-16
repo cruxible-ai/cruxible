@@ -65,9 +65,7 @@ def _vocabulary(cx: Cruxible) -> None:
     changes.field(
         "dev.item", "blocks", "subject<dev.item>", description="Items it blocks.", many=True
     )
-    changes.field(
-        "dev.item", "seen", StringType(max_len=64), default_role="observation", sources=["osv.dev"]
-    )
+    changes.field("dev.item", "seen", StringType(max_len=64), description="Where it was seen.")
     changes.subject_kind(name="dev.item", description="A planned piece of work.")
     changes.field("dev.note", "body", StringType(max_len=200), description="One line.")
     changes.subject_kind(name="dev.note", minted=True, description="A note.")
@@ -117,7 +115,6 @@ def test_export_writes_every_definition_so_it_lowers_back_to_its_digest(world) -
     assert list(item.fields)[0] == "slug" and item.fields["slug"].key is True
     assert item.fields["state"].enum == STATE
     assert item.fields["blocks"].link == "dev.item" and item.fields["blocks"].many is True
-    assert item.fields["seen"].stated["anticipated_source_ids"] == ["osv.dev"]
     assert parsed.kinds["dev.note"].minted is True
     for kind, entry in parsed.kinds.items():
         for name, field in entry.fields.items():

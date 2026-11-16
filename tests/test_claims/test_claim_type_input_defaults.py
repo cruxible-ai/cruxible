@@ -93,7 +93,7 @@ def test_defaults_follow_the_stated_role_cardinality_and_sources() -> None:
             **_MINIMAL,
             "cardinality": "many",
             "default_role": "observation",
-            "anticipated_source_ids": ["repo.parts"],
+            "evidence": ["repo.parts"],
         }
     )
 
@@ -101,14 +101,14 @@ def test_defaults_follow_the_stated_role_cardinality_and_sources() -> None:
     assert lowered.resolution_policy.selector == "all"
     assert lowered.evidence_requirement == "captured"
     assert [rule.rule_id for rule in lowered.evidence_admission_policy.rules] == [
-        "source-repo.parts",
+        "evidence",
     ]
 
 
 def test_a_new_claim_type_states_what_no_default_can_fill() -> None:
     with pytest.raises(ClaimTypeInputIncomplete, match="states cardinality"):
         _lower({"predicate": "catalog.part.price", "value": "string{max_len: 256}"})
-    with pytest.raises(ClaimTypeEvidenceRulesRequired, match="anticipated_source_ids"):
+    with pytest.raises(ClaimTypeEvidenceRulesRequired, match="evidence: "):
         _lower({**_MINIMAL, "evidence_requirement": "captured"})
     with pytest.raises(ValueError, match="cannot be null"):
         ClaimTypeInputRecord.model_validate({**_MINIMAL, "cardinality": None})
@@ -268,7 +268,6 @@ def test_lint_does_not_warn_when_a_family_rule_covers_an_anticipated_source(
             **_MINIMAL,
             "predicate": "catalog.part.notes",
             "permitted_roles": ["observation"],
-            "anticipated_source_ids": ["repo.family-fixture"],
             "evidence_admission_policy": {
                 "rules": [
                     {
@@ -283,7 +282,12 @@ def test_lint_does_not_warn_when_a_family_rule_covers_an_anticipated_source(
         }
     )
 
-    lint = lint_claim_type_input(instance, record, coordinate=instance.accepted_coordinate())
+    lint = lint_claim_type_input(
+        instance,
+        record,
+        coordinate=instance.accepted_coordinate(),
+        anticipated_source_ids=("repo.family-fixture",),
+    )
 
     codes = {item.code for item in lint.warnings}
     assert "cruxible.claim_type.evidence_policy_admits_no_accepted_contract" not in codes

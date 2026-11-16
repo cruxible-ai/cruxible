@@ -13,6 +13,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,
+    parse_claim_type,
     render_claim_type,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError, FormatError
@@ -150,6 +151,25 @@ def service_propose_playbill_builtin_claim_type(
     )
 
 
+def refuse_new_workspace_rules(claim_type: ClaimType, tree: Mapping[str, bytes]) -> None:
+    """Authoring refuses a rule newly naming a per-file contract or only a family.
+
+    Compared with the accepted ClaimType at ``tree``: a rule it already holds
+    stays, so the field remains editable. Reads that one predecessor.
+    """
+
+    from cruxible_client.contracts.claim_type_inputs import (
+        refuse_added_family_rules,
+        refuse_added_per_file_rules,
+    )
+
+    path = claim_type_path(claim_type.predicate)
+    held = tree.get(path)
+    prior = None if held is None else parse_claim_type(held, path=path).evidence_admission_policy
+    refuse_added_per_file_rules(claim_type.predicate, claim_type.evidence_admission_policy, prior)
+    refuse_added_family_rules(claim_type.predicate, claim_type.evidence_admission_policy, prior)
+
+
 def service_propose_playbill_claim_type_input(
     instance: PlaybillInstance,
     *,
@@ -168,6 +188,7 @@ def service_propose_playbill_claim_type_input(
     tree = instance.immutable_tree_at(coordinate.git_oid)
     claim_type = lower_claim_type_input(input, tree=tree)
     path = claim_type_path(claim_type.predicate)
+    refuse_new_workspace_rules(claim_type, tree)
     inventory = (
         claim_type_migration_inventory(tree, root=claim_type.identity, by_name=True)
         if path in tree

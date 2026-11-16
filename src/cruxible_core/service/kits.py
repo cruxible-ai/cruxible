@@ -754,8 +754,9 @@ def _refuse_per_file_evidence_rules(path: str, payload: Mapping[str, Any]) -> No
                     f"ClaimType:{payload.get('predicate')} evidence rule "
                     f"{rule.get('rule_id')!r} names CaptureContract:{public_name(name)}; "
                     "this contract stands for one workspace file, so a kit cannot carry "
-                    "the rule. Admit workspace citations with capture_contract_families: "
-                    "[workspace_file] (a ClaimType edit), then build again",
+                    "the rule. A workspace citation needs no rule; for a particular kind of "
+                    "source, list its shaped CaptureContract in the field's evidence: "
+                    "[<contract name>, ...] (a ClaimType edit), then build again",
                     repair=RepairOperation(operation="cruxible.kit.build"),
                 )
 

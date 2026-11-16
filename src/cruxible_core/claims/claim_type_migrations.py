@@ -236,6 +236,17 @@ def resolve_claim_type_succession(
             f"{ClaimTypeMigrationError.code}: migration requires an accepted predecessor"
         )
     predecessor = parse_claim_type(predecessor_content, path=path)
+    from cruxible_client.contracts.claim_type_inputs import (
+        refuse_added_family_rules,
+        refuse_added_per_file_rules,
+    )
+
+    for refuse in (refuse_added_per_file_rules, refuse_added_family_rules):
+        refuse(
+            successor.predicate,
+            successor.evidence_admission_policy,
+            predecessor.evidence_admission_policy,
+        )
     if successor.identity != predecessor.identity:
         raise ClaimTypeMigrationError(
             f"{ClaimTypeMigrationError.code}: successor changes ClaimType identity"

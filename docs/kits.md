@@ -632,8 +632,8 @@ cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-pa
 - A field's evidence rule that names one workspace file's own contract
   (`cruxible.foreign-source.NAME`) refuses the build
   (`cruxible.kit.per_file_evidence_rule`): the consumer may not have that
-  file. Admit workspace citations with `capture_contract_families:
-  [workspace_file]` instead.
+  file. Workspace file and section citations need no rule; a field that needs
+  a particular kind of source lists its shaped CaptureContract in `evidence:`.
 - `--automation-template FILE` names the kit's automation template (it sits at
   the kit's root under its own file name). The build refuses
   (`cruxible.kit.automation_template_invalid`, naming the template and its first

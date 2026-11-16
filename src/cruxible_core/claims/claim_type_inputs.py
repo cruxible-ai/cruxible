@@ -17,6 +17,7 @@ from pydantic import Field, ValidationError
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    FOREIGN_SOURCE_CONTRACT_PREFIX,
     capture_contract_digest,
     foreign_source_capture_contract,
 )
@@ -149,6 +150,21 @@ def _lint_reads(
     return effective, description, undeclared_kind
 
 
+def _admit_instead(resolvable_identities: set[str]) -> dict[str, object]:
+    """The contracts a rule could name instead: shaped contracts only, never one
+    workspace file's own contract (workspace citations need no rule)."""
+
+    shaped = sorted(
+        (
+            identity
+            for identity in resolvable_identities
+            if not identity.startswith(f"CaptureContract:{FOREIGN_SOURCE_CONTRACT_PREFIX}")
+        ),
+        key=lambda item: item.encode("utf-8"),
+    )
+    return {"capture_contracts": shaped}
+
+
 def lint_claim_type_input(
     instance: PlaybillInstance,
     value: ClaimTypeInputRecord | ClaimType,
@@ -262,11 +278,7 @@ def lint_claim_type_input(
                         code="cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                         field_path=f"$.evidence_admission_policy.rules[{index}].capture_contracts",
                         contract_identity=identity,
-                        replacement_rule_fragment={
-                            "capture_contracts": sorted(
-                                resolvable_identities, key=lambda item: item.encode("utf-8")
-                            )
-                        },
+                        replacement_rule_fragment=_admit_instead(resolvable_identities),
                     )
                 )
         admitted.update(digests)
@@ -331,25 +343,8 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"allowed_subject_kinds": [undeclared_kind]},
             )
         )
-    for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
-        contract = foreign_source_capture_contract(source_id)
-        contract_digest = capture_contract_digest(contract).tagged
-        if (
-            contract_digest in admitted
-            or contract.identity.qualified in admitted_identities
-            or contract.shape in admitted_family_shapes
-        ):
-            continue
-        warnings.append(
-            ClaimTypeLintWarningV1(
-                code="cruxible.claim_type.anticipated_source_contract_omitted",
-                field_path="$.evidence_admission_policy.rules",
-                source_id=source_id,
-                contract_identity=contract.identity.qualified,
-                contract_digest=contract_digest,
-                replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
-            )
-        )
+    # A workspace source needs no rule: its citations are admitted wherever own
+    # words are, so no per-source rule is proposed here (ruling 2026-11-16).
     rule_roles = {
         role
         for raw_rule in rules

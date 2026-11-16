@@ -40,7 +40,6 @@ from cruxible_client.contracts.canonical_forms import CanonicalTransform
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
     capture_contract_digest,
-    foreign_source_capture_contract,
     parse_capture_contract,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
@@ -61,8 +60,10 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    PER_FILE_EVIDENCE_RULE_REPAIR,
     CaptureContractAdmission,
     ClaimEvidenceAdmissionPolicy,
+    added_per_file_contracts,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.shapes import (
@@ -250,8 +251,10 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     - ``evidence_admission_policy``: with ``evidence_requirement`` ``self`` (the
       default) or ``none``, one own-words rule (``self``, contract
       ``cruxible.coordinator-self-source-v1``) for every permitted role but
-      ``derivation``, plus one rule per ``anticipated_source_ids`` entry; with
-      ``captured``, the source rules only.
+      ``derivation``, which also admits workspace file and section citations;
+      plus, for ``evidence: [<contract>, ...]``, one rule admitting those shaped
+      contracts (derivationally for ``derivation``); with ``captured``, the
+      ``evidence`` rules only.
     - ``admission_policy``: no corroboration or freeze requirements.
     - ``resolution_policy``: supported, current Claims; ``only_contender``
       (one) or ``all`` (many); a conflict leaves the field unresolved.
@@ -355,6 +358,13 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     #: How the type states absence. Omitted: kept from the predecessor (none
     #: for a new ClaimType). ``null``: cleared.
     inverse: ClaimInverseInput | None = None
+    #: The shaped CaptureContracts whose Captures back this field, by name: the
+    #: short form of ``evidence_admission_policy``. Each is admitted for the
+    #: field's permitted roles (derivationally for ``derivation``). Own words,
+    #: and workspace file and section citations, need no entry: they are
+    #: admitted on every field that is not ``evidence_requirement: captured``.
+    evidence: tuple[str, ...] | None = None
+    #: Retired authoring field: refused with a repair naming ``evidence``.
     anticipated_source_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -362,6 +372,11 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
         for field in _NEVER_NULL_FIELDS:
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null: name a value or leave it out")
+        if self.evidence is not None and self.evidence_admission_policy is not None:
+            raise ValueError(
+                "state evidence (the shaped contracts) or evidence_admission_policy (the "
+                "full rules), not both"
+            )
         return self
 
     @model_serializer(mode="wrap")
@@ -382,10 +397,24 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     @field_validator("anticipated_source_ids")
     @classmethod
     def _anticipated_source_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("anticipated source IDs must be UTF-8 byte-sorted and unique")
-        for source_id in value:
-            foreign_source_capture_contract(source_id)
+        if value:
+            raise ValueError(
+                "anticipated_source_ids is no longer authored: a workspace file or section "
+                "citation needs no rule (it is admitted wherever own words are); for a "
+                "particular kind of source, list its shaped CaptureContract in "
+                "evidence: [<contract name>, ...]"
+            )
+        return value
+
+    @field_validator("evidence")
+    @classmethod
+    def _evidence(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("evidence lists at least one shaped CaptureContract; leave it out")
+        if len(set(value)) != len(value):
+            raise ValueError("evidence names each contract once")
         return value
 
 
@@ -393,6 +422,74 @@ class ClaimTypeInputIncomplete(FormatError):
     """A new ClaimType leaves out a field no default can fill."""
 
     error_code = "cruxible.claim_type.input_incomplete"
+
+
+class ClaimTypePerFileEvidenceRule(FormatError):
+    """A ClaimType's evidence rule newly names one workspace file's own contract."""
+
+    error_code = "cruxible.claim_type.per_file_evidence_rule"
+
+
+def refuse_added_per_file_rules(
+    predicate: str,
+    policy: ClaimEvidenceAdmissionPolicy,
+    predecessor: ClaimEvidenceAdmissionPolicy | None,
+) -> None:
+    """Refuse a rule that newly names a per-file foreign-source contract.
+
+    A rule the accepted ClaimType already holds is left as it is, so the field
+    stays editable; only a newly named per-file contract refuses.
+    """
+
+    added = added_per_file_contracts(policy, predecessor)
+    if not added:
+        return
+    index, name = added[0]
+    rule_id = policy.rules[index].rule_id
+    raise ClaimTypePerFileEvidenceRule(
+        f"{ClaimTypePerFileEvidenceRule.error_code}: ClaimType:{predicate} evidence rule "
+        f"{rule_id!r} names CaptureContract:{public_name(name)}; {PER_FILE_EVIDENCE_RULE_REPAIR}"
+    )
+
+
+class ClaimTypeFamilyRuleNotAuthored(FormatError):
+    """An authored rule newly names a capture-contract family."""
+
+    error_code = "cruxible.claim_type.family_rule_not_authored"
+
+
+WORKSPACE_FILE_FAMILY = "workspace_file"
+
+
+def refuse_added_family_rules(
+    predicate: str,
+    policy: ClaimEvidenceAdmissionPolicy,
+    predecessor: ClaimEvidenceAdmissionPolicy | None,
+) -> None:
+    """Workspace citations need no rule: refuse a family a rule newly names on its own.
+
+    A family beside the own-words contract is what lowering writes itself, and
+    a rule the accepted ClaimType already holds stays as it is.
+    """
+
+    held = {
+        rule.rule_id
+        for rule in (() if predecessor is None else predecessor.rules)
+        if rule.capture_contract_families
+    }
+    for rule in policy.rules:
+        own_words = any(
+            item.target.name == COORDINATOR_SELF_SOURCE_CONTRACT_ID
+            for item in rule.capture_contracts
+        )
+        if rule.capture_contract_families and not own_words and rule.rule_id not in held:
+            raise ClaimTypeFamilyRuleNotAuthored(
+                f"{ClaimTypeFamilyRuleNotAuthored.error_code}: ClaimType:{predicate} evidence "
+                f"rule {rule.rule_id!r} names capture_contract_families; a workspace file or "
+                "section citation needs no rule: it is admitted wherever own words are. For "
+                "a particular kind of source, list its shaped CaptureContract in "
+                "evidence: [<contract name>, ...]"
+            )
 
 
 class ClaimTypeEvidenceRulesRequired(FormatError):
@@ -406,9 +503,15 @@ def _admitted_roles(roles: tuple[str, ...]) -> list[str]:
 
 
 def default_evidence_policy(
-    roles: tuple[str, ...], requirement: str, source_ids: tuple[str, ...]
+    roles: tuple[str, ...], requirement: str, evidence: tuple[str, ...] = ()
 ) -> dict[str, object]:
-    """The rules a new ClaimType takes when it states none (names in public spelling)."""
+    """The rules a field takes from its roles, requirement and ``evidence`` list.
+
+    Names are in public spelling. Unless the field requires captured evidence,
+    one ``self`` rule admits own words and workspace file and section citations;
+    ``evidence`` adds one ``evidence`` rule for the permitted roles, and one
+    derivational ``derivation`` rule when ``derivation`` is permitted.
+    """
 
     claim_roles = _admitted_roles(roles)
     rules: list[dict[str, object]] = []
@@ -418,27 +521,37 @@ def default_evidence_policy(
                 "rule_id": "self",
                 "claim_roles": claim_roles,
                 "capture_contracts": [public_name(COORDINATOR_SELF_SOURCE_CONTRACT_ID)],
+                "capture_contract_families": [WORKSPACE_FILE_FAMILY],
                 "admission": "direct",
                 "subject_binding": "exact_claim_subject",
             }
         )
-    if claim_roles:
-        for source_id in source_ids:
-            contract = foreign_source_capture_contract(source_id)
-            rules.append(
-                {
-                    "rule_id": f"source-{source_id}",
-                    "claim_roles": claim_roles,
-                    "capture_contracts": [public_name(contract.identity.name)],
-                    "admission": "direct",
-                    "subject_binding": "exact_claim_subject",
-                }
-            )
+    shaped = sorted(set(evidence), key=lambda item: item.encode("utf-8"))
+    if shaped and claim_roles:
+        rules.append(
+            {
+                "rule_id": "evidence",
+                "claim_roles": claim_roles,
+                "capture_contracts": shaped,
+                "admission": "direct",
+                "subject_binding": "exact_claim_subject",
+            }
+        )
+    if shaped and "derivation" in roles:
+        rules.append(
+            {
+                "rule_id": "derivation",
+                "claim_roles": ["derivation"],
+                "capture_contracts": shaped,
+                "admission": "derivational",
+                "subject_binding": "exact_claim_subject",
+            }
+        )
     if requirement == "captured" and not rules:
         raise ClaimTypeEvidenceRulesRequired(
             f"{ClaimTypeEvidenceRulesRequired.error_code}: evidence_requirement captured "
-            "admits only captured evidence, and this ClaimType names no source: list the "
-            "sources in anticipated_source_ids, or state evidence_admission_policy"
+            "admits only a shaped payload under a declared contract, and this ClaimType "
+            "names none: list its shaped CaptureContracts in evidence: [<contract name>, ...]"
         )
     rules.sort(key=lambda rule: str(rule["rule_id"]).encode("utf-8"))
     return {"rules": rules}
@@ -501,7 +614,14 @@ def claim_type_input_defaults(
         for field in _STRUCTURAL_INPUT_FIELDS:
             if field not in stated and field in prior:
                 data[field] = prior[field]
-        if "evidence_admission_policy" not in stated:
+        if value.evidence is not None:
+            data["evidence_admission_policy"] = default_evidence_policy(
+                tuple(cast(list[str], data["permitted_roles"])),
+                str(value.evidence_requirement or prior["evidence_requirement"]),
+                value.evidence,
+            )
+            data.pop("evidence", None)
+        elif "evidence_admission_policy" not in stated:
             data["evidence_admission_policy"] = _inherited_policy(
                 cast(dict[str, object], data["evidence_admission_policy"])
             )
@@ -536,8 +656,9 @@ def claim_type_input_defaults(
         data["evidence_admission_policy"] = default_evidence_policy(
             tuple(data["permitted_roles"]),
             requirement,
-            value.anticipated_source_ids,
+            value.evidence or (),
         )
+    data.pop("evidence", None)
     if "admission_policy" not in stated:
         data["admission_policy"] = {"corroboration_requirements": [], "freeze_requirements": []}
     if "resolution_policy" not in stated:
@@ -562,15 +683,10 @@ def claim_type_input_template(*, expanded: bool = False) -> ClaimTypeInputRecord
     return claim_type_input_defaults(minimal, None) if expanded else minimal
 
 
-def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...]) -> dict[str, str]:
-    """Accepted (and anticipated foreign-source) contract digests to their identities."""
+def _contract_identities(tree: Mapping[str, bytes]) -> dict[str, str]:
+    """Accepted contract digests to their identities."""
 
     identities: dict[str, str] = {}
-    for source_id in source_ids:
-        source_contract = foreign_source_capture_contract(source_id)
-        identities[capture_contract_digest(source_contract).tagged] = (
-            source_contract.identity.qualified
-        )
     for path in tree:
         if path.startswith("capture-contracts/") and path.endswith(".json"):
             contract = parse_capture_contract(tree[path], path=path)
@@ -768,6 +884,7 @@ def lower_claim_type_input(
     value = claim_type_input_defaults(value, predecessor)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
+    payload.pop("evidence", None)
     for field in _MERGED_INPUT_FIELDS:
         payload.pop(field, None)
     payload["canonical_form"] = list(_canonical_form(value, predecessor))
@@ -784,17 +901,14 @@ def lower_claim_type_input(
     )
     identity_policy = identity_evidence_policy(
         policy,
-        identities=(
-            _contract_identities(tree, value.anticipated_source_ids) if needs_digest_lookup else {}
-        ),
+        identities=(_contract_identities(tree) if needs_digest_lookup else {}),
     )
     payload.update(_description_fields(value, predecessor))
     try:
-        payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicy.model_validate(
-            identity_policy
-        ).model_dump(mode="json")
+        evidence_policy = ClaimEvidenceAdmissionPolicy.model_validate(identity_policy)
     except ValidationError as exc:
         raise ClaimTypeInputValidationError(exc) from exc
+    payload["evidence_admission_policy"] = evidence_policy.model_dump(mode="json")
     payload["identity"] = ArtifactIdentity(kind="ClaimType", name=value.predicate).model_dump(
         mode="json"
     )
@@ -823,6 +937,11 @@ __all__ = [
     "claim_type_input_defaults",
     "claim_type_input_template",
     "default_evidence_policy",
+    "refuse_added_per_file_rules",
+    "refuse_added_family_rules",
+    "ClaimTypeFamilyRuleNotAuthored",
+    "WORKSPACE_FILE_FAMILY",
+    "ClaimTypePerFileEvidenceRule",
     "default_resolution_policy",
     "identity_evidence_policy",
     "lower_claim_type_input",

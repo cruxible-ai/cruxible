@@ -1524,29 +1524,37 @@ ClaimType states `predicate` and `cardinality`; `value` declares its native
 Contract field type and defaults to `string{max_len: 256}`. `allowed_subject_kinds`
 defaults to the predicate prefix. Every
 other field has a default: `permitted_roles` of `[default_role]` or
-`[normative]`, one own-words evidence rule (plus one per
-`anticipated_source_ids` entry), no admission requirements, and supported,
+`[normative]`, one rule admitting the writer's own words and workspace file
+and section citations (none when `evidence_requirement` is `captured`), plus
+the shaped contracts listed in `evidence: [CONTRACT, ...]`, no admission
+requirements, and supported,
 current resolution. An edit of a held predicate states only what changes; an
 omitted field keeps its accepted value. `propose --template` prints that
 minimal record for a literal `project.work_item.status` without contacting the
 daemon, and `--template --expanded` prints every default it takes. A proposal
 lands when policy and the caller's tier allow (`--no-accept` only proposes),
 and an edit carries the Claims that use the field to the new version.
-An evidence rule names contracts in `capture_contracts`: a bare name, or
-`{contract: NAME, logical_sources: [SOURCE]}` to require a recorded source
-label. Empty or omitted `logical_sources` accepts any source; CAS evidence
-requires an unrestricted entry. It admits
-evidence captured under every accepted version of those contracts, so improving
-a contract through a compatible successor needs no ClaimType change. Replace
-`anticipated_source_ids` with the logical source used by `authoring bind`;
-the source-intent lint then names the deterministic foreign-source
-CaptureContract to place in the rule. An anchored binding (`authoring bind`,
-or `--evidence-file` on a write) carries that exact contract into the governed
-Claim candidate, so accepting the bound Claim accepts the contract and gives the
-rule an evidence producer. The writer's own words are admitted by naming
-`CaptureContract:cruxible.coordinator-self-source-v1`, and a catalogued file
-named `NAME` by `CaptureContract:cruxible.foreign-source.NAME`; the stored
-spelling of either name is accepted too. Durations (`stale_after`,
+`evidence: [CONTRACT, ...]` is the short form of a field's rules: each shaped
+CaptureContract listed is admitted for the field's permitted roles (directly;
+derivationally for `derivation`), about the Claim's own Subject. Workspace file
+and section citations need no entry: they are admitted wherever own words are,
+that is on every field whose `evidence_requirement` is not `captured`;
+`captured` means a shaped payload under a declared contract, so a file quote
+does not satisfy it. `evidence` and `evidence_admission_policy` exclude each
+other. In the full rule form a rule names contracts in `capture_contracts`: a
+bare name, or `{contract: NAME, logical_sources: [SOURCE]}` to require a
+recorded source label. Empty or omitted `logical_sources` accepts any source;
+CAS evidence requires an unrestricted entry. A rule admits evidence captured
+under every accepted version of its contracts, so improving a contract through
+a compatible successor needs no ClaimType change. A new rule never names one
+workspace file's own contract (`CaptureContract:cruxible.foreign-source.NAME`:
+`cruxible.claim_type.per_file_evidence_rule`) or only a capture-contract family
+(`cruxible.claim_type.family_rule_not_authored`); `kit build` refuses a
+per-file rule too. A rule an existing ClaimType already holds is kept when the
+field is edited. `anticipated_source_ids` is retired and refuses with a repair
+naming `evidence`. The writer's own words are named
+`CaptureContract:cruxible.coordinator-self-source-v1`; the stored spelling of a
+contract name is accepted too. Durations (`stale_after`,
 `unsure_hold_for`) take ISO 8601 (`P30D`). The input command lowers the tagless form
 and returns nonblocking policy/source lint beside the proposal, among it
 `cruxible.claim_type.permitted_role_unadmitted` (a permitted role no evidence
@@ -1563,10 +1571,7 @@ Document section the Claim cites) and
 a version, a date or an identifier, which names a thing that is better a kind
 and a `subject<K>` field). A change set's preflight (`authoring compile`,
 `authoring submit`, the SDK's `prepare()`) returns the same lint for every
-ClaimType it defines, each warning naming its definition in `artifact`. The optional,
-sorted `anticipated_source_ids` input supplies
-source-specific repair suggestions without entering the governed ClaimType.
-Expert proposals, migration preflight and submission, and SDK cold-dependency
+ClaimType it defines, each warning naming its definition in `artifact`. Expert proposals, migration preflight and submission, and SDK cold-dependency
 preflight deliver the same typed lint; advisories never enter candidate identity,
 the approval frontier, or its certificate. `migrate` atomically succeeds the
 ClaimType and disposes every dependent the request names; it never authors

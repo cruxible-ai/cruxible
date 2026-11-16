@@ -443,12 +443,12 @@ def test_lowering_never_authors_an_exact_digest_rule() -> None:
     with pytest.raises(
         ClaimTypeInputReferenceError, match="name the contract in capture_contracts"
     ):
-        _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), {})
+        _lower(_input(evidence_admission_policy=unaccepted), {})
     tree = {PATH: render_claim_type(_lower(_input(), {}))}
     with pytest.raises(
         ClaimTypeInputReferenceError, match="name the contract in capture_contracts"
     ):
-        _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), tree)
+        _lower(_input(evidence_admission_policy=unaccepted), tree)
 
 
 def _described_v7() -> ClaimType:

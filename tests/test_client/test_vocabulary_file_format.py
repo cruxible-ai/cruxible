@@ -233,7 +233,7 @@ def test_export_writes_shorthand_and_full_form_and_reads_back_to_each_digest() -
             cardinality="one",
             value="string{max_len: 64}",
             permitted_roles=["observation"],
-            anticipated_source_ids=["osv.dev"],
+            evidence=["osv.dev"],
         ),
         _type(
             predicate="dev.item.count",
@@ -294,7 +294,7 @@ def test_export_writes_shorthand_and_full_form_and_reads_back_to_each_digest() -
     assert item.fields["seen"].stated == {
         "value": "string{max_len: 64}",
         "permitted_roles": ["observation"],
-        "anticipated_source_ids": ["osv.dev"],
+        "evidence": ["osv.dev"],
     }
     assert item.fields["count"].stated["evidence_freshness"] == {"stale_after": "PT2592000S"}
     assert item.fields["parent"].link == ("dev.item", "dev.note")

@@ -83,6 +83,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
     DIRECT_SELF_ASSERTED_CONTRACT_ID,
+    FOREIGN_SOURCE_CONTRACT_PREFIX,
     FOREIGN_SOURCE_COORDINATE_TYPE,
     classify_capture_reuse,
     foreign_source_capture_contract,
@@ -296,6 +297,21 @@ def _refuse(
         candidates=tuple(candidates)[:_MAX_CANDIDATES],
         repair_line=repair,
         field_path=field_path,
+    )
+
+
+def _captured_repair(field_name: str, shown: tuple[str, ...]) -> str:
+    """Cite a Capture under a shaped contract the field admits, or add one to its evidence."""
+
+    add = (
+        f"add a shaped CaptureContract to {field_name}'s evidence (evidence: [<contract "
+        "name>, ...] in the vocabulary file)"
+    )
+    if not shown:
+        return f"Cite a Capture under a shaped CaptureContract: {add}, then cite under it"
+    return (
+        f"Cite a Capture under {' or '.join(shown)}: contract evidence naming it "
+        f"(--evidence-contract) or a Capture handle (--capture); or {add}"
     )
 
 
@@ -2103,6 +2119,39 @@ class _Planner:
             repair="Use write through the CLI, MCP or SDK beside the workspace",
         )
 
+    def _refuse_file_quote_for_captured(
+        self, info: PredicateInfo, field_name: str, *, index: int, path: str
+    ) -> None:
+        """``captured`` means a shaped payload under a declared contract.
+
+        A file or section quote satisfies it only where an accepted rule still
+        admits workspace citations (a family or per-file rule a field already
+        holds); a field lowered under the shaped-only form admits none.
+        """
+
+        if not requires_captured_evidence(info.claim_type):
+            return
+        rules = info.claim_type.evidence_admission_policy.rules
+        if any(rule.capture_contract_families for rule in rules) or any(
+            item.target.name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX)
+            for rule in rules
+            for item in rule.capture_contracts
+        ):
+            return
+        shown = tuple(
+            public_name(item.target.name) for rule in rules for item in rule.capture_contracts
+        )
+        raise _refuse(
+            "cruxible.write.evidence_required",
+            f"{field_name} declares evidence_requirement 'captured' "
+            f"({', '.join(shown) or 'no shaped contract yet'}): a shaped payload under a "
+            "declared contract; a file quote does not satisfy it",
+            change=index,
+            candidates=shown,
+            repair=_captured_repair(field_name, shown),
+            field_path=path,
+        )
+
     def source(
         self,
         info: PredicateInfo,
@@ -2120,10 +2169,12 @@ class _Planner:
         if capture is not None:
             return ExistingCaptureCitationSource(capture_digest=capture), "evidence"
         if isinstance(evidence, FileEvidence):
+            self._refuse_file_quote_for_captured(info, field_name, index=index, path=path)
             return self._observed(evidence, index=index), "evidence"
         if isinstance(evidence, SectionEvidence):
             observation = self._observed(evidence, index=index)
             if not evidence.own_words:
+                self._refuse_file_quote_for_captured(info, field_name, index=index, path=path)
                 return observation, "evidence"
             if requires_captured_evidence(info.claim_type):
                 raise _refuse(
@@ -2145,19 +2196,21 @@ class _Planner:
                     ).admitted(info.claim_type)
                     if name not in _OWN_WORDS_CONTRACTS
                 )
-            shown = tuple(public_name(name) for name in admitted)
+            # Only shaped contracts are named: a file's own contract stands for one
+            # workspace file, and no repair proposes a rule derived from a file.
+            shown = tuple(
+                public_name(name)
+                for name in admitted
+                if not name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX)
+            )
             raise _refuse(
                 "cruxible.write.evidence_required",
                 f"{field_name} declares evidence_requirement 'captured' "
-                f"({', '.join(shown)}); your own words cannot back it",
+                f"({', '.join(shown) or 'no shaped contract yet'}); your own words cannot "
+                "back it",
                 change=index,
                 candidates=shown,
-                repair=(
-                    "Cite a Capture under "
-                    f"{' or '.join(shown) or 'an admitted CaptureContract'}: contract evidence "
-                    "naming it (--evidence-contract), a Capture handle (--capture), or file "
-                    "evidence (--evidence-file PATH#ANCHOR)"
-                ),
+                repair=_captured_repair(field_name, shown),
                 field_path=path,
             )
         return SelfSourceBody(content_base64=base64.b64encode(body).decode("ascii")), None

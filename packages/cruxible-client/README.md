@@ -443,12 +443,14 @@ claim_type(
     cardinality: Cardinality | str,
     permitted_roles: Sequence[ClaimRole | str],
     referent_sensitivity: ReferentSensitivity | str,
-    sources: Sequence[str | SourceRef],
     admission_policy: ClaimAdmissionPolicy,
     resolution_policy: ClaimResolutionPolicy,
     pins: Sequence[ArtifactPin],
     evidence_freshness: Duration | None,
     attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None,
+    canonical_form: Sequence[str] | None = None,
+    evidence: Sequence[str] = (),
+    sources: Sequence[str | SourceRef] = (),
 ) -> ClaimTypeDraft
 ```
 
@@ -464,12 +466,14 @@ Builds a ClaimTypeDraft with explicit object, cardinality, role, evidence, admis
 | `cardinality` | Required | one or many. It constrains the field; it does not hide live competing Claims on reads. |
 | `permitted_roles` | Required | Claim roles admitted by this ClaimType. |
 | `referent_sensitivity` | Required | Whether dependency sensitivity follows endpoint identity or its shell. |
-| `sources` | Required | Logical sources admitted by the ClaimType evidence policy. |
 | `admission_policy` | Required | Typed policy governing Claim admission. |
 | `resolution_policy` | Required | Typed policy governing Claim resolution; separate from acceptance. |
 | `pins` | Required | Declared ArtifactPin dependencies. Exact pins belong to their artifact contract. |
 | `evidence_freshness` | Required | Optional freshness duration. None leaves it unspecified. |
 | `attestation_consequence_policy` | `None` | Optional policy for consequences of accepted signed attestations. |
+| `canonical_form` | `None` | Ordered transforms literal values are stored in; left out, a successor keeps its predecessor's. |
+| `evidence` | `()` | Shaped CaptureContract names that back the field (the short form's `evidence`). Own words and workspace file and section citations need no entry. |
+| `sources` | `()` | Retired: refuses with a repair naming `evidence`. |
 
 <a id="api-cruxible-claim"></a>
 
@@ -2059,14 +2063,17 @@ field(
     members: Mapping[str | int | bool, str] | None = None,
     key: bool = False,
     default_role: ClaimRole | str | None = None,
-    sources: Sequence[str] = (),
+    evidence: Sequence[str] | None = None,
     canonical_form: Sequence[str] | None = None,
+    sources: Sequence[str] = (),
 ) -> PendingClaimTypeRef
 ```
 
 Define (or edit) one field of a kind, with the short form's defaults. The
 same request through `cruxible claim-type propose` gives the same ClaimType and
-digest. `prepare()` returns its lint.
+digest. `prepare()` returns its lint. `evidence=[...]` lists the shaped
+CaptureContracts that back the field; own words and workspace file and section
+citations need no entry. `sources=` is retired and refuses.
 
 ```python
 changes = cx.changes(rationale="Project items.")

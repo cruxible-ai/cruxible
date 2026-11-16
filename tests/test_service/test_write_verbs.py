@@ -666,16 +666,72 @@ def test_a_captured_claim_type_refuses_own_words_naming_its_contracts(
     _move_to_v7(instance, "measured", evidence_requirement="captured")
     refusal = _refusal(_write(instance, _set(WI1, "measured", 3)))
     assert refusal.code == "cruxible.write.evidence_required"
-    # Prose and candidates name the contract as a reader sees it (public name).
-    assert refusal.candidates == (public_name(REPORTS.identity.name),)
-    assert "cruxible.foreign-source.repo.reports" in refusal.message
+    # Only shaped contracts are named: a file's own contract (the per-file rule
+    # this older field holds) is never proposed, and the repair adds a shaped
+    # contract to the field's evidence (ruling 2026-11-16).
+    assert refusal.candidates == ()
+    assert "foreign-source" not in refusal.message + (refusal.repair or "")
     assert "playbill." not in refusal.message + (refusal.repair or "")
     assert "evidence_requirement 'captured'" in refusal.message
+    assert refusal.repair is not None
+    assert "add a shaped CaptureContract to measured's evidence" in refusal.repair
     captured = _write(
         instance,
         _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "sha256:" + "a" * 64}),
     )
     assert _refusal(captured).code != "cruxible.write.evidence_required"
+
+
+def test_a_file_quote_does_not_satisfy_a_shaped_only_captured_field() -> None:
+    """``captured`` means a shaped payload under a declared contract (2026-11-16)."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+
+    base = next(item for item in CLAIM_TYPES if item.predicate == f"{KIND}.measured")
+    shaped = base.model_copy(
+        update={
+            "evidence_requirement": "captured",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="evidence",
+                        claim_roles=("observation",),
+                        capture_contracts=("acme.quotes",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            ),
+        }
+    )
+    from cruxible_client.contracts.errors import WriteRefusalError
+
+    with pytest.raises(WriteRefusalError) as caught:
+        write_verbs._Planner._refuse_file_quote_for_captured(
+            None,  # type: ignore[arg-type]
+            SimpleNamespace(claim_type=shaped),  # type: ignore[arg-type]
+            "measured",
+            index=0,
+            path="changes[0].evidence",
+        )
+    refusal = caught.value
+    assert refusal.error_code == "cruxible.write.evidence_required"
+    assert "a file quote does not satisfy it" in refusal.detail
+    assert refusal.candidates == ("acme.quotes",)
+    # An older field that still admits a workspace file keeps taking its quote.
+    held = next(item for item in CLAIM_TYPES if item.predicate == f"{KIND}.measured")
+    write_verbs._Planner._refuse_file_quote_for_captured(
+        None,  # type: ignore[arg-type]
+        SimpleNamespace(claim_type=held.model_copy(update={"evidence_requirement": "captured"})),  # type: ignore[arg-type]
+        "measured",
+        index=0,
+        path="changes[0].evidence",
+    )
 
 
 def test_a_none_claim_type_is_supported_by_the_writers_words_without_a_warning(

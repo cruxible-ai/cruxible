@@ -35,7 +35,6 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     WorkingSelectionObservation,
 )
-from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicy,
     ClaimAttestationConsequenceRule,
@@ -744,7 +743,6 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=("corpus.runbook",),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
@@ -953,7 +951,6 @@ def test_claim_type_builder_writes_native_values_with_identity_rules(tmp_path: P
         cardinality=Cardinality.ONE,
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=("corpus.runbook",),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
@@ -969,10 +966,12 @@ def test_claim_type_builder_writes_native_values_with_identity_rules(tmp_path: P
     assert draft.definition.attestation_consequence_policy == policy
     assert draft.definition.evidence_requirement == "self"
     assert draft.definition.revision_evidence == "replace"
+    # The short form's one rule: own words and workspace citations together.
     (rule,) = draft.definition.evidence_admission_policy.rules
-    assert [item.target.qualified for item in rule.capture_contracts] == [
-        foreign_source_capture_contract("corpus.runbook").identity.qualified
+    assert [item.target.name for item in rule.capture_contracts] == [
+        "playbill.coordinator-self-source-v1"
     ]
+    assert rule.capture_contract_families == ("workspace_file",)
 
 
 def test_claim_requires_exactly_one_explicit_source_role(tmp_path: Path) -> None:

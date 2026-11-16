@@ -31,7 +31,7 @@ from cruxible_client.contracts.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
-    foreign_source_capture_contract,
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
 )
 from cruxible_client.contracts.errors import BootstrapError
 from cruxible_client.contracts.floor import FLOOR_LOCAL_PATHS, FLOOR_MANIFEST_PATH
@@ -513,7 +513,6 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert cruxible.creator_private_key.is_file()
 
     # 2. Seed the predicate vocabulary.
-    source_contract = foreign_source_capture_contract(CLAIM_SOURCE_ID)
     claim_type = _claim_type().model_copy(
         update={
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
@@ -521,7 +520,10 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
                     ClaimEvidenceAdmissionRule(
                         rule_id="coordinator-self-source",
                         claim_roles=("normative", "observation"),
-                        capture_contracts=(source_contract.identity.name,),
+                        # Own words and workspace citations: a catalogued
+                        # file needs no per-file rule.
+                        capture_contracts=(COORDINATOR_SELF_SOURCE_CONTRACT_ID,),
+                        capture_contract_families=("workspace_file",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

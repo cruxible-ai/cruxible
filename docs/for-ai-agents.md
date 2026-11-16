@@ -372,6 +372,14 @@ mapping moves), and `apply` submits it as one change set. The SDK spelling is
 (`vocabulary_file_behind`); `vocabulary export` repairs it. [Evolving your
 vocabulary](evolving-your-vocabulary.md#the-vocabulary-file) has the format.
 
+Citations need no rule: a field admits your own words and passages of
+catalogued workspace files and sections unless it requires captured evidence.
+A field backed by a particular kind of source lists its shaped
+CaptureContracts in `evidence: [CONTRACT, ...]` (vocabulary file, `claim-type
+propose`, or the SDK's `field(..., evidence=[...])`); `captured` then means a
+Capture under one of them
+([Evidence and admission](evidence-and-admission.md#writing-a-fields-rules)).
+
 For a change that needs a judgment per Claim, the SDK states it directly.
 `ChangeSetDraft.succeed_claim_type(successor, dependents=[...])` changes a
 field together with what happens to every Claim written under it, so "I need
