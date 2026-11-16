@@ -812,17 +812,86 @@ def test_the_fallback_spellings_take_each_surfaces_argument_shape() -> None:
 SDK_BARE_PLACEHOLDERS = frozenset({"SIGNER", "INPUT"})
 
 
+#: The caller's own words: the operands whose placeholder a field check refuses.
+_CALLER_TEXT = {"because": "A reviewer read the source.", "reason": "Reviewed.", "name": "fix-it"}
+
+
+def _cases(spelling: RepairSpelling) -> list[dict[str, object]]:
+    """Every operand missing; then the caller's words given, everything else missing."""
+
+    given = {key: text for key, text in _CALLER_TEXT.items() if key in spelling.required}
+    return [{}, given] if given else [{}]
+
+
 def _placeholder_lines() -> Iterator[tuple[str, str, str]]:
     for operation, spelling in sorted(REPAIR_SPELLINGS.items()):
         if not spelling.required:
             continue
-        for surface in _SURFACES:
-            line = render_repair(
-                RepairOperation(operation=operation),
-                surface=surface,  # type: ignore[arg-type]
-            )
-            if _own_form(line) and PLACEHOLDER_PATTERN.search(line):
-                yield operation, surface, line
+        for arguments in _cases(spelling):
+            for surface in _SURFACES:
+                line = render_repair(
+                    RepairOperation(operation=operation, arguments=arguments),
+                    surface=surface,  # type: ignore[arg-type]
+                )
+                if _own_form(line) and PLACEHOLDER_PATTERN.search(line):
+                    yield operation, surface, line
+
+
+def _is_preview(line: str, surface: str) -> bool:
+    if surface == "cli":
+        return "--dry-run" in line.split()
+    markers = ("dry_run=true", '"dry_run": true') if surface == "mcp" else ("dry_run=True",)
+    return any(marker in line for marker in markers)
+
+
+@pytest.mark.parametrize("operation", sorted(REPAIR_SPELLINGS))
+def test_a_line_left_with_only_content_placeholders_is_a_preview(operation: str) -> None:
+    """(c) Every refusing operand given (the caller's words, real identifiers), every
+    opaque one missing: nothing refuses that placeholder, so the line only previews."""
+
+    spelling = REPAIR_SPELLINGS[operation]
+    opaque = set(spelling.opaque) & set(spelling.required)
+    if not opaque:
+        return
+    values: dict[str, object] = {
+        key: _CALLER_TEXT.get(key, _value_for(spelling, key))
+        for key in spelling.required
+        if key not in opaque
+    }
+    for surface in _SURFACES:
+        if not opaque & declared_keys(spelling, surface):  # type: ignore[arg-type]
+            continue  # this client takes no such content operand (a file it reads instead)
+        line = render_repair(
+            RepairOperation(operation=operation, arguments=values),
+            surface=surface,  # type: ignore[arg-type]
+        )
+        if _own_form(line):
+            assert _is_preview(line, surface), (operation, surface, line)
+
+
+def test_a_value_left_out_of_a_reasoned_set_only_previews() -> None:
+    """Review round 4 follow-up: the reviewer's reproducer, on every client."""
+
+    repair = RepairOperation(
+        operation="cruxible.set",
+        arguments={
+            "subject": "dev.item/a",
+            "field": "status",
+            "because": "The source now reports this status.",
+        },
+    )
+    assert render_repair(repair, surface="cli") == (
+        "cruxible set dev.item/a status '<VALUE>' --dry-run "
+        "--because 'The source now reports this status.'"
+    )
+    assert render_repair(repair, surface="mcp") == (
+        'cruxible_set(dry_run=true, subject="dev.item/a", field="status", value="<VALUE>", '
+        'because="The source now reports this status.")'
+    )
+    assert render_repair(repair, surface="sdk") == (
+        'cx.set("dev.item/a", "status", "<VALUE>", '
+        'because="The source now reports this status.", dry_run=True)'
+    )
 
 
 def test_the_renderer_emits_only_the_registered_placeholders() -> None:
@@ -1012,6 +1081,8 @@ def test_a_line_run_unchanged_refuses_specifically_and_changes_nothing(
             refused, detail = _sdk_refusal(exc, tokens), repr(exc)
         else:
             refused, detail = False, "returned"
+    if not refused and _is_preview(line, surface):
+        refused = True  # a preview stores nothing; the head check below proves it
     assert refused, f"{operation} on {surface}: no specific refusal for {line}: {detail}"
     assert _head(instance_id) == before, f"{operation} on {surface} changed accepted state"
 

@@ -707,6 +707,11 @@ class RepairSpelling:
     #: a client's form does not declare leaves that client with no form, so a
     #: carried control is never dropped silently.
     context: frozenset[str] = frozenset()
+    #: Required operands that are content no check refuses (a Claim's value, a
+    #: Procedure's input, a directory the command creates): their placeholder
+    #: would be stored or used as is. A line missing one, with nothing else left
+    #: to refuse, renders as its client's preview, or not at all.
+    opaque: frozenset[str] = frozenset()
     #: Tool arguments every MCP form of this operation sends (``mode="write"``).
     mcp_fixed: Mapping[str, object] = field(default_factory=dict)
     #: A CLI operand that travels on stdin as ``{key: value}`` JSON
@@ -958,10 +963,11 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
             _operand(values, "subject"),
             _operand(values, "field"),
             _operand(values, "value"),
-            because=_OPERAND_PLACEHOLDERS["because"],
+            because=_operand(values, "because"),
             **_given(values, "dry_run"),
         ),
         required=("subject", "field", "value", "because"),
+        opaque=frozenset({"value"}),
     ),
     "cruxible.claim.retire": RepairSpelling(
         cli="retire",
@@ -974,7 +980,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         sdk=lambda values: _sdk_call(
             "cx.retire",
             _operand(values, "claim_id"),
-            because=_OPERAND_PLACEHOLDERS["because"],
+            because=_operand(values, "because"),
             **_given(values, "dry_run"),
         ),
         required=("claim_id", "because"),
@@ -990,7 +996,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
             "cx.rebind",
             _operand(values, "claim_id"),
             file=_operand(values, "file"),
-            because=_OPERAND_PLACEHOLDERS["because"],
+            because=_operand(values, "because"),
             **_given(values, "dry_run"),
         ),
         # The new text is the re-binder's: a file citation's anchor, by default.
@@ -1282,6 +1288,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
             _sdk_call("cx.accepted_procedure", _operand(values, "procedure")) + ".run(input=INPUT)"
         ),
         required=("procedure", "input_file", "input"),
+        opaque=frozenset({"input"}),
     ),
     "cruxible.procedure.measure": RepairSpelling(
         cli="procedure measure",
@@ -1356,6 +1363,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         mcp="cruxible_kit_build",
         mcp_args={"id": "request.kit_id", "version": "request.version", "owns": "request.owns"},
         required=("id", "version", "owns", "out"),
+        opaque=frozenset({"out"}),
     ),
     "cruxible.provider.install": RepairSpelling(
         cli="provider install",
@@ -1387,6 +1395,7 @@ REPAIR_SPELLINGS: Mapping[str, RepairSpelling] = {
         cli_args=("principal_id",),
         cli_flags=_flags(_CHANGE_FLAGS, key_dir="--key-dir", mode="--mode"),
         required=("principal_id", "key_dir"),
+        opaque=frozenset({"key_dir"}),
     ),
     "credential.mint": RepairSpelling(
         cli="credential mint",
@@ -1585,6 +1594,13 @@ def _spelled(
     spelling: RepairSpelling, surface: RepairSurface, values: Mapping[str, object]
 ) -> str | None:
     declared = declared_keys(spelling, surface)
+    missing = {key for key in spelling.required if key in declared and values.get(key) in _ABSENT}
+    if missing and missing <= spelling.opaque:
+        # Only content placeholders are left, and no check refuses those: the
+        # line may run only as a preview, which stores nothing.
+        if "dry_run" not in declared:
+            return None
+        values = {**values, "dry_run": True}
     carried = _carried(spelling, values)
     if values.get("dry_run") is False and "dry_run" not in declared:
         # Committing is the only thing a form with no preview does.
@@ -1602,6 +1618,9 @@ def _spelled(
     # A surface that cannot carry the repair's preview has no form for it: a
     # typed preview never renders as the change itself.
     return line if line is None or _keeps_preview(line, values, surface, spelling) else None
+
+
+_ABSENT: tuple[object, ...] = (None, "", (), [])
 
 
 #: How each surface spells a preview, as a rendered line shows it.
