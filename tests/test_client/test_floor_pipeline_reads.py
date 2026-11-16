@@ -221,6 +221,7 @@ def test_git_info_fifo_swap_refuses_or_persists_through_the_held_descriptor(
             assert (held / "exclude").read_bytes() == (
                 old_bytes
                 + b"/.cruxible/coverage.json\n/.cruxible/identity.json\n/.cruxible/world.pyi\n"
+                + b"/.cruxible/files.yaml.lock\n"
             )
             assert (held / "exclude").stat().st_mode & 0o777 == 0o640
             assert sorted(path.name for path in held.iterdir()) == ["exclude"]
