@@ -123,6 +123,12 @@ def _new_credential_id() -> str:
     return new_id("rcred", length=16, separator="_")
 
 
+def token_names_credential(token: str, credential_id: str) -> bool:
+    """Whether a bearer token was minted for ``credential_id`` (its id is in the token)."""
+
+    return token.startswith(f"{_TOKEN_PREFIX}_{credential_id}_")
+
+
 def _new_token(credential_id: str) -> str:
     return f"{_TOKEN_PREFIX}_{credential_id}_{secrets.token_urlsafe(_TOKEN_SECRET_BYTES)}"
 

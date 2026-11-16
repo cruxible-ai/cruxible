@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import shlex
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from cruxible_client.authoring.principal_settings import (
@@ -88,17 +88,33 @@ def write_principal_settings(
     return path
 
 
-def set_principal_settings_token(key_dir: Path, token: str) -> Path | None:
-    """Replace the bearer token in an existing settings file; None when there is none."""
+class SettingsTokenMismatch(ValueError):
+    """The settings file holds a token other than the one being replaced."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(str(path))
+        self.path = path
+
+
+def set_principal_settings_token(
+    key_dir: Path, token: str, *, replaces: Callable[[str], bool] | None = None
+) -> Path | None:
+    """Replace the bearer token in an existing settings file; None when there is none.
+
+    ``replaces`` (S5): compare-and-write. The file is rewritten only when the
+    token it holds passes the check (the token being rotated); otherwise
+    ``SettingsTokenMismatch`` names the file and nothing is written.
+    """
 
     path = principal_settings_path(key_dir)
     if not path.is_file() or path.is_symlink():
         return None
-    kept = [
-        line
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if not line.startswith(f"export {_TOKEN_ENV}=")
-    ]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if replaces is not None:
+        held = read_principal_settings(path).token
+        if held is None or not replaces(held):
+            raise SettingsTokenMismatch(path)
+    kept = [line for line in lines if not line.startswith(f"export {_TOKEN_ENV}=")]
     kept.append(f"export {_TOKEN_ENV}={shlex.quote(token)}")
     _write_owner_only(path, "\n".join(kept) + "\n")
     return path
@@ -118,6 +134,7 @@ def _write_owner_only(path: Path, content: str) -> None:
 
 
 __all__ = [
+    "SettingsTokenMismatch",
     "PRINCIPAL_ID_ENV",
     "PRINCIPAL_KEY_ENV",
     "PRINCIPAL_SETTINGS_FILE",

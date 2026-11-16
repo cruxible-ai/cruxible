@@ -256,8 +256,12 @@ revokes every credential that acts as it: the next request with one is refused
 with `cruxible.identity.principal_revoked` and the rows are marked revoked.
 Rotation keeps the principal, tier and label, so rotating a bound credential
 needs the same authority minting it would: the request acts as that principal,
-or `credential rotate --key-dir DIR` signs its consent. Any admin may revoke a
-credential, but never receives a replacement for someone else's principal.
+or `credential rotate --key-dir DIR` signs its consent. With `--key-dir`, the
+replacement token is written into DIR's `cruxible.env` only when that file holds
+the token being rotated (compare-and-write); a file holding another credential's
+token, or none, refuses before anything is revoked, naming the file. Any admin
+may revoke a credential, but never receives a replacement for someone else's
+principal.
 
 The bootstrap claim and `recover-admin` mint unbound operator credentials: they
 carry transport authority (host, init, credentials, daemon lifecycle) but act as
