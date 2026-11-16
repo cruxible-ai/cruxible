@@ -2768,17 +2768,25 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
-    literal_traversal = _literal_object_traversal(query, claim_types=context.resolved.claim_types)
-    if literal_traversal is not None:
-        return _MemberVerdict(diagnostics=(literal_traversal,))
-    pair_hop = _pair_hop_issue(
-        query,
-        path=context.path,
-        tree=context.candidate_tree,
-        claim_types=context.resolved.claim_types,
-    )
-    if pair_hop is not None:
-        return _MemberVerdict(diagnostics=(pair_hop,))
+    if query.lifecycle.state == "live":
+        # What a traversal walks is checked for a live query, the one reads and
+        # Procedures are authored against. A retiring query is not: the kinds it
+        # walks may retire in the same change (a kit removal). Named execution
+        # still runs a retired query as stored (it has no lifecycle check), so
+        # this is not a claim that it never runs. Compiler revision 73.
+        literal_traversal = _literal_object_traversal(
+            query, claim_types=context.resolved.claim_types
+        )
+        if literal_traversal is not None:
+            return _MemberVerdict(diagnostics=(literal_traversal,))
+        pair_hop = _pair_hop_issue(
+            query,
+            path=context.path,
+            tree=context.candidate_tree,
+            claim_types=context.resolved.claim_types,
+        )
+        if pair_hop is not None:
+            return _MemberVerdict(diagnostics=(pair_hop,))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
     if predecessor is not None and predecessor.artifact_digest != law.artifact_digest:

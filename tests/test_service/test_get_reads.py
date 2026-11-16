@@ -1320,3 +1320,45 @@ def test_a_literal_cruxible_name_is_read_as_written_not_as_a_built_in(tmp_path: 
     assert _get(instance, IDENTITY.qualified).ref == IDENTITY.qualified
     # A Contract (not a CaptureContract) of that spelling is not a built-in name.
     assert stored_name(f"Contract:{literal_name}") == f"Contract:{literal_name}"
+
+
+def test_a_kind_id_ending_in_json_reads_as_its_subject_and_a_long_list_names_one_read(
+    tmp_path: Path,
+) -> None:
+    """An SBOM file name as a key: the card's own ``kind/id`` is gettable as printed.
+
+    A field listing many Claims, cut for a CLI card's width, names its whole list
+    once (``--json``) instead of one evidence read per Claim.
+    """
+
+    from tests.core_support._write_support import KIND, seed_write_surface
+
+    instance, _ = seed_write_surface(tmp_path)
+    inventory = f"{KIND}/sbom.cdx.json"
+    targets = [f"{KIND}/component-with-a-long-name-{index}" for index in range(8)]
+    _written(
+        instance,
+        {"op": "set", "subject": inventory, "field": "status", "value": "ready"},
+        *({"op": "set", "subject": item, "field": "status", "value": "ready"} for item in targets),
+        because="Inventory and components.",
+    )
+    _written(
+        instance,
+        *({"op": "add", "subject": inventory, "field": "governs", "value": t} for t in targets),
+        because="It governs every component.",
+    )
+
+    for ref in (inventory, f"Subject:{inventory}"):
+        card = _get(instance, ref, surface="cli").card
+        assert isinstance(card, GetSubjectCard) and card.subject == inventory
+    history = _get(instance, inventory, detail="history")
+    assert history.ref == inventory and history.history is not None
+    # An accepted path still reads as that artifact; a missing id of a known kind
+    # refuses as a Subject, with the nearest names.
+    missing = _refusal(instance, f"{KIND}/nothing.json")
+    assert "no accepted Subject" in str(missing)
+
+    card = _get(instance, inventory, surface="cli").card
+    assert isinstance(card, GetSubjectCard)
+    assert f"cruxible get {inventory} --json" in card.next
+    assert not any("--detail evidence" in step for step in card.next)

@@ -2288,6 +2288,13 @@ def _kit_plan_heading(kind: str) -> str:
     return kind[:1].upper() + kind[1:]
 
 
+def _exit_if_kit_blocked(result: KitChangeResult) -> None:
+    """A commit that was blocked changed nothing: exit 1 (a blocked preview is an answer)."""
+
+    if result.status == "blocked":
+        raise SystemExit(1)
+
+
 def _echo_kit_change(
     result: KitChangeResult, *, template_on_disk: Path | None = None, source: str | None = None
 ) -> None:
@@ -2592,6 +2599,7 @@ def add_kit(
             template_on_disk=_kit_directory_file(kit, result.automation_template),
             source=_pull_reference(kit, origin),
         )
+    _exit_if_kit_blocked(result)
 
 
 @kit_group.command("pull")
@@ -2742,6 +2750,7 @@ def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: b
         _emit_json(result.model_dump(mode="json"))
     else:
         _echo_kit_change(result)
+    _exit_if_kit_blocked(result)
 
 
 @playbill_group.group("document")

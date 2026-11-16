@@ -1081,6 +1081,192 @@ def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World])
     assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
 
 
+def _author_pair_kinds(world: _World) -> None:
+    """An inventory, a component and their pair (occurrence), and a query that walks it."""
+
+    from cruxible_client.contracts.query.authored import QuerySpecInput
+
+    draft = world.pb.changes(rationale="Shape the inventory vocabulary.")
+    for predicate, value in (
+        ("acme.inv.iid", {"type": "string"}),
+        ("acme.comp.purl", {"type": "string"}),
+        ("acme.occ.inventory", ("acme.inv",)),
+        ("acme.occ.component", ("acme.comp",)),
+        ("acme.occ.scope", {"type": "string"}),
+    ):
+        draft.claim_type(_claim_type(predicate, value))  # type: ignore[arg-type]
+    draft.subject_kind(name="acme.inv", keys=("acme.inv.iid",))
+    draft.subject_kind(name="acme.comp", keys=("acme.comp.purl",))
+    draft.subject_kind(name="acme.occ", keys=("acme.occ.inventory", "acme.occ.component"))
+    draft.query_definition(
+        QueryDefinitionInput(
+            kind="query_definition",
+            query_definition=QuerySpecInput.model_validate(
+                {
+                    "query": "acme.sbom",
+                    "params": {"inventory": "subject"},
+                    "from": {"i": "acme.inv = $inventory"},
+                    "hops": [{"o": "acme.occ{inventory: i} with scope"}],
+                    "fields": [{"occurrence": "o.subject_id"}, "o.scope"],
+                }
+            ),
+        )
+    )
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit(accept="never")
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+
+
+def test_removing_a_kit_retires_its_queries_with_the_kinds_they_walk(
+    worlds: tuple[_World, _World],
+) -> None:
+    """A pair hop is checked for a query that will run, not one retiring with its kinds.
+
+    The pair kind's endpoint ClaimTypes are frozen for life (R13), so the removal
+    keeps them and retires everything else the kit owns, in one change.
+    """
+
+    publisher, consumer = worlds
+    _author_pair_kinds(publisher)
+    consumer.add(publisher.build("1.0.0"))
+
+    preview = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme")
+    )
+    assert preview.status == "would_propose", preview.detail
+    removed = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+    )
+    consumer.settle(removed)
+
+    actions = {item.identity: item.action for item in removed.plan}
+    assert actions["QueryDefinition:acme.sbom"] == "retire"
+    assert actions["SubjectKind:acme.occ"] == "retire"
+    assert actions["ClaimType:acme.occ.scope"] == "retire"
+    assert actions["ClaimType:acme.occ.inventory"] == "keep"
+    assert actions["ClaimType:acme.occ.component"] == "keep"
+    assert _query_state(consumer, "acme.sbom") == "retired"
+    assert consumer.claim_type("acme.occ.inventory").lifecycle.state == "live"
+    assert _installed(playbill_api.playbill_kit_status(consumer.instance_id)) == ()
+
+
+def _record_seats(world: _World, slug: str) -> None:
+    """Accept one Claim of the kit's SEATS about a consumer-declared account."""
+
+    draft = world.pb.changes(rationale="Record the account's seats.")
+    created = _create_by_slug(world, draft, "acme.account", slug)
+    draft.claim(
+        subject=created,
+        predicate=SEATS,
+        value=50,
+        role="observation",
+        rationale="The source records 50 seats.",
+        supported_by=None,
+        copied_from=None,
+        self_source=f"{SEATS}: 50\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit(accept="never")
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+
+
+def _kit_proposals(world: _World, kit_id: str) -> list[str]:
+    return [
+        entry.proposal_id
+        for entry in playbill_api.playbill_list_proposals(world.instance_id).entries
+        if f"/kit-{kit_id}-" in (entry.target_ref or "")
+    ]
+
+
+def test_a_removal_that_would_strand_claims_says_how_many_and_records_nothing(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    _record_seats(consumer, "acme")
+    head = get_playbill_manager().get(consumer.instance_id).accepted_coordinate().git_oid
+
+    preview = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme")
+    )
+    assert preview.status == "would_block"
+    assert preview.detail is not None
+    (claim_path,) = _claim_paths(consumer, SEATS)
+    claim_id = claim_path.rsplit("/", 1)[-1].removesuffix(".json")
+    assert (
+        "cruxible.change_set.incomplete_closure: 1 live artifact(s) outside this change depend "
+        f"on definitions it retires or replaces: 1 Claim(s) of 1 ClaimType(s) ({SEATS} 1; "
+        f"e.g. Claim:{claim_id})."
+    ) in preview.detail
+    assert "cruxible retire KIND/ID --with-claims" in preview.detail
+    # The record's per-dependent digests stay out of the answer.
+    assert "sha256:" not in preview.detail
+
+    before = playbill_api.playbill_list_proposals(consumer.instance_id).entries
+    blocked = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False, at=head)
+    )
+    assert blocked.status == "blocked"
+    assert blocked.proposal_id is None
+    assert blocked.detail == preview.detail
+    # Blocked at the head its preview saw: nothing is recorded.
+    assert playbill_api.playbill_list_proposals(consumer.instance_id).entries == before
+    assert get_playbill_manager().get(consumer.instance_id).accepted_coordinate().git_oid == head
+
+
+def test_a_removal_whose_head_moves_after_its_check_refuses_and_records_nothing(
+    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Checked clean at one head, a Claim on the retiring ClaimType lands before submit.
+
+    The submission is bound to the head its check saw: it refuses state_moved
+    before evaluating, so the refusal the new head would give is never published.
+    """
+
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.proposals.proposals import ProposalService
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    before = _kit_proposals(consumer, "acme")
+    original = ProposalService.submit
+    moved: list[str] = []
+
+    def submit(self: ProposalService, **kwargs: typing.Any) -> typing.Any:
+        if not moved and "/kit-acme-" in kwargs["request"].target_ref:
+            moved.append(kwargs["request"].proposed_base_oid)
+            _record_seats(consumer, "acme")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(ProposalService, "submit", submit)
+    with pytest.raises(ChangeRefusedError) as refused:
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+
+    assert refused.value.error_code == "cruxible.preview.state_moved"
+    head = get_playbill_manager().get(consumer.instance_id).accepted_coordinate().git_oid
+    assert moved and moved[0] != head
+    assert _kit_proposals(consumer, "acme") == before
+    assert consumer.claim_type(SEATS).lifecycle.state == "live"
+
+
 def test_removing_a_kit_that_is_not_installed_is_refused_naming_the_installed_ones(
     worlds: tuple[_World, _World],
 ) -> None:
